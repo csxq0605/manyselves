@@ -1,0 +1,5 @@
+id: aggregate_editor_input
+version: 1.0.0
+description: Five validated existing module bodies exposed to the aggregate editor
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.inputs:AggregateEditorInput

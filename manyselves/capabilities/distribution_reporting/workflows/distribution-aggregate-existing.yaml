@@ -1,0 +1,48 @@
+id: distribution-aggregate-existing
+version: 1.0.0
+description: Prepare five existing module reports and invoke the aggregate editor
+tasks:
+- aggregate-existing
+gates: []
+recovery:
+- current-reporting-recovery
+outputs:
+- aggregate-existing-agent-result
+input_contract: aggregate_existing_input
+input_variable: aggregate-input
+output_contract: edited_report_submission
+state:
+  aggregate-input: {}
+  aggregate-context: {}
+  aggregate-editor-input: {}
+  aggregate-conversation: {}
+  aggregate-agent-result: {}
+actions:
+- id: prepare-aggregate-existing
+  kind: invoke_tool
+  tool: prepare-aggregate-existing
+  input_variable: aggregate-input
+  output_variable: aggregate-context
+- id: project-aggregate-editor-input
+  kind: invoke_tool
+  tool: project-aggregate-editor-input
+  input_variable: aggregate-context
+  output_variable: aggregate-editor-input
+- id: create-aggregate-existing-conversation
+  kind: create_conversation
+  agent: aggregate-editor
+  conversation_key: aggregate-existing
+  mode: run
+  output_variable: aggregate-conversation
+- id: invoke-aggregate-existing-agent
+  kind: invoke_agent
+  agent: aggregate-editor
+  task: aggregate-existing
+  conversation_variable: aggregate-conversation
+  input_variable: aggregate-editor-input
+  output_variable: aggregate-agent-result
+- id: finish-aggregate-existing-agent
+  kind: end_workflow
+  output_variable: aggregate-agent-result
+  output_name: result
+  output_contract: edited_report_submission

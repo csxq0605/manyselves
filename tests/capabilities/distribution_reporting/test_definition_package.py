@@ -189,6 +189,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding"
     )
     assert {definition.id for definition in registry.all(DefinitionKind.AGENT)} == {
+        "aggregate-editor",
         "chief-editor-auditor",
         "chief-editor",
         "citation-builder",
@@ -212,6 +213,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
         "render-existing",
         "distill-template-skill",
+        "distribution-aggregate-existing",
         "distribution-evidence-readiness",
         "distribution-chief-chapter-1-lane",
         "distribution-chief-chapter-3-lane",
@@ -837,7 +839,8 @@ def test_capability_agent_projection_preserves_the_legacy_template_corpus() -> N
     )
     projected = load_reporting_agents()
 
-    assert legacy.keys() == projected.keys()
+    assert set(legacy) <= set(projected)
+    assert set(projected) - set(legacy) == {"aggregate-editor"}
     for agent_id in legacy:
         legacy_payload = legacy[agent_id].model_dump(
             exclude={"source_path", "reads", "writes", "tools"}

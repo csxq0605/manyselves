@@ -1,0 +1,10 @@
+id: prepare-aggregate-existing
+version: 1.0.0
+description: Read five frozen existing module reports and persist aggregate handoff artifacts
+implementation: capability:distribution-reporting:prepare-aggregate-existing
+input_contract: aggregate_existing_input
+output_contract: aggregate_existing_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

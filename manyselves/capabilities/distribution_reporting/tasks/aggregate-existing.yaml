@@ -1,0 +1,12 @@
+id: aggregate-existing
+version: 1.0.0
+description: Aggregate five existing module reports into one complete report result
+agent: aggregate-editor
+objective: Integrate the five validated existing module reports without Cross or module cohorts.
+input_contract: aggregate_editor_input
+output_contract: edited_report_submission
+tools:
+- write_result_part
+- list_result_parts
+- submit_result
+recovery: current-reporting-recovery

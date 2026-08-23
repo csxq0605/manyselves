@@ -1,0 +1,5 @@
+id: edited_report_submission
+version: 1.0.0
+description: Typed complete report result returned by an aggregate editor Agent
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:EditedReportSubmission
