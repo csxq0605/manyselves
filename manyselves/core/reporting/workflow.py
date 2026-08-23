@@ -21,6 +21,10 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
+from manyselves.capabilities.distribution_reporting.domain.evidence_readiness import (
+    EvidenceReadinessPolicy,
+    ReportingBlockedError,
+)
 from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
     final_lane_specialization,
 )
@@ -174,7 +178,6 @@ from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
 from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
-from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_snapshot import RunInputSnapshotStore
 from .research.knowledge_context import KnowledgeContextBuilder
 from .review_lifecycle import (

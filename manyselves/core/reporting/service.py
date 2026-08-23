@@ -18,6 +18,9 @@ from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.capabilities.distribution_reporting.domain.coverage import evaluate_coverage
+from manyselves.capabilities.distribution_reporting.domain.evidence_readiness import (
+    ReportingBlockedError,
+)
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
@@ -80,7 +83,6 @@ from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .decisions import EvidenceDecisionStore
-from .evidence_readiness import ReportingBlockedError
 from .execution_runtime import ProviderRouter
 from .input_snapshot import RunInputSnapshotStore
 from .locks import exclusive_reporting_writer_lock
