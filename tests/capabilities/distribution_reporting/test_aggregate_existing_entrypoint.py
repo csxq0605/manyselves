@@ -13,6 +13,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ClaimRecord,
     ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -62,13 +63,24 @@ def _markdown(module_id: str) -> str:
 
 def _structured(module_id: str) -> ModuleSubmission:
     definition = REPORT_TAXONOMY[module_id]
+    first_submodule_id = next(iter(definition.submodules))
     return ModuleSubmission(
         module_id=module_id,
         submodule_narratives={
             submodule_id: f"模块 {module_id} 的既有小节正文。"
             for submodule_id in definition.submodules
         },
-        claims=[],
+        claims=[
+            ClaimRecord(
+                id=f"C-{module_id.replace('.', '')}-existing",
+                module_id=module_id,
+                submodule_id=first_submodule_id,
+                text=f"模块 {module_id} 的既有汇总说明。",
+                claim_type="recommendation",
+                footnote_required=False,
+                unresolved=True,
+            )
+        ],
         source_ids=[],
         unresolved_questions=[],
         revision=0,
@@ -86,7 +98,7 @@ def _edited_submission():
         findings_overview="发现",
         regional_executive_summary="区域摘要",
         module_narratives={
-            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            module_id: _structured(module_id).markdown
             for module_id in REPORT_MODULE_IDS
         },
         risk_panorama="风险全景",
@@ -357,6 +369,106 @@ def test_aggregate_existing_agent_slice_does_not_claim_final_or_delivery_complet
     )
 
 
+def test_final_recheck_open_and_new_finding_returns_to_next_round_same_run(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
+        FinalReviewTools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ChapterScopedFinalReviewFinding,
+        ChapterScopedFinalReviewTargetChange,
+        FinalChapterLaneVerdictSubmission,
+        ResolutionVerdict,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+        DeclarativeFinalRecheckOutcome,
+        DeclarativeFinalReviewContext,
+    )
+
+    run_id = "aggregate-open-recheck"
+    finding = ChapterScopedFinalReviewFinding(
+        id="F-final-open",
+        target_section_ids=["1.1"],
+        target_changes=[
+            ChapterScopedFinalReviewTargetChange(
+                target_section_id="1.1",
+                required_change="保留原 finding 并补充下一轮需要核对的证据说明。",
+                reviewer_checks=["下一轮应重新检查该 section 的证据说明。"],
+            )
+        ],
+        category="completeness",
+        impact="blocking",
+        observation="当前修订仍缺少可复核的证据说明，需要继续修订。",
+        evidence_refs=[f"Work/runs/{run_id}/reviews/final-initial.json"],
+    )
+    new_finding = finding.model_copy(update={"id": "F-final-new"})
+    review = DeclarativeFinalReviewContext(
+        state={
+            "run_id": run_id,
+            "max_final_review_rounds": 3,
+            "edited_report": _edited_submission_with_final_chapter_4(),
+        },
+        current=_edited_submission_with_final_chapter_4(),
+        subject_ref=f"Work/runs/{run_id}/edited-revisions/chief-r1.json",
+        findings_by_chapter={"1": [finding]},
+        pending_by_chapter={"1": [finding]},
+        initial_lane_refs={"1": f"Work/runs/{run_id}/reviews/final-initial.json"},
+        revision_number=1,
+    )
+    submission = FinalChapterLaneVerdictSubmission(
+        run_id=run_id,
+        chapter_id="1",
+        checked_section_ids=["1.1", "1.2", "1.3"],
+        verdicts=[
+            ResolutionVerdict(
+                finding_id=finding.id,
+                verdict="open",
+                reason="当前 section 仍未满足 reviewer_checks，需要下一轮修订。",
+            )
+        ],
+        new_findings=[new_finding],
+    )
+    outcome = DeclarativeFinalRecheckOutcome(
+        chapter_id="1",
+        status="completed",
+        submission=submission,
+        output_ref=f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r1.json",
+    )
+
+    reduced = FinalReviewTools(
+        workspace=tmp_path,
+        store=ReportingStore(tmp_path),
+    ).reduce_rechecks(
+        {"review": review, "outcomes": {"1": outcome}}
+    )
+    assert [item.id for item in reduced.pending_by_chapter["1"]] == [
+        "F-final-open",
+        "F-final-new",
+    ]
+    assert reduced.latest_verdict_refs["1"] == outcome.output_ref
+    assert reduced.verdict_history[0].submission.new_findings[0].id == "F-final-new"
+    assert FinalReviewTools.needs_round(reduced) is True
+
+    next_round = FinalReviewTools.advance_round(reduced)
+    assert next_round.revision_number == 2
+    assert next_round.state["run_id"] == run_id
+    assert next_round.revision_responses == {}
+
+    _capability, registry = load_distribution_reporting_capability()
+    cycle = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-final-review-cycle",
+    )
+    choose_next = next(
+        action for action in cycle.actions if action["id"] == "choose-final-review-next-step"
+    )
+    assert choose_next["then"] == "advance-final-review-round"
+
+
 @pytest.mark.asyncio
 async def test_aggregate_existing_host_executes_prepare_before_agent_boundary(
     tmp_path: Path,
@@ -592,9 +704,6 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         ResolutionVerdict,
         RevisionResponse,
     )
-    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
-        DeclarativeFinalReviewContext,
-    )
     from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
@@ -640,7 +749,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     refs = _write_frozen_modules(
         tmp_path,
         run_id,
-        suffixes={module_id: ".md" for module_id in REPORT_MODULE_IDS},
+        suffixes={module_id: ".json" for module_id in REPORT_MODULE_IDS},
     )
     chief_skill_path = (
         tmp_path
@@ -885,7 +994,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: accept-current-final-recheck",
+            match="missing tool adapter: prepare-render-delivery",
         ):
             await host.execute(
                 plan,
@@ -905,37 +1014,47 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         persisted = store.load(run_id)
         assert persisted.actions["run-aggregate-existing"].status.value == "completed"
         assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
-        assert persisted.actions["run-final-review"].status.value == "failed"
-        assert persisted.actions["run-report-delivery"].status.value == "pending"
+        assert persisted.actions["run-final-review"].status.value == "completed"
+        assert persisted.actions["run-report-delivery"].status.value == "failed"
         final_state = WorkflowState.model_validate(
             persisted.subworkflow_states["run-final-review"]
         )
-        assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
-        assert final_state.actions["final-chapter-cohort"].status.value == "completed"
-        assert final_state.actions["reduce-final-chapter-cohort"].status.value == "completed"
-        assert final_state.actions["run-final-review-cycle"].status.value == "failed"
-        review_state = WorkflowState.model_validate(
-            final_state.subworkflow_states["run-final-review-cycle"]
+        assert final_state.status.value == "completed"
+        completed_reporting_state = final_state.outputs["result"]
+        assert completed_reporting_state["final_review_completion_ref"] == (
+            f"Work/runs/{run_id}/reviews/final-completion.json"
         )
-        assert review_state.actions["start-final-review-cycle"].status.value == "completed"
-        assert review_state.actions["final-review-needs-round"].status.value == "completed"
-        assert review_state.actions["advance-final-review-round"].status.value == "completed"
-        assert (
-            review_state.actions["run-final-chief-revision-cohort"].status.value
-            == "completed"
+        assert completed_reporting_state["final_audit_snapshot_ref"] == (
+            f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
         )
-        assert review_state.actions["run-final-recheck-cohort"].status.value == "failed"
-        chief_cohort_state = WorkflowState.model_validate(
-            review_state.subworkflow_states["run-final-chief-revision-cohort"]
-        )
-        assert chief_cohort_state.status.value == "completed"
-        assert chief_cohort_state.outputs["result"]["subject_ref"] == (
-            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
-        )
-        recheck_cohort_state = WorkflowState.model_validate(
-            review_state.subworkflow_states["run-final-recheck-cohort"]
-        )
-        assert recheck_cohort_state.status.value == "failed"
+        final_cohort_completed = {
+            event.action_id
+            for event in events.events
+            if event.kind == "action.completed"
+            and event.workflow_id == "distribution-final-chapter-cohort"
+        }
+        assert {
+            "prepare-final-chapter-cohort",
+            "final-chapter-cohort",
+            "reduce-final-chapter-cohort",
+            "run-final-review-cycle",
+        }.issubset(final_cohort_completed)
+        review_completed = {
+            event.action_id
+            for event in events.events
+            if event.kind == "action.completed"
+            and event.workflow_id == "distribution-final-review-cycle"
+        }
+        assert {
+            "start-final-review-cycle",
+            "final-review-needs-round",
+            "advance-final-review-round",
+            "run-final-chief-revision-cohort",
+            "run-final-recheck-cohort",
+            "final-review-needs-round-after-recheck",
+            "complete-final-review",
+            "finish-final-review-cycle",
+        }.issubset(review_completed)
         recheck_lane_completed = {
             event.action_id
             for event in events.events
@@ -968,15 +1087,10 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             "accept-current-final-chief-revision",
             "complete-current-final-chief-revision",
         }
-        review = DeclarativeFinalReviewContext.model_validate(
-            review_state.variables["review"]
-        )
-        assert review.revision_number == 1
-        assert set(review.pending_by_chapter) == {"1"}
-        assert review.subject_ref == (
+        assert completed_reporting_state["chief_candidate_ref"] == (
             f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
         )
-        assert review.current.assessment_background == (
+        assert completed_reporting_state["edited_report"]["assessment_background"] == (
             "Updated background text with the requested verification detail."
         )
         chief_output_ref = (
@@ -1015,13 +1129,31 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
                 )
             ).hexdigest(),
         }
-        assert final_state.variables["prepared-final-state"]["run_id"] == run_id
+        assert completed_reporting_state["run_id"] == run_id
         aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
         assert aggregate_ref.is_file()
         assert json.loads(aggregate_ref.read_text(encoding="utf-8"))["lane_ids"] == [
             "1",
             "3",
             "4",
+        ]
+        recheck_aggregate_ref = (
+            tmp_path / f"Work/runs/{run_id}/reviews/final-recheck-r1-aggregate.json"
+        )
+        assert recheck_aggregate_ref.is_file()
+        completion_ref = tmp_path / completed_reporting_state["final_review_completion_ref"]
+        completion = json.loads(completion_ref.read_text(encoding="utf-8"))
+        assert completion["subject_refs"] == [
+            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
+        ]
+        assert completion["resolved_finding_ids"] == ["F-final-1"]
+        assert completion["verdict_refs"] == [
+            f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r1.json"
+        ]
+        snapshot_ref = tmp_path / completed_reporting_state["final_audit_snapshot_ref"]
+        snapshot = json.loads(snapshot_ref.read_text(encoding="utf-8"))
+        assert snapshot["completion_ref"] == completed_reporting_state[
+            "final_review_completion_ref"
         ]
         assert len(loops) == 4
         assert {loop.received[0].session_id for loop in loops.values()} == {
@@ -1077,7 +1209,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         assert persisted.outputs == {}
         assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
         assert any(
-            event.kind == "action.failed" and event.action_id == "run-final-review"
+            event.kind == "action.failed" and event.action_id == "run-report-delivery"
             for event in events.events
         )
     finally:

@@ -14,6 +14,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ChiefChapterLaneRevisionSubmission,
     EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
     ModuleSubmission,
     TaskEnvelope,
     numbered_markdown_headings,
@@ -25,10 +26,17 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_review 
     DeclarativeFinalChiefRevisionAgentResult,
     DeclarativeFinalChiefRevisionContext,
     DeclarativeFinalChiefRevisionOutcome,
+    DeclarativeFinalRecheckAgentResult,
+    DeclarativeFinalRecheckContext,
+    DeclarativeFinalRecheckOutcome,
     DeclarativeFinalReviewContext,
+    DeclarativeFinalVerdictRecord,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ChiefChapterLaneInput,
+    FinalAuditSnapshot,
+    FinalChapterLaneInput,
+    ReviewCompletionRecord,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
@@ -36,6 +44,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     chapter_section_ids,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+
+from .delivery_projection import build_delivery_projection
+from .report_validation import validate_final_report_structure
 
 _TEMPLATE_SKILL_ROOT = "Work/report-template-role-skills"
 
@@ -643,6 +654,221 @@ class FinalReviewTools:
             }
         )
 
+    def accept_recheck(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalRecheckContext:
+        """Accept one typed Final Auditor verdict for its affected chapter lane."""
+
+        context = DeclarativeFinalRecheckContext.model_validate(values["context"])
+        result = DeclarativeFinalRecheckAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            return context.model_copy(update={"status": "failed", "error": result.error})
+        submission = cast(FinalChapterLaneVerdictSubmission, result.submission)
+        contract = cast(FinalChapterLaneInput, context.contract)
+        try:
+            expected_ids = {finding.id for finding in contract.required_findings}
+            actual_ids = {verdict.finding_id for verdict in submission.verdicts}
+            if (
+                submission.run_id != contract.run_id
+                or submission.chapter_id != context.chapter_id
+                or set(submission.checked_section_ids) != set(contract.section_ids)
+                or actual_ids != expected_ids
+            ):
+                raise ValueError(
+                    f"final chapter {context.chapter_id} verdict does not close its lane findings"
+                )
+            output_ref = (
+                f"Work/runs/{contract.run_id}/reviews/final-chapter-lane-"
+                f"{context.chapter_id}-r{contract.revision}.json"
+            )
+            self.store.write_json(output_ref, submission.model_dump(mode="json"))
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(
+            update={
+                "status": "accepted",
+                "submission": submission,
+                "output_ref": output_ref,
+            }
+        )
+
+    @staticmethod
+    def complete_recheck(value: Any) -> DeclarativeFinalRecheckOutcome:
+        """Project an accepted Final recheck lane into its cohort outcome."""
+
+        context = DeclarativeFinalRecheckContext.model_validate(value)
+        if context.status == "failed":
+            return DeclarativeFinalRecheckOutcome(
+                chapter_id=context.chapter_id,
+                status="failed",
+                error=context.error,
+            )
+        if context.status == "skipped":
+            return DeclarativeFinalRecheckOutcome(
+                chapter_id=context.chapter_id,
+                status="skipped",
+            )
+        return DeclarativeFinalRecheckOutcome(
+            chapter_id=context.chapter_id,
+            status="completed",
+            submission=context.submission,
+            output_ref=context.output_ref,
+        )
+
+    def reduce_rechecks(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalReviewContext:
+        """Reduce Final verdicts while retaining history and next-round findings."""
+
+        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+        outcomes = {
+            chapter_id: DeclarativeFinalRecheckOutcome.model_validate(outcome)
+            for chapter_id, outcome in dict(values["outcomes"]).items()
+        }
+        failures = {
+            chapter_id: outcome.error or "Final recheck lane failed"
+            for chapter_id, outcome in outcomes.items()
+            if outcome.status == "failed"
+        }
+        if failures:
+            first = min(failures, key=int)
+            raise RuntimeError(failures[first])
+        active = tuple(review.pending_by_chapter)
+        next_pending: dict[str, list[Any]] = {}
+        history = list(review.verdict_history)
+        latest_refs = dict(review.latest_verdict_refs)
+        for chapter_id in active:
+            outcome = outcomes[chapter_id]
+            payload = cast(FinalChapterLaneVerdictSubmission, outcome.submission)
+            output_ref = cast(str, outcome.output_ref)
+            history.append(
+                DeclarativeFinalVerdictRecord(
+                    submission=payload,
+                    output_ref=output_ref,
+                )
+            )
+            latest_refs[chapter_id] = output_ref
+            verdict_by_id = {
+                verdict.finding_id: verdict for verdict in payload.verdicts
+            }
+            pending = [
+                finding
+                for finding in review.pending_by_chapter[chapter_id]
+                if verdict_by_id[finding.id].verdict != "resolved"
+            ]
+            pending.extend(payload.new_findings)
+            if pending:
+                next_pending[chapter_id] = pending
+        run_id = str(review.state["run_id"])
+        revision = review.revision_number
+        aggregate_ref = (
+            f"Work/runs/{run_id}/reviews/final-recheck-r{revision}-aggregate.json"
+        )
+        self.store.write_json(
+            aggregate_ref,
+            {
+                "run_id": run_id,
+                "stage": f"final-recheck-r{revision}",
+                "status": "completed",
+                "lane_ids": list(active),
+                "result_ref": review.subject_ref,
+            },
+        )
+        return review.model_copy(
+            update={
+                "pending_by_chapter": next_pending,
+                "verdict_history": history,
+                "latest_verdict_refs": latest_refs,
+            }
+        )
+
+    def complete_review(self, value: Any) -> dict[str, Any]:
+        """Persist the existing Final completion handoff before Delivery."""
+
+        review = DeclarativeFinalReviewContext.model_validate(value)
+        state = _restore_state(review.state)
+        if review.already_completed:
+            return state
+        run_id = str(state["run_id"])
+        revision = review.revision_number
+        state["edited_report"] = review.current
+        state["chief_candidate_ref"] = review.subject_ref
+        state["final_review_restart_round"] = revision or 1
+        completion = ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="final-chapter-wave",
+            subject_refs=[review.subject_ref],
+            finding_refs=list(review.initial_lane_refs.values()),
+            verdict_refs=[record.output_ref for record in review.verdict_history],
+            resolved_finding_ids=sorted(
+                {
+                    finding.id
+                    for findings in review.findings_by_chapter.values()
+                    for finding in findings
+                }
+                | {
+                    finding.id
+                    for record in review.verdict_history
+                    for finding in record.submission.new_findings
+                }
+            ),
+        )
+        completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+        self.store.write_json(completion_ref, completion.model_dump(mode="json"))
+        claims = [
+            claim
+            for module_id in REPORT_MODULE_IDS
+            for claim in getattr(
+                state.get("module_submissions", {}).get(module_id),
+                "claims",
+                [],
+            )
+        ]
+        canonical_ref = (
+            f"Work/runs/{run_id}/validation/report-chief-candidate-r{revision}.md"
+        )
+        _, canonical = build_delivery_projection(
+            self.workspace,
+            state,
+            review.current,
+            claims,
+        )
+        validate_final_report_structure(
+            store=self.store,
+            state=state,
+            markdown=canonical,
+            phase=f"chief-candidate-r{revision}",
+        )
+        validation_ref = (
+            f"Work/runs/{run_id}/reviews/"
+            f"report-integrity-chief-candidate-r{revision}.json"
+        )
+        snapshot_ref = f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        snapshot = FinalAuditSnapshot(
+            run_id=run_id,
+            subject_ref=review.subject_ref,
+            subject_revision=revision,
+            canonical_markdown_ref=canonical_ref,
+            validation_report_ref=validation_ref,
+            completion_ref=completion_ref,
+        )
+        self.store.write_json(snapshot_ref, snapshot.model_dump(mode="json"))
+        state["final_review_completion_ref"] = completion_ref
+        state["final_audit_snapshot_ref"] = snapshot_ref
+        state["final_residual_risks"] = list(review.initial_residual_risks)
+        state["final_chapter_lane_refs"] = dict(review.initial_lane_refs)
+        state["aggregate_refs"] = {
+            **dict(state.get("aggregate_refs", {})),
+            "final": completion_ref,
+        }
+        return state
+
 
 def build_final_review_tool_implementations(
     *,
@@ -659,6 +885,10 @@ def build_final_review_tool_implementations(
         "accept-current-final-chief-revision": tools.accept_chief_revision,
         "complete-current-final-chief-revision": tools.complete_chief_revision,
         "reduce-final-chief-revision-cohort": tools.reduce_chief_revisions,
+        "accept-current-final-recheck": tools.accept_recheck,
+        "complete-current-final-recheck": tools.complete_recheck,
+        "reduce-final-recheck-cohort": tools.reduce_rechecks,
+        "complete-final-review": tools.complete_review,
     }
 
 
