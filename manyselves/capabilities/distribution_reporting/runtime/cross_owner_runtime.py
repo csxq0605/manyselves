@@ -55,6 +55,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CrossReviewVerdictSubmission,
     CrossSynthesisInput,
     ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
+    ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
     WorkflowDecisionSubmission,
@@ -75,8 +77,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     module_content_view,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRecheckAgentResult,
     DeclarativeModuleReviewAgentResult,
+    DeclarativeModuleReviewPreparation,
     DeclarativeModuleRevisionAgentResult,
+    DeclarativeModuleRevisionPreparation,
+    DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     UserSupplement,
@@ -93,13 +99,28 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleRevisionPreparation,
     _CrossOwnerPipelineResult,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
+    module_review_needs_revision,
+    module_review_preflight_needs_revision,
+    module_review_requires_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
+    accept_current_module_preflight_revision,
+    prepare_current_module_preflight_revision,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_recheck_tools import (
+    accept_current_module_recheck,
+    module_recheck_requires_agent,
+    prepare_current_module_recheck,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
-    accept_module_initial_review,
+    accept_current_module_review,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
     prepare_module_local_regression_review,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    accept_current_module_revision,
     accept_module_revision,
     load_module_revision_candidate,
     prepare_module_revision,
@@ -425,6 +446,15 @@ class CrossOwnerAgentInvoker:
         context: DeclarativeCrossOwnerRuntimeContext,
         output_contract: str,
     ) -> Any:
+        local = context.local_module_context
+        if output_contract == "declarative_module_review_agent_result":
+            return local.review.prepared if local is not None and local.review else None
+        if output_contract == "declarative_module_recheck_agent_result":
+            return local.recheck.prepared if local is not None and local.recheck else None
+        if output_contract == "declarative_module_revision_agent_result":
+            if local is not None and local.revision is not None:
+                return local.revision.prepared
+            return context.revision_preparation
         if output_contract == "declarative_cross_owner_recheck_agent_result":
             return context.recheck_preparation
         if output_contract == "declarative_main_exception_agent_result":
@@ -460,6 +490,21 @@ class CrossOwnerAgentInvoker:
     def _decode_result(self, result_ref: str, *, output_contract: str) -> dict[str, Any]:
         loaded = load_agent_result_payload(self.workspace, result_ref)
         payload = loaded.payload
+        if output_contract == "declarative_module_review_agent_result":
+            return DeclarativeModuleReviewAgentResult(
+                status="completed",
+                submission=ModuleReviewFindingSubmission.model_validate(payload),
+            ).model_dump(mode="json")
+        if output_contract == "declarative_module_revision_agent_result":
+            return DeclarativeModuleRevisionAgentResult(
+                status="completed",
+                submission=ModuleRevisionSubmission.model_validate(payload),
+            ).model_dump(mode="json")
+        if output_contract == "declarative_module_recheck_agent_result":
+            return DeclarativeModuleRecheckAgentResult(
+                status="completed",
+                submission=ModuleReviewVerdictSubmission.model_validate(payload),
+            ).model_dump(mode="json")
         if output_contract == "declarative_cross_owner_recheck_agent_result":
             return DeclarativeCrossOwnerRecheckAgentResult(
                 status="completed",
@@ -1099,26 +1144,46 @@ class CrossOwnerRuntime:
         revision = context.revision_acceptance
         if revision is None:
             raise ValueError("Cross owner local review requires an accepted revision")
-        regression_context, local_scope = build_cross_owner_local_regression_context(
-            workspace=self.workspace,
-            store=self.store,
-            run_id=revision.run_id,
-            owner_module_id=revision.owner_module_id,
-            reviewed_baseline=revision.current,
-            revised=revision.revised,
-            findings=list(revision.findings),
-            review_round=revision.review_round,
-            prior_completion_ref=revision.prior_completion_ref,
+        previous_lane = context.local_module_context
+        current = (
+            previous_lane.module
+            if previous_lane is not None and previous_lane.module is not None
+            else revision.revised
+        )
+        previous_preparation = context.local_review_preparation
+        if (
+            previous_preparation is not None
+            and previous_preparation.regression_context is not None
+        ):
+            regression_context = previous_preparation.regression_context
+            local_scope = set(previous_preparation.prepared.scope)
+        else:
+            regression_context, local_scope = build_cross_owner_local_regression_context(
+                workspace=self.workspace,
+                store=self.store,
+                run_id=revision.run_id,
+                owner_module_id=revision.owner_module_id,
+                reviewed_baseline=revision.current,
+                revised=current,
+                findings=list(revision.findings),
+                review_round=revision.review_round,
+                prior_completion_ref=revision.prior_completion_ref,
+            )
+        previous_preflight_progress = (
+            previous_lane.review.prepared.preflight_progress
+            if previous_lane is not None and previous_lane.review is not None
+            else None
         )
         prepared = prepare_module_local_regression_review(
             store=self.store,
             workflow_id=revision.workflow_id,
             run_id=revision.run_id,
-            current=revision.revised,
+            current=current,
             scope=local_scope,
             review_round=revision.review_round,
             regression_context=regression_context,
             user_supplements=revision.user_supplements,
+            previous_preflight_progress=previous_preflight_progress,
         )
         preparation = CrossOwnerLocalReviewPreparation(
             mode=prepared.mode,
@@ -1132,11 +1197,42 @@ class CrossOwnerRuntime:
             regression_context=regression_context,
             prepared=prepared,
         )
+        reporting_state = (
+            previous_lane.reporting_state
+            if previous_lane is not None
+            else {
+                "run_id": revision.run_id,
+                "request": {
+                    "user_supplements": [
+                        item.model_dump(mode="json")
+                        for item in revision.user_supplements
+                    ]
+                },
+            }
+        )
+        lane = DeclarativeModuleRuntimeLaneContext(
+            module_id=revision.owner_module_id,
+            workflow_id=revision.workflow_id,
+            reporting_state=reporting_state,
+            status=(
+                "preflight_revision_pending"
+                if prepared.mode == "preflight_revision"
+                else "review_ready"
+            ),
+            review=DeclarativeModuleReviewPreparation(
+                envelope=prepared.envelope,
+                reviewer_session_key=prepared.reviewer_session_key,
+                prepared=prepared,
+            ),
+            module=prepared.current,
+        )
         return context.model_copy(
+            deep=True,
             update={
                 "status": "local_review_ready",
                 "local_review_preparation": preparation,
                 "local_review_acceptance": None,
+                "local_module_context": lane,
                 "error": None,
             }
         )
@@ -1144,11 +1240,52 @@ class CrossOwnerRuntime:
     @staticmethod
     def local_review_requires_agent(value: Any) -> bool:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
-        preparation = context.local_review_preparation
         return bool(
             context.status == "local_review_ready"
-            and preparation is not None
-            and preparation.mode == "invoke_agent"
+            and context.local_module_context is not None
+            and module_review_requires_agent(context.local_module_context)
+        )
+
+    @staticmethod
+    def local_review_preflight_needs_revision(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.local_module_context is not None
+            and module_review_preflight_needs_revision(
+                context.local_module_context
+            )
+        )
+
+    async def prepare_local_preflight_revision(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        prepared = await prepare_current_module_preflight_revision(
+            lane,
+            store=self.store,
+        )
+        return context.model_copy(
+            deep=True,
+            update={"local_module_context": prepared, "error": None},
+        )
+
+    def accept_local_preflight_revision(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross local preflight acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        accepted = accept_current_module_preflight_revision(
+            {"context": lane, "result": value.get("result")},
+            store=self.store,
+        )
+        return context.model_copy(
+            deep=True,
+            update={"local_module_context": accepted, "error": accepted.error},
         )
 
     def accept_local_review(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
@@ -1158,7 +1295,8 @@ class CrossOwnerRuntime:
             raise TypeError("Cross owner local review acceptance requires context and result")
         context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
         preparation = context.local_review_preparation
-        if preparation is None or preparation.prepared is None:
+        lane = self._require_local_module_context(context)
+        if preparation is None or preparation.prepared is None or lane.review is None:
             raise ValueError("Cross owner local review acceptance has no preparation")
         raw_result = value.get("result")
         if isinstance(raw_result, DeclarativeModuleReviewAgentResult) or (
@@ -1172,14 +1310,19 @@ class CrossOwnerRuntime:
                         "error": result.error or "Cross owner local Auditor failed",
                     }
                 )
-            submission = result.submission
+            typed_result = result
         else:
-            submission = _model(raw_result, ModuleReviewFindingSubmission)
-        review = accept_module_initial_review(
-            preparation=preparation.prepared,
-            submission=submission,
+            typed_result = DeclarativeModuleReviewAgentResult(
+                status="completed",
+                submission=_model(raw_result, ModuleReviewFindingSubmission),
+            )
+        accepted_lane = accept_current_module_review(
+            {"context": lane, "result": typed_result},
             store=self.store,
         )
+        review = accepted_lane.review.acceptance
+        if review is None:
+            raise ValueError("Cross owner local Auditor result was not accepted")
         acceptance = CrossOwnerLocalReviewAcceptance(
             run_id=preparation.run_id,
             workflow_id=preparation.workflow_id,
@@ -1195,12 +1338,148 @@ class CrossOwnerRuntime:
             review=review,
         )
         return context.model_copy(
+            deep=True,
             update={
                 "status": "local_review_accepted",
                 "local_review_acceptance": acceptance,
+                "local_module_context": accepted_lane,
                 "error": None,
             }
         )
+
+    @staticmethod
+    def local_review_needs_revision(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.local_module_context is not None
+            and module_review_needs_revision(context.local_module_context)
+        )
+
+    async def prepare_local_module_revision(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        review = lane.review
+        acceptance = review.acceptance if review is not None else None
+        if acceptance is None or lane.module is None:
+            raise ValueError("Cross local module revision requires accepted findings")
+        prepared = await prepare_module_revision(
+            workspace=self.workspace,
+            store=self.store,
+            state=lane.reporting_state,
+            workflow_id=lane.workflow_id,
+            subject=lane.module,
+            module_findings=list(acceptance.findings),
+            user_supplements=request_user_supplements(
+                lane.reporting_state.get("request")
+            ),
+        )
+        prepared_lane = lane.model_copy(
+            deep=True,
+            update={
+                "status": "revision_ready",
+                "revision": DeclarativeModuleRevisionPreparation(prepared=prepared),
+                "error": None,
+            },
+        )
+        return context.model_copy(
+            deep=True,
+            update={"local_module_context": prepared_lane, "error": None},
+        )
+
+    @staticmethod
+    def local_revision_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        lane = context.local_module_context
+        return bool(lane is not None and lane.status == "revision_ready")
+
+    def accept_local_module_revision(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross local revision acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        accepted = accept_current_module_revision(
+            {"context": lane, "result": value.get("result")},
+            store=self.store,
+        )
+        return context.model_copy(
+            deep=True,
+            update={"local_module_context": accepted, "error": accepted.error},
+        )
+
+    def prepare_local_module_recheck(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        prepared = prepare_current_module_recheck(lane, store=self.store)
+        return context.model_copy(
+            deep=True,
+            update={"local_module_context": prepared, "error": prepared.error},
+        )
+
+    @staticmethod
+    def local_recheck_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.local_module_context is not None
+            and module_recheck_requires_agent(context.local_module_context)
+        )
+
+    def accept_local_module_recheck(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross local recheck acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        lane = self._require_local_module_context(context)
+        accepted = accept_current_module_recheck(
+            {"context": lane, "result": value.get("result")},
+            store=self.store,
+        )
+        review = accepted.review
+        local_review = review.acceptance if review is not None else None
+        preparation = context.local_review_preparation
+        if local_review is None or preparation is None:
+            raise ValueError("Cross local recheck result was not accepted")
+        acceptance = CrossOwnerLocalReviewAcceptance(
+            run_id=preparation.run_id,
+            workflow_id=preparation.workflow_id,
+            owner_module_id=preparation.owner_module_id,
+            review_round=preparation.review_round,
+            owner_input_ref=preparation.owner_input_ref,
+            reviewed_baseline=preparation.reviewed_baseline,
+            cross_responses=preparation.cross_responses,
+            regression_context=cast(
+                ModuleLocalRegressionContext,
+                preparation.regression_context,
+            ),
+            review=local_review,
+        )
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "local_review_accepted",
+                "local_review_acceptance": acceptance,
+                "local_module_context": accepted,
+                "error": accepted.error,
+            },
+        )
+
+    @staticmethod
+    def _require_local_module_context(
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.local_module_context is None:
+            raise ValueError("Cross owner local module lifecycle is not prepared")
+        return context.local_module_context
 
     async def prepare_recheck(
         self,

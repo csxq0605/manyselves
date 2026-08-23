@@ -126,6 +126,12 @@ async def prepare_current_module_preflight_revision(
         workflow_id=prepared.workflow_id,
         subject=prepared.current,
         module_findings=list(prepared.pending) if is_recheck else [],
+        cross_findings=(
+            list(prepared.regression_context.trigger_cross_findings)
+            if isinstance(prepared, ModuleInitialReviewPreparation)
+            and prepared.regression_context is not None
+            else []
+        ),
         validation_ref=prepared.validation_ref,
         validation_target_submodule_ids=set(
             prepared.validation_target_submodule_ids

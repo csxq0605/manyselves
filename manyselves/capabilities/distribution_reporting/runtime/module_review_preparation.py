@@ -205,6 +205,7 @@ def prepare_module_local_regression_review(
     review_round: int,
     regression_context: ModuleLocalRegressionContext,
     user_supplements: list[UserSupplement],
+    previous_preflight_progress: ModuleReviewPreflightProgress | None = None,
 ) -> ModuleInitialReviewPreparation:
     """Prepare the original module Auditor's Cross-triggered local review."""
 
@@ -235,8 +236,18 @@ def prepare_module_local_regression_review(
         f"{review_root}/preflight-subject-r{current.revision}-review-r0.json"
     )
     store.write_json(preflight_ref, preflight.report.model_dump(mode="json"))
-    preflight_progress = ModuleReviewPreflightProgress(current=current)
+    preflight_progress = (
+        ModuleReviewPreflightProgress(current=current)
+        if previous_preflight_progress is None
+        else previous_preflight_progress.model_copy(update={"current": current})
+    )
     if not preflight.report.passed:
+        preflight_progress = advance_module_review_preflight_progress(
+            current=current,
+            report=preflight.report,
+            previous=previous_preflight_progress,
+            validation_ref=preflight_ref,
+        )
         return ModuleInitialReviewPreparation(
             mode="preflight_revision",
             run_id=run_id,
@@ -253,23 +264,8 @@ def prepare_module_local_regression_review(
             subject_ref=subject_ref,
             validation_ref=preflight_ref,
             validation_target_submodule_ids=sorted(preflight.target_submodule_ids),
-            preflight_progress=preflight_progress.model_copy(
-                update={
-                    "attempts": 1,
-                    "failure_signatures": [
-                        tuple(
-                            sorted(
-                                (
-                                    failure.check_id,
-                                    failure.target_path,
-                                    failure.message,
-                                )
-                                for failure in preflight.report.failures
-                            )
-                        )
-                    ],
-                }
-            ),
+            preflight_progress=preflight_progress,
+            regression_context=regression_context,
         )
 
     state: dict[str, Any] = {}
@@ -379,6 +375,7 @@ def prepare_module_local_regression_review(
         validation_ref=preflight_ref,
         validation_target_submodule_ids=[],
         preflight_progress=preflight_progress,
+        regression_context=regression_context,
     )
 
 

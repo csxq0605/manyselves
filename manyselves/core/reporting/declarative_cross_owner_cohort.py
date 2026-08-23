@@ -10,6 +10,9 @@ from typing import Any, cast
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_owner_definitions import (
+    register_cross_owner_pipeline_specializations as _register_cross_owner_pipeline_specializations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     cross_owner as cross_owner_models,
 )
@@ -49,7 +52,6 @@ from manyselves.kernel.definitions import (
     RecoveryPolicyDefinition,
     TaskDefinition,
     WorkflowDefinition,
-    specialize_workflow,
 )
 from manyselves.kernel.executors import ExecutorRegistry
 from manyselves.kernel.ports import (
@@ -572,38 +574,9 @@ class _CrossOwnerReviewerInvoker:
 def register_cross_owner_pipeline_specializations(
     definitions: DefinitionRegistry,
 ) -> dict[str, WorkflowDefinition]:
-    """Register five statically bound owner-pipeline workflow definitions."""
+    """Compatibility entrypoint using the Capability-owned specialization."""
 
-    template = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-cross-owner-pipeline",
-    )
-    if not isinstance(template, WorkflowDefinition):
-        raise TypeError("distribution-cross-owner-pipeline is not a workflow")
-    workflows: dict[str, WorkflowDefinition] = {}
-    for module_id in REPORT_MODULE_IDS:
-        workflow_id = f"distribution-cross-owner-{module_id}-pipeline"
-        registered = definitions.get(DefinitionKind.WORKFLOW, workflow_id)
-        if registered is not None:
-            if not isinstance(registered, WorkflowDefinition):
-                raise TypeError(f"{workflow_id} is not a workflow")
-            workflows[workflow_id] = registered
-            continue
-        workflow = specialize_workflow(
-            template,
-            {
-                "owner_module_id": module_id,
-                "conversation_key": f"cross-owner-{module_id}",
-                "revision_agent_id": f"module-{module_id}-specialist",
-                "revision_task_id": f"cross-owner-module-{module_id}-revision-r1",
-                "revision_conversation_key": f"module-{module_id}",
-                "local_review_conversation_key": f"module-auditor-{module_id}",
-            },
-            workflow_id=workflow_id,
-        )
-        definitions.register(workflow)
-        workflows[workflow_id] = workflow
-    return workflows
+    return _register_cross_owner_pipeline_specializations(definitions)
 
 
 def compile_cross_owner_workflows(

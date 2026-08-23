@@ -50,8 +50,45 @@ _CROSS_TOOL_ATTRIBUTES: tuple[tuple[str, str], ...] = (
         "author_exception_returns_to_author",
     ),
     ("prepare-current-cross-owner-local-review", "prepare_local_review"),
+    (
+        "cross-owner-local-review-preflight-needs-revision",
+        "local_review_preflight_needs_revision",
+    ),
+    (
+        "prepare-current-cross-owner-local-preflight-revision",
+        "prepare_local_preflight_revision",
+    ),
+    (
+        "accept-current-cross-owner-local-preflight-revision",
+        "accept_local_preflight_revision",
+    ),
     ("cross-owner-local-review-requires-agent", "local_review_requires_agent"),
     ("accept-current-cross-owner-local-review", "accept_local_review"),
+    ("cross-owner-local-review-needs-revision", "local_review_needs_revision"),
+    (
+        "prepare-current-cross-owner-local-module-revision",
+        "prepare_local_module_revision",
+    ),
+    (
+        "cross-owner-local-revision-requires-agent",
+        "local_revision_requires_agent",
+    ),
+    (
+        "accept-current-cross-owner-local-module-revision",
+        "accept_local_module_revision",
+    ),
+    (
+        "prepare-current-cross-owner-local-module-recheck",
+        "prepare_local_module_recheck",
+    ),
+    (
+        "cross-owner-local-recheck-requires-agent",
+        "local_recheck_requires_agent",
+    ),
+    (
+        "accept-current-cross-owner-local-module-recheck",
+        "accept_local_module_recheck",
+    ),
     ("prepare-current-cross-owner-recheck", "prepare_recheck"),
     ("cross-owner-recheck-requires-agent", "recheck_requires_agent"),
     ("accept-current-cross-owner-recheck", "accept_recheck"),

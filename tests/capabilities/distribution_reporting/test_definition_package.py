@@ -230,8 +230,9 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "distribution-chief-chapter-4-lane",
         "distribution-chief-chapter-cohort",
         "distribution-chief-chapter-lane",
-        "distribution-cross-owner-cohort",
-        "distribution-cross-owner-pipeline",
+            "distribution-cross-owner-cohort",
+            "distribution-cross-owner-local-module-review-lane",
+            "distribution-cross-owner-pipeline",
         "distribution-final-chapter-1-lane",
         "distribution-final-chapter-3-lane",
         "distribution-final-chapter-4-lane",
@@ -1172,13 +1173,11 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "cross-module-reviewer",
             f"module-{module_id}-specialist",
             "main-agent",
-            "evidence-auditor",
         ]
         assert pipeline_plan.task_ids == [
             "cross-owner-runtime-initial-review",
             f"cross-owner-module-{module_id}-revision-r1",
             "cross-owner-runtime-main-exception",
-            "cross-owner-runtime-local-review",
             "cross-owner-runtime-recheck",
         ]
         assert pipeline_plan.tool_ids == [
@@ -1196,8 +1195,6 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "apply-current-cross-owner-main-exception-user-input",
             "cross-owner-author-exception-returns-to-author",
             "prepare-current-cross-owner-local-review",
-            "cross-owner-local-review-requires-agent",
-            "accept-current-cross-owner-local-review",
             "prepare-current-cross-owner-recheck",
             "cross-owner-recheck-requires-agent",
             "accept-current-cross-owner-recheck",
@@ -1206,6 +1203,19 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "cross-owner-round-needs-revision",
             "complete-current-cross-owner-pipeline",
             "complete-current-cross-owner-without-findings",
+        ]
+        local_workflow_id = (
+            f"distribution-cross-owner-local-{module_id}-module-review-lane"
+        )
+        local_plan = pipeline_plan.subworkflow_plans[local_workflow_id]
+        assert local_plan.agent_ids == [
+            f"module-{module_id}-specialist",
+            "evidence-auditor",
+        ]
+        assert local_plan.task_ids == [
+            f"cross-owner-module-{module_id}-revision-r1",
+            "cross-owner-runtime-local-review",
+            "cross-owner-runtime-local-recheck",
         ]
         conversation = next(
             action
@@ -1537,12 +1547,17 @@ def test_cross_owner_21_pipeline_declares_original_auditor_local_regression() ->
 
     action_ids = [action.id for action in plan.actions]
     assert "prepare-current-cross-owner-local-review" in action_ids
-    assert "accept-current-cross-owner-local-review" in action_ids
     assert "continue-current-cross-owner-pipeline" not in action_ids
+
+    local_plan = plan.subworkflow_plans[
+        "distribution-cross-owner-local-2.1-module-review-lane"
+    ]
+    local_action_ids = [action.id for action in local_plan.actions]
+    assert "accept-current-cross-owner-local-review" in local_action_ids
 
     local_review_agents = [
         action
-        for action in plan.actions
+        for action in local_plan.actions
         if action.kind == "invoke_agent"
         and action.agent == "evidence-auditor"
         and action.task == "cross-owner-runtime-local-review"
@@ -1550,7 +1565,7 @@ def test_cross_owner_21_pipeline_declares_original_auditor_local_regression() ->
     assert len(local_review_agents) == 1
     local_review_conversation = next(
         action
-        for action in plan.actions
+        for action in local_plan.actions
         if action.kind == "create_conversation" and action.agent == "evidence-auditor"
     )
     assert local_review_conversation.conversation_key == "module-auditor-2.1"
@@ -1591,10 +1606,17 @@ def test_cross_owner_21_pipeline_declares_original_reviewer_recheck() -> None:
     )
     assert recheck_conversation.conversation_key == "cross-owner-2.1"
     assert recheck_agents[0].conversation_variable == (recheck_conversation.output_variable)
-    local_review_route = next(
-        action for action in plan.actions if action.id == "choose-cross-owner-local-review-source"
+    local_subworkflow_index = next(
+        index
+        for index, action in enumerate(plan.actions)
+        if action.id == "execute-current-cross-owner-local-module-review"
     )
-    assert local_review_route.otherwise == "prepare-current-cross-owner-recheck"
+    assert plan.actions[local_subworkflow_index].workflow == (
+        "distribution-cross-owner-local-2.1-module-review-lane"
+    )
+    assert plan.actions[local_subworkflow_index + 1].id == (
+        "prepare-current-cross-owner-recheck"
+    )
 
 
 def test_cross_owner_21_pipeline_declares_repeated_recheck_round_route() -> None:

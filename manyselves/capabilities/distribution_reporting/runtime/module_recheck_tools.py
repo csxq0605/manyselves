@@ -70,10 +70,6 @@ def _pending(context: DeclarativeModuleRuntimeLaneContext) -> list[ModuleReviewF
     return []
 
 
-def _progress_ref(run_id: str, module_id: str) -> str:
-    return f"Work/runs/{run_id}/reviews/module/initial/{module_id}/progress.json"
-
-
 def _load_progress(store: ReportingStore, progress_ref: str) -> ModuleReviewProgress:
     path = store.workspace / progress_ref
     if not path.is_file():
@@ -93,8 +89,11 @@ def prepare_current_module_recheck(
     pending = _pending(context)
     if current is None or not pending:
         return context
+    if context.review is None:
+        raise ValueError("module recheck requires the existing module review identity")
+    initial_prepared = context.review.prepared
     run_id = str(context.reporting_state["run_id"])
-    progress_ref = _progress_ref(run_id, context.module_id)
+    progress_ref = initial_prepared.progress_ref
     progress = _load_progress(store, progress_ref)
     if progress.run_id != run_id or progress.module_id != context.module_id:
         raise ValueError("module recheck progress identity changed")
@@ -102,7 +101,9 @@ def prepare_current_module_recheck(
         return context
     baseline_ref = progress.last_reviewed_subject_ref
     if baseline_ref is None:
-        baseline_ref = f"Work/runs/{run_id}/modules/{context.module_id}-r0.json"
+        baseline_ref = initial_prepared.subject_ref
+    if baseline_ref is None:
+        raise ValueError("module recheck baseline identity is missing")
     baseline_path = store.workspace / baseline_ref
     if not baseline_path.is_file():
         raise ValueError(f"module recheck baseline is missing: {baseline_ref}")
@@ -112,7 +113,8 @@ def prepare_current_module_recheck(
         if progress.next_action == "review" and progress.phase == "recheck"
         else progress.review_round + 1
     )
-    review_root = f"Work/runs/{run_id}/reviews/module/initial/{context.module_id}"
+    review_root = initial_prepared.review_root
+    lifecycle_id = initial_prepared.lifecycle_id
     subject_ref = f"Work/runs/{run_id}/modules/{context.module_id}-r{current.revision}.json"
     if not (store.workspace / subject_ref).is_file():
         store.write_json(subject_ref, current.model_dump(mode="json"))
@@ -164,7 +166,7 @@ def prepare_current_module_recheck(
             mode="preflight_revision",
             run_id=run_id,
             module_id=context.module_id,
-            lifecycle_id="initial",
+            lifecycle_id=lifecycle_id,
             workflow_id=context.workflow_id,
             reviewer_session_key=reviewer_session_key,
             review_root=review_root,
@@ -203,7 +205,7 @@ def prepare_current_module_recheck(
         phase="recheck",
         run_id=run_id,
         module_id=context.module_id,
-        lifecycle_id="initial",
+        lifecycle_id=lifecycle_id,
         review_round=review_round,
         subject_ref=subject_ref,
         subject_revision=current.revision,
@@ -226,7 +228,9 @@ def prepare_current_module_recheck(
     store.write_json(input_ref, review_input.model_dump(mode="json"))
     reviewer_session_key = progress.reviewer_session_key or f"module-auditor-{context.module_id}"
     envelope = TaskEnvelope(
-        task_id=f"module-{context.module_id}-initial-review-r{review_round}",
+        task_id=(
+            f"module-{context.module_id}-{lifecycle_id}-review-r{review_round}"
+        ),
         run_id=run_id,
         agent_id="evidence-auditor",
         objective=f"只对模块 {context.module_id} 的 required_findings 返回逐项 verdict，并检查修改回归。",
@@ -254,7 +258,7 @@ def prepare_current_module_recheck(
         mode="invoke_agent",
         run_id=run_id,
         module_id=context.module_id,
-        lifecycle_id="initial",
+        lifecycle_id=lifecycle_id,
         workflow_id=context.workflow_id,
         reviewer_session_key=reviewer_session_key,
         review_root=review_root,
@@ -311,11 +315,12 @@ def _validate_new_findings(
     findings: list[ModuleReviewFinding],
     *,
     module_id: str,
+    lifecycle_id: str,
     review_round: int,
     scope: set[str],
     existing_ids: set[str],
 ) -> None:
-    prefix = f"M-{module_id}-initial-r{review_round}-"
+    prefix = f"M-{module_id}-{lifecycle_id}-r{review_round}-"
     ids = [finding.id for finding in findings]
     if len(ids) != len(set(ids)):
         raise ValueError("new module review findings contain duplicate ids")
@@ -414,6 +419,7 @@ def accept_current_module_recheck(
     _validate_new_findings(
         submission.new_findings,
         module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
         review_round=preparation.review_round,
         scope=set(preparation.scope),
         existing_ids={*required_ids, *preparation.resolved_ids},

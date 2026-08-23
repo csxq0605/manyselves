@@ -11,6 +11,7 @@ from .agentic import (
     CrossOwnerVerdictSubmission,
     WorkflowDecisionSubmission,
 )
+from .module_lane import DeclarativeModuleRuntimeLaneContext
 from .review import (
     CrossOwnerInitialReviewAcceptance,
     CrossOwnerInitialReviewPreparation,
@@ -93,6 +94,7 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     revision_acceptance: CrossOwnerRevisionAcceptance | None = None
     local_review_preparation: CrossOwnerLocalReviewPreparation | None = None
     local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None
+    local_module_context: DeclarativeModuleRuntimeLaneContext | None = None
     recheck_preparation: CrossOwnerRecheckPreparation | None = None
     recheck_acceptance: CrossOwnerRecheckAcceptance | None = None
     main_preparation: MainExceptionDecisionPreparation | None = None

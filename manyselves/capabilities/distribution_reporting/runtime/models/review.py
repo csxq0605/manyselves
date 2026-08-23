@@ -88,6 +88,7 @@ class ModuleInitialReviewPreparation(StrictModel):
     validation_ref: str | None = None
     validation_target_submodule_ids: list[str] = Field(default_factory=list)
     preflight_progress: ModuleReviewPreflightProgress | None = None
+    regression_context: ModuleLocalRegressionContext | None = None
 
 
 class ModuleInitialReviewAcceptance(StrictModel):
@@ -348,7 +349,7 @@ class MainExceptionDecisionAcceptance(StrictModel):
 class CrossOwnerLocalReviewPreparation(StrictModel):
     """Typed boundary before the original module Auditor local regression."""
 
-    mode: Literal["invoke_agent", "continue_existing"]
+    mode: Literal["invoke_agent", "continue_existing", "preflight_revision"]
     run_id: str
     workflow_id: str
     owner_module_id: str
@@ -372,7 +373,7 @@ class CrossOwnerLocalReviewAcceptance(StrictModel):
     reviewed_baseline: ModuleSubmission
     cross_responses: list[RevisionResponse]
     regression_context: ModuleLocalRegressionContext
-    review: ModuleInitialReviewAcceptance
+    review: ModuleInitialReviewAcceptance | ModuleRecheckAcceptance
 
 
 class CrossOwnerRecheckPreparation(StrictModel):

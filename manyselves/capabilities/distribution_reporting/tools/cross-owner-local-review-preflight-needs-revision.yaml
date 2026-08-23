@@ -1,0 +1,10 @@
+id: cross-owner-local-review-preflight-needs-revision
+version: 1.0.0
+description: Route a failed Cross local module preflight to its original Author
+implementation: capability:distribution-reporting:cross-owner-local-review-preflight-needs-revision
+input_contract: declarative_cross_owner_runtime_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,20 @@
+id: cross-owner-runtime-local-recheck
+version: 1.0.0
+description: Recheck accepted local module findings through the original Auditor
+agent: evidence-auditor
+objective: Return verdicts for the exact Cross-triggered local module findings.
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_module_recheck_agent_result
+tools:
+- search_project_evidence
+- open_project_source
+- open_reference
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- query_peer
+- reply_peer
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery
