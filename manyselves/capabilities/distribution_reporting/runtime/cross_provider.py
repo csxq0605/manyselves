@@ -27,9 +27,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerRuntimeContext,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.review import (
-    CrossOwnerInitialReviewPreparation,
-)
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     ModuleProviderDependencies,
     build_module_provider_tools,
@@ -79,7 +76,8 @@ class CrossProviderRuntime:
             ArtifactGrant("root", "root", "workflow", "root"),
         )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
-            "cross-module-reviewer": self
+            "cross-module-reviewer": self,
+            "main-agent": self,
         }
 
     async def close(self) -> None:
@@ -135,7 +133,10 @@ class CrossProviderRuntime:
             if isinstance(value, DeclarativeCrossOwnerRuntimeContext)
             else DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         )
-        preparation = cast(CrossOwnerInitialReviewPreparation, context.preparation)
+        preparation = CrossOwnerAgentInvoker.preparation_for_output(
+            context,
+            task.output_contract,
+        )
         envelope = cast(TaskEnvelope, preparation.envelope)
 
         session_id = conversation.external_session_id or (
@@ -177,6 +178,9 @@ class CrossProviderRuntime:
             loop_kwargs=loop_kwargs,
             persist_handoff_summary=False,
         )
+        existing = self.execution.session(self.workflow_id, conversation.key.value)
+        if existing is not None:
+            session_factory.reconfigure(existing.loop)
         return CrossOwnerAgentInvoker(
             self.workspace,
             execution=self.execution,

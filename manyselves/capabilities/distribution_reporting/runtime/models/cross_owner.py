@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .agentic import (
     CrossOwnerFindingSubmission,
@@ -97,6 +97,7 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     recheck_acceptance: CrossOwnerRecheckAcceptance | None = None
     main_preparation: MainExceptionDecisionPreparation | None = None
     main_acceptance: MainExceptionDecisionAcceptance | None = None
+    review_exception_refs: list[str] = Field(default_factory=list)
     round_progress: CrossOwnerRoundProgress | None = None
     error: str | None = None
 

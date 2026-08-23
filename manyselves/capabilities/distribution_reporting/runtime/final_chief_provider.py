@@ -178,6 +178,9 @@ class FinalChiefProviderRuntime:
             loop_kwargs=loop_kwargs,
             persist_handoff_summary=False,
         )
+        existing = self.execution.session(self.workflow_id, conversation.key.value)
+        if existing is not None:
+            session_factory.reconfigure(existing.loop)
         return FinalChiefAgentBridge(
             self.workspace,
             execution=self.execution,

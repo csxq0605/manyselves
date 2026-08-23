@@ -27,24 +27,45 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_completion import (
+    build_cross_owner_lane_completion,
+    promote_cross_owner_pipeline_completion,
+)
 from manyselves.capabilities.distribution_reporting.runtime.cross_local_regression import (
     build_cross_owner_local_regression_context,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_recheck import (
+    accept_cross_owner_recheck,
+    prepare_cross_owner_recheck,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_round import (
+    advance_cross_owner_round,
+)
+from manyselves.capabilities.distribution_reporting.runtime.main_exception import (
+    accept_main_exception_decision,
+    prepare_main_exception_decision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     CrossDecisionPack,
     CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
     CrossReviewCoverageEntry,
     CrossReviewFindingSubmission,
+    CrossReviewVerdictSubmission,
     CrossSynthesisInput,
     ModuleReviewFindingSubmission,
     ModuleSubmission,
     TaskEnvelope,
+    WorkflowDecisionSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
+    DeclarativeCrossOwnerRecheckAgentResult,
     DeclarativeCrossOwnerRuntimeContext,
+    DeclarativeMainExceptionAgentResult,
+    DeclarativeMainExceptionUserInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     CrossOwnerInput,
@@ -67,8 +88,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     CrossOwnerLocalReviewPreparation,
     CrossOwnerRevisionAcceptance,
     CrossOwnerRevisionPreparation,
+    MainExceptionDecisionPreparation,
     ModuleLocalRegressionContext,
     ModuleRevisionPreparation,
+    _CrossOwnerPipelineResult,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     accept_module_initial_review,
@@ -328,12 +351,12 @@ class CrossOwnerAgentInvoker:
         task_id: str,
     ) -> AgentInvocationOutcome:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
-        preparation = context.preparation
+        preparation = self.preparation_for_output(context, task.output_contract)
         if preparation is None or preparation.envelope is None:
             return AgentInvocationOutcome(
                 status="failed",
                 session_id=conversation.external_session_id,
-                error="Cross owner initial preparation has no TaskEnvelope",
+                error=f"Cross owner {task.output_contract} preparation has no TaskEnvelope",
             )
         workflow_id = preparation.workflow_id or self.workflow_id
         run_id = preparation.run_id
@@ -398,17 +421,32 @@ class CrossOwnerAgentInvoker:
         )
 
     @staticmethod
+    def preparation_for_output(
+        context: DeclarativeCrossOwnerRuntimeContext,
+        output_contract: str,
+    ) -> Any:
+        if output_contract == "declarative_cross_owner_recheck_agent_result":
+            return context.recheck_preparation
+        if output_contract == "declarative_main_exception_agent_result":
+            return context.main_preparation
+        return context.preparation
+
     def _prompt(
+        self,
         agent: AgentDefinition,
         task: TaskDefinition,
-        preparation: CrossOwnerInitialReviewPreparation,
+        preparation: Any,
     ) -> str:
         envelope = preparation.envelope
+        input_path = self.workspace / (
+            envelope.input_contract_ref or envelope.input_refs[0]
+        )
+        payload = json.loads(input_path.read_text(encoding="utf-8"))
         sections = [
             agent.instructions,
             f"Task: {task.objective}",
             json.dumps(
-                preparation.owner_input.model_dump(mode="json"),
+                payload,
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -420,12 +458,18 @@ class CrossOwnerAgentInvoker:
         return "\n\n".join(sections)
 
     def _decode_result(self, result_ref: str, *, output_contract: str) -> dict[str, Any]:
-        if output_contract == "declarative_cross_owner_recheck_agent_result":
-            raise ValueError(
-                "Cross owner recheck bridge is not part of the initial composition slice"
-            )
         loaded = load_agent_result_payload(self.workspace, result_ref)
         payload = loaded.payload
+        if output_contract == "declarative_cross_owner_recheck_agent_result":
+            return DeclarativeCrossOwnerRecheckAgentResult(
+                status="completed",
+                submission=CrossOwnerVerdictSubmission.model_validate(payload),
+            ).model_dump(mode="json")
+        if output_contract == "declarative_main_exception_agent_result":
+            return DeclarativeMainExceptionAgentResult(
+                status="completed",
+                submission=WorkflowDecisionSubmission.model_validate(payload),
+            ).model_dump(mode="json")
         submission = CrossOwnerFindingSubmission.model_validate(payload)
         return DeclarativeCrossOwnerInitialAgentResult(
             status="completed",
@@ -451,13 +495,15 @@ class CrossOwnerRuntime:
         self.agent_execution = agent_execution
         self.agent_session_factory = agent_session_factory
         if agent_execution is not None and callable(agent_session_factory):
+            invoker = CrossOwnerAgentInvoker(
+                self.workspace,
+                execution=agent_execution,
+                session_factory=agent_session_factory,
+                workflow_id=workflow_id,
+            )
             self.agent_invokers: Mapping[str, Any] = {
-                "cross-module-reviewer": CrossOwnerAgentInvoker(
-                    self.workspace,
-                    execution=agent_execution,
-                    session_factory=agent_session_factory,
-                    workflow_id=workflow_id,
-                )
+                "cross-module-reviewer": invoker,
+                "main-agent": invoker,
             }
         else:
             self.agent_invokers = {}
@@ -822,6 +868,227 @@ class CrossOwnerRuntime:
             }
         )
 
+    def prepare_author_exception(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare Main only for explicit Author dispute/input responses."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        revision = context.revision_acceptance
+        if context.status == "failed" or revision is None:
+            return context
+        exceptional = [
+            response
+            for response in revision.revised.revision_responses
+            if response.action in {"disputed", "needs_input"}
+        ]
+        if not exceptional:
+            return context.model_copy(
+                update={
+                    "status": "author_exception_not_required",
+                    "main_preparation": None,
+                    "main_acceptance": None,
+                }
+            )
+        preparation = prepare_main_exception_decision(
+            store=self.store,
+            run_id=revision.run_id,
+            workflow_id=revision.workflow_id,
+            scope="cross",
+            subject_refs=[revision.candidate_ref],
+            finding_refs=revision.finding_refs,
+            verdicts=[],
+            responses=exceptional,
+            trigger="author_response",
+        )
+        if preparation.mode == "continue_existing":
+            return self._accept_prepared_main_exception(
+                context,
+                preparation=preparation,
+                result=None,
+                resumed=True,
+            )
+        return context.model_copy(
+            update={
+                "status": "author_exception_ready",
+                "main_preparation": preparation,
+                "main_acceptance": None,
+            }
+        )
+
+    def prepare_reviewer_exception(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare Main only for explicit Cross reviewer escalations."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        recheck = context.recheck_acceptance
+        if context.status == "failed" or recheck is None:
+            return context
+        escalated = [
+            verdict for verdict in recheck.result.verdicts if verdict.verdict == "escalate"
+        ]
+        if not escalated:
+            return context.model_copy(
+                update={
+                    "status": "reviewer_exception_not_required",
+                    "main_preparation": None,
+                    "main_acceptance": None,
+                }
+            )
+        subject = recheck.lane.completion.subject
+        subject_ref = subject.ref if hasattr(subject, "ref") else str(subject)
+        preparation = prepare_main_exception_decision(
+            store=self.store,
+            run_id=recheck.run_id,
+            workflow_id=recheck.workflow_id,
+            scope="cross",
+            subject_refs=[subject_ref],
+            finding_refs=(
+                list(context.round_progress.finding_refs)
+                if context.round_progress is not None
+                else [recheck.initial_result_ref]
+            ),
+            verdicts=escalated,
+            responses=recheck.lane.responses,
+            trigger="reviewer_escalation",
+        )
+        if preparation.mode == "continue_existing":
+            return self._accept_prepared_main_exception(
+                context,
+                preparation=preparation,
+                result=None,
+                resumed=True,
+            )
+        return context.model_copy(
+            update={
+                "status": "reviewer_exception_ready",
+                "main_preparation": preparation,
+                "main_acceptance": None,
+            }
+        )
+
+    @staticmethod
+    def main_exception_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return context.status in {"author_exception_ready", "reviewer_exception_ready"}
+
+    def accept_main_exception(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept a typed Main result while retaining the decision artifact ref."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Main exception acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.main_preparation
+        if preparation is None:
+            raise ValueError("Main exception acceptance has no preparation")
+        raw_result = value.get("result")
+        if isinstance(raw_result, DeclarativeMainExceptionAgentResult) or (
+            isinstance(raw_result, Mapping) and "status" in raw_result
+        ):
+            result = _model(raw_result, DeclarativeMainExceptionAgentResult)
+            if result.status != "completed" or result.submission is None:
+                return context.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": result.error or "Main exception Agent failed",
+                    }
+                )
+            submission = result.submission
+        else:
+            submission = _model(raw_result, WorkflowDecisionSubmission)
+        return self._accept_prepared_main_exception(
+            context,
+            preparation=preparation,
+            result=submission,
+            resumed=False,
+        )
+
+    def _accept_prepared_main_exception(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+        *,
+        preparation: MainExceptionDecisionPreparation,
+        result: WorkflowDecisionSubmission | None,
+        resumed: bool,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        decision_state: dict[str, Any] = {
+            "review_exception_refs": list(context.review_exception_refs)
+        }
+        acceptance = accept_main_exception_decision(
+            store=self.store,
+            preparation=preparation,
+            result=result,
+            state=decision_state,
+            raise_for_terminal_decisions=False,
+        )
+        if acceptance.result.decision == "stop_incomplete":
+            return context.model_copy(
+                update={
+                    "status": "failed",
+                    "main_preparation": preparation,
+                    "main_acceptance": acceptance,
+                    "review_exception_refs": decision_state["review_exception_refs"],
+                    "error": acceptance.result.rationale,
+                }
+            )
+        prefix = "author" if preparation.trigger == "author_response" else "reviewer"
+        return context.model_copy(
+            update={
+                "status": f"{prefix}_exception_{'resumed' if resumed else 'accepted'}",
+                "main_preparation": preparation,
+                "main_acceptance": acceptance,
+                "review_exception_refs": decision_state["review_exception_refs"],
+                "error": None,
+            }
+        )
+
+    @staticmethod
+    def main_exception_requests_user(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.status != "failed"
+            and context.main_acceptance is not None
+            and context.main_acceptance.result.decision == "request_user"
+        )
+
+    def apply_main_exception_user_input(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Apply one generic Interaction response to the prepared exception."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Main exception user input requires context and input")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.main_preparation
+        if preparation is None:
+            raise ValueError("Main exception user input has no preparation")
+        supplied = _model(value.get("input"), DeclarativeMainExceptionUserInput)
+        return self._accept_prepared_main_exception(
+            context,
+            preparation=preparation,
+            result=WorkflowDecisionSubmission(
+                decision=supplied.decision,
+                rationale=supplied.rationale,
+                finding_ids=list(preparation.exception_ids),
+            ),
+            resumed=False,
+        )
+
+    @staticmethod
+    def author_exception_returns_to_author(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.status != "failed"
+            and context.revision_acceptance is not None
+            and context.main_acceptance is not None
+            and context.main_acceptance.trigger == "author_response"
+            and context.main_acceptance.result.decision == "return_to_author"
+        )
+
     async def prepare_local_review(
         self,
         value: Any,
@@ -935,6 +1202,258 @@ class CrossOwnerRuntime:
             }
         )
 
+    async def prepare_recheck(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare or recover the original Cross owner reviewer recheck."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        initial = context.acceptance
+        initial_preparation = context.preparation
+        revision = context.revision_acceptance
+        local = context.local_review_acceptance
+        if (
+            initial is None
+            or initial_preparation is None
+            or revision is None
+            or local is None
+        ):
+            raise ValueError("Cross owner recheck requires accepted revision and local review")
+        if local.review.next_action != "completed" or local.review.completion_ref is None:
+            raise ValueError("Cross owner local review still requires its module revision loop")
+
+        required_findings = (
+            list(context.round_progress.pending)
+            if context.round_progress is not None
+            else list(revision.findings)
+        )
+        lane = build_cross_owner_lane_completion(
+            workspace=self.workspace,
+            store=self.store,
+            run_id=revision.run_id,
+            review_round=revision.review_round,
+            owner_module_id=revision.owner_module_id,
+            owner_input_ref=revision.owner_input_ref,
+            revised=local.review.current,
+            cross_responses=local.cross_responses,
+            local_review_completion_ref=local.review.completion_ref,
+            findings=required_findings,
+        )
+        subject_ref = lane.completion.subject
+        owner_subject_ref = (
+            subject_ref.ref if hasattr(subject_ref, "ref") else str(subject_ref)
+        )
+        frozen_input = initial_preparation.owner_input.model_copy(
+            deep=True,
+            update={
+                "phase": "recheck",
+                "review_round": revision.review_round,
+                "owner_subject_ref": owner_subject_ref,
+                "owner_subject_revision": lane.module.revision,
+                "owner_subject": module_content_view(lane.module),
+                "owner_scope_submodule_ids": list(lane.module.submodule_narratives),
+                "required_findings": required_findings,
+                "revision_responses": list(lane.responses),
+                "prior_synthesis_inputs": list(initial.result.synthesis_inputs),
+                "local_regression_review_ref": lane.local_review_ref,
+            },
+        )
+        owner_input_ref = (
+            f"Work/runs/{revision.run_id}/reviews/"
+            f"cross-owner-input-r{revision.review_round}-{revision.owner_module_id}.json"
+        )
+        self.store.write_json(owner_input_ref, frozen_input.model_dump(mode="json"))
+
+        def read_result(ref: str) -> CrossOwnerVerdictSubmission | None:
+            path = self.workspace / ref
+            return (
+                CrossOwnerVerdictSubmission.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                if path.is_file()
+                else None
+            )
+
+        preparation = prepare_cross_owner_recheck(
+            workflow_id=revision.workflow_id,
+            initial=initial,
+            lane=lane,
+            frozen_owner_input=frozen_input,
+            owner_input_ref=owner_input_ref,
+            review_round=revision.review_round,
+            required_findings=required_findings,
+            read_result=read_result,
+        )
+        if preparation.mode == "continue_existing":
+            acceptance = accept_cross_owner_recheck(
+                preparation=preparation,
+                result=None,
+            )
+            return context.model_copy(
+                update={
+                    "status": "recheck_resumed",
+                    "recheck_preparation": preparation,
+                    "recheck_acceptance": acceptance,
+                    "error": None,
+                }
+            )
+        return context.model_copy(
+            update={
+                "status": "recheck_ready",
+                "recheck_preparation": preparation,
+                "recheck_acceptance": None,
+                "error": None,
+            }
+        )
+
+    @staticmethod
+    def recheck_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return bool(
+            context.status == "recheck_ready"
+            and context.recheck_preparation is not None
+            and context.recheck_preparation.mode == "invoke_agent"
+        )
+
+    def accept_recheck(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept a fresh typed verdict or its same-run persisted result."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross owner recheck acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.recheck_preparation
+        if preparation is None:
+            raise ValueError("Cross owner recheck acceptance has no preparation")
+        if preparation.mode == "continue_existing":
+            acceptance = accept_cross_owner_recheck(
+                preparation=preparation,
+                result=None,
+            )
+        else:
+            result = _model(
+                value.get("result"),
+                DeclarativeCrossOwnerRecheckAgentResult,
+            )
+            if result.status != "completed" or result.submission is None:
+                return context.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": result.error or "Cross owner recheck Agent failed",
+                    }
+                )
+
+            def write_result(ref: str, submission: CrossOwnerVerdictSubmission) -> str:
+                self.store.write_json(ref, submission.model_dump(mode="json"))
+                return ref
+
+            acceptance = accept_cross_owner_recheck(
+                preparation=preparation,
+                result=result.submission,
+                write_immutable=write_result,
+            )
+        return context.model_copy(
+            update={
+                "status": "recheck_accepted",
+                "recheck_acceptance": acceptance,
+                "error": None,
+            }
+        )
+
+    async def advance_round(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Advance the typed pending/resolved owner state after one recheck."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        initial = context.acceptance
+        acceptance = context.recheck_acceptance
+        if context.status == "failed" or initial is None or acceptance is None:
+            return context
+
+        def write_result(ref: str, submission: Any) -> str:
+            self.store.write_json(
+                ref,
+                submission.model_dump(mode="json")
+                if hasattr(submission, "model_dump")
+                else submission,
+            )
+            return ref
+
+        progress = await advance_cross_owner_round(
+            workflow_id=initial.workflow_id,
+            initial_input_ref=initial.owner_input_ref,
+            initial_result_ref=initial.result_ref,
+            initial_result=initial.result,
+            acceptance=acceptance,
+            previous=context.round_progress,
+            main_decision=(
+                context.main_acceptance
+                if context.main_acceptance is not None
+                and context.main_acceptance.trigger == "reviewer_escalation"
+                else None
+            ),
+            write_immutable=write_result,
+        )
+        return context.model_copy(
+            update={
+                "status": (
+                    "round_revision_pending"
+                    if progress.next_action == "revise"
+                    else "round_completed"
+                ),
+                "round_progress": progress,
+                "error": None,
+            }
+        )
+
+    @staticmethod
+    def round_needs_revision(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        return context.status == "round_revision_pending"
+
+    async def complete_owner_round(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerPipelineOutcome:
+        """Promote one fully resolved owner round into its typed pipeline output."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        progress = context.round_progress
+        if context.status != "round_completed" or progress is None:
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="failed",
+                error=context.error or "Cross owner round is not complete",
+            )
+        lane = promote_cross_owner_pipeline_completion(
+            workspace=self.workspace,
+            store=self.store,
+            lane=progress.lane,
+            initial_result_ref=progress.initial_result_ref,
+            verdict_ref=progress.verdict_ref,
+        )
+        pipeline = _CrossOwnerPipelineResult(
+            owner_module_id=progress.owner_module_id,
+            initial_input_ref=progress.initial_input_ref,
+            initial_result_ref=progress.initial_result_ref,
+            initial_result=progress.initial_result,
+            lane=lane,
+            verdict_ref=progress.verdict_ref,
+            verdict=progress.verdict,
+            finding_refs=progress.finding_refs,
+            verdict_refs=progress.verdict_refs,
+            findings=progress.findings,
+            verdicts=progress.verdicts,
+        ).model_dump(mode="json")
+        pipeline["review_exception_refs"] = list(context.review_exception_refs)
+        return DeclarativeCrossOwnerPipelineOutcome(
+            owner_module_id=context.owner_module_id,
+            status="completed",
+            pipeline=pipeline,
+        )
+
     def complete_owner_without_findings(
         self,
         value: Any,
@@ -998,6 +1517,11 @@ class CrossOwnerRuntime:
         if set(parsed) != set(REPORT_MODULE_IDS):
             raise ValueError("Cross owner reduction requires exactly five owner outcomes")
         pipelines: dict[str, dict[str, Any]] = {}
+        finding_ids: list[str] = []
+        findings_by_owner: dict[str, list[Any]] = {}
+        synthesis_by_id: dict[str, CrossSynthesisInput] = {}
+        verdicts = []
+        subject_refs: dict[str, str] = {}
         for owner_module_id, outcome in parsed.items():
             if outcome.status != "completed" or not outcome.pipeline:
                 raise ValueError(
@@ -1007,15 +1531,50 @@ class CrossOwnerRuntime:
             if result.owner_module_id != owner_module_id:
                 raise ValueError("Cross owner outcome owner/result mismatch")
             if result.findings:
-                raise ValueError(
-                    "Cross owner reduction requires revision/recheck for findings before closure"
+                completed = _model(outcome.pipeline, _CrossOwnerPipelineResult)
+                state.setdefault("module_submissions", {})[owner_module_id] = (
+                    completed.lane.module
                 )
+                state.setdefault("specialist_submissions", {})[owner_module_id] = (
+                    completed.lane.module
+                )
+                state.setdefault("module_review_completion_refs", {})[owner_module_id] = (
+                    completed.lane.local_review_ref
+                )
+                subject = completed.lane.completion.subject
+                subject_refs[owner_module_id] = (
+                    subject.ref
+                    if hasattr(subject, "ref")
+                    else f"Work/runs/{state['run_id']}/modules/"
+                    f"{owner_module_id}-r{completed.lane.module.revision}.json"
+                )
+                if hasattr(subject, "model_dump"):
+                    state.setdefault("module_artifact_refs", {})[owner_module_id] = (
+                        subject.model_dump(mode="json")
+                    )
+                verdicts.extend(completed.verdicts)
+                finding_ids.extend(finding.id for finding in completed.findings)
+                findings_by_owner[owner_module_id] = list(completed.findings)
+            else:
+                metadata = _metadata_map(state)
+                subject_refs[owner_module_id] = _metadata_entry(
+                    metadata,
+                    owner_module_id,
+                )[0]
+                finding_ids.extend(finding.id for finding in result.findings)
+                findings_by_owner[owner_module_id] = list(result.findings)
+            for item in result.synthesis_inputs:
+                existing = synthesis_by_id.get(item.id)
+                if existing is not None and existing != item:
+                    raise ValueError(
+                        "Cross owner synthesis reused an id with different content"
+                    )
+                synthesis_by_id[item.id] = item
             pipelines[owner_module_id] = outcome.pipeline
 
-        metadata = _metadata_map(state)
-        subject_refs = {
-            owner: _metadata_entry(metadata, owner)[0] for owner in REPORT_MODULE_IDS
-        }
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("Cross owner findings reused an id")
+
         run_id = str(state["run_id"])
         cross_findings = CrossReviewFindingSubmission(
             coverage=[
@@ -1025,25 +1584,40 @@ class CrossOwnerRuntime:
                 )
                 for owner in REPORT_MODULE_IDS
             ],
-            findings=[],
-            synthesis_inputs=[
-                CrossSynthesisInput.model_validate(item)
-                for pipeline in pipelines.values()
-                for item in pipeline.get("synthesis_inputs", [])
+            findings=[
+                finding
+                for owner in REPORT_MODULE_IDS
+                for finding in findings_by_owner[owner]
             ],
+            synthesis_inputs=list(synthesis_by_id.values()),
         )
         finding_ref = f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
         self.store.write_json(finding_ref, cross_findings.model_dump(mode="json"))
+        cross_verdicts = CrossReviewVerdictSubmission(
+            coverage=[
+                CrossReviewCoverageEntry(
+                    module_id=owner,
+                    checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                )
+                for owner in REPORT_MODULE_IDS
+            ],
+            verdicts=verdicts,
+            new_findings=[],
+            synthesis_inputs=list(synthesis_by_id.values()),
+        )
+        verdict_ref = f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json"
+        self.store.write_json(verdict_ref, cross_verdicts.model_dump(mode="json"))
         completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
         completion = ReviewCompletionRecord(
+            review_protocol_version=2,
             lifecycle="cross",
             run_id=run_id,
             reviewer_agent_id="cross-module-reviewer",
             reviewer_session_key="cross-owner-wave",
             subject_refs=[subject_refs[module_id] for module_id in REPORT_MODULE_IDS],
             finding_refs=[finding_ref],
-            verdict_refs=[],
-            resolved_finding_ids=[],
+            verdict_refs=[verdict_ref],
+            resolved_finding_ids=sorted(item.finding_id for item in verdicts),
         )
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
         pack = CrossDecisionPack(

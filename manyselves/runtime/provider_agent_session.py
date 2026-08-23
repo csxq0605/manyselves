@@ -28,5 +28,22 @@ class ProviderAgentSessionFactory:
         loop.persist_handoff_summary = self.persist_handoff_summary
         return loop
 
+    def reconfigure(self, loop: AgentSessionLoop) -> None:
+        """Rebind one reused Provider loop to the caller's next typed task."""
+
+        attributes = {
+            "tools": "tools",
+            "config": "config",
+            "llm_provider": "llm_provider",
+            "artifact_gateway": "artifact_gateway",
+            "usage_run_id": "usage_run_id",
+            "usage_task_id": "usage_task_id",
+            "system_prompt": "_system_prompt_override",
+        }
+        for source, target in attributes.items():
+            if source in self.loop_kwargs:
+                setattr(loop, target, self.loop_kwargs[source])
+        loop.persist_handoff_summary = self.persist_handoff_summary
+
 
 __all__ = ["ProviderAgentSessionFactory"]

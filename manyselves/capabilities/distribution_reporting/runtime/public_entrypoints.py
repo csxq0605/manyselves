@@ -34,6 +34,7 @@ def load_public_entrypoint_definitions():
     )
 
     from .. import load_distribution_reporting_capability
+    from .cross_owner_definitions import register_cross_owner_pipeline_specializations
     from .entrypoint_tools import specialize_module_cohort_workflow
     from .module_lane_definitions import register_module_runtime_lane_specializations
     from .reporting_tail_runtime import register_reporting_tail_workflow_specializations
@@ -51,6 +52,7 @@ def load_public_entrypoint_definitions():
     cohort = specialize_module_cohort_workflow(cohort, REPORT_MODULE_IDS)
     cohort = specialize_workflow(cohort, {"max_concurrency": len(REPORT_MODULE_IDS)})
     registry.register(cohort)
+    register_cross_owner_pipeline_specializations(registry)
     register_module_runtime_lane_specializations(registry)
     register_reporting_tail_workflow_specializations(registry)
     return capability, registry

@@ -172,6 +172,9 @@ class AggregateProviderRuntime:
             loop_kwargs=loop_kwargs,
             persist_handoff_summary=False,
         )
+        existing = self.execution.session(workflow_id, conversation.key.value)
+        if existing is not None:
+            session_factory.reconfigure(existing.loop)
         return AggregateEditorAgentBridge(
             self.workspace,
             execution=self.execution,
