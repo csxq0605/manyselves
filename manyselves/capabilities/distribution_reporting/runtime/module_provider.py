@@ -523,7 +523,7 @@ class ModuleProviderComposition:
 def build_module_provider_composition(
     services: RuntimeServicesView,
     *,
-    agent_session_factory: SessionFactory,
+    agent_session_factory: SessionFactory | None = None,
     execution: AgentExecutionService | None = None,
     loop_builder: LoopBuilder = AgentLoop,
     store: ReportingStore | None = None,

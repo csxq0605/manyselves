@@ -159,8 +159,8 @@ class CapabilityModuleRuntime:
         *,
         store: ReportingStore,
         agent_execution: AgentExecutionService,
-        agent_session_factory: SessionFactory,
         agent_invokers: Mapping[str, AgentInvoker],
+        agent_session_factory: SessionFactory | None = None,
         global_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()

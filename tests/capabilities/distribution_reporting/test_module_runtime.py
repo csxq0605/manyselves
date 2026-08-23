@@ -599,7 +599,6 @@ def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> No
             agent_defaults=AgentDefaults(),
             global_knowledge_root=None,
         ),
-        agent_session_factory=lambda _runtime_id: object(),
     )
     runtime = PublicReportingWorkflowRuntime(
         tmp_path,
@@ -611,6 +610,7 @@ def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> No
 
     invokers = runtime._agent_invokers()
 
+    assert composition.module_runtime.agent_session_factory is None
     assert invokers["module-2.4-specialist"] is composition.provider
     assert invokers["evidence-auditor"] is composition.provider
 
