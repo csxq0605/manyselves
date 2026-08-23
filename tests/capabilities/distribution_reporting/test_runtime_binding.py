@@ -123,3 +123,21 @@ def test_full_report_binding_composes_the_complete_capability_tail(
         "chief-editor",
         "chief-editor-auditor",
     } <= agents.keys()
+
+
+def test_reporting_binding_owns_one_agent_execution_service_per_account(
+    tmp_path: Path,
+) -> None:
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+
+    binding = DistributionReportingRuntimeBinding(tmp_path, services)
+
+    assert {id(provider.execution) for provider in binding._providers} == {
+        id(binding._execution)
+    }

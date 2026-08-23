@@ -60,6 +60,7 @@ from manyselves.capabilities.distribution_reporting.runtime.template_provider im
     TemplateDistillationProviderRuntime,
 )
 from manyselves.core.artifacts.content_store import ContentAddressedStore
+from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
@@ -108,30 +109,50 @@ class DistributionReportingRuntimeBinding:
     def __init__(self, workspace: Path, services: RuntimeServicesView) -> None:
         self.workspace = Path(workspace).resolve()
         self.services = services
+        self._execution = AgentExecutionService(services.bus)
         snapshot_store = RunInputSnapshotStore(self.workspace)
         content_store = ContentAddressedStore(self.workspace)
-        module = build_module_provider_composition(services)
-        aggregate = build_aggregate_provider_composition(services)
-        final = build_final_provider_composition(services)
-        final_chief = build_final_chief_provider_composition(services)
-        template = TemplateDistillationProviderRuntime(services)
+        module = build_module_provider_composition(
+            services,
+            execution=self._execution,
+        )
+        aggregate = build_aggregate_provider_composition(
+            services,
+            execution=self._execution,
+        )
+        final = build_final_provider_composition(
+            services,
+            execution=self._execution,
+        )
+        final_chief = build_final_chief_provider_composition(
+            services,
+            execution=self._execution,
+        )
+        template = TemplateDistillationProviderRuntime(
+            services,
+            execution=self._execution,
+        )
         cross_lifecycle = CrossOwnerRuntime(self.workspace)
         cross = build_cross_provider_composition(
             services,
             cross_runtime=cross_lifecycle,
+            execution=self._execution,
         )
         chief_lifecycle = ChiefChapterRuntime(self.workspace)
         chief = build_chief_provider_composition(
             services,
             chief_runtime=chief_lifecycle,
+            execution=self._execution,
         )
         full_final = build_final_provider_composition(
             services,
             workflow_id="public-reporting",
+            execution=self._execution,
         )
         full_final_chief = build_final_chief_provider_composition(
             services,
             workflow_id="public-reporting",
+            execution=self._execution,
         )
         tail = ReportingTailComposition(
             self.workspace,
