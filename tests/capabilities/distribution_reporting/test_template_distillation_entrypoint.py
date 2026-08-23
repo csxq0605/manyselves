@@ -541,6 +541,181 @@ async def test_template_distillation_bridge_loads_persisted_completed_result(
     assert service.sessions == {}
 
 
+@pytest.mark.asyncio
+async def test_template_distillation_bridge_corrects_natural_language_in_same_session(
+    tmp_path: Path,
+) -> None:
+    """A natural-language terminal must become one typed correction turn."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
+        TemplateDistillationAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        AgentDefinition,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+        TaskDefinition,
+    )
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    result_ref = "Work/runs/run-template-correction/results/template-skill.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    class ScriptedCorrectionLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                if message.turn_kind == "task_initial":
+                    await bus.publish(
+                        AgentResponse(
+                            agent_type=self.runtime_id,
+                            message_id=message.message_id,
+                            content="已完成当前分析，但没有提交结构化结果。",
+                            workflow_id=message.workflow_id,
+                            run_id=message.run_id,
+                            task_id=message.task_id,
+                            task_attempt_id=message.task_attempt_id,
+                            session_id=message.session_id,
+                        )
+                    )
+                    return
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    agent = AgentDefinition(
+        id="template-distiller",
+        version="1.0.0",
+        description="typed template distiller",
+        instructions="distill",
+        accepts=["template_distillation_input"],
+        produces=["template_skill_submission"],
+    )
+    task = TaskDefinition(
+        id="template-skill-distillation",
+        version="1.0.0",
+        description="distill task",
+        agent=agent.id,
+        objective="distill one template",
+        input_contract="template_distillation_input",
+        output_contract="template_skill_submission",
+    )
+    value = TemplateDistillationInput(
+        run_id="run-template-correction",
+        template_ref=(
+            "Work/runs/run-template-correction/templates/template-for-skill.docx"
+        ),
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(
+            agent_id=agent.id,
+            value="template-distillation",
+            mode="run",
+        ),
+        run_id=value.run_id,
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    loops: list[ScriptedCorrectionLoop] = []
+
+    def session_factory(runtime_id: str) -> ScriptedCorrectionLoop:
+        loop = ScriptedCorrectionLoop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    bridge = TemplateDistillationAgentBridge(
+        tmp_path,
+        execution=service,
+        session_factory=session_factory,
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id="invoke-template-correction",
+            recovery_policy=RecoveryPolicyDefinition(
+                id="natural-language-correction",
+                version="1.0.0",
+                description="correct a natural-language terminal",
+                rules={
+                    "natural_language_without_submission": RecoveryRule(
+                        action="correct"
+                    ),
+                },
+            ),
+        )
+    finally:
+        await service.close_workflow("distill-template-skill")
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert TemplateSkillSubmission.model_validate(outcome.result).kind == (
+        "template_skill_submission"
+    )
+    assert len(loops) == 1
+    assert len(loops[0].received) == 2
+    assert [message.turn_kind for message in loops[0].received] == [
+        "task_initial",
+        "submission_correction",
+    ]
+    assert loops[0].received[1].internal is True
+    assert "submission_correction" in loops[0].received[1].content
+    assert "submit_result" in loops[0].received[1].content
+    assert outcome.session_id == conversation.external_session_id
+    assert len(service.sessions) == 0
+
+
 def _submission() -> TemplateSkillSubmission:
     description = (
         "将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法"

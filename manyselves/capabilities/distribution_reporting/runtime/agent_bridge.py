@@ -6,10 +6,11 @@ proved here: a typed input is rendered into one generic Agent turn, the
 ``AgentResultMessage`` is decoded back into the Capability output contract.
 
 Completed-result reuse now uses the existing neutral recovery service when a
-Capability-owned loader supplies an already verified typed result.  Correction,
-continuation, and no-progress remain outside this bridge until their existing
-durable reporting implementations can be reused without copying their policy
-or persistence semantics.
+Capability-owned loader supplies an already verified typed result.  Natural
+language without a submission now uses the same generic recovery driver for
+one Capability-owned typed correction turn.  Continuation and no-progress
+remain outside this bridge until their existing durable implementations can be
+reused without copying their policy or persistence semantics.
 """
 
 from __future__ import annotations
@@ -34,10 +35,17 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.kernel.ports import AgentInvocationOutcome
+from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
 from manyselves.runtime.agent_execution import (
     AgentExecutionService,
+    AgentRecoveryCompleted,
+    AgentRecoveryDirective,
+    AgentRecoveryObservation,
+    AgentRecoveryRequired,
+    AgentRecoveryStopped,
     AgentSessionLoop,
     AgentTerminalSubscription,
+    AgentTurnOutcome,
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
@@ -208,7 +216,7 @@ class TemplateDistillationAgentBridge:
                 }
             )
 
-        request = AgentTurnRequest(
+        initial_request = AgentTurnRequest(
             content=self._prompt(agent, task, input_value),
             message_id=f"{task_id}:{input_value.run_id}:initial",
             workflow_id=self.workflow_id,
@@ -231,24 +239,117 @@ class TemplateDistillationAgentBridge:
                 session_id=session.session_id,
             ),
         )
-        outcome = await self.execution.dispatch_turn(
+        if recovery_policy is None:
+            outcome = await self.execution.dispatch_turn(
+                session,
+                initial_request,
+                terminals=(terminal,),
+            )
+            return self._outcome_to_invocation(outcome, session.session_id)
+
+        async def interpret(
+            outcome: AgentTurnOutcome,
+            _request: AgentTurnRequest,
+        ) -> AgentRecoveryObservation:
+            if outcome.kind == "typed_result":
+                message = outcome.message
+                if not isinstance(message, AgentResultMessage):
+                    return AgentRecoveryStopped(
+                        reason="typed terminal was not an AgentResultMessage"
+                    )
+                if message.status != "completed":
+                    return AgentRecoveryStopped(reason=message.status)
+                try:
+                    return AgentRecoveryCompleted(
+                        result=self._read_submission(message.result_path)
+                    )
+                except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    return AgentRecoveryStopped(reason=str(exc))
+            if outcome.kind == "error":
+                return AgentRecoveryStopped(reason=str(outcome.message))
+            if isinstance(outcome.message, AgentResponse):
+                return AgentRecoveryRequired(
+                    event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                    fallback_action=RecoveryActionKind.CORRECT,
+                    detail={"task_id": task.id},
+                )
+            return AgentRecoveryStopped(reason="Agent turn returned an unknown terminal")
+
+        async def build_turn(
+            directive: AgentRecoveryDirective,
+            _observation: AgentRecoveryRequired,
+        ) -> AgentTurnRequest:
+            return AgentTurnRequest(
+                content=directive.prompt or self._correction_prompt(agent, task),
+                message_id=f"{task_id}:{input_value.run_id}:correction",
+                workflow_id=self.workflow_id,
+                run_id=input_value.run_id,
+                task_id=task_id,
+                task_attempt_id=task_id,
+                internal=True,
+                turn_kind="submission_correction",
+            )
+
+        async def stop(
+            outcome: AgentTurnOutcome,
+            directive: AgentRecoveryDirective,
+        ) -> AgentInvocationOutcome:
+            if isinstance(outcome.message, AgentResponse):
+                return self._incomplete_outcome(
+                    directive.reason or "Agent turn ended without a typed result",
+                    session.session_id,
+                )
+            return self._incomplete_outcome(
+                directive.reason or str(outcome.message),
+                session.session_id,
+            )
+
+        async def reuse_result(
+            outcome: AgentTurnOutcome,
+            _directive: AgentRecoveryDirective,
+        ) -> TemplateSkillSubmission:
+            if not isinstance(outcome.message, AgentResultMessage):
+                raise ValueError("reusable terminal was not an AgentResultMessage")
+            return self._read_submission(outcome.message.result_path)
+
+        recovered = await self.execution.execute_with_recovery(
             session,
-            request,
+            initial_request,
+            recovery=AgentRecoveryDriver(recovery_policy),
+            interpret=interpret,
+            build_turn=build_turn,
+            stop=stop,
+            reuse_result=reuse_result,
             terminals=(terminal,),
         )
+        if isinstance(recovered, AgentInvocationOutcome):
+            return recovered
+        if isinstance(recovered, TemplateSkillSubmission):
+            return self._completed_outcome(recovered, session.session_id)
+        return AgentInvocationOutcome(
+            status="failed",
+            session_id=session.session_id,
+            error="Agent recovery returned an unknown result",
+        )
+
+    def _outcome_to_invocation(
+        self,
+        outcome: AgentTurnOutcome,
+        session_id: str,
+    ) -> AgentInvocationOutcome:
         if outcome.kind == "typed_result":
             message = outcome.message
             if not isinstance(message, AgentResultMessage):
                 return AgentInvocationOutcome(
                     status="failed",
-                    session_id=session.session_id,
+                    session_id=session_id,
                     error="typed terminal was not an AgentResultMessage",
                 )
             if message.status != "completed":
                 status = "blocked" if message.status == "blocked" else "incomplete"
                 return AgentInvocationOutcome(
                     status=status,  # type: ignore[arg-type]
-                    session_id=session.session_id,
+                    session_id=session_id,
                     error=message.status,
                 )
             try:
@@ -256,29 +357,24 @@ class TemplateDistillationAgentBridge:
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 return AgentInvocationOutcome(
                     status="failed",
-                    session_id=session.session_id,
+                    session_id=session_id,
                     error=str(exc),
                 )
-            return AgentInvocationOutcome(
-                status="ok",
-                result=submission.model_dump(mode="json"),
-                session_id=session.session_id,
-            )
+            return self._completed_outcome(submission, session_id)
         if outcome.kind == "error":
             return AgentInvocationOutcome(
                 status="failed",
-                session_id=session.session_id,
+                session_id=session_id,
                 error=str(outcome.message),
             )
         if isinstance(outcome.message, AgentResponse):
-            return AgentInvocationOutcome(
-                status="incomplete",
-                session_id=session.session_id,
-                error="Agent turn ended without a typed result",
+            return self._incomplete_outcome(
+                "Agent turn ended without a typed result",
+                session_id,
             )
         return AgentInvocationOutcome(
             status="failed",
-            session_id=session.session_id,
+            session_id=session_id,
             error="Agent turn returned an unknown terminal",
         )
 
@@ -326,6 +422,23 @@ class TemplateDistillationAgentBridge:
                     ensure_ascii=False,
                     indent=2,
                 ),
+            )
+        )
+
+    @staticmethod
+    def _correction_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+    ) -> str:
+        return "\n\n".join(
+            (
+                "<submission_correction>",
+                "上一轮只返回了自然语言，尚未提交类型化结果。",
+                f"你仍是 {agent.id}，当前任务是 {task.id}。",
+                "不要重新读取模板或重复已经完成的分析；使用当前会话上下文，"
+                "立即调用 submit_result 提交 template_skill_submission。",
+                "参数必须直接符合 output contract，不要添加 payload 包装或 JSON 字符串。",
+                "</submission_correction>",
             )
         )
 
