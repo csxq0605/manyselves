@@ -1,9 +1,9 @@
-"""Capability-owned bridge for one typed module Author Agent turn.
+"""Capability-owned bridge for typed module Author Agent turns.
 
 The bridge adapts the file-defined module Author task to the neutral
-``AgentExecutionService``.  This first slice deliberately ends after one
-typed terminal is decoded; continuation, correction, and recovery remain
-owned by later Capability runtime slices.
+``AgentExecutionService``.  Recovery marker interpretation and prompt text
+remain Capability-owned; session lifecycle and recovery progression stay in
+the generic runtime.
 """
 
 from __future__ import annotations
@@ -13,6 +13,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    execute_reporting_recovery,
+)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -86,15 +89,13 @@ class ModuleAuthoringAgentBridge:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Keep the declared port while this slice remains initial-only."""
-
-        del recovery_policy
         return await self._invoke_once(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=recovery_policy,
         )
 
     async def _invoke_once(
@@ -105,6 +106,7 @@ class ModuleAuthoringAgentBridge:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         envelope = cast(TaskEnvelope, self._envelope(context))
@@ -161,18 +163,44 @@ class ModuleAuthoringAgentBridge:
             terminal_task_id=envelope.task_id,
             terminal_task_attempt_id="",
         )
-        outcome = await typed_turn.dispatch(
+        if recovery_policy is None:
+            outcome = await typed_turn.dispatch(
+                session,
+                request,
+                terminals=(terminal,),
+            )
+            return TypedAgentTurn.map_outcome(
+                outcome,
+                session_id=session.session_id,
+                decode_result=lambda result_ref: self._decode_result(
+                    result_ref,
+                    output_contract=task.output_contract,
+                ),
+            )
+
+        recovered = await execute_reporting_recovery(
+            self.execution,
             session,
             request,
+            recovery_policy=recovery_policy,
             terminals=(terminal,),
-        )
-        return TypedAgentTurn.map_outcome(
-            outcome,
-            session_id=session.session_id,
-            decode_result=lambda result_ref: self._decode_result(
+            prompt_builder=lambda event_kind: self._recovery_prompt(
+                agent,
+                task,
+                context,
+                event_kind,
+            ),
+            result_decoder=lambda result_ref: self._decode_result(
                 result_ref,
                 output_contract=task.output_contract,
             ),
+        )
+        if isinstance(recovered, AgentInvocationOutcome):
+            return recovered
+        return AgentInvocationOutcome(
+            status="ok",
+            result=recovered,
+            session_id=session.session_id,
         )
 
     def _prompt(
@@ -217,6 +245,47 @@ class ModuleAuthoringAgentBridge:
             status="completed",
             module=submission,
         ).model_dump(mode="json")
+
+    @staticmethod
+    def _recovery_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        context: DeclarativeModuleRuntimeLaneContext,
+        event_kind: Any,
+    ) -> str:
+        event_name = getattr(event_kind, "value", str(event_kind))
+        if event_name == "max_tokens":
+            instruction = (
+                "继续当前会话中已开始的 module author 工作；上轮达到 max_tokens，"
+                "不要重做已完成的工具或分析。"
+            )
+        elif event_name == "tool_slice_boundary":
+            instruction = (
+                "继续当前会话中的 module author 工作；复用已有 tool slice 结果，"
+                "不要重放已经完成的工具。"
+            )
+        else:
+            instruction = (
+                "上一轮没有提交结构化结果；在当前会话中立即完成 submission_correction，"
+                "不要重复已完成的分析。"
+            )
+        return "\n\n".join(
+            (
+                f"<{event_name}>",
+                instruction,
+                f"你仍是 {agent.id}，当前任务是 {task.id}。",
+                "立即调用 submit_result，提交符合 output contract 的类型化结果。",
+                json.dumps(
+                    {
+                        "module_context": context.model_dump(mode="json"),
+                        "output_contract": task.output_contract,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                f"</{event_name}>",
+            )
+        )
 
     @staticmethod
     def _envelope(

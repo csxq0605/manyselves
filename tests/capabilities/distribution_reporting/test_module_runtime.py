@@ -1511,3 +1511,283 @@ def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
     assert set(task.tools).issubset(set(captured[0]["tool_names"]))
     assert first.artifact_access.readable_refs
     assert second.artifact_access.readable_refs
+
+
+@pytest.mark.parametrize(
+    (
+        "case_name",
+        "marker",
+        "continuation_kind",
+        "event_name",
+        "prompt_fragment",
+    ),
+    (
+        (
+            "natural-language",
+            "已完成分析，但尚未提交结构化结果。",
+            "submission_correction",
+            "natural_language_without_submission",
+            "submission_correction",
+        ),
+        (
+            "max-tokens",
+            "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED",
+            "max_tokens_continuation",
+            "max_tokens",
+            "max_tokens",
+        ),
+        (
+            "tool-slice",
+            "AGENT_TURN_CONTINUATION_REQUIRED",
+            "tool_slice_continuation",
+            "tool_slice_boundary",
+            "tool_slice",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_module_author_bridge_recovers_markers_in_same_session(
+    tmp_path: Path,
+    case_name: str,
+    marker: str,
+    continuation_kind: str,
+    event_name: str,
+    prompt_fragment: str,
+) -> None:
+    """Author marker recovery keeps one session and reaches typed completion."""
+
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ModuleSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+        ModuleAuthoringAgentBridge,
+    )
+    from manyselves.core.loops.agent_loop import (
+        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+        AGENT_TURN_CONTINUATION_REQUIRED,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        AgentDefinition,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+        TaskDefinition,
+    )
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    run_id = f"module-author-recovery-{case_name}"
+    agent = AgentDefinition(
+        id="module-2.4-specialist",
+        version="1.0.0",
+        description="module author",
+        instructions="author the module",
+        accepts=["declarative_module_runtime_lane_context"],
+        produces=["declarative_module_authoring_agent_result"],
+    )
+    task = TaskDefinition(
+        id="module-2.4-authoring",
+        version="1.0.0",
+        description="author task",
+        agent=agent.id,
+        objective="Author module 2.4",
+        input_contract="declarative_module_runtime_lane_context",
+        output_contract="declarative_module_authoring_agent_result",
+    )
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    envelope = TaskEnvelope(
+        task_id=f"{run_id}-task",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_submission"],
+        input_refs=[f"Work/runs/{run_id}/context/module-input.json"],
+        target_submodule_ids=part_ids,
+        input_contract_kind="module_authoring_input",
+        input_contract_ref=f"Work/runs/{run_id}/context/module-input.json",
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+    result_ref = f"Work/runs/{run_id}/results/module-2.4.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    submission = ModuleSubmission(
+        module_id="2.4",
+        submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+
+    marker_content = {
+        "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED": AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+        "AGENT_TURN_CONTINUATION_REQUIRED": AGENT_TURN_CONTINUATION_REQUIRED,
+    }.get(marker, marker)
+
+    class ScriptedAuthorLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                if message.turn_kind == "task_initial":
+                    await bus.publish(
+                        AgentResponse(
+                            agent_type=self.runtime_id,
+                            message_id=message.message_id,
+                            content=marker_content,
+                            internal=marker.startswith("AGENT_"),
+                            workflow_id=message.workflow_id,
+                            run_id=message.run_id,
+                            task_id=message.task_id,
+                            task_attempt_id=message.task_attempt_id,
+                            session_id=message.session_id,
+                        )
+                    )
+                    return
+                if message.turn_kind != continuation_kind:
+                    await bus.publish(
+                        AgentResponse(
+                            agent_type=self.runtime_id,
+                            message_id=message.message_id,
+                            content="unexpected continuation",
+                            workflow_id=message.workflow_id,
+                            run_id=message.run_id,
+                            task_id=message.task_id,
+                            task_attempt_id=message.task_attempt_id,
+                            session_id=message.session_id,
+                        )
+                    )
+                    return
+                result_path.write_text(
+                    AgentResult(
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
+                        agent_id=envelope.agent_id,
+                        session_id=message.session_id,
+                        status=AgentRunStatus.COMPLETED,
+                        payload=submission,
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=envelope.agent_id,
+                        workflow_id=message.workflow_id,
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
+                        result_path=result_ref,
+                        task_attempt_id="",
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(
+            agent_id=agent.id,
+            value=f"module-author-{case_name}",
+            mode="run",
+        ),
+        run_id=run_id,
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    loops: list[ScriptedAuthorLoop] = []
+
+    def session_factory(runtime_id: str) -> ScriptedAuthorLoop:
+        loop = ScriptedAuthorLoop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    bridge = ModuleAuthoringAgentBridge(
+        tmp_path,
+        execution=service,
+        session_factory=session_factory,
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id=f"dispatch-{case_name}",
+            recovery_policy=RecoveryPolicyDefinition(
+                id=f"module-{case_name}-recovery",
+                version="1.0.0",
+                description="recover declared AgentLoop boundary",
+                rules={
+                    event_name: RecoveryRule(
+                        action=(
+                            "correct"
+                            if event_name == "natural_language_without_submission"
+                            else "continue"
+                        )
+                    )
+                },
+            ),
+        )
+    finally:
+        await service.close_workflow("public-reporting")
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert outcome.result["status"] == "completed"
+    assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
+    assert len(loops) == 1
+    assert [message.turn_kind for message in loops[0].received] == [
+        "task_initial",
+        continuation_kind,
+    ]
+    assert loops[0].received[0].session_id == loops[0].received[1].session_id
+    assert loops[0].received[1].internal is True
+    assert prompt_fragment in loops[0].received[1].content
+    assert outcome.session_id == conversation.external_session_id
