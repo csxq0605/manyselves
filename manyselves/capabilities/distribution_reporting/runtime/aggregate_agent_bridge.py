@@ -7,6 +7,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     EditedReportSubmission,
 )
@@ -45,11 +48,17 @@ class AggregateEditorAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        terminal_sender: str | None = None,
+        terminal_task_id: str | None = None,
+        terminal_task_attempt_id: str | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.terminal_sender = terminal_sender
+        self.terminal_task_id = terminal_task_id
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -148,6 +157,9 @@ class AggregateEditorAgentBridge:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=self.terminal_sender,
+            terminal_task_id=self.terminal_task_id,
+            terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
         outcome = await typed_turn.dispatch(
             session,
@@ -181,10 +193,8 @@ class AggregateEditorAgentBridge:
         )
 
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
-        submission = EditedReportSubmission.model_validate_json(
-            path.read_text(encoding="utf-8")
+        submission = EditedReportSubmission.model_validate(
+            load_agent_result_payload(self.workspace, result_ref).payload
         )
         return submission.model_dump(mode="json")
 

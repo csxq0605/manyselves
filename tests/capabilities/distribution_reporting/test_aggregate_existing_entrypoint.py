@@ -690,6 +690,7 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
         AggregateEditorAgentBridge,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
         EditedReportSubmission,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
@@ -710,7 +711,14 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
-        json.dumps(_edited_submission().model_dump(mode="json"), ensure_ascii=False),
+        AgentResult(
+            task_id="aggregate-existing",
+            run_id=run_id,
+            agent_id="aggregate-editor",
+            session_id="aggregate-existing",
+            status="completed",
+            payload=_edited_submission(),
+        ).model_dump_json(),
         encoding="utf-8",
     )
     editor_input = AggregateEditorInput(
@@ -754,12 +762,12 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
                 self.received.append(message)
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender="aggregate-editor",
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
+                        task_id="aggregate-existing",
                         run_id=message.run_id,
                         result_path=result_ref,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
@@ -784,6 +792,9 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
         tmp_path,
         execution=execution,
         session_factory=session_factory,
+        terminal_sender="aggregate-editor",
+        terminal_task_id="aggregate-existing",
+        terminal_task_attempt_id="",
     )
     conversation = ConversationRecord(
         conversation_id=(
@@ -853,6 +864,7 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         CHIEF_SECTION_RESULT_PART_IDS,
+        AgentResult,
         ChapterScopedFinalReviewFinding,
         ChapterScopedFinalReviewTargetChange,
         ChiefChapterLaneRevisionSubmission,
@@ -1062,10 +1074,14 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
     aggregate_result_path = tmp_path / aggregate_result_ref
     aggregate_result_path.parent.mkdir(parents=True, exist_ok=True)
     aggregate_result_path.write_text(
-        json.dumps(
-            _edited_submission_with_final_chapter_4().model_dump(mode="json"),
-            ensure_ascii=False,
-        ),
+        AgentResult(
+            task_id="aggregate-existing",
+            run_id=run_id,
+            agent_id="aggregate-editor",
+            session_id="aggregate-existing",
+            status="completed",
+            payload=_edited_submission_with_final_chapter_4(),
+        ).model_dump_json(),
         encoding="utf-8",
     )
     bus = MessageBus()
@@ -1094,12 +1110,12 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
                 self.received.append(message)
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender="aggregate-editor",
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
+                        task_id="aggregate-existing",
                         run_id=message.run_id,
                         result_path=aggregate_result_ref,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
@@ -1124,6 +1140,9 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         tmp_path,
         execution=aggregate_execution,
         session_factory=aggregate_session_factory,
+        terminal_sender="aggregate-editor",
+        terminal_task_id="aggregate-existing",
+        terminal_task_attempt_id="",
     )
     events = InMemoryWorkflowEventSink()
     chief = RecordingAgentInvoker("chief")
