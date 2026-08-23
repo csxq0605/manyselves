@@ -26,6 +26,8 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    restore_plan_definition_registry,
+    resume_waiting_input,
 )
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.conversation_store import FileConversationStore
@@ -186,6 +188,35 @@ class PublicReportingWorkflowRuntime:
             "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
         }
 
+    async def provide_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        *,
+        input_id: str | None,
+        values: Any,
+    ) -> dict[str, Any]:
+        """Resume the persisted outer-to-inner waiting path in the same Run."""
+
+        del command_id
+        state = self._load_state(run_id)
+        try:
+            plan = self.state_store.load_plan(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        definitions = restore_plan_definition_registry(plan)
+        contracts = build_contract_catalog(definitions)
+        resumed = resume_waiting_input(
+            plan,
+            state,
+            input_id=input_id,
+            values=values,
+            contracts=contracts,
+            subworkflows=plan.subworkflow_plans,
+        )
+        await self._execute_state(plan, resumed, definitions, contracts)
+        return {"run_id": run_id, "task_id": None}
+
     def compile_plan(
         self,
         request: ReportRequest | Any,
@@ -236,6 +267,15 @@ class PublicReportingWorkflowRuntime:
                 },
             )
 
+        return await self._execute_state(plan, state, definitions, contracts)
+
+    async def _execute_state(
+        self,
+        plan: ResolvedPlan,
+        state: WorkflowState,
+        definitions: DefinitionRegistry,
+        contracts: Mapping[str, ContractAdapter],
+    ) -> WorkflowState:
         tools = self._tools(definitions, contracts, plan)
         agents = self._agent_invokers()
         return await WorkflowRuntimeHost(

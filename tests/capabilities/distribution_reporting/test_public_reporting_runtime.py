@@ -163,6 +163,72 @@ def test_public_runtime_projects_its_persisted_run_and_outputs(tmp_path: Path) -
     }
 
 
+@pytest.mark.asyncio
+async def test_public_runtime_resumes_waiting_input_through_generic_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryWorkflowStateStore()
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=object(),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+        state_store=store,
+    )
+    child = ResolvedPlan(
+        workflow_id="child-input",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    plan = ResolvedPlan(
+        workflow_id="module-report",
+        workflow_version="1.0.0",
+        actions=[],
+        subworkflow_plans={"child-input": child},
+    )
+    state = WorkflowState.for_plan("module-report-waiting", plan)
+    state.status = WorkflowStatus.WAITING
+    state.waiting_input = {
+        "input_id": "request-evidence-decision",
+        "path": [{"kind": "subworkflow", "action_id": "readiness"}],
+    }
+    store.save_plan(state.run_id, plan)
+    store.save(state)
+    observed: dict[str, Any] = {}
+
+    def resume(plan, state, **kwargs):
+        observed.update(plan=plan, state=state, resume=kwargs)
+        resumed = state.model_copy(deep=True)
+        resumed.status = WorkflowStatus.RUNNING
+        resumed.waiting_input = None
+        return resumed
+
+    async def execute_state(plan, state, definitions, contracts):
+        observed.update(executed=(plan, state, definitions, contracts))
+        state.status = WorkflowStatus.COMPLETED
+        store.save(state)
+        return state
+
+    monkeypatch.setattr(
+        "manyselves.capabilities.distribution_reporting.runtime.public_reporting.resume_waiting_input",
+        resume,
+    )
+    monkeypatch.setattr(runtime, "_execute_state", execute_state)
+
+    accepted = await runtime.provide_input(
+        UUID("61000000-0000-4000-8000-000000000002"),
+        state.run_id,
+        input_id="request-evidence-decision",
+        values={"action": "draft"},
+    )
+
+    assert accepted == {"run_id": state.run_id, "task_id": None}
+    assert observed["resume"]["subworkflows"] == plan.subworkflow_plans
+    assert observed["resume"]["values"] == {"action": "draft"}
+    assert observed["executed"][1].run_id == state.run_id
+
+
 def test_author_accept_projects_typed_submission_to_lane_and_reporting_state(
     tmp_path: Path,
 ) -> None:
