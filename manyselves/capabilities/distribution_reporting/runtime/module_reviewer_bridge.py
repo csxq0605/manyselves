@@ -14,11 +14,13 @@ from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ModuleReviewInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRecheckAgentResult,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
@@ -104,7 +106,13 @@ class ModuleReviewerAgentBridge:
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         review = context.review
-        review_input = ModuleReviewInput.model_validate(review.prepared.review_input)
+        review_input = (
+            ModuleReviewInput.model_validate(
+                review.prepared.review_input
+                if context.recheck is None
+                else context.recheck.prepared.review_input
+            )
+        )
         workflow_id = context.workflow_id or self.workflow_id
         run_id = str(context.reporting_state["run_id"])
         runtime_id = self._runtime_id(agent, conversation, workflow_id)
@@ -172,7 +180,10 @@ class ModuleReviewerAgentBridge:
         return TypedAgentTurn.map_outcome(
             outcome,
             session_id=session.session_id,
-            decode_result=self._decode_result,
+            decode_result=lambda result_ref: self._decode_result(
+                result_ref,
+                output_contract=task.output_contract,
+            ),
         )
 
     @staticmethod
@@ -194,9 +205,22 @@ class ModuleReviewerAgentBridge:
             sections.append(f"Inline context:\n{inline_context}")
         return "\n\n".join(sections)
 
-    def _decode_result(self, result_ref: str) -> dict[str, Any]:
+    def _decode_result(
+        self,
+        result_ref: str,
+        *,
+        output_contract: str,
+    ) -> dict[str, Any]:
         path = Path(result_ref)
         path = path if path.is_absolute() else self.workspace / path
+        if output_contract == "declarative_module_recheck_agent_result":
+            submission = ModuleReviewVerdictSubmission.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            return DeclarativeModuleRecheckAgentResult(
+                status="completed",
+                submission=submission,
+            ).model_dump(mode="json")
         submission = ModuleReviewFindingSubmission.model_validate(
             json.loads(path.read_text(encoding="utf-8"))
         )

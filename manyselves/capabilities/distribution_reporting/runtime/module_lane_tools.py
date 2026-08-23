@@ -19,8 +19,17 @@ from .models.module_lane import (
     DeclarativeModuleRuntimeLaneContext,
 )
 from .models.review import ModuleInitialReviewAcceptance, ModuleRecheckAcceptance
+from .module_recheck_tools import (
+    accept_current_module_recheck,
+    module_recheck_requires_agent,
+    prepare_current_module_recheck,
+)
 from .module_review_acceptance import accept_current_module_review
 from .module_review_preparation import prepare_current_module_review
+from .module_revision_tools import (
+    accept_current_module_revision,
+    prepare_current_module_revision,
+)
 from .storage import ReportingStore
 
 
@@ -87,10 +96,15 @@ def module_review_preflight_needs_revision(
     """Route only a prepared machine-preflight failure to author correction."""
 
     context = _context(value)
-    return (
+    initial_revision = (
         context.review is not None
         and context.review.prepared.mode == "preflight_revision"
     )
+    recheck_revision = (
+        context.recheck is not None
+        and context.recheck.prepared.mode == "preflight_revision"
+    )
+    return initial_revision or recheck_revision
 
 
 def module_review_requires_agent(
@@ -116,6 +130,7 @@ def module_review_needs_recheck(
     return (
         isinstance(acceptance, ModuleRecheckAcceptance)
         and acceptance.next_action == "continue_existing"
+        and not acceptance.findings
     )
 
 
@@ -126,10 +141,26 @@ def module_review_needs_revision(
 
     context = _context(value)
     acceptance = context.review.acceptance if context.review is not None else None
+    if isinstance(acceptance, ModuleInitialReviewAcceptance):
+        return acceptance.next_action == "revise"
     return (
-        isinstance(acceptance, ModuleInitialReviewAcceptance)
-        and acceptance.next_action == "revise"
+        isinstance(acceptance, ModuleRecheckAcceptance)
+        and acceptance.next_action == "continue_existing"
+        and bool(acceptance.findings)
     )
+
+
+def prepare_current_module_author_exception(
+    value: DeclarativeModuleRuntimeLaneContext,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Keep the existing author-exception decision boundary explicit.
+
+    A normal typed revision has no deferred Main decision.  The file workflow
+    still visits this boundary so a future exception implementation can be
+    attached without changing the Kernel graph.
+    """
+
+    return _context(value)
 
 
 def build_module_lane_tool_implementations(
@@ -156,6 +187,24 @@ def build_module_lane_tool_implementations(
             prepare_current_module_review,
             store=store,
         ),
+        "prepare-current-module-revision": partial(
+            prepare_current_module_revision,
+            store=store,
+        ),
+        "accept-current-module-revision": partial(
+            accept_current_module_revision,
+            store=store,
+        ),
+        "prepare-current-module-recheck": partial(
+            prepare_current_module_recheck,
+            store=store,
+        ),
+        "accept-current-module-recheck": partial(
+            accept_current_module_recheck,
+            store=store,
+        ),
+        "module-recheck-requires-agent": module_recheck_requires_agent,
+        "prepare-current-module-author-exception": prepare_current_module_author_exception,
     }
 
 
@@ -169,4 +218,10 @@ __all__ = [
     "module_review_needs_recheck",
     "module_review_needs_revision",
     "prepare_current_module_review",
+    "accept_current_module_revision",
+    "prepare_current_module_revision",
+    "accept_current_module_recheck",
+    "module_recheck_requires_agent",
+    "prepare_current_module_recheck",
+    "prepare_current_module_author_exception",
 ]

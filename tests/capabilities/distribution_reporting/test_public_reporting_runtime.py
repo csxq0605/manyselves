@@ -21,6 +21,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleRecheckPreparation,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleReviewPreparation,
     DeclarativeModuleRuntimeLaneContext,
@@ -29,7 +30,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+    ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRecheckPreparation,
     ModuleReviewPreflightProgress,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_cohort_tools import (
@@ -38,10 +41,14 @@ from manyselves.capabilities.distribution_reporting.runtime.module_cohort_tools 
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
     accept_current_module_authoring,
     accept_current_module_review,
+    module_recheck_requires_agent,
     module_review_needs_recheck,
     module_review_needs_revision,
     module_review_preflight_needs_revision,
     module_review_requires_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_recheck_tools import (
+    accept_current_module_recheck,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     _validate_findings,
@@ -185,11 +192,15 @@ class _ScriptedModuleAgentLoop:
         runtime_id: str,
         result_ref: str,
         reviewer_result_ref: str,
+        revision_result_ref: str | None = None,
+        recheck_result_ref: str | None = None,
     ) -> None:
         self.bus = bus
         self.runtime_id = runtime_id
         self.result_ref = result_ref
         self.reviewer_result_ref = reviewer_result_ref
+        self.revision_result_ref = revision_result_ref
+        self.recheck_result_ref = recheck_result_ref
         self.received: list[UserMessage] = []
         self._callback = None
 
@@ -201,17 +212,21 @@ class _ScriptedModuleAgentLoop:
             if message.agent_type != self.runtime_id:
                 return
             self.received.append(message)
+            if message.task_id == "invoke-current-module-reviewer":
+                result_ref = self.reviewer_result_ref
+            elif message.task_id == "invoke-current-module-recheck":
+                result_ref = self.recheck_result_ref or self.reviewer_result_ref
+            elif message.task_id == "invoke-current-module-revision":
+                result_ref = self.revision_result_ref or self.result_ref
+            else:
+                result_ref = self.result_ref
             await self.bus.publish(
                 AgentResultMessage(
                     sender=self.runtime_id,
                     workflow_id=message.workflow_id,
                     task_id=message.task_id,
                     run_id=message.run_id,
-                    result_path=(
-                        self.reviewer_result_ref
-                        if message.task_id == "invoke-current-module-reviewer"
-                        else self.result_ref
-                    ),
+                    result_path=result_ref,
                     task_attempt_id=message.task_attempt_id,
                     session_id=message.session_id,
                 )
@@ -554,6 +569,344 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     assert output["module_review_completion_refs"]["2.4"].endswith(
         "reviews/module/initial/2.4/completion-r0.json"
     )
+
+
+@pytest.mark.asyncio
+async def test_module_report_finding_revision_recheck_completes_without_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive one finding through Author revision and Auditor recheck."""
+
+    _patch_minimal_preparation(monkeypatch)
+    snapshot = {
+        "inventory_digest": "inventory",
+        "files": [
+            {
+                "logical_ref": "Inputs/S4-6.xlsx",
+                "snapshot_ref": "Inputs/S4-6.xlsx",
+                "sha256": "a" * 64,
+            }
+        ],
+    }
+    run_id = "public-module-finding"
+    result_ref = f"Work/runs/{run_id}/results/module-2.4.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_module_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    finding_id = "M-2.4-initial-r0-1"
+    reviewer_result_ref = f"Work/runs/{run_id}/results/module-review-2.4.json"
+    reviewer_result_path = tmp_path / reviewer_result_ref
+    reviewer_result_path.write_text(
+        json.dumps(
+            {
+                "kind": "module_review_finding_submission",
+                "coverage": {
+                    "submodule_ids": sorted(_module_submission().submodule_narratives)
+                },
+                "findings": [
+                    {
+                        "id": finding_id,
+                        "target_submodule_id": "2.4.1.1",
+                        "category": "evidence_boundary",
+                        "impact": "blocking",
+                        "observation": "当前正文没有把客户证据边界写清楚，读者无法复核该结论。",
+                        "evidence_refs": ["module-2.4-r0"],
+                        "required_change": "补充可复核的证据边界说明并明确待核实限制。",
+                        "reviewer_checks": ["确认正文明确说明证据边界和待核实限制"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    revision_result_ref = f"Work/runs/{run_id}/results/module-revision-2.4.json"
+    revision_result_path = tmp_path / revision_result_ref
+    revision_result_path.write_text(
+        json.dumps(
+            {
+                "kind": "module_revision_submission",
+                "module_id": "2.4",
+                "base_revision": 0,
+                "revision": 1,
+                "submodule_narratives": {
+                    "2.4.1.1": "修订后的正文明确说明证据边界、适用条件和可复核的后续验证方式。"
+                },
+                "claims_upsert": [],
+                "claim_ids_remove": [],
+                "source_ids": [],
+                "unresolved_questions": [],
+                "revision_responses": [
+                    {
+                        "finding_id": finding_id,
+                        "action": "implemented",
+                        "summary": "已按要求补充证据边界和待核实限制，并保留可复核的验证步骤。",
+                        "changed_target_ids": ["2.4.1.1"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    recheck_result_ref = f"Work/runs/{run_id}/results/module-recheck-2.4.json"
+    recheck_result_path = tmp_path / recheck_result_ref
+    recheck_result_path.write_text(
+        json.dumps(
+            {
+                "kind": "module_review_verdict_submission",
+                "coverage": {"submodule_ids": ["2.4.1.1"]},
+                "verdicts": [
+                    {
+                        "finding_id": finding_id,
+                        "verdict": "resolved",
+                        "reason": "修订内容已经满足原 finding 的证据边界与验证要求。",
+                        "evidence_refs": ["module-2.4-r1"],
+                    }
+                ],
+                "new_findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    auditor_skill = tmp_path / "Work/report-template-role-skills/auditor-2.4/SKILL.md"
+    auditor_skill.parent.mkdir(parents=True)
+    auditor_skill.write_text("auditor-skill: preserve the review envelope", encoding="utf-8")
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    execution = AgentExecutionService(bus, timeout=1)
+    loops: list[_ScriptedModuleAgentLoop] = []
+    events = InMemoryWorkflowEventSink()
+
+    def session_factory(runtime_id: str) -> _ScriptedModuleAgentLoop:
+        loop = _ScriptedModuleAgentLoop(
+            bus,
+            runtime_id,
+            result_ref,
+            reviewer_result_ref,
+            revision_result_ref,
+            recheck_result_ref,
+        )
+        loops.append(loop)
+        return loop
+
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=lambda _run_id: snapshot,
+        snapshot_content=lambda source, target: (target, "a" * 64, "blob"),
+        runtime_photo_ids=lambda _evidence, _photos: None,
+        module_runtime=_BoundaryModuleRuntime(execution, session_factory),
+        state_store=InMemoryWorkflowStateStore(),
+        events=events,
+    )
+    request = ReportRequest(
+        operation="module_report",
+        instruction="run only module 2.4",
+        target_modules=["2.4"],
+        missing_evidence_policy="draft",
+        preparation_mode="serial",
+    )
+
+    try:
+        completed = await runtime.execute(request, run_id)
+    finally:
+        await execution.close_workflow("public-reporting")
+        bus.shutdown()
+        await bus_task
+
+    state = runtime.state_store.load(run_id)
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert state.status is WorkflowStatus.COMPLETED
+    author_initial = next(
+        loop for loop in loops if "specialist-2.4" in loop.runtime_id
+    )
+    author_revision = next(
+        loop for loop in loops if loop.runtime_id.endswith(":module-2.4")
+    )
+    reviewer = next(loop for loop in loops if "evidence-auditor" in loop.runtime_id)
+    assert len(author_initial.received) == 1
+    assert len(author_revision.received) == 1
+    assert len(reviewer.received) == 2
+    assert author_revision.received[0].session_id == "public-reporting:module-2.4"
+    assert reviewer.received[0].session_id == reviewer.received[1].session_id
+    assert finding_id in author_revision.received[0].content
+    assert finding_id in reviewer.received[1].content
+    assert "module_revision_submission" in author_revision.received[0].content
+    assert '"kind": "module_review_input"' in reviewer.received[1].content
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/findings-r0.json").is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/modules/2.4-r1.json").is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/verdicts-r1.json").is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/completion-r1.json").is_file()
+    recheck_input = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/input-r1.json").read_text()
+    )
+    assert recheck_input["kind"] == "module_review_input"
+    assert recheck_input["phase"] == "recheck"
+    assert recheck_input["revision_diff"]["changed_submodule_narratives"] == ["2.4.1.1"]
+    # The compact recheck boundary only covers submodules assigned by pending
+    # findings.  Unassigned module content must not be pulled into the Auditor
+    # scope merely to produce a digest.
+    assert recheck_input["unchanged_submodule_sha256"] == {}
+    assert recheck_input["required_findings"][0]["id"] == finding_id
+    assert any(
+        event.kind == "action.completed"
+        and event.action_id == "invoke-current-module-revision"
+        for event in events.events
+    )
+    assert any(
+        event.kind == "action.completed"
+        and event.action_id == "invoke-current-module-recheck"
+        for event in events.events
+    )
+    assert state.outputs["result"]["module_submissions"]["2.4"].revision == 1
+
+
+def test_module_recheck_open_and_new_finding_routes_to_next_revision(
+    tmp_path: Path,
+) -> None:
+    """An unresolved prior or genuinely new finding cannot complete the lane."""
+
+    run_id = "run-module-recheck-open"
+    module = _module_submission().model_copy(
+        update={
+            "revision": 1,
+            "submodule_narratives": {
+                **_module_submission().submodule_narratives,
+                "2.4.1.1": "已完成一次定向修订，但仍需由同一审计员复核证据边界。",
+            },
+            "revision_responses": [
+                {
+                    "finding_id": "M-2.4-initial-r0-1",
+                    "action": "implemented",
+                    "summary": "已补充证据边界说明和对应的可复核验证步骤。",
+                    "changed_target_ids": ["2.4.1.1"],
+                }
+            ],
+        }
+    )
+    finding = ModuleReviewFinding(
+        id="M-2.4-initial-r0-1",
+        target_submodule_id="2.4.1.1",
+        category="evidence_boundary",
+        impact="blocking",
+        observation="当前正文仍没有完整说明证据边界，读者无法复核该结论。",
+        evidence_refs=["module-2.4-r0"],
+        required_change="补充可复核的证据边界说明并明确待核实限制。",
+        reviewer_checks=["复审确认正文明确说明证据边界和待核实限制。"],
+    )
+    new_finding = finding.model_copy(
+        update={
+            "id": "M-2.4-initial-r1-2",
+            "impact": "advisory",
+            "observation": "修订后新增一处行动闭环缺口，仍需要作者补充责任和验证方式。",
+            "required_change": "补充责任人、完成时序和可复核的行动验证方式。",
+        }
+    )
+    review_root = f"Work/runs/{run_id}/reviews/module/initial/2.4"
+    prepared = ModuleRecheckPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=review_root,
+        progress_ref=f"{review_root}/progress.json",
+        review_round=1,
+        scope=["2.4.1.1"],
+        current=module,
+        pending=[finding],
+        responses=list(module.revision_responses),
+        finding_refs=[f"{review_root}/findings-r0.json"],
+        last_reviewed_subject_ref=f"Work/runs/{run_id}/modules/2.4-r0.json",
+        subject_ref=f"Work/runs/{run_id}/modules/2.4-r1.json",
+    )
+    initial_prepared = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=review_root,
+        progress_ref=prepared.progress_ref,
+        review_round=0,
+        scope=["2.4.1.1"],
+        current=_module_submission(),
+        subject_ref=prepared.last_reviewed_subject_ref,
+    )
+    initial_acceptance = ModuleInitialReviewAcceptance(
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        reviewer_session_key="module-auditor-2.4",
+        subject_ref=prepared.last_reviewed_subject_ref or "",
+        current=_module_submission(),
+        findings=[finding],
+        finding_refs=prepared.finding_refs,
+        next_action="revise",
+        progress_ref=prepared.progress_ref,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="recheck_ready",
+        module=module,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=initial_prepared,
+            acceptance=initial_acceptance,
+        ),
+        recheck=DeclarativeModuleRecheckPreparation(prepared=prepared),
+    )
+    result = {
+        "status": "completed",
+        "submission": {
+            "kind": "module_review_verdict_submission",
+            "coverage": {"submodule_ids": ["2.4.1.1"]},
+            "verdicts": [
+                {
+                    "finding_id": finding.id,
+                    "verdict": "open",
+                    "reason": "原 finding 尚未完全满足 reviewer_checks，需要继续修订。",
+                    "evidence_refs": [],
+                }
+            ],
+            "new_findings": [new_finding.model_dump(mode="json")],
+        },
+    }
+
+    accepted = accept_current_module_recheck(
+        {"context": context, "result": result},
+        store=ReportingStore(tmp_path),
+    )
+
+    assert accepted.status == "reviewed"
+    assert accepted.review is not None
+    assert accepted.review.acceptance is not None
+    assert accepted.review.acceptance.next_action == "continue_existing"
+    assert {item.id for item in accepted.review.acceptance.findings} == {
+        finding.id,
+        new_finding.id,
+    }
+    assert module_review_needs_recheck(accepted) is False
+    assert module_review_needs_revision(accepted) is True
+    assert module_recheck_requires_agent(accepted) is False
+    assert not (
+        tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/completion-r1.json"
+    ).is_file()
+    progress = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json").read_text()
+    )
+    assert progress["next_action"] == "revise"
+    assert {item["id"] for item in progress["pending"]} == {
+        finding.id,
+        new_finding.id,
+    }
 
 
 def test_module_review_preflight_failure_routes_to_author_correction_gap() -> None:

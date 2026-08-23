@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ModuleRevisionSubmission,
     ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
+    DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.kernel.conversations import ConversationRecord
@@ -159,7 +161,10 @@ class ModuleAuthoringAgentBridge:
         return TypedAgentTurn.map_outcome(
             outcome,
             session_id=session.session_id,
-            decode_result=self._decode_result,
+            decode_result=lambda result_ref: self._decode_result(
+                result_ref,
+                output_contract=task.output_contract,
+            ),
         )
 
     def _prompt(
@@ -191,7 +196,22 @@ class ModuleAuthoringAgentBridge:
             json.loads(path.read_text(encoding="utf-8"))
         )
 
-    def _decode_result(self, result_ref: str) -> dict[str, Any]:
+    def _decode_result(
+        self,
+        result_ref: str,
+        *,
+        output_contract: str,
+    ) -> dict[str, Any]:
+        if output_contract == "declarative_module_revision_agent_result":
+            path = Path(result_ref)
+            path = path if path.is_absolute() else self.workspace / path
+            submission = ModuleRevisionSubmission.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            return DeclarativeModuleRevisionAgentResult(
+                status="completed",
+                submission=submission,
+            ).model_dump(mode="json")
         submission = self._read_submission(result_ref)
         return DeclarativeModuleAuthoringAgentResult(
             status="completed",
