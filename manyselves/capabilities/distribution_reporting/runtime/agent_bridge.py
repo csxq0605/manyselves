@@ -5,15 +5,18 @@ proved here: a typed input is rendered into one generic Agent turn, the
 ``AgentExecutionService`` owns a stable conversation session, and a typed
 ``AgentResultMessage`` is decoded back into the Capability output contract.
 
-Correction, continuation, no-progress, and completed-result reuse remain
-outside this bridge until their existing durable reporting implementations can
-be reused without copying their policy or persistence semantics.
+Completed-result reuse now uses the existing neutral recovery service when a
+Capability-owned loader supplies an already verified typed result.  Correction,
+continuation, and no-progress remain outside this bridge until their existing
+durable reporting implementations can be reused without copying their policy
+or persistence semantics.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +40,13 @@ from manyselves.runtime.agent_execution import (
     AgentTerminalSubscription,
     AgentTurnRequest,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[
+    [AgentDefinition, TaskDefinition, TemplateDistillationInput, ConversationRecord],
+    Any | Awaitable[Any] | None,
+]
 
 
 class TemplateDistillationAgentBridge:
@@ -56,11 +64,13 @@ class TemplateDistillationAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distill-template-skill",
+        completed_result_loader: CompletedResultLoader | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.completed_result_loader = completed_result_loader
 
     def _runtime_id(
         self,
@@ -84,6 +94,7 @@ class TemplateDistillationAgentBridge:
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
         )
 
     async def invoke_with_recovery(
@@ -96,20 +107,20 @@ class TemplateDistillationAgentBridge:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Keep the optional Kernel port shape while recovery is not migrated.
+        """Reuse a Capability-loaded completion, then run one typed turn.
 
-        The declared policy is intentionally not interpreted in this first
-        bridge slice.  Calling the same typed initial turn preserves the
-        Generic Host contract without inventing a second recovery algorithm.
+        Only the existing neutral ``completed_tool_result`` decision is
+        interpreted here.  Other recovery events still use the same initial
+        turn until their durable Capability-owned implementations are reused.
         """
 
-        del recovery_policy
         return await self._invoke_once(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=recovery_policy,
         )
 
     async def _invoke_once(
@@ -120,12 +131,52 @@ class TemplateDistillationAgentBridge:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         input_value = (
             value
             if isinstance(value, TemplateDistillationInput)
             else TemplateDistillationInput.model_validate(value)
         )
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader(
+                agent,
+                task,
+                input_value,
+                conversation,
+            )
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                submission = (
+                    persisted
+                    if isinstance(persisted, TemplateSkillSubmission)
+                    else TemplateSkillSubmission.model_validate(persisted)
+                )
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return self._completed_outcome(
+                        submission,
+                        conversation.external_session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return self._incomplete_outcome(
+                        directive.reason or "completed result recovery stopped",
+                        conversation.external_session_id,
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=AgentRecoveryDriver(recovery_policy),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or (
             f"{self.workflow_id}:{conversation.key.value}"
@@ -229,6 +280,28 @@ class TemplateDistillationAgentBridge:
             status="failed",
             session_id=session.session_id,
             error="Agent turn returned an unknown terminal",
+        )
+
+    @staticmethod
+    def _completed_outcome(
+        submission: TemplateSkillSubmission,
+        session_id: str | None,
+    ) -> AgentInvocationOutcome:
+        return AgentInvocationOutcome(
+            status="ok",
+            result=submission.model_dump(mode="json"),
+            session_id=session_id,
+        )
+
+    @staticmethod
+    def _incomplete_outcome(
+        error: str,
+        session_id: str | None,
+    ) -> AgentInvocationOutcome:
+        return AgentInvocationOutcome(
+            status="incomplete",
+            session_id=session_id,
+            error=error,
         )
 
     def _prompt(

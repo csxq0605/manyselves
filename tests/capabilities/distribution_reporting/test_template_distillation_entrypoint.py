@@ -306,6 +306,101 @@ async def test_template_distillation_bridge_uses_generic_agent_execution_service
     await bus_task
 
 
+@pytest.mark.asyncio
+async def test_template_distillation_bridge_reuses_completed_result_before_session(
+    tmp_path: Path,
+) -> None:
+    """A persisted completed result must bypass session creation and Provider work."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
+        TemplateDistillationAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        AgentDefinition,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+        TaskDefinition,
+    )
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    agent = AgentDefinition(
+        id="template-distiller",
+        version="1.0.0",
+        description="typed template distiller",
+        instructions="distill",
+        accepts=["template_distillation_input"],
+        produces=["template_skill_submission"],
+    )
+    task = TaskDefinition(
+        id="template-skill-distillation",
+        version="1.0.0",
+        description="distill task",
+        agent=agent.id,
+        objective="distill one template",
+        input_contract="template_distillation_input",
+        output_contract="template_skill_submission",
+    )
+    value = TemplateDistillationInput(
+        run_id="run-template-reuse",
+        template_ref="Work/runs/run-template-reuse/templates/template-for-skill.docx",
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(
+            agent_id=agent.id,
+            value="template-distillation",
+            mode="run",
+        ),
+        run_id=value.run_id,
+    )
+    service = AgentExecutionService(MessageBus())
+    loader_calls: list[str] = []
+
+    def load_completed(_agent, loaded_task, loaded_value, _conversation):
+        loader_calls.append(loaded_task.id)
+        assert loaded_value.run_id == value.run_id
+        return _submission()
+
+    bridge = TemplateDistillationAgentBridge(
+        tmp_path,
+        execution=service,
+        session_factory=lambda _runtime_id: (
+            (_ for _ in ()).throw(AssertionError("Provider session must not start"))
+        ),
+        completed_result_loader=load_completed,
+    )
+
+    outcome = await bridge.invoke_with_recovery(
+        agent,
+        task,
+        value,
+        conversation,
+        task_id="invoke-template-distiller",
+        recovery_policy=RecoveryPolicyDefinition(
+            id="completed-reuse",
+            version="1.0.0",
+            description="reuse persisted completed result",
+            rules={
+                "completed_tool_result": RecoveryRule(action="reuse_result"),
+            },
+        ),
+    )
+
+    assert outcome.status == "ok"
+    assert TemplateSkillSubmission.model_validate(outcome.result).kind == (
+        "template_skill_submission"
+    )
+    assert loader_calls == [task.id]
+    assert service.sessions == {}
+    assert conversation.external_session_id is None
+
+
 def _submission() -> TemplateSkillSubmission:
     description = (
         "将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法"
