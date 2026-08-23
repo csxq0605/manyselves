@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from manyselves.capabilities.distribution_reporting.runtime.cross_owner_composition import (
+    build_cross_owner_tool_implementations,
+    cross_owner_agent_invokers,
+)
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     build_delivery_tool_implementations,
 )
@@ -35,9 +39,15 @@ _CHAPTER_IDS = ("1", "3", "4")
 
 @dataclass(frozen=True)
 class ReportingTailComposition:
-    """Provide full-report tail definitions and migrated Tool bindings."""
+    """Provide full-report tail definitions and migrated Tool bindings.
+
+    ``cross_runtime`` is an internal Capability composition port.  The
+    definition specializations are always available; Cross actions are only
+    bound when their owning lifecycle runtime is supplied.
+    """
 
     workspace: Path
+    cross_runtime: Any | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", Path(self.workspace).resolve())
@@ -47,10 +57,11 @@ class ReportingTailComposition:
         return register_reporting_tail_workflow_specializations
 
     def tool_implementations(self) -> dict[str, Any]:
-        """Return the existing Final and Delivery Capability Tool bindings."""
+        """Return the Capability-owned tail Tool bindings."""
 
         store = ReportingStore(self.workspace)
         return {
+            **build_cross_owner_tool_implementations(self.cross_runtime),
             **build_final_chapter_tool_implementations(
                 workspace=self.workspace,
                 store=store,
@@ -60,6 +71,12 @@ class ReportingTailComposition:
                 store=store,
             ),
         }
+
+    @property
+    def agent_invokers(self) -> dict[str, Any]:
+        """Expose already-composed Cross invokers for Host construction."""
+
+        return dict(cross_owner_agent_invokers(self.cross_runtime))
 
 
 def register_reporting_tail_workflow_specializations(
