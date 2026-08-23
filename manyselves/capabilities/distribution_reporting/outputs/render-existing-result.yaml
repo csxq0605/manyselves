@@ -1,0 +1,6 @@
+id: render-existing-result
+version: 1.0.0
+description: Existing Markdown render result exposed by the generic Run projection
+output_type: value
+contract: render_existing_output
+label: Render existing result

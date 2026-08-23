@@ -14,6 +14,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     UserSupplement,
 )
+from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
+    RenderExistingWorkflowRuntime,
+)
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
 from manyselves.runtime.capability_binding import (
@@ -32,6 +35,7 @@ class DistributionReportingRuntimeBinding:
     def __init__(self, workspace: Path, reporting_adapter: Any) -> None:
         self.workspace = Path(workspace)
         self.reporting_adapter = reporting_adapter
+        self._render_runtime = RenderExistingWorkflowRuntime(self.workspace)
 
     async def start(
         self,
@@ -39,6 +43,8 @@ class DistributionReportingRuntimeBinding:
         workflow_id: str,
         values: Any,
     ) -> dict[str, Any]:
+        if workflow_id == "render-existing":
+            return await self._render_runtime.start(command_id, workflow_id, values)
         request = ReportRequest.model_validate(values)
         try:
             return self.reporting_adapter.start_declarative(command_id, request)
@@ -55,6 +61,13 @@ class DistributionReportingRuntimeBinding:
         input_id: str | None,
         values: Any,
     ) -> dict[str, Any]:
+        if run_id.startswith("render-existing-"):
+            return self._render_runtime.provide_input(
+                command_id,
+                run_id,
+                input_id=input_id,
+                values=values,
+            )
         try:
             runtime_state = self._runtime_state(run_id)
             if input_id is not None and runtime_state is not None:
@@ -98,6 +111,8 @@ class DistributionReportingRuntimeBinding:
             raise CapabilityRunStateError(str(exc)) from exc
 
     def get_run(self, run_id: str) -> dict[str, Any]:
+        if run_id.startswith("render-existing-"):
+            return self._render_runtime.get_run(run_id)
         snapshot = self._snapshot(run_id)
         current = snapshot.get("run", {})
         runtime_state = self._runtime_state(run_id)
@@ -129,6 +144,8 @@ class DistributionReportingRuntimeBinding:
         }
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
+        if run_id.startswith("render-existing-"):
+            return self._render_runtime.get_outputs(run_id)
         snapshot = self._snapshot(run_id)
         runtime_state = self._runtime_state(run_id)
         outputs: list[dict[str, Any]] = []
@@ -193,6 +210,8 @@ class DistributionReportingRuntimeBinding:
         }
 
     def get_cost(self, run_id: str) -> dict[str, Any]:
+        if run_id.startswith("render-existing-"):
+            return self._render_runtime.get_cost(run_id)
         self._snapshot(run_id)
         return {
             "run_id": run_id,

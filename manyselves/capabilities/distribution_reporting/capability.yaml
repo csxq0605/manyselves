@@ -12,4 +12,5 @@ interactions: ./interactions
 outputs: ./outputs
 entrypoints:
 - distribution-reporting
+- render-existing
 runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

@@ -1,0 +1,5 @@
+id: render_existing_output
+version: 1.0.0
+description: Deterministic render result for an existing Markdown artifact
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.rendering.contracts:RenderResult

@@ -1,0 +1,10 @@
+id: render-existing
+version: 1.0.0
+description: Render approved Markdown through the packaged deterministic DOCX core
+implementation: capability:distribution-reporting:render-existing
+input_contract: render_existing_context
+output_contract: render_existing_output
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false
