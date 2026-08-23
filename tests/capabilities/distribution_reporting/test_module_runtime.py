@@ -101,6 +101,8 @@ _CAPABILITY_AVAILABLE_METHODS = (
     "can_review_lane",
     "prepare_review_lane",
     "review_preflight_needs_revision",
+    "prepare_preflight_revision_lane",
+    "accept_preflight_revision_lane",
     "review_requires_agent",
     "accept_review_lane",
     "review_needs_revision",
@@ -201,8 +203,6 @@ def test_module_runtime_marks_unmigrated_lifecycle_ports_explicitly(
 
     assert available == list(_CAPABILITY_AVAILABLE_METHODS)
     assert missing == [
-        "prepare_preflight_revision_lane",
-        "accept_preflight_revision_lane",
         "resume_review_lane",
         "resume_recheck_lane",
         "prepare_main_exception_lane",

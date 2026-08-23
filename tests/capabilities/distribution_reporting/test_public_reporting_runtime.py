@@ -23,9 +23,15 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     AgentRunStatus,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
+    ModuleRevisionSubmission,
     ModuleSubmission,
+    RevisionResponse,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ValidationFailure,
+    ValidationReport,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
@@ -33,6 +39,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRecheckPreparation,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleReviewPreparation,
+    DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -43,6 +50,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleInitialReviewPreparation,
     ModuleRecheckPreparation,
     ModuleReviewPreflightProgress,
+    ModuleReviewProgress,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_cohort_tools import (
     complete_current_module_lane,
@@ -56,8 +64,12 @@ from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools im
     module_review_preflight_needs_revision,
     module_review_requires_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
+    advance_module_review_preflight_progress,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_recheck_tools import (
     accept_current_module_recheck,
+    prepare_current_module_recheck,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     _validate_findings,
@@ -1247,7 +1259,163 @@ def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     }
 
 
-def test_module_review_preflight_failure_routes_to_author_correction_gap() -> None:
+@pytest.mark.asyncio
+async def test_module_recheck_preflight_returns_typed_author_correction(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-module-recheck-preflight"
+    target = "2.4.1.1"
+    baseline = _module_submission()
+    finding = ModuleReviewFinding(
+        id="M-2.4-initial-r0-1",
+        target_submodule_id=target,
+        category="internal_consistency",
+        impact="blocking",
+        observation="目标小节仍包含不可交付的运行时控制标记。",
+        evidence_refs=["Work/runs/run-module-recheck-preflight/modules/2.4-r0.json"],
+        required_change="删除运行时控制标记并保留完整的业务正文。",
+        reviewer_checks=["复审确认正文不再包含运行时控制标记。"],
+    )
+    revised = baseline.model_copy(
+        deep=True,
+        update={
+            "revision": 1,
+            "submodule_narratives": {
+                **baseline.submodule_narratives,
+                target: "### 修订正文\n\n[[RECHECK_PREFLIGHT_A]]",
+            },
+            "revision_responses": [
+                RevisionResponse(
+                    finding_id=finding.id,
+                    action="implemented",
+                    summary="已提交本轮目标小节修订，等待机器预检与原 Auditor 复审。",
+                    changed_target_ids=[target],
+                )
+            ],
+        },
+    )
+    review_root = f"Work/runs/{run_id}/reviews/module/initial/2.4"
+    progress_ref = f"{review_root}/progress.json"
+    baseline_ref = f"Work/runs/{run_id}/modules/2.4-r0.json"
+    store = ReportingStore(tmp_path)
+    store.write_json(baseline_ref, baseline.model_dump(mode="json"))
+    store.write_json(
+        f"Work/runs/{run_id}/modules/2.4-r1.json",
+        revised.model_dump(mode="json"),
+    )
+    store.write_json(
+        progress_ref,
+        ModuleReviewProgress(
+            run_id=run_id,
+            module_id="2.4",
+            next_action="revise",
+            current=baseline,
+            pending=[finding],
+            finding_refs=[f"{review_root}/findings-r0.json"],
+            review_round=0,
+            phase="initial",
+            scope=[target],
+            reviewer_session_key="module-auditor-2.4",
+            last_reviewed_subject_ref=baseline_ref,
+            review_protocol_version=2,
+        ).model_dump(mode="json"),
+    )
+    initial_preparation = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=review_root,
+        progress_ref=progress_ref,
+        review_round=0,
+        scope=[target],
+        current=baseline,
+        subject_ref=baseline_ref,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="reviewed",
+        module=revised,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=initial_preparation,
+            acceptance=ModuleInitialReviewAcceptance(
+                run_id=run_id,
+                module_id="2.4",
+                lifecycle_id="initial",
+                reviewer_session_key="module-auditor-2.4",
+                subject_ref=baseline_ref,
+                current=baseline,
+                findings=[finding],
+                finding_refs=[f"{review_root}/findings-r0.json"],
+                next_action="revise",
+                progress_ref=progress_ref,
+            ),
+        ),
+    )
+
+    prepared = prepare_current_module_recheck(context, store=store)
+
+    assert prepared.status == "preflight_revision_pending"
+    assert prepared.recheck is not None
+    assert prepared.recheck.prepared.mode == "preflight_revision"
+    assert prepared.recheck.prepared.envelope is None
+    assert prepared.recheck.prepared.validation_target_submodule_ids == [target]
+    assert prepared.recheck.prepared.preflight_progress is not None
+    assert prepared.recheck.prepared.preflight_progress.attempts == 1
+
+    runtime = CapabilityModuleRuntime(
+        tmp_path,
+        store=store,
+        agent_execution=object(),
+        agent_session_factory=object(),
+        agent_invokers={},
+    )
+    revision_ready = await runtime.prepare_preflight_revision_lane(prepared)
+    accepted = runtime.accept_preflight_revision_lane(
+        {
+            "context": revision_ready,
+            "result": DeclarativeModuleRevisionAgentResult(
+                status="completed",
+                submission=ModuleRevisionSubmission(
+                    module_id="2.4",
+                    base_revision=1,
+                    revision=2,
+                    submodule_narratives={
+                        target: "### 再次修订正文\n\n已删除运行时控制标记并保留业务内容。"
+                    },
+                    source_ids=[],
+                    revision_responses=[
+                        RevisionResponse(
+                            finding_id=finding.id,
+                            action="implemented",
+                            summary="已删除控制标记并保留可交付的完整业务正文。",
+                            changed_target_ids=[target],
+                        )
+                    ],
+                ),
+            ),
+        }
+    )
+
+    assert accepted.status == "recheck_pending"
+    assert accepted.module is not None
+    assert accepted.module.revision == 2
+    restored_progress = json.loads((tmp_path / progress_ref).read_text())
+    assert restored_progress["next_action"] == "review"
+    assert restored_progress["phase"] == "recheck"
+    assert restored_progress["review_round"] == 1
+
+
+@pytest.mark.asyncio
+async def test_module_review_preflight_failure_routes_to_author_correction(
+    tmp_path: Path,
+) -> None:
     module = _module_submission()
     prepared = ModuleInitialReviewPreparation(
         mode="preflight_revision",
@@ -1259,10 +1427,10 @@ def test_module_review_preflight_failure_routes_to_author_correction_gap() -> No
         review_root="Work/runs/run-preflight-failure/reviews/module/initial/2.4",
         progress_ref="Work/runs/run-preflight-failure/reviews/module/initial/2.4/progress.json",
         review_round=0,
-        scope=["2.4.1"],
+        scope=["2.4.1.1"],
         current=module,
         validation_ref="Work/runs/run-preflight-failure/reviews/module/initial/2.4/preflight.json",
-        validation_target_submodule_ids=["2.4.1"],
+        validation_target_submodule_ids=["2.4.1.1"],
         preflight_progress=ModuleReviewPreflightProgress(current=module, attempts=1),
     )
     context = DeclarativeModuleRuntimeLaneContext(
@@ -1278,8 +1446,106 @@ def test_module_review_preflight_failure_routes_to_author_correction_gap() -> No
         module=module,
     )
 
+    validation_ref = prepared.validation_ref
+    assert validation_ref is not None
+    subject_ref = f"Work/runs/{prepared.run_id}/modules/2.4-r0.json"
+    store = ReportingStore(tmp_path)
+    store.write_json(
+        validation_ref,
+        ValidationReport(
+            validation_protocol_version=2,
+            run_id=prepared.run_id,
+            subject_ref=subject_ref,
+            subject_revision=0,
+            validator="module-structure-v2",
+            check_ids=["required-section"],
+            failures=[
+                ValidationFailure(
+                    check_id="required-section",
+                    target_path="submodule_narratives.2.4.1.1",
+                    message="required section is incomplete",
+                )
+            ],
+            passed=False,
+        ).model_dump(mode="json"),
+    )
+    runtime = CapabilityModuleRuntime(
+        tmp_path,
+        store=store,
+        agent_execution=object(),
+        agent_session_factory=object(),
+        agent_invokers={},
+    )
+
     assert module_review_preflight_needs_revision(context) is True
     assert module_review_requires_agent(context) is False
+
+    revision_ready = await runtime.prepare_preflight_revision_lane(context)
+
+    assert revision_ready.status == "preflight_revision_ready"
+    assert revision_ready.revision is not None
+    assert (
+        revision_ready.revision.prepared.revision_input.validation_report_ref
+        == validation_ref
+    )
+    assert revision_ready.revision.prepared.target_submodule_ids == ["2.4.1.1"]
+    revised = runtime.accept_preflight_revision_lane(
+        {
+            "context": revision_ready,
+            "result": DeclarativeModuleRevisionAgentResult(
+                status="completed",
+                submission=ModuleRevisionSubmission(
+                    module_id="2.4",
+                    base_revision=0,
+                    revision=1,
+                    submodule_narratives={"2.4.1.1": "修复后的完整模块内容。"},
+                    source_ids=[],
+                ),
+            ),
+        }
+    )
+
+    assert revised.status == "authored"
+    assert revised.module is not None
+    assert revised.module.revision == 1
+    progress = json.loads((tmp_path / prepared.progress_ref).read_text())
+    assert progress["next_action"] == "review"
+    assert progress["current"]["revision"] == 1
+
+
+def test_module_preflight_preserves_repeated_failure_stop() -> None:
+    module = _module_submission()
+    failure = ValidationFailure(
+        check_id="required-section",
+        target_path="submodule_narratives.2.4.1.1",
+        message="required section is incomplete",
+    )
+    report = ValidationReport(
+        validation_protocol_version=2,
+        run_id="run-preflight-repeat",
+        subject_ref="Work/runs/run-preflight-repeat/modules/2.4-r1.json",
+        subject_revision=1,
+        validator="module-structure-v2",
+        check_ids=[failure.check_id],
+        failures=[failure],
+        passed=False,
+    )
+    signature = ((failure.check_id, failure.target_path, failure.message),)
+
+    with pytest.raises(ValueError, match="failed repeatedly"):
+        advance_module_review_preflight_progress(
+            current=module.model_copy(update={"revision": 1}),
+            report=report,
+            previous=ModuleReviewPreflightProgress(
+                current=module,
+                attempts=1,
+                failure_signatures=[signature],
+            ),
+            validation_ref=(
+                "Work/runs/run-preflight-repeat/reviews/module/initial/2.4/"
+                "preflight-subject-r1-review-r0.json"
+            ),
+        )
 
 
 def test_initial_review_finding_persists_and_routes_to_revision_gap(

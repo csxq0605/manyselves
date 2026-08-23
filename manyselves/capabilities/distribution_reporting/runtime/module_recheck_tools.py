@@ -30,7 +30,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleInitialReviewAcceptance,
     ModuleRecheckAcceptance,
     ModuleRecheckPreparation,
+    ModuleReviewPreflightProgress,
     ModuleReviewProgress,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
+    advance_module_review_preflight_progress,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     _write_immutable_json,
@@ -103,7 +107,11 @@ def prepare_current_module_recheck(
     if not baseline_path.is_file():
         raise ValueError(f"module recheck baseline is missing: {baseline_ref}")
     baseline = type(current).model_validate_json(baseline_path.read_text(encoding="utf-8"))
-    review_round = progress.review_round + 1
+    review_round = (
+        progress.review_round
+        if progress.next_action == "review" and progress.phase == "recheck"
+        else progress.review_round + 1
+    )
     review_root = f"Work/runs/{run_id}/reviews/module/initial/{context.module_id}"
     subject_ref = f"Work/runs/{run_id}/modules/{context.module_id}-r{current.revision}.json"
     if not (store.workspace / subject_ref).is_file():
@@ -131,8 +139,66 @@ def prepare_current_module_recheck(
         f"{review_root}/preflight-subject-r{current.revision}-review-r{review_round}.json"
     )
     store.write_json(preflight_ref, preflight.report.model_dump(mode="json"))
+    previous_preflight_progress = (
+        context.recheck.prepared.preflight_progress
+        if context.recheck is not None
+        else None
+    )
+    current_preflight_progress = (
+        ModuleReviewPreflightProgress(current=current)
+        if previous_preflight_progress is None
+        else previous_preflight_progress.model_copy(update={"current": current})
+    )
     if not preflight.report.passed:
-        raise ValueError(f"module recheck preflight failed: {preflight_ref}")
+        current_preflight_progress = advance_module_review_preflight_progress(
+            current=current,
+            report=preflight.report,
+            previous=previous_preflight_progress,
+            validation_ref=preflight_ref,
+        )
+        reviewer_session_key = (
+            progress.reviewer_session_key
+            or f"module-auditor-{context.module_id}"
+        )
+        prepared = ModuleRecheckPreparation(
+            mode="preflight_revision",
+            run_id=run_id,
+            module_id=context.module_id,
+            lifecycle_id="initial",
+            workflow_id=context.workflow_id,
+            reviewer_session_key=reviewer_session_key,
+            review_root=review_root,
+            progress_ref=progress_ref,
+            review_round=review_round,
+            scope=sorted(scope),
+            current=current,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=list(progress.resolved_ids),
+            last_reviewed_subject_ref=baseline_ref,
+            subject_ref=subject_ref,
+            progress=progress,
+            validation_ref=preflight_ref,
+            validation_target_submodule_ids=sorted(
+                preflight.target_submodule_ids
+            ),
+            preflight_progress=current_preflight_progress,
+        )
+        review = context.review
+        if review is None:
+            raise ValueError(
+                "module recheck requires the existing module review identity"
+            )
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "preflight_revision_pending",
+                "recheck": DeclarativeModuleRecheckPreparation(prepared=prepared),
+                "error": None,
+            },
+        )
     review_input = ModuleReviewInput(
         phase="recheck",
         run_id=run_id,
@@ -207,6 +273,7 @@ def prepare_current_module_recheck(
         review_input=review_input,
         envelope=envelope,
         progress=progress,
+        preflight_progress=current_preflight_progress,
     )
     _save_progress(
         store,

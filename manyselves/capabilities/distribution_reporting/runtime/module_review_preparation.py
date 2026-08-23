@@ -42,6 +42,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleLocalRegressionContext,
     ModuleReviewPreflightProgress,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
+    advance_module_review_preflight_progress,
+)
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
 )
@@ -425,8 +428,23 @@ def prepare_current_module_review(
     )
     store.write_json(preflight_ref, preflight.report.model_dump(mode="json"))
     reviewer_session_key = f"module-auditor-{module_id}"
-    preflight_progress = ModuleReviewPreflightProgress(current=module)
+    previous_preflight_progress = (
+        context.review.prepared.preflight_progress
+        if context.review is not None
+        else None
+    )
+    preflight_progress = (
+        ModuleReviewPreflightProgress(current=module)
+        if previous_preflight_progress is None
+        else previous_preflight_progress.model_copy(update={"current": module})
+    )
     if not preflight.report.passed:
+        preflight_progress = advance_module_review_preflight_progress(
+            current=module,
+            report=preflight.report,
+            previous=previous_preflight_progress,
+            validation_ref=preflight_ref,
+        )
         prepared = ModuleInitialReviewPreparation(
             mode="preflight_revision",
             run_id=run_id,
@@ -443,23 +461,7 @@ def prepare_current_module_review(
             subject_ref=subject_ref,
             validation_ref=preflight_ref,
             validation_target_submodule_ids=sorted(preflight.target_submodule_ids),
-            preflight_progress=preflight_progress.model_copy(
-                update={
-                    "attempts": 1,
-                    "failure_signatures": [
-                        tuple(
-                            sorted(
-                                (
-                                    failure.check_id,
-                                    failure.target_path,
-                                    failure.message,
-                                )
-                                for failure in preflight.report.failures
-                            )
-                        )
-                    ],
-                }
-            ),
+            preflight_progress=preflight_progress,
         )
     else:
         knowledge_ref, knowledge_context = _review_knowledge(

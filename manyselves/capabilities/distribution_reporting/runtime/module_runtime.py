@@ -37,6 +37,10 @@ from .module_lane_tools import (
     module_review_requires_agent,
     prepare_current_module_author_exception,
 )
+from .module_preflight_revision import (
+    accept_current_module_preflight_revision,
+    prepare_current_module_preflight_revision,
+)
 from .module_recheck_tools import (
     accept_current_module_recheck,
     prepare_current_module_recheck,
@@ -200,6 +204,14 @@ class CapabilityModuleRuntime:
             store=store,
         )
         self.review_preflight_needs_revision = module_review_preflight_needs_revision
+        self.prepare_preflight_revision_lane = partial(
+            prepare_current_module_preflight_revision,
+            store=store,
+        )
+        self.accept_preflight_revision_lane = partial(
+            accept_current_module_preflight_revision,
+            store=store,
+        )
         self.review_requires_agent = module_review_requires_agent
         self.accept_review_lane = partial(
             accept_current_module_review,
