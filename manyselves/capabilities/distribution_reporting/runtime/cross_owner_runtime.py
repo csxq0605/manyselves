@@ -18,7 +18,7 @@ import json
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.domain.cross_specialization import (
     cross_lane_specialization,
@@ -49,11 +49,28 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ReviewCompletionRecord,
     module_content_view,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRevisionAgentResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    UserSupplement,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     CrossOwnerInitialReviewAcceptance,
     CrossOwnerInitialReviewPreparation,
+    CrossOwnerRevisionAcceptance,
+    CrossOwnerRevisionPreparation,
+    ModuleRevisionPreparation,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    accept_module_revision,
+    load_module_revision_candidate,
+    prepare_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
+    request_user_supplements,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -86,6 +103,15 @@ def _state_from(value: Any) -> dict[str, Any]:
             return deepcopy(dict(value["reporting_state"]))
         return deepcopy(dict(value))
     raise TypeError("Cross owner runtime requires a state object")
+
+
+def _state_user_supplements(state: Mapping[str, Any]) -> list[UserSupplement]:
+    return [
+        item
+        if isinstance(item, UserSupplement)
+        else UserSupplement.model_validate(item)
+        for item in request_user_supplements(state.get("request"))
+    ]
 
 
 def _module_submissions(state: Mapping[str, Any]) -> dict[str, ModuleSubmission]:
@@ -457,6 +483,14 @@ class CrossOwnerRuntime:
         input_ref = str(state["cross_owner_input_refs"][owner_module_id])
         workflow_id = str(state.get("workflow_id") or self.workflow_id)
         session_key = f"cross-owner-{owner_module_id}"
+        user_supplements = _state_user_supplements(state)
+        completion_refs = state.get("module_review_completion_refs")
+        prior_completion_ref = (
+            str(completion_refs[owner_module_id])
+            if isinstance(completion_refs, Mapping)
+            and owner_module_id in completion_refs
+            else None
+        )
         result_ref = (
             f"Work/runs/{contract.run_id}/reviews/"
             f"cross-owner-findings-r{review_round}-{owner_module_id}.json"
@@ -479,6 +513,8 @@ class CrossOwnerRuntime:
                 reviewer_session_key=session_key,
                 owner_input_ref=input_ref,
                 owner_input=contract,
+                user_supplements=user_supplements,
+                prior_module_review_completion_ref=prior_completion_ref,
                 existing_result_ref=result_ref,
                 existing_result=existing,
             )
@@ -488,6 +524,8 @@ class CrossOwnerRuntime:
                 owner_module_id=owner_module_id,
                 reviewer_session_key=session_key,
                 owner_input_ref=input_ref,
+                user_supplements=user_supplements,
+                prior_module_review_completion_ref=prior_completion_ref,
                 result_ref=result_ref,
                 result=existing,
             )
@@ -513,6 +551,8 @@ class CrossOwnerRuntime:
             reviewer_session_key=session_key,
             owner_input_ref=input_ref,
             owner_input=contract,
+            user_supplements=user_supplements,
+            prior_module_review_completion_ref=prior_completion_ref,
             envelope=envelope,
         )
         return DeclarativeCrossOwnerRuntimeContext(
@@ -567,6 +607,10 @@ class CrossOwnerRuntime:
             owner_module_id=preparation.owner_module_id,
             reviewer_session_key=preparation.reviewer_session_key,
             owner_input_ref=preparation.owner_input_ref,
+            user_supplements=preparation.user_supplements,
+            prior_module_review_completion_ref=(
+                preparation.prior_module_review_completion_ref
+            ),
             result_ref=result_ref,
             result=submission,
         )
@@ -583,6 +627,186 @@ class CrossOwnerRuntime:
     def initial_has_findings(value: Any) -> bool:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
         return bool(context.acceptance and context.acceptance.result.findings)
+
+    async def prepare_revision(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare or reuse the original owner Author's bounded revision."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        acceptance = context.acceptance
+        initial_preparation = context.preparation
+        if acceptance is None or initial_preparation is None:
+            raise ValueError("Cross owner revision requires accepted initial findings")
+
+        if context.round_progress is not None:
+            progress = context.round_progress
+            findings = list(progress.pending)
+            current = progress.lane.module
+            reviewed_baseline = current
+            finding_refs = list(progress.finding_refs)
+            review_round = progress.next_review_round
+            owner_input_ref = progress.next_owner_input_ref
+            prior_completion_ref = progress.lane.local_review_ref
+        else:
+            findings = list(acceptance.result.findings)
+            owner_subject_path = self.workspace / initial_preparation.owner_input.owner_subject_ref
+            current = ModuleSubmission.model_validate_json(
+                owner_subject_path.read_text(encoding="utf-8")
+            )
+            reviewed_baseline = current
+            finding_refs = [acceptance.result_ref]
+            review_round = initial_preparation.review_round + 1
+            owner_input_ref = acceptance.owner_input_ref
+            prior_completion_ref = acceptance.prior_module_review_completion_ref
+        if not findings:
+            raise ValueError("Cross owner revision requires at least one pending finding")
+
+        existing = load_module_revision_candidate(
+            workspace=self.workspace,
+            run_id=acceptance.run_id,
+            module_id=context.owner_module_id,
+            current=current,
+            findings=findings,
+        )
+        if existing is not None:
+            candidate, candidate_ref = existing
+            preparation = CrossOwnerRevisionPreparation(
+                mode="continue_existing",
+                run_id=acceptance.run_id,
+                workflow_id=acceptance.workflow_id,
+                owner_module_id=context.owner_module_id,
+                review_round=review_round,
+                owner_input_ref=owner_input_ref,
+                current=current,
+                reviewed_baseline=reviewed_baseline,
+                findings=findings,
+                finding_refs=finding_refs,
+                user_supplements=acceptance.user_supplements,
+                prior_completion_ref=prior_completion_ref,
+                existing_candidate=candidate,
+                existing_candidate_ref=candidate_ref,
+            )
+            revision_acceptance = CrossOwnerRevisionAcceptance(
+                run_id=preparation.run_id,
+                workflow_id=preparation.workflow_id,
+                owner_module_id=preparation.owner_module_id,
+                review_round=preparation.review_round,
+                owner_input_ref=preparation.owner_input_ref,
+                current=reviewed_baseline,
+                findings=findings,
+                finding_refs=finding_refs,
+                user_supplements=acceptance.user_supplements,
+                prior_completion_ref=preparation.prior_completion_ref,
+                revised=candidate,
+                candidate_ref=candidate_ref,
+            )
+            return context.model_copy(
+                update={
+                    "status": "revision_resumed",
+                    "revision_preparation": preparation,
+                    "revision_acceptance": revision_acceptance,
+                    "error": None,
+                }
+            )
+
+        prepared = await prepare_module_revision(
+            workspace=self.workspace,
+            store=self.store,
+            state={"run_id": acceptance.run_id},
+            workflow_id=acceptance.workflow_id,
+            subject=current,
+            cross_findings=findings,
+            user_supplements=acceptance.user_supplements,
+        )
+        preparation = CrossOwnerRevisionPreparation(
+            mode="invoke_agent",
+            run_id=acceptance.run_id,
+            workflow_id=acceptance.workflow_id,
+            owner_module_id=context.owner_module_id,
+            review_round=review_round,
+            owner_input_ref=owner_input_ref,
+            current=current,
+            reviewed_baseline=reviewed_baseline,
+            findings=findings,
+            finding_refs=finding_refs,
+            user_supplements=acceptance.user_supplements,
+            prior_completion_ref=prior_completion_ref,
+            prepared=prepared,
+        )
+        return context.model_copy(
+            update={
+                "status": "revision_ready",
+                "revision_preparation": preparation,
+                "revision_acceptance": None,
+                "error": None,
+            }
+        )
+
+    @staticmethod
+    def revision_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.revision_preparation
+        return bool(
+            context.status == "revision_ready"
+            and preparation is not None
+            and preparation.mode == "invoke_agent"
+        )
+
+    def accept_revision(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept one typed Author revision or its same-run candidate."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross owner revision acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.revision_preparation
+        if preparation is None:
+            raise ValueError("Cross owner revision acceptance has no preparation")
+        if preparation.mode == "continue_existing":
+            if (
+                preparation.existing_candidate is None
+                or preparation.existing_candidate_ref is None
+            ):
+                raise ValueError("Cross owner revision continuation has no candidate")
+            revised = preparation.existing_candidate
+            candidate_ref = preparation.existing_candidate_ref
+        else:
+            result = _model(value.get("result"), DeclarativeModuleRevisionAgentResult)
+            if result.status != "completed" or result.submission is None:
+                return context.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": result.error or "Cross owner revision Agent failed",
+                    }
+                )
+            revised, candidate_ref = accept_module_revision(
+                workspace=self.workspace,
+                store=self.store,
+                preparation=cast(ModuleRevisionPreparation, preparation.prepared),
+                result=result.submission,
+            )
+        revision_acceptance = CrossOwnerRevisionAcceptance(
+            run_id=preparation.run_id,
+            workflow_id=preparation.workflow_id,
+            owner_module_id=preparation.owner_module_id,
+            review_round=preparation.review_round,
+            owner_input_ref=preparation.owner_input_ref,
+            current=preparation.reviewed_baseline or preparation.current,
+            findings=preparation.findings,
+            finding_refs=preparation.finding_refs,
+            user_supplements=preparation.user_supplements,
+            prior_completion_ref=preparation.prior_completion_ref,
+            revised=revised,
+            candidate_ref=candidate_ref,
+        )
+        return context.model_copy(
+            update={
+                "status": "revision_accepted",
+                "revision_acceptance": revision_acceptance,
+                "error": None,
+            }
+        )
 
     def complete_owner_without_findings(
         self,

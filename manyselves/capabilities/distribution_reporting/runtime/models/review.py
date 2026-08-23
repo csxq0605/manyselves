@@ -28,6 +28,7 @@ from .inputs import (
     ModuleRevisionInput,
     ReviewCompletionRecord,
 )
+from .reporting import UserSupplement
 
 
 class ModuleReviewProgress(StrictModel):
@@ -259,6 +260,8 @@ class CrossOwnerInitialReviewPreparation(StrictModel):
     reviewer_session_key: str
     owner_input_ref: str
     owner_input: CrossOwnerInput
+    user_supplements: list[UserSupplement] = Field(default_factory=list)
+    prior_module_review_completion_ref: str | None = None
     envelope: TaskEnvelope | None = None
     existing_result_ref: str | None = None
     existing_result: CrossOwnerFindingSubmission | None = None
@@ -272,6 +275,8 @@ class CrossOwnerInitialReviewAcceptance(StrictModel):
     owner_module_id: str
     reviewer_session_key: str
     owner_input_ref: str
+    user_supplements: list[UserSupplement] = Field(default_factory=list)
+    prior_module_review_completion_ref: str | None = None
     result_ref: str
     result: CrossOwnerFindingSubmission
     next_action: Literal["continue_existing"] = "continue_existing"
@@ -290,6 +295,7 @@ class CrossOwnerRevisionPreparation(StrictModel):
     reviewed_baseline: ModuleSubmission | None = None
     findings: list[CrossReviewFinding]
     finding_refs: list[str]
+    user_supplements: list[UserSupplement] = Field(default_factory=list)
     prior_completion_ref: str | None = None
     prepared: ModuleRevisionPreparation | None = None
     existing_candidate: ModuleSubmission | None = None
@@ -307,6 +313,7 @@ class CrossOwnerRevisionAcceptance(StrictModel):
     current: ModuleSubmission
     findings: list[CrossReviewFinding]
     finding_refs: list[str]
+    user_supplements: list[UserSupplement] = Field(default_factory=list)
     prior_completion_ref: str | None = None
     revised: ModuleSubmission
     candidate_ref: str

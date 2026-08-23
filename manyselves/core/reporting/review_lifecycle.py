@@ -90,6 +90,9 @@ from manyselves.capabilities.distribution_reporting.runtime.module_revision_tool
     apply_module_revision as capability_apply_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    load_module_revision_candidate as capability_load_module_revision_candidate,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
     prepare_module_revision as capability_prepare_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
@@ -4292,26 +4295,13 @@ def _load_cross_owner_revision_candidate(
 ) -> tuple[ModuleSubmission, str] | None:
     """Load the same persisted owner Author candidate used by the Legacy lane."""
 
-    modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
-    candidates: list[ModuleSubmission] = []
-    for path in modules_root.glob(f"{module_id}-r*.json"):
-        try:
-            candidate = ModuleSubmission.model_validate_json(path.read_text(encoding="utf-8"))
-            if candidate.revision <= current.revision:
-                continue
-            _validate_responses(
-                candidate.revision_responses,
-                {finding.id for finding in findings},
-                {target_id for finding in findings for target_id in finding.target_submodule_ids},
-            )
-            candidates.append(candidate)
-        except (OSError, ValueError):
-            continue
-    if not candidates:
-        return None
-    candidate = max(candidates, key=lambda item: item.revision)
-    candidate_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{candidate.revision}.json"
-    return candidate, candidate_ref
+    return capability_load_module_revision_candidate(
+        workspace=runner.service.workspace,
+        run_id=state["run_id"],
+        module_id=module_id,
+        current=current,
+        findings=findings,
+    )
 
 
 async def prepare_cross_owner_revision(

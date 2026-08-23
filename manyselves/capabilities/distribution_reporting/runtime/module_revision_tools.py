@@ -325,6 +325,49 @@ def _validate_responses(
         raise ValueError(f"module revision response targets are out of scope: {invalid_targets}")
 
 
+def load_module_revision_candidate(
+    *,
+    workspace: Path,
+    run_id: str,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: Iterable[CrossReviewFinding],
+) -> tuple[ModuleSubmission, str] | None:
+    """Load the existing same-run Author candidate without changing its rules."""
+
+    findings = list(findings)
+    required_finding_ids = {finding.id for finding in findings}
+    target_submodule_ids = {
+        target_id
+        for finding in findings
+        for target_id in finding.target_submodule_ids
+    }
+    modules_root = Path(workspace) / f"Work/runs/{run_id}/modules"
+    candidates: list[ModuleSubmission] = []
+    for path in modules_root.glob(f"{module_id}-r*.json"):
+        try:
+            candidate = ModuleSubmission.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if candidate.revision <= current.revision:
+                continue
+            _validate_responses(
+                candidate.revision_responses,
+                required_finding_ids,
+                target_submodule_ids,
+            )
+            candidates.append(candidate)
+        except (OSError, ValueError):
+            continue
+    if not candidates:
+        return None
+    candidate = max(candidates, key=lambda item: item.revision)
+    candidate_ref = (
+        f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
+    )
+    return candidate, candidate_ref
+
+
 def apply_module_revision(
     baseline: ModuleSubmission,
     patch: ModuleRevisionSubmission,
@@ -544,6 +587,7 @@ __all__ = [
     "accept_module_revision",
     "accept_current_module_revision",
     "apply_module_revision",
+    "load_module_revision_candidate",
     "prepare_module_revision",
     "prepare_current_module_revision",
 ]
