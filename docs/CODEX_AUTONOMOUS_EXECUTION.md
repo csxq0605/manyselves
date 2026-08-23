@@ -1,224 +1,203 @@
-# Codex 自主连续实施与最终真实测试
+# Codex 最终架构自主连续实施协议
 
-> 文档性质：Manyselves 运行时抽取项目的 Codex 总控协议
+> 目标：在长期实施分支中持续完成最终架构收敛，中途不设置人工验收断点，全部自动证据成立后只进行一次真实测试
 >
-> 目标：Codex 在一个长期实施分支中按主方案自动、顺序推进，不要求人工逐个派发工作包；四阶段迁移全部完成后才统一请求一次真实环境测试
->
-> 主方案：[`docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
+> 主方案：[`architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 
 ## 1. 执行模式
 
-本项目采用“四阶段自主连续实施 + 最终一次真实测试”，而不是“一次 Codex 任务只做一个工作包”。
+本项目采用一次总任务、`FA-00`～`FA-07` 连续实施、最终一次真实测试。
 
-Codex 接受一次总任务后，应：
+Codex 必须：
 
-1. 从 `WP-00` 开始读取主方案；
-2. 按依赖顺序推进后续工作包；
-3. 每个工作包或更小垂直切片独立提交；
-4. focused tests 和受影响测试通过后，自动进入下一工作包；
-5. 在同一个长期实施分支和同一个 Draft PR 中持续更新；
-6. 不设置中途人工验收断点，仅在真实阻塞或不可证明的兼容风险处停止；
-7. 四阶段和 `WP-00`～`WP-12` 全部完成后，才生成最终真实测试交接。
+1. 读取规范和唯一状态文件；
+2. 检查当前分支、提交、工作区和生产调用链；
+3. 从状态中的 `Current slice` 继续；
+4. Characterization First；
+5. 完成一个可验证纵切；
+6. 运行 focused/affected tests；
+7. 更新状态、聚焦提交并推送；
+8. 自动开始下一切片；
+9. 实时比较设计与实际并补救；
+10. 所有自动完成证据成立后才请求一次真实测试。
 
-工作包仍然是：
+工作包是依赖、测试、提交和回滚边界，不是用户重新派发任务的边界。
 
-- 设计和代码范围边界；
-- 测试边界；
-- 提交边界；
-- 回滚边界。
-
-工作包不再是每次都需要用户重新下达的任务边界。
-
-## 2. 分支和 PR 模型
-
-基线分支：
+## 2. 分支和 PR
 
 ```text
-agent/declarative-runtime-plan
+base: agent/declarative-runtime-plan
+head: agent/declarative-runtime-implementation
+PR: one long-lived Draft PR
 ```
 
-Codex 应创建或使用一个长期实施分支，例如：
+每个切片可以有一个或多个聚焦提交。不得为了永久保留双路径而使用 Feature Flag；代码回退依靠提交。不得未经明确要求合并 PR。
 
-```text
-agent/declarative-runtime-implementation
-```
+## 3. 唯一实施状态
 
-并创建一个以 `agent/declarative-runtime-plan` 为 base 的 Draft PR。
-
-执行期间：
-
-- 一个工作包可以有一个或多个聚焦提交；
-- 提交信息应包含工作包编号，例如 `WP-02: add minimal workflow compiler`；
-- 不为每个工作包重新创建 PR；
-- 不把多个工作包压成一个无法回滚的大提交；
-- 每个工作包或可验证垂直切片完成后必须推送提交；
-- 最终真实测试完成前，不得合并 PR、切换生产默认路径或删除 Legacy Reporting Runner。
-
-## 3. 唯一执行状态记录
-
-为了支持 Codex 上下文耗尽、任务中断或由新的 Codex 会话接续，实施分支只维护一份人工可读状态文件：
+只维护：
 
 ```text
 docs/implementation/RUNTIME_EXTRACTION_STATUS.md
 ```
 
-该文件不是运行时 Manifest，也不复制 Event Log。它只记录实施项目状态：
+它记录：
+
+- 当前分支和 HEAD；
+- Current FA work package / slice；
+- 已完成切片与提交；
+- 实际运行的测试；
+- 设计—实现差异；
+- 研究决定；
+- 阻塞；
+- 下一自动动作；
+- 最终真实测试状态。
+
+它不是 Runtime Manifest，不复制 Event Log 或每次 Action。
+
+## 4. 自主研究
+
+不确定时依次检查：
+
+1. 当前源码、定义、测试和 Run 产物；
+2. 官方 GitHub 源码和测试；
+3. 官方文档和设计说明；
+4. 隔离最小 POC。
+
+只采用官方一手技术资料。若结论不改变实现选择，更新当前差异即可；改变长期边界时记录 `docs/research/decisions/`。
+
+本轮不新增 Microsoft Agent Framework、LangGraph、Burr、Temporal、Restate 或其他生产编排依赖。官方研究用于校准 Loader/Compiler/Executor/State/Persistence 分层。
+
+## 5. FA 连续顺序
 
 ```text
-Current work package
-Last completed work package
-Current branch and latest commit
-Completed commits
-Tests actually run
-Open research decisions
-Current migration stage
-Final real-test status
-Known blockers
-Next automatic action
+FA-00  事实基线、规范和完成矩阵
+FA-01  生产架构边界 Characterization
+FA-02  通用 Agent/Conversation/Recovery Runtime
+FA-03  Distribution Reporting Domain Runtime 与 Legacy 解耦
+FA-04  通用 Capability Runtime Binding
+FA-05  物理归属收敛与旧流程删除
+FA-06  通用 FastAPI/React 产品表面
+FA-07  完成审计、构建和最终真实测试
 ```
 
-更新时机仅限：
+原 `WP-00`～`WP-12` 是基础抽取历史，不再是当前完成状态。旧流程兼容、Legacy 默认和双路径 A/B 不再是 FA 工作包的验收条件。
 
-- 完成一个工作包；
-- 完成一个迁移阶段；
-- 最终真实测试结果返回；
-- 出现真实阻塞；
-- Codex 需要结束当前会话并交给新会话接续。
+## 6. 每个切片执行循环
 
-不得为每个 Action、测试或代码修改再创建额外状态清单。
+### 6.1 勘察
 
-## 4. 自主推进规则
+先确认：
 
-Codex 在以下条件全部满足时必须自动继续，不询问用户：
+- 真实生产入口和构造链；
+- MRO、import、依赖注入和 Capability Binding；
+- 文件定义到 Compiler/Runtime 的真实连接；
+- State、Conversation、Recovery、Event、Output 所有者；
+- 受影响测试和持久化行为。
 
-- 当前工作包完成条件满足；
-- 聚焦测试和受影响测试通过；
-- 没有引入需要人工选择的新生产依赖；
-- 没有发现现有行为与计划不一致且无法由测试解决；
-- 当前事项可以用 Fake/Scripted Provider、离线项目夹具或自动化投影测试验证；
-- 下一工作包的依赖已满足。
+### 6.2 Characterization First
 
-Codex 不得因为以下原因停下询问：
+先让测试准确暴露当前缺口，再修改实现。测试应固定要保留的语义，而不是永久固定旧父类、旧 Facade 或旧导入路径。
 
-- 即将从一个工作包进入下一个工作包；
-- 需要创建常规测试或适配器；
-- 需要阅读更多当前仓库源码；
-- 可以通过官方源码、官方文档或最小 POC 自行解决的技术问题；
-- 非破坏性的实现细节存在多个合理选择，但主方案和测试足以决定。
+### 6.3 实现
 
-## 5. 自动研究规则
-
-实施中出现调研触发条件时，Codex应先自行调研，再决定是否继续。
-
-调研顺序：
-
-1. 当前仓库源码和测试；
-2. 官方 GitHub 源码与测试；
-3. 官方文档或设计说明；
-4. 隔离的最小 POC；
-5. 将影响实现选择的结论写入 `docs/research/decisions/`。
-
-如果调研后可以在不改变既定架构边界的情况下确定方案，Codex应继续实施，不等待人工确认。
-
-以下情况视为架构研究触发条件：
-
-- 需要新增 Microsoft Agent Framework、LangGraph、Burr、Temporal、Restate 或其他生产运行时依赖；
-- 两种方案会形成明显不同的长期公共接口；
-- 需要改变现有 Run、Conversation、Tool Result 或 Recovery 的兼容语义；
-- 需要放弃已写入主方案的关键不变量；
-- 官方来源和 POC 仍不能排除重大不确定性。
-
-本轮迁移不新增生产编排依赖。研究和 POC 可以继续，但必须保持隔离；实现优先使用当前依赖和内部轻量 Compiler/Executor。如果现有边界内确实无法继续，记录精确阻塞事实和所需来源后停止，不得凭记忆编造结论。
-
-## 6. 四阶段连续迁移
-
-本轮实施不设置中途人工验收断点。四阶段只作为依赖、提交和状态记录边界，完成后自动进入下一阶段：
-
-1. **Definition 阶段：** `WP-00`～`WP-01`，冻结基线并实现 Definition Models、Loader、Registry 和 Contract Adapter；
-2. **无状态 Kernel/Runtime 阶段：** `WP-02`～`WP-06`，实现 Workflow State、Compiler、Tool、Conversation、Agent Recovery 和声明式控制流；
-3. **Reporting 迁移阶段：** `WP-07`～`WP-10`，迁移单 Lane、模块 Cohort、Cross/Chief/Final/Delivery，并形成独立配电报告 Capability；
-4. **通用产品化与第二能力阶段：** `WP-11`～`WP-12`，完成通用 FastAPI/React 投影和第二个中立 Capability。
-
-每阶段必须：
-
-- 先 Characterization，再实现；
-- 只运行 focused tests 和受影响测试集合，除非用户明确要求全量回归；
-- 每个可验证切片独立提交、推送并更新 Draft PR；
-- 更新唯一状态文件后自动继续；
-- 不调用真实 Provider，不要求真实项目、浏览器或服务器人工验收。
-
-原先分散在各阶段的真实环境检查项合并为最终真实测试矩阵，不再阻断工作包依赖，也不再使用中途批准口令。
-
-## 7. 最终真实测试交接
-
-只有四阶段、`WP-00`～`WP-12`、自动行为等价验证和文档同步全部完成后，Codex 才停止并请求一次真实测试。交接必须包含：
+优先纵向贯通：
 
 ```text
-Branch
-Latest commit
-Draft PR
-Completed work packages and stages
-Changed architecture and compatibility adapters
-Focused/affected tests actually run
-Exact real Provider and project setup
-Exact CLI, UI, browser and server steps
-Legacy/declarative paired-run procedure
-Expected semantic, output, recovery and cost results
-Artifacts/logs to inspect
-Pass criteria
-Fail criteria
-Rollback steps
-Known limitations
+Definition → Compiler → Runtime Port → Capability implementation
+           → State/Event → Application projection → Test
 ```
 
-该最终真实测试统一覆盖原各人工门中的 Legacy 基线、中立 Runtime、单模块等价、完整报告 Shadow、通用 API/UI、第二 Capability、恢复、DOCX 和成本检查。Codex 不得提前要求用户执行其中任何一部分。
+不得只增加抽象类，也不得用新 Adapter 包住旧整流程后声称解耦。
 
-最终真实测试前保持 Legacy Reporting Runner 可用并维持当前默认路径；声明式路径必须完整实现且可显式选择。是否切换默认路径只在最终真实测试结果可用后处理，不阻断 `WP-11` 或 `WP-12` 的实现。
+### 6.4 验证
 
-## 8. 中断和恢复
+默认：
 
-如果由新的 Codex 会话接续，启动提示只需要求它：
-
-```text
-读取 AGENTS.md 和 docs/implementation/RUNTIME_EXTRACTION_STATUS.md，
-确认当前分支和最新提交，从 Current migration stage / Next automatic action 继续，
-不要重复已完成工作包，也不要创建中途人工验收断点。
+```bash
+uv run ruff check <changed-python-and-test-paths>
+uv run pytest -q <focused-and-affected-tests> --maxfail=3
 ```
 
-## 9. 真实失败与停止条件
+前端读取 `frontend/package.json`，运行 focused Vitest、定向 ESLint、TypeScript 或受影响 build。
 
-连续实施期间，Codex 仅在以下情况停止：
+除非用户明确要求，不运行全量测试回归。必须准确记录测试范围，不能由 focused tests 推导全仓库通过。
 
-- 自动测试失败且经过定位后无法在当前工作包内修复；
-- 新路径无法证明与现有行为兼容；
-- 需要删除既有恢复能力才能继续；
-- 发现旧 Run、输出合同或交付文件会不兼容；
-- Compiler 无法确定输入输出关系；
-- 新抽象泄漏具体领域概念；
-- 必要外部调研无法完成；
-- 必须执行破坏性仓库操作；
-- 在不新增生产编排依赖、不改变既定长期公共边界的前提下确实无法继续；
-- 当前方案本身存在需要用户重新决策的矛盾。
+### 6.5 状态和提交
 
-停止前必须：
+测试通过后：
 
-- 保存可复现测试或失败 POC；
-- 提交非破坏且已验证的部分；
-- 更新唯一状态文件；
-- 明确阻塞事实和下一步选项。
+- 更新差异矩阵和下一动作；
+- `git diff --check`；
+- 创建并推送聚焦提交；
+- 更新 Draft PR；
+- 自动继续。
 
-## 10. 完成定义
+## 7. 实时差异监控
 
-整个自主实施程序只有在以下条件全部满足时才完成：
+每个工作包开始和结束都核对：
 
-- 通用 Definition、Contract、Workflow Compiler 和 Action/Executor Runtime 已实现；
-- Agent、Tool、Conversation、Recovery、State 和 Event 已接入；
-- Kernel 不含配电报告领域概念；
-- 配电报告通过声明式 Capability 运行，并保持原有功能、接口、恢复和输出兼容；
-- 至少一个无配电报告角色和流程的新 Capability 运行成功；
-- FastAPI、React 和内部服务器部署封装完成；
-- 任务完成后成本可以展示；
-- 四阶段和 `WP-00`～`WP-12` 均有自动验证与聚焦提交记录；
-- 已生成唯一最终真实测试交接，且此前没有要求中途人工验收；
-- 最终真实测试前 Legacy 路径保持可用且仍为默认；
-- 文档、测试和实际代码状态一致。
+| 目标 | 必查证据 |
+| --- | --- |
+| Stateless Kernel | transition 调用链、领域 import/词汇扫描 |
+| Generic Compiler/Runtime | Definition→Plan→Host 生产接线 |
+| Capability-owned Python | 领域代码目录、Binding 和调用者 |
+| 无 Legacy 宿主 | Runner MRO、构造和 service selection |
+| Generic Application | route/facade 依赖和 Capability registry |
+| Generic React | Capability-ID 分支、Schema/WAITING/Output 投影 |
+| Recovery | Conversation/session/result reuse focused behavior |
+
+若实际偏离设计：立即写入状态，新增 Characterization，调整下一切片并修复。不得以旧真实 Run 或类已经存在掩盖未接线。
+
+## 8. 默认禁止的新机制
+
+默认禁止新增不必要的 Gate、判断门禁、Hash、CAS、锁和额外校验链。确实需要时，必须先向用户说明问题证据、现有机制不足、替代方案、影响和回退，获得明确同意后才能实现。
+
+不得为了删除 Legacy 而删除结构化纠正、Schema 原会话修正、Max Token、Tool Slice、No-progress、Tool Result 复用、Conversation/Session 复用或 Same-run 恢复。
+
+## 9. 停止条件
+
+中途不设人工验收门。只有以下真实情况才停止：
+
+- focused/affected 自动测试失败且在当前边界内无法修复；
+- 必须破坏真实项目、Run 或 Artifact 才能继续；
+- 必须新增生产编排依赖或决定尚未定义的长期公共接口；
+- 无法证明应保留的 Recovery/Conversation/Output 语义；
+- 官方来源与最小 POC 仍无法消解关键架构矛盾。
+
+普通调研、文件移动、测试改写和内部接口选择不构成停止理由。
+
+## 10. 最终真实测试
+
+只有 `FA-00`～`FA-07` 自动部分全部通过后才执行一次真实测试。交接必须只要求用户操作网页版 Demo，并包含：
+
+- 分支、提交、Draft PR；
+- 启动和登录；
+- Provider/Model 设置；
+- 中立 Capability 的输入、运行和输出；
+- Distribution Reporting 的真实项目和 Schema 表单；
+- 同一 Run 的 WAITING 恢复（若触发）；
+- 状态、Events、Outputs、Artifacts、Cost 的预期；
+- 通过/失败标准；
+- 失败时保留的 Run ID 和现场；
+- 回滚步骤。
+
+真实 Reporting 可能运行约半小时，不做持续长时间轮询。失败后不自动刷新重试或创建新 Run。
+
+## 11. 完成审计
+
+最终宣布完成前，逐项检查主方案第 15 节。每项必须有当前生产代码、测试、构建或真实运行证据；缺失或间接证据按未完成处理。
+
+历史 `report-declarative-*` 成功 Run 只证明当时的业务路径，不证明移除 Legacy 宿主后的最终架构。
+
+## 12. 接续
+
+新会话先运行：
+
+```bash
+git status -sb
+git branch --show-current
+git log -1 --oneline
+```
+
+随后完整读取 `AGENTS.md` 和本协议，从状态文件的 Current slice/Next automatic action 继续。不得重新把 Legacy 兼容设为目标，也不得在工作包间询问是否继续。

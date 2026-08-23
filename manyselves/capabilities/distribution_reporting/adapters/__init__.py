@@ -1,4 +1,4 @@
-"""Reporting-owned adapters behind the neutral Capability definitions."""
+"""Temporary Reporting compatibility adapters, loaded only when requested."""
 
 from pathlib import Path
 

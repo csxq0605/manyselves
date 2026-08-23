@@ -1,15 +1,18 @@
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
-    load_reporting_agents,
 )
 from manyselves.capabilities.distribution_reporting.adapters import (
     build_module_cohort_definition,
     build_module_lane_definitions,
     build_reporting_tail_definition,
+    load_reporting_agents,
 )
 from manyselves.core.reporting.config import (
     AgentDefinition as ReportingAgentDefinition,
@@ -26,6 +29,49 @@ from manyselves.kernel.contracts import ContractValidationError, build_contract_
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import EndWorkflowAction, WorkflowCompiler
+
+
+def test_importing_capability_package_loads_only_the_definition_entrypoint() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    "import manyselves.capabilities.distribution_reporting as capability",
+                    "print(json.dumps({",
+                    "    'exports': sorted(capability.__all__),",
+                    "    'reporting_modules': sorted(",
+                    "        name for name in sys.modules",
+                    "        if name.startswith('manyselves.core.reporting')",
+                    "    ),",
+                    "    'adapter_modules': sorted(",
+                    "        name for name in sys.modules",
+                    "        if name.startswith(",
+                    "            'manyselves.capabilities.distribution_reporting.adapters'",
+                    "        )",
+                    "    ),",
+                    "}))",
+                )
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload == {
+        "exports": [
+            "CAPABILITY_FILE",
+            "CAPABILITY_ROOT",
+            "load_distribution_reporting_capability",
+        ],
+        "reporting_modules": [],
+        "adapter_modules": [],
+    }
 
 
 def test_distribution_reporting_capability_loads_all_definition_indexes() -> None:

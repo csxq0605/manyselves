@@ -1,511 +1,181 @@
-# Runtime Extraction Implementation Status
+# Final Architecture Consolidation Status
 
-> This is the single handoff record for the long-running Codex implementation program.
+> Manyselves 最终定义驱动架构的唯一跨会话实施状态
 >
-> Runtime execution state, provider traces, and product logs do not belong in this file.
+> Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
+>
+> 状态：**重新开放，尚未完成**
 
 ## Program
 
 - Repository: `csxq0605/manyselves`
-- Plan base branch: `agent/declarative-runtime-plan`
+- Plan base: `agent/declarative-runtime-plan`
 - Implementation branch: `agent/declarative-runtime-implementation`
-- Draft PR: <https://github.com/csxq0605/manyselves/pull/3>, targeting `agent/declarative-runtime-plan`
-- Execution protocol: [`docs/CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
+- Draft PR: <https://github.com/csxq0605/manyselves/pull/3>
+- Governing architecture: [`../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
+- Execution protocol: [`../CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
-- Current work package: `WP-00 through WP-12 plus the reopened architecture reconciliation implemented`
-- Last completed vertical slice: the preserved real declarative Reporting Run completed Final Review and Delivery after Characterization-first fixes at Reporting-owned serialized-state and DOCX-rendering boundaries; the generic browser surface then projected its declared outputs, events, cost, and completed status without loading the internal Reporting state
-- Current branch: `agent/declarative-runtime-implementation`; completed real-test implementation commit `c29cbc3` is pushed to the Draft PR
-- Current migration stage: `all four implementation stages, the stateless Kernel, generic Workflow Compiler/Runtime Host, file-defined capability layer, Reporting adapter, and generic React surface are implemented. The real Provider/project/browser test passed on the preserved declarative Run. Legacy Reporting remains the default and no default-path switch is authorized.`
-- Final real-test status: `report-declarative-33ed40175b` is `completed` and delivered. It reused completed module/Cross/Chief/Final branches, retained original Conversation identities, completed the affected Final Chapter 4 branch, passed Final reduction/recheck and Delivery, and was reconciled through the existing same-Run completed-delivery path without another Provider call. The browser shows the sidebar, completed Run, 12 outputs, 2320 events, and 18,903,056 total tokens; pricing is explicitly `unconfigured`, so no monetary-cost claim is made. All 11 declared artifact paths exist, including the final DOCX, Markdown report, source index, delivery manifest, and completion records.`
-- Next action: leave the completed Run and browser available for optional user inspection. Do not create a new Run, replay completed stages, mutate the Kernel, add hash/CAS logic, or switch the Legacy default path.
+- Current FA work package: `FA-02 — 抽取通用 Agent/Conversation/Recovery Runtime`
+- Current slice: `在保持现有恢复语义的前提下，建立生产通用 AgentExecutionService，并让 InvokeAgent 不再依赖 Reporting Runner 私有入口`
+- Current branch at slice start: `agent/declarative-runtime-implementation`
+- HEAD at slice start: `f23bd8a Docs: record declarative real-run completion`
+- Program status: `in progress`
+- Final real-test status: `not started for the final architecture`
+- Blockers: `none known`
+- Next automatic action: `勘察 ReportingAgentRunner/AgentLoop 的通用与领域边界，先固定中立 Agent recovery Characterization，再执行 FA-02 第一个生产垂直切片`
 
-## Active real-test finding — Final Chief revision Task binding
+## Why the prior completion claim is reopened
 
-The preserved Run proves that the existing correction loop executed but could
-not succeed with its declared Tool surface. The dynamic Chief revision envelope
-correctly requested `write_result_part`, `list_result_parts`, and
-`submit_result`; `bind_declared_task` correctly treated the frozen file-defined
-Task as authoritative; the v1.0.0 Task snapshot incorrectly contained only
-`submit_result`. Provider-visible execution therefore exposed only
-`submit_result` plus the existing runtime `open_tool_result`, while correction
-instructions required an unavailable `write_result_part` call.
+原 `WP-00`～`WP-12` 和后续审计建立了真实可用的 Definition Loader/Registry、Workflow Compiler、ResolvedPlan、Stateless Kernel、WorkflowRuntimeHost、Capability definitions、Generic Run API/React，以及声明式 Reporting 的大量文件控制流。
 
-The package fix changes only
-`tasks/final-chief-chapter-revision.yaml`: version 1.0.1 declares the same three
-Tools already owned by the Chief role, dynamic envelope, contracts, and saved
-Run Tool-definition closure. Characterization first failed with the actual
-bound `['submit_result']`; after the definition fix, the focused Final cycle and
-definition selections pass (`5 passed`). No Kernel, Compiler, public interface,
-dependency, Gate, hash, CAS, lock, or validation chain changed.
+但是，历史“完成”结论采用了现在已经废止的兼容目标：
 
-The Run-frozen graph invariant remains authoritative: ordinary resume must not
-silently compile or substitute changed packaged definitions. The current code
-has no plan-definition migration entry. Preserving this same Run therefore
-requires one explicit, audited, Reporting-private migration that replaces only
-the `task:final-chief-chapter-revision` v1.0.0 snapshot with packaged v1.0.1,
-records `definition.migrated`, and is a no-op when already applied. The exact
-Task ID and source version checks prevent applying the migration to a different
-definition; they are compatibility targeting, not a business acceptance Gate.
-The user approved this exact migration. It is implemented as a private,
-single-purpose function, covered by target-only, state-preservation, event, wrong-version,
-and idempotency tests, and was applied once to the preserved Run. The saved Task snapshot
-is now v1.0.1; the WorkflowState and frozen graph were not replaced. A
-`definition.migrated` event records the v1.0.0-to-v1.0.1 change.
+- Legacy Reporting Runner 保持默认；
+- 声明式 Reporting Runner 可以继承旧 `ReportWorkflowRunner`；
+- 通用 Workflow Projection 可以把 ReportingFacade 作为 Capability Host；
+- `manyselves/core/reporting` 可以继续混合通用 Agent 机制、Reporting 领域逻辑和旧流程；
+- 旧 API/旧 Run/双路径行为等价被视为最终完成条件。
 
-## Active real-test finding — serialized Chapter 4 plan restoration
+用户已经明确：不需要继续以旧流程兼容为目标。最终项目必须形成一个 Stateless Kernel、一个 Generic Compiler/Runtime、Capability-owned Domain Runtime/Tools、文件定义系统和 Generic FastAPI/React。因此旧的兼容式真实 Run 成功不能证明新的最终架构完成。
 
-The first post-migration resume proved the corrected Tool binding: Final Chief Chapters
-1 and 3 used `write_result_part`, `list_result_parts`, and `submit_result` on their
-original Conversations and completed. Their completion artifacts remain reusable. The
-Chapter 4 branch failed before Agent invocation because
-`prepare_chief_revision()` restored `review.state` through `_set_current()` but then read
-the still-serialized mapping rather than `self.current_state`; `chapter_section_ids()`
-therefore received a `dict` instead of `SpecialTopicPlan`.
+## Confirmed implemented foundation
 
-Characterization first reproduced the exact
-`'dict' object has no attribute 'sections'` failure using a serialized Final Review
-context. The Reporting-private fix consistently uses the already restored runtime state
-in Chief preparation, Chapter 4 reduction, Final recheck preparation, and r1 artifact
-recovery. The focused test now covers prepare, deterministic Chapter 4 rendering, and
-recheck preparation from serialized state; the affected Final/recovery/migration
-selection passes (`8 passed`). No Kernel, Compiler, Definition field, public interface,
-dependency, Gate, hash, CAS, lock, retry limit, or validation chain changed. No Provider
-was called during this fix verification.
+以下基础已有生产代码和 focused/affected 测试证据，但仍需在后续拆分中保持：
 
-## Final real-test findings — Delivery state and DOCX preservation
-
-The same-Run continuation next exposed two later defects and both were repaired before
-continuing. First, Final completion and Delivery received serialized `evidence_items`
-and `photo_assets` mappings where the Reporting boundary expected typed models. Focused
-Characterization reproduced the exact `'dict' object has no attribute 'id'` failure.
-Only the Reporting-private Final Review and Delivery adapters now restore those existing
-models; the Kernel and public state shape remain unchanged.
-
-Second, Delivery rendered the final document but rejected quoted Markdown bullets such
-as `> - **[已发现事实]**` during semantic preservation comparison. Characterization
-proved that the renderer preserved the prose while the verifier normalized `>` but not
-the following list marker. The renderer-specific normalization now treats Markdown
-`-`, `*`, and `+` markers like the already supported presentation bullets. No content
-validation was removed and no retry, Gate, hash/CAS, dependency, or public interface was
-added. The same Run then completed Render, Publish, Delivery completion, and the parent
-workflow.
-
-## Final browser and generic-output acceptance
-
-The completed Run was opened through the React application at the project Workflow
-route, using the existing authenticated session. The browser proved the generic
-Capability/Workflow selection, Schema-driven form, restored sidebar, completed status,
-artifact list, event trace, and cost/token panel. The public Outputs projection returns
-the declared `distribution_reporting_output` value plus 11 artifact items rather than
-the internal Reporting runtime state. The Events badge retains the full count while the
-UI renders only the latest 100 rows, avoiding thousands of DOM nodes without changing
-persisted events or failure diagnosis.
-
-The completed nested Runtime snapshots retain outputs and Conversations while omitting
-only already-terminal internal branch payloads; WAITING and FAILED snapshots remain
-fully resumable and completed Parallel siblings are not replayed. This is Runtime Host
-persistence behavior, not Kernel business logic. The real Provider/project/browser
-test is therefore complete for the preserved Run; the user may inspect it, but no
-additional acceptance stop or new Run is required.
-
-## Final seven-point architecture closure
-
-The final 2026-08-22 live-code audit deliberately re-opened the completion
-claim and reproduced each previously suspected production gap. The current
-tree closes all seven without adding a production dependency, business Gate,
-hash, CAS, lock, or Reporting-specific Kernel Action:
-
-| Area | Final production closure |
-| --- | --- |
-| State ownership | `apply_action_result` deep-copies every Executor patch, and success, failure, nested completion, Parallel recovery, and Capability recovery all enter the stateless Kernel transition before becoming authoritative State. |
-| Frozen recovery graph | A Run persists the complete parent/child plan bundle and referenced definition snapshots. Deep Final retry receives that saved bundle and cannot silently compile changed packaged definitions. |
-| Recovery durability | Recovery attempts live in the existing bounded Conversation identity manifest. New and cached Agent sessions restore the same counters, so same-process redispatch and process restart obey the same declared `max_attempts`. |
-| Agent-visible Tools | Saved Tool implementations and execution metadata select the runtime Tool; saved input/output Contract definitions drive Provider-visible static schemas and execution validation. Task-dynamic `submit_result` and result-part schemas remain owned by their existing typed Task boundary. |
-| Scheduling and events | Direct unsafe Tools serialize inside a generic Parallel action, declared safe read-only branches keep their requested concurrency, and branch/Agent/Tool/contract/output lifecycle events are persisted and projected through the generic Run API. |
-| Outputs | The top-level Reporting workflow validates `distribution_reporting_output`; Delivery serializes artifacts at the declarative boundary, and the Capability adapter projects only that declared public result plus produced artifacts instead of the internal Reporting state. |
-| Product surface | React starts arbitrary JSON-Schema Workflows, resumes nested WAITING paths in the same Run, displays structured value/artifact outputs, runtime events, explicit pricing state, and project-isolated Runs without Capability-ID rendering branches. |
-
-Focused evidence on the affected surfaces includes the Runtime/Compiler/neutral
-Capability group (`59 passed`), the selected Reporting definition, recovery,
-saved-plan, Delivery, and stage-boundary group (`41 passed`), the Web/API
-projection group (`19 passed` across its focused selections), the frontend Run
-workspace/API selections (`10 passed`), and the final cached-session Recovery
-RED-to-GREEN selection (`3 passed`). These are intentionally affected tests,
-not a full repository regression. Existing macOS pytest temporary-directory
-cleanup warnings were observed; they were not product-test failures.
-
-The remaining old `SequentialWorkflowExecutor`, `ControlFlowWorkflowExecutor`,
-standalone Reporting-tail helper, and legacy Agent adapter are compatibility or
-test-only debt and are not wired into the production Host path. They are not
-used as evidence for this completion claim. Legacy Reporting remains the
-default; this closure does not authorize switching the default path.
-
-## Five-gap architecture reconciliation
-
-The 2026-08-22 audit reopened the previous completion claim and compared live
-production call paths with the target architecture. The five gaps and their
-implemented closures are:
-
-| Gap | Live-code finding | Closure |
+| Foundation | Current evidence | Completion meaning |
 | --- | --- | --- |
-| 1. Compiler and plan completeness | The saved plan contained IDs but not the full child graph or definition closure; reachable non-terminal paths and final-output contract drift were possible. | The Compiler now freezes the complete parent/child plan bundle and referenced definition snapshots per Run, rejects reachable non-terminal paths, checks Task/Agent contracts and Tool visibility, and the Host restores saved definitions/contracts rather than recompiling resumed work from changed files. |
-| 2. Definition-driven Tools | Workflow Tools used definitions, but Provider-visible Reporting Agent Tools still selected Python instances and scheduling metadata by hard-coded ID. | Declarative Reporting restores the Run-saved Tool definitions, resolves `capability:distribution-reporting:<implementation>`, applies model visibility, description, side-effect, parallel-safety and reuse metadata, while Legacy/no-plan execution keeps its compatibility assembly. |
-| 3. Definition-driven Agent Recovery | Recovery reached continuation/correction wrappers but Provider failures still bypassed the Controller and used only AgentLoop's fixed retry classification. | Every packaged Reporting Task supplies its Recovery policy; all production wrappers propagate it, Provider errors dispatch through the same Controller/RecoveryState, and `continue` can only preserve an already-legal retry while `stop`/`fail` can only narrow it. Existing Conversation, Session, correction, continuation, no-progress and completed-result behavior remains intact. |
-| 4. Generic input and WAITING UI | The workspace had a Reporting-ID display branch, hid WAITING input when a run was active, and reduced most real `ReportRequest` schemas to a raw JSON box. | Rendering is driven only by JSON Schema and `waitingInput`; primitive, enum, nullable, array, object/`$ref`, defaults, constraints, descriptions, typed submission, nested input IDs, and unknown-schema fallback are supported without Capability identity checks. |
-| 5. User-operable proof | The handoff mixed developer pytest, `curl`/`jq`, internal artifact inspection, Legacy/Declarative A/B, and the final user test. | Developer equivalence remains automated and focused. The final acceptance used the browser-only Workflow page and the preserved real Provider/project Reporting Run; its completed status, generic outputs, event trace, and token/pricing panel are verified. |
+| Definition files | Capability/Agent/Task/Tool/Contract/Workflow/Recovery 可从包加载 | 基础已实现，不证明领域实现已正确归属 |
+| Registry/Catalog | 两个 Capability 可发现 | 基础已实现，不证明 Application 已与 ReportingFacade 解耦 |
+| Compiler | 父子 Workflow、定义快照和完整 Plan 可冻结/恢复 | 核心基础已实现 |
+| Stateless Kernel | State/Event 转换和 Host 调度已存在 | Kernel 中立性仍需持续边界审计 |
+| Generic Runtime Host | Tool/Agent/Conversation/Subworkflow/Parallel/WAITING 可执行 | Agent/Recovery 生产实现仍部分借用 Reporting 代码 |
+| Reporting definitions | Module/Cross/Chief/Final/Delivery 大量流程已文件化 | 不等于声明式 Runner 已脱离 Legacy 父类 |
+| Neutral Capability | `parameter-adjustment` 通过同一 Compiler/Host | 证明 Kernel 可中立使用 |
+| Generic API/UI | Schema 表单、WAITING、Events、Outputs、Cost 已有通用投影 | 仍需移除 Application 的 Reporting host 耦合并重新审计 |
 
-No new production dependency, hash, CAS, lock, default-path switch, or
-Reporting-specific Kernel Action was introduced by this reconciliation.
+## Current design-to-production differences
 
-## Reopened architecture completion audit
+此表是当前实施的权威差异列表。每个切片完成后必须用实时源码更新。
 
-The 2026-08-21 live-code audit found that the previous completion record proved
-several useful vertical slices but did not prove the requested target
-architecture:
+| Final design requirement | Current production evidence at FA-00 start | Difference | Planned correction |
+| --- | --- | --- | --- |
+| Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
+| Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
+| Reporting Python 归 Capability 所有 | 大量领域模型、Agent runner、review/render/delivery 仍在 `manyselves/core/reporting` | 物理和语义归属混合 | FA-03/FA-05 分类迁移 |
+| Generic Agent/Recovery 不依赖 Reporting | 成熟 correction/continuation/session 逻辑仍集中在 Reporting runner/loops | 其他 Capability 无法直接获得同等能力 | FA-02 以通用端口提取，Reporting 提供领域 Prompt/结果绑定 |
+| 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
+| 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
+| 旧兼容代码不在发布图 | Sequential/ControlFlow old executor、legacy adapter、Reporting facade/runner 债务仍存在 | 无生产用途和旧产品入口尚未系统删除 | FA-05 按引用与行为测试删除 |
+| 文档直面最终形态 | 六份权威规范/状态已在 FA-00 改写为最终形态 | 当前无已知规范差异；后续持续与代码同步 | 每个切片更新本表 |
 
-- the selectable Reporting runner still subclasses `ReportWorkflowRunner`; its
-  production module entry is the packaged Cohort and each branch now declares
-  its lifecycle boundaries; initial authors now execute as file-declared Agents,
-  initial Auditors, the first finding-triggered Author correction, and its first
-  original-Auditor semantic recheck now execute as file-declared Agents, but
-  subsequent open/new-finding correction rounds now repeat those same declared
-  actions through an explicit exit loop and close through explicit owner
-  promotion; ordinary no-initial-finding completion is also file-declared, and
-  initial and recheck machine-preflight failures now invoke the original Author
-  through declared preparation, Conversation, Agent, acceptance, and retry
-  actions; module Main
-  exceptions drain through Join and execute as declared Agent, Interaction, and
-  typed routing actions; the remaining whole-Lane compatibility functions are
-  removed; invalid or incomplete persisted recheck state now fails explicitly
-  instead of replaying the whole Legacy review lifecycle;
-- the packaged detailed review Lane is file-owned and executable, and the
-  production module runtime Lane now decomposes authoring, machine preflight,
-  review, corrections, rechecks, exceptions, and completion;
-- the declarative Reporting Agent boundary now resolves its Capability-owned
-  Recovery policy and passes it into the current Agent runner. The generic
-  Controller drives current structured/schema and Tool-contract correction,
-  Max Token and Tool Slice continuation, No-progress stopping, ordinary-text
-  correction, and completed-result reuse without changing the Kernel vocabulary
-  or Legacy default path;
-- the production Cross Cohort, five owner branches, Join, failed-owner retry,
-  initial reviewer preparation/recovery, original owner Conversation, generic
-  Agent invocation, typed initial-result acceptance, first finding route,
-  original Author revision/recovery, typed revision acceptance, original module
-  Auditor local-regression preparation, Conversation, Agent invocation, typed
-  finding/completion acceptance, every repeated original-owner recheck, typed
-  round advancement, finding-path owner promotion, exceptional Author/reviewer
-  preparation, `main-agent` invocation, decision acceptance, and return/continue
-  routes and explicit user waits are file-owned; nested WAITING state, contract
-  projection, generic input submission, and same-Run resume are Runtime-owned;
-  no owner branch or Capability definition retains the obsolete whole-owner
-  continuation Tool; the initial Chief Chapter 1/3/(optional 4) Agent wave is
-  now a file-owned Cohort with static chapter Subworkflows, exact existing
-  Conversation keys, typed outcomes, Parallel/Join reduction, and
-  failed-chapter-only retry, and the coarse Chief Tool is removed; Final's
-  initial Chapter 1/3/(optional 4) Auditor wave now has the same file-owned
-  structure, exact original Conversations, persisted-artifact reuse, and
-  failed-chapter-only retry; its affected-only Chief revision and Final recheck
-  rounds are now separate file-owned Parallel/Join Cohorts over one reduced
-  subject, loop through explicit typed state, and complete without the obsolete
-  whole-Final continuation; Render preparation, Publish/materialization, and
-  Delivery completion are separate file-owned actions with same-Run nested
-  recovery, and the obsolete whole-Delivery Tool is removed;
-- the generic application and React projections now discover both production
-  capabilities from their file packages, execute the neutral Capability through
-  the same Run endpoints, project artifact-or-value Outputs, and show generic
-  continuation input only for Kernel-owned `waitingInput`; Reporting exception
-  translation is contained by its Capability adapter.
+## FA work package progress
 
-The audit is now closed: the missing production connections listed above are
-implemented and the prior entries remain as their commit and test evidence.
-Legacy Reporting remains the default. The deferred real Provider, browser,
-project, and server test passed on the preserved declarative Run; that result
-does not authorize a default-path switch.
+| Work package | Status | Required evidence |
+| --- | --- | --- |
+| FA-00 Facts and final specification | `completed` | 六份规范一致；三项生产耦合审计；完成矩阵；diff-check |
+| FA-01 Architecture boundary characterization | `completed` | 5 项生产边界 Characterization 已取得真实 RED，并以 strict xfail 保持可逐项收敛；Capability 顶层导入纯度已转绿 |
+| FA-02 Generic Agent/Conversation/Recovery Runtime | `pending` | 中立 Agent/Tool/Recovery 行为与 Reporting 受影响测试 |
+| FA-03 Distribution Reporting Domain Runtime | `pending` | 无 Legacy 继承/委托；文件 Workflow 全链执行 |
+| FA-04 Generic Capability Runtime Binding | `pending` | 两个 Capability 同一 start/query/input/output/events/cost 接口 |
+| FA-05 Ownership convergence and legacy deletion | `pending` | 生产/发布图无旧 Runner/Facade/selector/adapter；领域代码归 Capability |
+| FA-06 Generic FastAPI/React surface | `pending` | Schema/WAITING/Output/Event/Cost，无 Capability-ID 流程分支 |
+| FA-07 Completion audit and final real test | `pending` | focused/affected checks、build、发布物审计、一次真实测试 |
 
-## Required startup checks
+## Historical evidence retained
 
-Codex must begin by running and recording:
+历史实现和真实测试仍有价值，但只作为迁移基线：
 
-```bash
-git status -sb
-git branch --show-current
-git log -1 --oneline
-```
+- 原 `WP-00`～`WP-12` 已实现 definitions/compiler/kernel/runtime/capability/API/UI 的大量基础；
+- 2026-08-20 的 Microsoft Agent Framework/LangGraph 隔离 POC 决定为 `reference`；
+- focused selections 曾覆盖 Runtime/Compiler/Reporting/API/Frontend；根据用户约束没有执行全量回归；
+- `report-declarative-33ed40175b` 曾在真实 Provider、真实项目和浏览器中完成并交付，证明旧兼容式声明路径的业务能力；
+- 该历史 Run 不证明移除 Legacy 宿主、ReportingFacade 和 `core/reporting` 混合边界后的最终路径。
 
-The plan baseline must contain the autonomous execution commits and this status file. Codex must not implement on `main` or directly on `feature/react-fastapi-manyselves`.
+详细历史提交、测试数字和旧发现保留在 Git history 与 Draft PR；不再把数百行历史流水复制进当前状态文件。
 
-## Completed commits
+## Current slice evidence
 
-- `Final: publish the executable real-test handoff` — replaces obsolete split Runtime-state paths with the one authoritative Run directory, adds exact nested-state/plan/event inspection, and makes persisted input/decision recovery submit the current input ID. It records the final focused Runtime, Capability, frontend, lock, build, and wheel verification without running a Provider, browser, server, real project, or full regression (this commit)
-- `WP-11: submit generic nested workflow input` — the Run Workspace recognizes the existing Kernel `input_id`/`inputId` projection before the existing Reporting decision identifiers and sends it through the unchanged generic `/runs/{run_id}/input` request. Nested outer-to-inner path ownership remains in WorkflowState and the Runtime resume implementation; the UI adds no replay decision, Gate, hash/CAS logic, validation chain, dependency, or public interface (this commit)
-- `WP-05/WP-10: drive Reporting recovery from definitions` — `DeclarativeReportWorkflowRunner` loads the single Recovery policy explicitly named by every packaged Reporting Task and injects it only into the declarative Agent path. `ReportingAgentRunner` consults the generic `RecoveryController` at the existing continuation/correction/reuse decisions, while `SubmitResultTool` reports schema failures and a Reporting-private transparent Tool proxy reports `ToolContractError` without modifying AgentLoop, Kernel, RuntimeContext, AgentInvoker, or Provider-visible schemas. Existing prompts, correction limits, continuation progress artifacts, Conversation/Session identity, Provider-call behavior, and persisted completed-result reuse remain in place. The obsolete unbound `run-reporting-cross` Tool is removed. No new Gate, hash/CAS logic, lock, dependency, attempt limit, or public interface is added (this commit)
-- `WP-11/WP-12: complete generic Run surface and second capability` — production discovery includes the neutral `parameter-adjustment` package with Markdown Agent, JSON Schema contracts, Task, deterministic Tool, conditional/Goto Workflow, Runtime binding, file state/events, and value Output. It executes through `WorkflowCompiler` and `WorkflowRuntimeHost` without Reporting imports, Gate definitions, Provider calls, hash/CAS logic, or new dependencies. Generic FastAPI routes consume only Capability Runtime errors, both capabilities use the same Run/Output/Cost surface, and React continuation controls depend only on projected `waitingInput` rather than a Capability ID. The historical test fixture remains available but is no longer the product implementation (this commit)
-- `WP-09: declare report delivery stages` — the Reporting tail invokes a packaged Delivery Subworkflow whose three ordered actions call the mechanically extracted Render preparation, Publish/materialization, and completion operations. A Reporting-private typed context is serialized into WorkflowState between actions and removed at completion, so a failed publish resumes at publish without replaying render. The Legacy `_deliver` entry remains as an unchanged-order wrapper over those same operations. The obsolete `run-reporting-delivery` Tool and adapter are removed. Existing completion-marker reuse is preserved; no new Gate, hash/CAS calculation, lock, dependency, validation chain, or public interface is added (this commit)
-- `WP-09: declare affected-only Final review cycle` — initial findings enter a packaged explicit-exit loop; every round invokes only affected Chapter 1/3/(optional 4) Chief revision Subworkflows, reduces one common `EditedReportSubmission`, then invokes only affected Final recheck Subworkflows before routing unresolved/new findings to the next round or writing the existing completion/snapshot/recovery projections. Original Chief/Final Task IDs, Conversations, result-part contracts, r1 persisted-artifact reuse, current maximum-round behavior, and deterministic delivery binding are preserved; r2+ RecoveryStore replay behavior is deliberately not expanded. Nested same-Run retry resets only typed failed Chief/recheck branches and preserves completed siblings. The obsolete `continue-current-final-review` and `run-reporting-final` Tools are removed. A generic Runtime fix makes loop re-entry create a fresh child only after the prior Subworkflow completed, while failed/WAITING child recovery is unchanged. No new Gate, cap, hash/CAS calculation, lock, dependency, or public interface is added (this commit)
-- `WP-09: declare initial Final chapter audit cohort` — the Reporting tail now invokes a packaged Final Cohort whose Chapter 1, Chapter 3, and optional Chapter 4 branches are file-declared Subworkflows. Each active branch prepares the existing `FinalChapterLaneInput` and `TaskEnvelope`, uses the original `final-chapter-{id}` Conversation and `chief-editor-auditor` Agent through the generic executor, persists the existing finding submission and RecoveryStore lane record, and joins a typed outcome before the existing revision/recheck continuation. An inactive Chapter 4 is a typed skipped branch; an Agent failure drains siblings and same-Run retry resets only the failed chapter; a fresh Host reuses only input-equivalent persisted initial artifacts without Provider replay. The existing input-equivalence recovery check is preserved without adding hashes or CAS. No new Gate, cap, validation chain, lock, dependency, or public interface is added (this commit)
-- `WP-09: declare initial Chief chapter cohort` — the Reporting tail now invokes a packaged Chief Cohort whose Chapter 1, Chapter 3, and optional Chapter 4 branches are file-declared Subworkflows. Each active branch prepares the existing `ChiefChapterLaneInput` and `TaskEnvelope`, uses the original `chief-chapter-{id}` Conversation and `chief-editor` Agent through the generic executor, persists the existing result-part submission and RecoveryStore lane record, and joins a typed outcome before the existing deterministic `EditedReportSubmission` reduction. An inactive Chapter 4 is a typed skipped branch using the existing special-topic condition; an Agent failure drains siblings and same-Run retry resets only the failed chapter. The obsolete `run-reporting-chief` Tool is removed. No new Gate, cap, hash/CAS calculation, validation chain, lock, dependency, or public interface is added (this commit)
-- `WP-07: remove module review fallback after declared recheck preflight` — the recheck-stage machine check exposes the same typed original-Author correction as the initial stage, preserves the existing second-identical/third-total stopping rules and current `ModuleReviewProgress`, returns accepted corrections to the original Auditor, and retries a failed correction from its same prepared context. The file graph no longer contains `continue-current-module-recheck`, and incomplete or corrupt recheck state fails instead of replaying `_module_review_loop`; accepted Author exceptions remain bound to the existing typed Main result. No new cap, acceptance Gate, hash/CAS logic, public interface, lock, or dependency is added (this commit)
-- `WP-07: declare module machine-preflight corrections` — one exact machine-preflight attempt is exposed as a typed boundary; a failed check routes through the existing original-Author revision preparation/acceptance behind declared Tool, Conversation, and Agent actions before returning to the original Auditor path. The pre-existing repeated-fingerprint/third-attempt stopping semantics remain in the Legacy wrapper, while failed correction recovery persists only the typed preflight turn and does not replay initial Author work; no new cap, acceptance Gate, hash/CAS logic, public interface, lock, or dependency is added (this commit)
-- `WP-07/WP-08: declare module Main exceptions after Join` — Author `disputed`/`needs_input` and Auditor `escalate` outcomes persist their typed Lane context, drain all five Parallel siblings, and only then invoke the packaged Main Task through the original `main-module-exception` Conversation; existing Main decision preparation/acceptance, serialization, user-input semantics, and Author/Auditor return routes are reused without replaying a completed Lane, while a generic failed-branch reset now also clears only that branch action's nested Subworkflow snapshot (this commit)
-- `WP-07: resume module rechecks through declared actions` — persisted `phase=recheck` review progress returns to the original `module-auditor-{module_id}` Conversation and declared Auditor Task without incrementing the review round or replaying completed Author work; persisted completion restores the exact module and completion ref without an Agent call; the broad compatibility continuation remains reachable only for exceptional/preflight states not yet represented by the file graph (this commit)
-- `WP-07: resume module reviews through declared actions` — persisted initial-review completion restores its exact typed subject and completion ref without an Agent call; persisted findings return to the original Author revision and Auditor recheck actions; a persisted pre-Agent review returns to the original reviewer Session; the broad module review continuation Tool is split so these routes cannot enter `_module_review_loop` (this commit)
-- `WP-02/WP-08/WP-11: resume nested Cross interactions` — Subworkflow and Parallel actions project a generic outer-to-inner `waiting_input.path`; pure input application recursively resumes the exact leaf, resets only its ancestor actions, preserves completed Parallel siblings, and resumes without replay. Cross Main `request_user` uses a packaged Interaction and Pydantic contract, then accepts the supplied decision through the existing Main lifecycle. The generic Run adapter exposes and accepts the raw contract values, while Kernel authority is persisted as `runtime-state.json` separately from the existing Reporting UI projection; the unused whole-owner continuation Tool and adapter are removed (this commit)
-- `WP-08: declare Cross Main exception routes` — Author `disputed`/`needs_input` and reviewer `escalate` paths share the exact existing Main exception input/envelope/acceptance implementation with Legacy, invoke the packaged `main-agent` through one declared Task and the original `main-cross-exception` Conversation, and route `accept_dispute`/`return_to_author` through the original Auditor or repeated typed owner rounds; the file graph contains no whole-owner compatibility action, while the existing Main serialization lock is reused rather than replaced or expanded (this commit)
-- `WP-08: recover Cross rechecks into typed rounds` — a recovered recheck acceptance now enters the same declared verdict-state advancement as a fresh Agent result; a fresh-then-resume characterization proves zero new Conversations, zero Agent replay, revision 1 completion, and success even when whole-owner `run_owner` is replaced by a hard failure (this commit)
-- `WP-08: declare Cross no-finding completion` — the existing no-finding owner no-op, prior module-audit binding, and outer r1 promotion are shared by Legacy and a dedicated file-declared completion action; a production characterization proves the ordinary path never calls the compatibility `run_owner`, while fresh and recovered initial results retain the original reviewer Conversation and completion semantics (this commit)
-- `WP-08: repeat Cross owner rounds as declared Agents` — an accepted Cross verdict advances the existing pending/resolved/new-finding semantics into typed WorkflowState, routes pending findings back through the same declared Author/local-Auditor/reviewer actions, and explicitly promotes a closed owner; a two-round characterization proves revision 2, both finding artifacts, the outer r1 completion identity, original Conversations, and no Legacy later-round Agent replay (this commit)
-- `WP-08: invoke first Cross rechecks as agents` — the first completed owner-local lane routes through the exact existing recheck input/envelope, original `cross-owner-{module_id}` Conversation, `cross-module-reviewer` Agent, typed verdict acceptance, and compatibility completion; a persisted local completion restores its typed acceptance without replaying the Auditor, and an injected recheck failure retries only the original Cross reviewer without replaying the initial reviewer, Author, or local Auditor (this commit)
-- `WP-08: invoke Cross local regressions as agents` — accepted or persisted Cross revisions route through the exact existing local-regression input/envelope preparation, the original `module-auditor-{module_id}` Conversation, `evidence-auditor` Agent, and typed finding/completion acceptance before compatibility closure; accepted completion bypasses Legacy Auditor replay, and a failed local Auditor drains all owner branches then retries only that owner without replaying its initial Cross reviewer or Author (this commit)
-- `WP-08: invoke first Cross owner revisions as agents` — initial owner findings route to one of five statically declared Cross-revision Tasks, the original `module-{module_id}` Conversation, and original module specialist through the generic Agent port; the existing `prepare_module_revision`/`accept_module_revision` implementation is shared without copying its current diff/barrier/hash code, persisted candidates bypass Author and Conversation creation, and a private exact-Task adapter route preserves the same specialist identity for both module authoring and Cross revision inside one parent Runtime (this commit)
-- `WP-08: declare Cross initial reviewers as agents` — every statically specialized owner pipeline declares prepare/recovery, the original `cross-owner-{module_id}` Conversation, the packaged `cross-module-reviewer` Agent and typed Task, result acceptance, and an explicit compatibility continuation; fresh, recovered, accepted-then-resumed, five-owner concurrency, failed-owner-only retry, Tail, and one-parent Runner tests prove no duplicate Agent invocation while Legacy remains unchanged (this commit)
-- `WP-08: run Cross owners through a file cohort` — the Reporting tail invokes a packaged Cross Cohort whose five static owner branches call separately specialized owner Subworkflows and Join typed outcomes; the existing Cross lifecycle was mechanically split into prepare, one-owner execution, and aggregate finalization boundaries shared by Legacy and declarative entries, tests prove independent fast-owner progress, exact aggregate equivalence, five-branch drain, and failed-owner-only same-Run retry (this commit)
-- `WP-07: repeat module correction as declared Agents` — the production Lane routes an open/new recheck finding back through its existing file-declared original-Author revision and original-Auditor recheck actions, updates typed Capability state between rounds, and exits on the existing completed result; tests prove two revisions and two rechecks reuse `module-{module_id}` and `module-auditor-{module_id}` Conversations without invoking the Legacy review Tool, while no cap, hash, CAS, or new gate is introduced (this commit)
-- `WP-06: compile loops with explicit exit conditions` — the business-neutral Compiler builds a CFG, validates each back-edge as a natural loop, and accepts an omitted iteration cap only when that loop owns an explicit `If`/`ConditionGroup` edge to the outside; existing `max_iterations` execution remains unchanged, no public Definition field or runtime gate is added, and the Runtime Host executes the exiting loop through the stateless reducer (this commit)
-- `WP-07: invoke first module rechecks as declared Agents` — the first persisted Author candidate is prepared through the exact current preflight and compact-delta input, invokes the original `module-auditor-{module_id}` Conversation through a file-declared recheck Task, and accepts typed verdicts into the existing progress/completion artifacts; exceptional Author responses, failed preflight, open/new findings, Main, and Deferred Main retain the current Capability continuation (this commit)
-- `WP-07: invoke first module revisions as declared Agents` — an initial finding routes through Capability-owned typed preparation into one of five module-specialized file Tasks, the original `module-{module_id}` Author Conversation, and the generic Agent port; typed acceptance applies and persists the exact existing patch/diff/barrier behavior once, and the existing review continuation consumes that persisted candidate without replaying the Author (this commit)
-- `WP-07: invoke production initial auditors as declared Agents` — the reusable production Lane declares initial review preparation, persisted-progress routing, the original module Auditor Conversation, generic Agent invocation, result acceptance, and continuation; the exact current preflight/input/envelope and finding/completion persistence are reusable Reporting boundaries, resumed progress bypasses duplicate initial review, and Reviewer failures remain typed Lane outcomes so siblings drain before failed-branch retry (this commit)
-- `WP-07: invoke production module authors as declared Agents` — one reusable production Lane template is specialized into five statically bound Agent/Task/Conversation workflows; exact current author TaskEnvelope preparation and acceptance are mechanically extracted, Provider work crosses the generic Agent port with `specialist-{module_id}` run Conversation keys, same-run author submissions take the declared reuse branch without an Agent call, and author failures still become typed Lane outcomes so siblings drain before failed-branch retry (this commit)
-- `WP-07: declare production module Lane lifecycle actions` — the reusable production Lane YAML now owns separate start/recovery, author, review-route, review, and completion actions with one typed Capability-owned context; the one-Tool whole-Lane definition is removed; current author/review methods and extracted attempt start/failure/completion bookkeeping remain the compatibility implementations, and failed outcomes still drain through the five-branch Cohort before only failed branches retry (this commit)
-- `WP-06/WP-07: nest reusable production module lanes` — generic Subworkflow actions accept either one input or multiple named parent-to-child bindings; the packaged Cohort uses that neutral feature to invoke one reusable production Lane workflow for all five module IDs; each branch now has nested Lane WorkflowState/events and the five duplicate module Tool definitions are replaced by one Capability Tool without a module-specific Kernel Action (this commit)
-- `WP-07/WP-08: run production modules through the file cohort` — the top-level workflow invokes the packaged module Cohort as a Subworkflow; its YAML owns preparation, fixed five-branch Parallel/Join, and reduction; production branches delegate complete current Lane semantics, successful siblings remain embedded in one parent Run, only failed branches retry, the coarse `run-reporting-module-work` Tool definition is removed, and the existing legacy barrier finalizer is reused from one extracted boundary without copying or adding hash/CAS logic (this commit)
-- `WP-02/WP-09: persist nested runtime events` — nested Subworkflows now emit standard workflow/action/output lifecycle events through the parent Runtime Host sink; the selectable Reporting runner persists top-level and tail events in the exact Run directory, without a child state directory (this commit)
-- `WP-08/WP-09: run reporting stages in one parent state` — `distribution-reporting.yaml` now branches partial/full work itself and invokes the packaged tail as a recoverable Subworkflow; the selectable declarative runner enters one `WorkflowRuntimeHost`, persists only the exact run identity, removes the coarse tail Tool, and resumes inside a failed tail without replaying completed module work or prior tail stages (this commit)
-- `WP-06/WP-09: persist failed subworkflow progress` — a failed nested effect now returns its child WorkflowState to the parent Runtime Host before the parent failure transition is persisted; a same-Run retry reuses completed child Actions and reruns only the failed Action without creating a child Run directory (this commit)
-- `WP-09: compile the reporting tail from files` — the production Workflow YAML owns the ordered Cross, Chief, Final, and current combined Render/Delivery actions; all four internal Tools are file-declared, the builder only loads the Capability Registry, and execution/recovery moved from the persistence-owning control executor to `WorkflowRuntimeHost` under the parent Run identity (this commit)
-- `WP-07/WP-08: compile reporting modules from files` — the packaged reusable Lane YAML owns every Tool, Conversation, Agent, branch, and End action; the packaged Cohort YAML owns all five Parallel branches and Join; declared typed parameters preserve module/lifecycle/revision IDs, all internal Python Tools are file-declared, and Python now only specializes runtime values and binds implementations (this commit)
-- `WP-07/WP-08: recover module lanes in one runtime state` — both detailed Reporting paths execute effects through `WorkflowRuntimeHost`; Lane states are embedded in parent Parallel branch state, only the parent Run is persisted, and a failed Cohort retry uses a generic pure branch-reset transform so completed sibling branches are not replayed (this commit)
-- `WP-06: keep parallel and child state in one runtime run` — Runtime Host executes Parallel/Join/Subworkflow effects, honors declared concurrency, and stores branch/child WorkflowState snapshots inside the parent state; tests prove no branch or child Run directories are created (this commit)
-- `01033d3` — `WP-06: reduce basic control flow in the stateless kernel`; moves If/ConditionGroup/Goto/ForEach decisions and bounded back-edge state into the pure reducer; the neutral parameter fixture now runs Tool, Contract, branch, Agent, Conversation, and Goto through `WorkflowRuntimeHost` instead of the persistence-owning control executor
-- `6fde929` — `WP-02: execute effects outside the stateless kernel`; adds the pure Start/Success/Failure reducer and ExecuteAction effects; a Runtime Host now executes effects, persists one WorkflowState, appends standard workflow/action/output events, and reuses a completed same-Run result without replay
-- `197cca6` — `WP-02/WP-11: execute declared interactions and outputs`; adds Interaction/Output definition kinds and references, compiles RequestInput/PublishResult, persists a waiting WorkflowState, resumes through a pure validated state transition, and publishes the declared result without Capability-specific logic
-- `6cd2688` — `WP-01/WP-11: bind capability runtimes from definitions`; adds explicit Capability entry points and trusted Python runtime-factory references, dispatches start/input/run/output/cost through a generic binding catalog, and moves all ReportRequest/UserSupplement/snapshot translation into the Distribution Reporting adapter
-- `fb7f857` — `WP-01/WP-11: discover production capability bundles`; reopens the architecture audit, adds file-based Capability discovery and workflow ownership, removes the neutral fixture from the installed/API product surface, and retains it under `tests/fixtures` as a complete Markdown/YAML/Schema runtime proof
-- `90fba9e` — `WP-00: stabilize plan baseline contracts`
-- `9323b12` — `WP-00: freeze legacy semantic trace`
-- `c7c1bd8` — `Program: defer real testing until four-stage completion`
-- `396f2be` — `Program: remove residual gate resume wording`
-- `5894cd5` — `WP-01: add definition models and file loaders`
-- `e85dc03` — `WP-01: complete registry and contract adapters`
-- `e1bfe9c` — `WP-02: execute neutral sequential workflows`
-- `be100ae` — `WP-03: adapt current tools to declarative runtime`; current Tool binding, explicit contracts, unified outcome, existing result-index reuse, ReadTool coverage, and InvokeTool integration
-- `71c1a9c` — `WP-04: bind neutral conversations to current agents`; neutral Conversation modes/keys/records, create/resolve actions, typed Agent port, InvokeAgent executor, and a Legacy ReportingAgentRunner adapter that passes the original session key
-- `WP-05: interpret declarative agent recovery policies` — generic recovery events/actions/state, explicit Recovery Definition interpretation, Capability-owned correction prompts, declared-only attempt limits, and no-hash progress observations (this commit)
-- `WP-05: align generic recovery event vocabulary` — aligned the Kernel enum exactly with plan section 5.8 and retained completed Tool Result reuse as the additional WP-05 event
-- `WP-06 research: choose an internal control-flow runtime` — R-01/R-02 isolated POCs completed; MAF and LangGraph both classified as `reference`, with no production dependency change
-- `WP-06: execute declarative control flow` — neutral If/ConditionGroup/Goto/ForEach/Parallel/Join/Subworkflow actions, explicit back-edge limits, persisted loop cursor, and one authoritative WorkflowState (this commit)
-- `WP-07: migrate one declarative module lane` — one explicit Reporting-owned module review definition, current Pydantic Agent contracts, current packaged Agent prompts and Tool declarations, stable Author/Auditor Conversation Keys, conditional revision, and exact scripted Legacy semantic Trace equivalence (this commit)
-- `WP-08: join the declarative module cohort` — fixed five-Lane Reporting Parallel/Join, optional declared concurrency limit, completion reuse through each Lane WorkflowState, sibling drain through typed Reporting outcomes, and all-complete reduction without new barrier hashes or CAS (this commit)
-- `WP-09: sequence current reporting tail declaratively` — first WP-09 slice: Reporting-owned Cross → Chief → Final → Delivery Tool adapters over the current implementations, ordered neutral actions, stage-marker reuse, and failed-stage continuation state (this commit)
-- `WP-09: compare current and declarative tail traces` — standard semantic Trace adapter for the ordered Cross, Chief, Final, and Delivery stage boundary, compared against direct execution of the same current stage implementations (this commit)
-- `WP-09: complete the declarative reporting tail` — completes WP-09 through Reporting-owned adapters: the current Cross owner pipelines, Chief/Final chapter lanes, Render, Delivery, completion-marker reuse, and same-run failed-stage continuation now execute behind an explicit declarative tail while Legacy remains the default (this commit)
-- `WP-10: package the distribution reporting capability` — packages the 19 current Reporting Agent identities, Task/Workflow/Contract/Tool/Recovery indexes, and executable Reporting adapters under `manyselves.capabilities.distribution_reporting`; the old packaged-Agent loader remains a compatible import, Kernel import boundaries remain intact, and no new Gate definition is introduced (this commit)
-- `WP-11: expose generic workflow projections` — adds the eight planned generic FastAPI projections for Capability, Workflow, input schema, Run, input, Output, and Cost; current Reporting start/resume/decision behavior remains behind a thin Capability adapter, and generic Outputs do not add or expose new hash/CAS logic (this commit)
-- `WP-11: add the generic Run workspace` — adds a project-scoped React Capability/Workflow selector, JSON input, Run status, Output, Cost, and continuation-input view over the generated generic API; the existing Reporting-specific store/view remains a compatibility adapter and no Reporting identities or SHA-based delivery checks enter the generic UI (this commit)
-- `WP-12: execute a second neutral capability` — packages and executes `parameter-adjustment` through Tool, Contract, condition, run-scoped Conversation, Capability-owned Agent, Goto, and output actions; the package contains no Reporting identities, Gate definitions, hashes, CAS, or Reporting imports (this commit)
-- `WP-12: project the neutral capability through Run` — exposes both capabilities through the same generic Workflow/Run API, persists and projects neutral Run state, generalizes Output to artifact-or-value without exposing legacy digests, and lets the React Run Workspace select and display the neutral result (this commit)
-- `WP-09: connect the explicit declarative Reporting path` — closes the completion-audit gap with a top-level executable Reporting definition, persisted declarative module-stage and tail orchestration, explicit `report-declarative-*` selection through the generic Workflow API, and same-run engine recovery by readable run identity; the existing Reporting API and Controller default remain Legacy (this commit)
-- `WP-11: poll generic Run completion` — keeps the generic Run projection live while a background run is active, then refreshes Output and Cost once it reaches a terminal state; completed neutral runs still do not expose Reporting continuation controls (this commit)
-
-## Tests actually run
-
-- Product Run Workspace closure Characterizations first produced `4 failed, 5 passed`: WAITING state reused values across distinct nested paths, path/title/description were absent, pricing status was hidden, and pending/failed Cost requests appeared as an unpriced result. After the UI-only correction, the focused Run Workspace file passed `9`; targeted ESLint and TypeScript `--noEmit` passed. WAITING form identity now includes input, contract, path, and Schema; Cost shows tokens plus `pricing_status` only from a successful response and distinguishes loading/API failure. No full regression, Provider, browser, server, or real project test ran.
-- Final architecture re-audit used focused/affected tests only, never the full suite. Run-frozen plan/Compiler/Host/Conversation/Agent-adapter selections passed `35` and `24`; generic Capability/application/WebAPI selections passed `20`; Reporting definition/Module/Cohort/Cross selections passed `26`; Provider retry plus declared Recovery and saved Agent Tool binding passed `20`; Recovery action nodes passed `8`. React Run Workspace passed `8`, project Workflow routing passed `2` with unrelated cases skipped, and targeted ESLint, TypeScript, generated-API drift, production Vite build, Ruff, and `git diff --check` passed. One combined Vitest invocation polluted its own `localStorage` test environment and failed unrelated route cases; the two affected files were rerun separately with the recorded passing results. No full regression or real Reporting Provider call ran.
-- Five-gap reconciliation used Characterization-first focused tests only, not a full regression. Compiler/plan/Host/Interaction/Agent/Tool/neutral Capability/WebAPI/import-boundary selection passed `69`; the exact Reporting Tool assembly and module/Cross/Chief/Final Recovery wrapper selection passed `9`; the earlier affected Reporting collection reached `65 passed, 2 failed`, exposing the omitted Final/Chief/Cross wrappers, and both exact failures then passed after completing every production wrapper. The complete changed-wrapper count is `15 invoke / 15 invoke_with_recovery`. React Run Workspace/API Vitest passed `7`; targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. Ruff for every changed Python file, compileall, and `git diff --check` passed. The current-HEAD browser workflow completion remains pending and is not claimed by this automated slice; only the isolated login page has been verified. No real Reporting Provider call or real project run was started. Two initial test commands used obsolete paths and collected no tests, and one initial Vitest command selected only one file; corrected commands produced the recorded results.
-- Final handoff verification at functional HEAD: Runtime Host, generic WebAPI projection, production `parameter-adjustment`, and Distribution definition package passed `43`; generated frontend API drift check passed; focused Run Workspace/API Vitest passed `5`; targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. `uv lock --check`, `git diff --check`, and a fresh wheel build passed. The wheel contains both Capability entry files, Reporting Recovery and Delivery definitions, the neutral Markdown Agent and Workflow, and omits the four obsolete coarse Reporting workflow Tools. Pytest emitted only the existing Pydantic deprecation and temporary-directory cleanup warnings; Vite emitted only its existing chunk-size warning. No full regression, Provider, browser, server, or real project test ran.
-- Generic nested-input UI Characterization first failed because `waitingInput.input_id` was displayed but omitted from the submit request. After the minimal projection mapping, focused Run Workspace/API Vitest passed `5`; targeted ESLint and TypeScript `--noEmit` passed. Existing `decision_id` handling remains covered. No full regression, Provider, browser, server, or real project test ran.
-- WP-05/WP-10 Characterization initially failed because declarative production calls never instantiated `RecoveryController`; the Tool-contract Characterization then failed because `AgentLoop` consumed `ToolContractError` as an ordinary tool error without policy dispatch. After the private Reporting-boundary connection, focused Controller/action tests, Agent/Tool adapters, the complete affected Reporting Agent runner, declarative parent runner, Capability package, and Kernel import boundary passed `156`. The new tests prove policy injection without direct test wiring, Controller-driven Tool Slice and Max Token continuation, first-observation/No-progress behavior, natural-language and invalid-structured correction, `ToolContractError` correction with unchanged Tool schemas, and a second-process persisted typed-result reuse with no Provider call. A mismatched declared action fails rather than silently defaulting. Ruff passes for the new/changed code when ignoring the listed HEAD-pre-existing issues; `git diff --check` passes. No full regression, Provider, browser, server, or real project test ran.
-- WP-11/WP-12 Characterization first failed because production discovery and HTTP tests still asserted that only Reporting was installed and that `parameter-adjustment` returned 404. After restoring the production package, its direct Tool/Contract/Condition/Agent/Goto execution and runtime binding passed `4`; affected Capability catalog, binding, generic projection, Distribution package, and both HTTP Run paths passed `40`; the focused production HTTP chain returned `completed`, value Output `10`, and zero Provider attempts/tokens. Focused React Run Workspace/API tests passed `4`; targeted ESLint and TypeScript `--noEmit` passed. Ruff, compileall, and `git diff --check` passed. An initial Vitest invocation used the wrong `npm exec` argument separator and exited before collecting tests; the corrected command is the recorded result. No full regression, Provider, browser, server, or real project test ran.
-- Delivery Characterization first failed collection because the three-stage Reporting binding did not exist. After implementation, packaged definitions, serializable stage context, direct Legacy wrapper order, nested publish-failure recovery, Tail trace/order, and one-parent Runner coverage passed `51`; current Delivery artifact/restore boundaries passed `5`; Runtime Host nested recovery passed `10`; protected structured correction, Max Token, Tool Slice, productive slices, No-progress, persisted Provider-result reuse, original Conversation reuse, and Kernel boundary passed `9`. Focused Ruff, compileall, `uv lock --check`, `git diff --check`, added-line hash/SHA/CAS scan, and wheel build passed; the wheel contains the three new Tool definitions and Delivery workflow and omits `run-reporting-delivery`. One initial Runtime command named two nonexistent test paths and collected no tests; the corrected Host selection is the recorded result. No full regression, Provider, browser, server, or real project test ran.
-- Final-cycle Characterization first exposed that a completed Subworkflow snapshot was incorrectly reused after a loop back-edge. The generic Host now starts a new child execution only on completed-action loop re-entry and continues failed/WAITING children unchanged: Runtime Host plus control-flow affected collection `21 passed`. Final initial failure/retry, fresh artifact restore, affected-only two-round Chief/recheck behavior, synthetic nested Chief/recheck failed-lane reset, Tail, one-parent Runner, current Legacy Final behavior, and Capability definitions passed `34`; protected Max Token, Tool Slice, productive slices, No-progress, structured correction, persisted Provider result, original session, and Kernel boundary passed `9`. Focused Ruff/format, compileall, lock, diff, package, and unchanged-hash-count checks passed. No full regression, Provider, browser, server, or real project test ran.
-- Final-initial Characterization first proved the Tail still used one coarse Final Tool; the production Cohort now declares Chapter 1/3/(optional 4) initial Auditor Subworkflows, exact Agent/Task/Conversation identities, typed Parallel/Join outcomes, persisted-artifact reuse, sibling drain, and failed-chapter-only retry. The focused production behavior file passed `2` tests; Capability definitions passed `18`; affected Tail/Runner/current Final lifecycle collections passed `33`. Protected Max Token, Tool Slice, productive slices, No-progress, structured correction, persisted Provider result reuse, original Conversation reuse, partial Final recovery, and Kernel boundary passed `9`. Focused Ruff/format, compileall, `uv lock --check`, `git diff --check`, added-line hash/SHA/CAS scan, and wheel build passed. No full regression, Provider, browser, or server test ran.
-- Module-recheck-preflight Characterizations first failed because the typed recheck boundary returned `continue_existing` and could not carry its bounded preflight state. It now returns `preflight_revision`, uses the existing Author revision preparation/acceptance and `module-{module_id}` Conversation, persists the current recheck progress, and returns to `module-auditor-{module_id}` without `_module_review_loop` or `_execute_module_lane`. Exact lifecycle Characterizations prove correction-before-Auditor plus identical-second/different-third stopping: `3 passed`; affected lifecycle, Runner, Lane, Cohort, and Capability definition selection passed: `49 passed`; protected continuation/correction/reuse and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, lock verification, added-line hash/SHA/CAS scan, and wheel build passed. No full regression, Provider, browser, or server test ran.
-- Module machine-preflight Characterizations prove typed machine failure before any Auditor, original-Author correction before the original Auditor, unchanged Legacy stopping semantics, and correction-failure recovery without initial-Author replay: `7 passed`. The complete affected production Runner, standalone Lane/Cohort, Capability definition package, and selected Legacy review/resume lifecycle collection passed: `49 passed`; protected Max Token, Tool Slice, productive slices, No-progress, structured correction, persisted Provider result reuse, original Conversation reuse, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `uv lock --check`, `git diff --check`, and wheel build passed; the wheel contains the four new internal preflight/retry Tools and updated Lane/Cohort workflows, while the added production diff contains no hash, SHA-256, digest, or CAS logic. No full regression, Provider, browser, or server test ran.
-- Module-Main-exception Characterizations first failed because Author disputes and Auditor escalations still entered the whole-Lane compatibility implementation before the Join. The packaged Cohort now resumes each typed Lane outcome after Join; completed/failed outcomes remain terminal, while deferred outcomes execute the declared `main-agent`, Task, Interaction, and exact existing decision acceptance before returning to the declared revision/recheck graph. Focused/affected Definition, Runner, Cohort, Lane, Runtime Host, and generic projection selections passed: `56 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. A failed-branch regression proved only the failed branch's nested Subworkflow snapshot is cleared and completed siblings are retained. Focused Ruff, compileall, `git diff --check`, added-line hash/SHA/CAS scan, and wheel build passed; the wheel contains the new Main Task, Interaction, Tools, and updated Lane/Cohort workflows. No full regression, Provider, browser, or server test ran.
-- Module-recheck-resume Characterizations cover persisted pre-Agent `review` and terminal `completed` progress. The production Lane re-enters the original Auditor Conversation/Task with the same round, or restores the accepted module/completion ref without Agent work; neither route calls `_module_review_loop`: focused Characterizations `2 passed`, direct lifecycle boundary `1 passed`, affected Reporting/Capability/Lane/Cohort selections `39 passed`. Protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; the wheel contains the new resume Tool and updated runtime Lane. No full regression, Provider, browser, or server test ran.
-- Module-review-resume Characterizations cover durable `completed`, `revise`, and pre-Agent `review` progress. The production Lane restores completion without Provider work, returns findings to declared Author revision and original-Auditor recheck, and re-enters the original reviewer Session without calling `_module_review_loop`: focused/affected selection `35 passed`. Protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Capability definition compilation passed; focused Ruff passed with pre-existing unrelated lint findings excluded for the two legacy large files; compileall and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- Nested-Interaction Characterizations cover Subworkflow WAITING/path/parent output and Parallel nested WAITING/path/completed-sibling preservation/no replay/Join. Cross `request_user` then resumes with `accept_dispute` and invokes only the not-yet-completed original Auditor/Cross turns; the generic Run projection exposes Kernel status/schema and delegates raw values to `resume_workflow_input`, while the legacy decision route remains unchanged. Runtime/Cross/Runner/Capability/API/neutral-fixture affected selection passed: `71 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed. No full regression, Provider, browser, or server test ran.
-- Cross-Main-exception Characterizations first failed because Author exceptions and reviewer escalations still fell into the whole-owner continuation. The declared paths now prove Author dispute → Main accept → original Auditor/Cross, Author dispute → Main return → the same Author Conversation at r2, reviewer escalation → Main accept → typed completion, and reviewer escalation → Main return → r2 Author/Auditor/Cross; all four replace `CrossReviewCoordinator.run_owner` with a hard failure. Cross/Definition/Tail/Runner affected selection passed: `45 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; no added diff line contains a hash, SHA-256, or CAS token. No full regression, Provider, browser, or server test ran.
-- Recovered-Cross-recheck Characterizations first failed because the persisted-verdict branch still targeted the compatibility closure. The branch now rejoins the existing `advance-current-cross-owner-round` action; a fresh run followed by artifact-based resume completes with no new Agent calls or Conversations while a patched `run_owner` would fail. Cross/Definition/Tail/Runner affected collections passed: `48 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, `git diff --check`, and wheel build passed; the packaged workflow has zero hash/CAS tokens and routes recovered verdicts into typed advancement. No full regression, Provider, browser, or server test ran.
-- Cross-no-finding Characterization first failed because `choose-cross-owner-revision.otherwise` still targeted the compatibility closure. The dedicated file action now reuses the exact existing no-op/recovery/promotion implementation; a production characterization replaces `CrossReviewCoordinator.run_owner` with a hard failure and still completes revision 0 with outer round 1 and only the original Cross reviewer Conversation. Cross/Definition/Tail/Runner affected collections passed: `46 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS token comparison (`56` unchanged), and wheel build passed; the wheel contains the no-finding completion Tool and updated owner workflow. No full regression, Provider, browser, or server test ran.
-- Repeated-Cross-round Characterization first failed because the owner workflow returned from its first recheck to the compatibility continuation; the first implementation run then exposed that recheck preparation still bound the initial findings instead of the current round. After sharing current-round preparation and verdict-state advancement with Legacy, the declarative path proves initial Cross → Author r1 → original Auditor r1 → Cross r1 with a new finding → Author r2 → original Auditor r2 → Cross r2 → explicit promotion. It persists both r2 input/verdict artifacts, retains both findings, preserves outer completion round 1, reuses the original three Conversations, and never enters an unaccepted Legacy later-round Agent call. Cross/Definition affected collections passed: `29 passed`; Tail/Runner: `15 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel import boundary: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS token comparison (`56` unchanged), and wheel build passed; the wheel contains the three round/route/completion Tools and updated owner workflow. No full regression, Provider, browser, or server test ran.
-- Cross-first-recheck Characterization first failed because the owner workflow lacked recheck preparation and the original reviewer Agent action; a second recovery Characterization failed because recovered local completion routed around recheck. The compiled owner specialization now declares prepare/route/original Conversation/Agent/typed accept/continue, and recovered local completion enters the same path. Fresh execution proves Cross initial → original Author → original local Auditor → original Cross reviewer order. Injected Author, local-Auditor, and recheck failures prove exact-five drain and stage-local recovery; the final retry invokes only `cross-owner-2.3-r1-recheck`. Cross definitions/concurrency/recovery plus direct Tail and one-parent Runner affected collections passed: `42 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel import boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash-expression count comparison (`54` unchanged), and wheel build passed; the wheel contains the recheck Task, three boundary Tools, typed Agent-result contract, and updated owner workflow. No full regression, Provider, browser, or server test ran.
-- Cross-local-Auditor Characterization first failed because the owner workflow had no local-regression preparation or Auditor Agent action. The compiled 2.1 specialization now declares prepare/route/original Conversation/Agent/typed accept/continue; fresh execution proves Cross initial → original Author → original module Auditor order and a persisted `phase=local_regression` input bound to r0 baseline, r1 subject, Cross finding, Author response, target scope, and existing diff. Persisted r1 recovery skips Author and invokes only the original Auditor before Cross recheck. Injected Author and local-Auditor failures prove exact-five drain and failed-owner-only recovery; after local-Auditor failure, retry does not replay the initial Cross reviewer or Author. Cross definitions/concurrency/recovery, Tail, and one-parent Runner affected selection passed: `41 passed`; exact initial/recheck/lifecycle/semantic selection passed: `4 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel import boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash-expression count comparison (`54` unchanged), and wheel build passed; the wheel contains the local-review Task and three boundary Tools. No full regression, Provider, browser, or server test ran.
-- Cross-owner-revision Characterization first failed because the owner workflow had no finding route and invoked no original Author; after implementation the 2.1 specialization declares route, prepare/recovery, original `module-2.1` Conversation, `module-2.1-specialist` Agent, typed acceptance, and continuation: `2 passed`. Fresh finding execution proves exactly one initial Cross reviewer and one original Author call before the accepted revision enters compatibility closure; persisted higher revision recovery skips Author and its Conversation. A one-parent module-Author RED exposed the shared Agent-ID adapter collision, then passed after private exact-Task routing without changing Kernel interfaces. An injected 2.3 Author failure proves all five owner pipelines drain, only 2.3 is marked failed, and retry resumes that owner at its original Author without replaying the initial Cross reviewer. Cross definitions/concurrency/recovery, Tail, and one-parent Runner affected selection passed: `39 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel import boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS count comparison, and wheel build passed; the wheel contains all five Cross revision Tasks and four route/prepare/accept Tools. No full regression, Provider, browser, or server test ran.
-- Cross-initial-Agent Characterization first failed because `DeclarativeCrossOwnerRuntime` had no initial prepare/route/accept/continue bindings; after implementation each specialized owner compiles with its declared initial Task, Agent, and original Conversation, while the obsolete whole-owner Tool is absent: `2 passed`. Fresh and recovered initial execution plus accepted-result continuation under `resume=True` without a Legacy task binding prove respectively one Agent call, zero Agent/Conversation calls, and no accepted-result replay. Cross concurrency/equivalence/failure recovery passed: `12 passed`; combined definition package, declarative Tail, and one-parent Runner selection passed: `35 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema submission correction, persisted Provider result reuse, original Agent session reuse, finding-progress resume, and Kernel import boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; the wheel contains the typed Cross runtime/result contracts, initial-review Task, and boundary Tools, and does not contain the removed whole-owner Tool. No full regression, Provider, browser, or server test ran.
-- Cross-Cohort Characterization first failed because `run-cross` was still one `run-reporting-cross` Tool; after implementation the tail declares the Cross Cohort Subworkflow, its five owner Subworkflows, Parallel/Join, and one current owner-pipeline compatibility Tool per branch: `1 passed`. Direct file-Cohort execution proves all five original `cross-owner-{module_id}` identities, fast-owner local completion before a blocked slow owner, and exact Legacy completion/barrier/module/synthesis projections: `1 passed`. File-state failure recovery proves five drained typed outcomes, only owner 2.3 failed, and same-Run retry invoked only `cross-owner-2.3` before aggregate completion: `1 passed`. Existing Cross concurrency/recovery/regression behavior passed: `9 passed`; combined Capability definitions, direct tail, one-parent runner, module Cohort, Runtime Host, and Kernel import-boundary selection passed: `42 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Tool result reuse, original Agent session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- Repeated-module-correction Characterization first asserted that recheck continuation must return to `module-review-needs-revision`; the focused execution then proved an initial finding, first revision, open recheck, second revision, resolved recheck, and completion through the same original Author/Auditor Conversation keys with no Legacy `review` event: `2 passed`. Affected Capability package, production runner, standalone Lane/Cohort/tail, semantic trace, and Runtime Host passed: `34 passed`; exact module review/revision/recheck lifecycle boundaries passed: `10 passed`; protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Tool result reuse, original Agent session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- Explicit-exit-loop Characterization first failed on the blanket `workflow with a back edge requires max_iterations` rule; after implementation `If` and `ConditionGroup` natural loops execute without a cap, while a loop with no exit and an unrelated external condition remain rejected. Compiler/ControlFlow/Stateless Runtime Host and Kernel import-boundary selection passed: `19 passed`. Focused Ruff, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- First-recheck Characterization initially failed because the production Lane jumped from revision acceptance directly to the compatibility review Tool; after implementation the specialization declares recheck preparation/routing, the original `module-auditor-2.1` Conversation, generic Auditor Agent invocation, typed verdict acceptance, and continuation: `1 passed`. The focused fresh-finding path proves initial Author → initial Auditor → original Author revision → original Auditor recheck exactly once before completion: `1 passed`.
-- Exact module lifecycle plus typed recheck prepare/accept boundaries passed: `54 passed`; combined Capability package, production runner, standalone Lane/Cohort, semantic trace, module-Auditor concurrency, and Runtime Host selection passed: `31 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Provider result reuse, original Auditor session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, `git diff --check`, and wheel build passed; the wheel contains the recheck Task, three recheck boundary Tools, and typed recheck Agent-result contract. No full regression, Provider, browser, or server test ran.
-- First-revision Characterization initially failed because the production Lane ended initial review in the compatibility continuation; after implementation the compiled specialization declares finding routing, revision preparation, the original `module-2.1` Conversation, module-specialized revision Agent Task, typed acceptance, and continuation: `1 passed`. The focused fresh-finding execution proves one initial Author call, one original-Conversation revision call, one acceptance, and no duplicate Author before review continuation: `1 passed`.
-- The exact current review/revision lifecycle and new typed prepare/accept boundaries passed: `53 passed`; affected Capability package, declarative Lane/Cohort/runner, Legacy semantic trace, module-Auditor concurrency, semantic trace, and Runtime Host selection passed: `31 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Provider result reuse, original Auditor session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, `git diff --check`, and wheel build passed; the wheel contains all five revision Tasks, three revision boundary Tools, and the typed revision Agent-result contract. No full regression, Provider, browser, or server test ran.
-- Production-initial-Auditor Characterization first failed because the Lane still compiled the entire review as `review-current-module-lane`; after implementation the specialization declares review preparation/routing, `module-auditor-2.1` Conversation, `evidence-auditor` Agent, typed acceptance, continuation, and no obsolete whole-review Tool: `1 passed`.
-- The exact current module review lifecycle plus the new typed initial boundary passed: `52 passed`; affected Capability package, production runner, standalone Lane/Cohort, semantic trace, module-Auditor concurrency, and Runtime Host selection passed: `29 passed`. The focused production Reviewer-failure case proves sibling drain and failed-Lane-only retry: `1 passed`; protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema submission correction, persisted Provider result reuse, original Author/Auditor correction, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- Production-author Characterization first failed because no module-specialized runtime Lane existed; after implementation the 2.1 specialization compiles with its declared author Agent, Task, Conversation, Tool branches, and current review/completion tail: `1 passed`.
-- Focused file-defined author failure/retry, same-run author reuse, and standalone Cohort selection passed: `5 passed`; affected Capability, Cohort, one-parent runner, direct current author extraction, generic Agent/Conversation, and nested Subworkflow selection passed: `29 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema submission correction, persisted Provider result reuse, original Auditor session reuse, legacy module concurrency/drain, and Legacy semantic trace selection passed: `10 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; the wheel contains the five author Tasks, four author boundary Tools, two current author-visible Tool declarations, and typed Agent result contract, but not `author-current-module-lane`. No full regression, Provider, browser, or server test ran.
-- Production-Lane lifecycle Characterization first failed because the packaged Lane still compiled as one coarse Tool followed by End; after implementation it compiles as five named Capability Tools, one necessary `If`, and End, with no `execute-current-module-lane` Tool: `1 passed`.
-- Standalone Cohort concurrency/failure recovery and the production one-parent adapter selection passed: `9 passed`; Capability package, detailed review Lane, legacy module concurrency/drain, Legacy semantic trace, and prior-revision recovery selection passed: `13 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; the wheel contains the five lifecycle Tool files and typed context contract but not the removed whole-Lane Tool. No full regression, Provider, browser, or server test ran.
-- Named-Subworkflow Characterization first failed because Subworkflow accepted only one parent variable; after implementation the child received two named values and returned their result: `1 passed`; affected Host/sequential/control-flow selection passed: `23 passed`.
-- Reusable production-Lane package Characterization first failed because the workflow did not exist and Cohort branches were Tools; after implementation the package contains the Lane workflow, Cohort branches compile as Subworkflows, standalone Cohort concurrency/retry and production failed-branch retry remain green. Combined affected Runtime/Compiler/Reporting/Capability/import-boundary selection: `39 passed`. Ruff, `git diff --check`, and wheel build passed; the wheel contains the singular Lane Tool and reusable Lane YAML, not the five old branch Tool files. No full regression or real runtime test ran.
-- Production-Cohort Characterization first failed because the top-level plan still began with the coarse Tool; after the YAML change it compiled as Cohort Subworkflow → If → Tail Subworkflow → End. The first execution then failed because the Runtime Context lacked the compiled Cohort, which was corrected by binding that child plan and its file-declared branch Tools.
-- Failed-branch Characterization proved a two-module production adapter attempt drained its sibling, persisted the child branch states inside the parent Run, then retried only failed module `2.2`: `1 passed`. The legacy finalizer extraction retained the existing all-ready and failure-barrier behavior: `2 passed`.
-- Production Cohort affected Reporting runner/Cohort/Lane/tail, current module concurrency, Capability package, Runtime Host, and Kernel import-boundary selection passed: `29 passed`. The wheel rebuilt and contains the top-level/Cohort YAML plus `prepare-module-cohort.yaml`, and no longer contains `run-reporting-module-work.yaml`. Ruff passed for the changed focused paths and `git diff --check` passed. No full regression or real runtime test ran.
-- Nested-event Characterization first failed because the child workflow had no events; after implementation the generic Host emitted the complete child lifecycle and the production Reporting entry persisted the ordered tail lifecycle beside the one authoritative state: `2 passed` focused, `10 passed` affected. Ruff and `git diff --check` passed. No full regression or real runtime test ran.
-- Top-level file-graph Characterization initially failed because the packaged workflow still used a coarse tail Tool; after implementation its compiled kinds are Tool → If → Subworkflow → End and the declared child Workflow is resolved.
-- One-parent focused cases passed for partial module delivery, failed module retry, complete module→tail execution, and failed-tail nested recovery. The latter proved module work called once, Cross reused, Chief retried, and one Run directory: `5 passed` with the packaged compiler case.
-- Affected declarative Runner/Tail/Lane/Cohort, Capability package, Runtime Host, control flow, service runner selection, and Kernel boundary selection passed: `34 passed` (`46 deselected`); the direct package/runner/tail/host selection passed: `20 passed`. Ruff and `git diff --check` passed. No full regression or real runtime test ran.
-- Failed-Subworkflow Characterization initially failed because the parent contained no child state; after implementation the child first Action remained completed, only the failed second Action retried, and the parent produced the expected output: `1 passed`.
-- Runtime Host plus affected sequential/basic-control selection passed: `22 passed`; Ruff and `git diff --check` passed. No full regression or real runtime test ran.
-- File-defined tail and one-state recovery Characterization initially failed because the packaged tail had no actions and persisted `run_id--reporting-tail`; after migration, exact trace equivalence, completion-marker reuse, failed-stage continuation, one Run directory, and packaged-definition ownership passed: `5 passed`.
-- Tail/runner/package, Runtime Host, sequential Runtime, and Kernel import-boundary affected selection passed: `27 passed`; Ruff and `git diff --check` passed. No full regression or real runtime test ran.
-- File-defined Lane/Cohort Characterization initially failed because both packaged workflow files had empty action lists; after migration the focused packaged definitions plus live Lane/Cohort execution selection passed: `11 passed`.
-- File-definition/Registry/Compiler, Runtime Host, packaged Reporting, Lane/Cohort semantic behavior, generic Workflow projection, and Kernel import-boundary affected selection passed: `54 passed`; Ruff and `git diff --check` passed. The wheel rebuilt and contains both executable Workflow YAML files and the new internal Tool declarations. No full regression or real runtime test ran.
-- Reporting one-state recovery Characterization replaced the old shadow-directory assertion and initially failed because the parent branch snapshot stopped at Join as `running`; after implementation, a same-Run retry invoked only failed module `2.2`, reused the other four completed branches, completed the parent Run, and left exactly one Run directory: `1 passed`.
-- Reporting one-state affected Lane, Cohort, Runtime Host, Interaction/Output, and basic-control selection passed: `18 passed`; Ruff and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
-- Stateless Parallel/Join/Subworkflow focused Host selection passed: `4 passed`; affected new/legacy control, sequential, neutral Capability, and Kernel boundary selection passed: `25 passed`; Ruff passed after import normalization.
-- Stateless basic-control focused Host plus neutral Tool/Agent/If/Goto selection passed: `5 passed`; the affected legacy/new sequential and control-flow comparison plus Kernel boundary selection passed: `23 passed`.
-- Stateless-kernel Characterization initially failed collection because StartWorkflow and the Runtime Host did not exist; after implementation, pure non-mutating transition and effect/persistence/event/same-Run reuse tests passed: `2 passed`.
-- Stateless sequential affected Runtime, Workflow, Definition, neutral Capability, and Kernel import-boundary selection passed: `50 passed`; Ruff passed for all changed paths.
-- Interaction/Output Characterization initially failed collection because the resume primitive and definition/action vocabulary did not exist; after implementation, the focused file-definition and wait/resume/publish selection passed: `2 passed`.
-- Interaction/Output affected Definition, sequential/control-flow Runtime, Recovery, Agent/Tool adapter, neutral Capability, and Kernel import-boundary selection passed: `59 passed`; Ruff passed for all changed Kernel and test paths.
-- Runtime-binding Characterization initially failed collection because the generic binding module did not exist. The synthetic Capability deliberately used different Capability and entry Workflow IDs; after implementation, focused binding, packaged Reporting definition, and projection tests passed: `11 passed`.
-- Runtime-binding affected Definition, Runtime adapter, synthetic application binding, packaged Reporting, generic projection, and HTTP route selection passed: `38 passed`; Ruff passed for every changed Python/test path.
-- Reopened-audit Capability Catalog Characterization initially failed collection because `CapabilityCatalog` did not exist; after implementation, the Catalog, production-only bundle boundary, relocated neutral fixture, generic Reporting projection, and generic HTTP non-exposure selection passed: `11 passed`.
-- Reopened-audit affected Definition, Distribution Capability, neutral fixture, generic Reporting route, and Kernel import-boundary selection passed: `30 passed`; Ruff passed for every changed Python/test path.
-- The wheel rebuilt successfully and contains only the installed `distribution_reporting` Capability; the `parameter_adjustment` definition graph remains executable from `tests/fixtures` and is not shipped in the application package.
-- Before the user's focused-test-only instruction, the unmodified plan baseline full offline selection ran once: `2521 passed, 11 failed, 3 skipped, 6 deselected`. The 11 failures were existing test/config drift and platform/schema determinism issues, not runtime extraction changes.
-- Each of those 11 baseline failures was rerun through focused/affected selections after correction: `92 passed`; the final OpenAPI/macOS-specific subset: `3 passed`.
-- WP-00 semantic trace and Kernel boundary focused tests: `3 passed`.
-- WP-00 affected Legacy recovery, conversation, review, and resume selection plus the new tests: `15 passed`.
-- WP-01 models and single-file loader Characterization: initially failed collection because `manyselves.kernel.definitions` did not exist, then `8 passed` after implementation.
-- WP-01 Registry and Contract Adapter Characterization: initially failed collection because the Registry and contracts package did not exist, then the complete WP-01 focused selection passed: `13 passed`.
-- WP-01 affected Kernel import boundary, existing Reporting frontmatter/module-skill loaders, and Tool Registry selection: `30 passed`.
-- WP-02 neutral sequential workflow Characterization: initially failed collection because the workflow/executor modules did not exist, then `7 passed` after implementation.
-- WP-02 affected Kernel and Runtime selection: `22 passed`.
-- WP-03 Tool Adapter Characterization: initially failed collection because the Tool port and adapter did not exist, then the Tool Adapter plus WP-02 integration selection passed: `13 passed`.
-- WP-03 affected Runtime, Kernel workflow, existing Tool Result Index, Tool Outcome, Tool Registry, and selected ReadTool tests: `31 passed`. One initial command used an incorrect pytest class node and collected no tests; the corrected node selection is the recorded result.
-- WP-04 Conversation and Agent Adapter Characterization: initially failed collection because the neutral Conversation package did not exist, then `7 passed`; a fresh-registry restoration case was added with the implementation.
-- WP-04 affected Conversation, Agent Adapter, Kernel workflow, Tool Adapter, Kernel import boundary, and four existing Reporting identity/session selections: `26 passed`.
-- WP-05 current-behavior Characterization for structured correction, Schema correction, Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, and completed Tool Result reuse: `8 passed` before generic implementation.
-- WP-05 generic Recovery Controller Characterization: initially failed collection because the Kernel recovery package did not exist, then `11 passed`.
-- WP-05 affected generic recovery, Kernel import boundary, Legacy Agent adapter, existing reporting recovery/continuation, Schema correction, and Tool Result reuse selection: `24 passed`.
-- WP-06 R-01 isolated POC: MAF 1.0.2 preserved two independent message histories (`[1, 3, 1]`) and produced 5 in-memory checkpoints; PowerFx condition execution was unavailable without .NET, and Goto to a ConditionGroup required its internal `_eval` ID.
-- WP-06 R-02 isolated POC: LangGraph 1.2.11 completed a neutral two-conversation loop, dynamic three-branch parallel Join (`[2, 4, 6]`), output-contract validation, and 11 checkpoint snapshots.
-- WP-06 Control Flow Characterization: initially failed collection because `ControlFlowWorkflowExecutor` did not exist, then `7 passed` after implementation.
-- WP-06 affected Kernel/Runtime selection: `54 passed`; affected Reporting definition/config and Kernel boundary selection: `7 passed`.
-- One initial WP-06 affected command named a nonexistent `tests/runtime/test_state_store.py` and collected no tests. A subsequent combined collection exposed two same-basename test modules; the new Conversation test was renamed, after which the recorded affected selections passed.
-- WP-07 Legacy semantic Trace Characterization passed before implementation: `1 passed`.
-- WP-07 declarative module Lane Characterization initially failed collection because `manyselves.core.reporting.declarative_module_lane` did not exist; the new Lane plus Legacy Trace focused selection then passed: `3 passed`.
-- WP-07 named multi-variable Tool input Characterization initially recorded `2 failed, 7 passed`; the additive single-or-named binding implementation then passed its focused selection: `9 passed`.
-- WP-07 affected declarative/Legacy module Lane, current review lifecycle and Conversation identity, Legacy Agent adapter, Kernel sequential/control-flow, and import-boundary selection: `27 passed`.
-- WP-08 declarative cohort Characterization initially failed collection because `manyselves.core.reporting.declarative_module_cohort` did not exist.
-- WP-08 concurrency-limit Characterization initially failed because `ParallelAction` did not accept `max_concurrency`; the focused Kernel case then passed: `1 passed`.
-- WP-08 focused five-Lane all-ready Join, concurrency limit, completed-Lane reuse, sibling drain, and failed-cohort projection selection: `3 passed`.
-- WP-08 affected declarative cohort/Lane, current Legacy module concurrency, ready supervisor and recovery state, Kernel sequential/control-flow, and import-boundary selection: `29 passed`.
-- WP-09 Reporting-tail Characterization initially failed collection because `manyselves.core.reporting.declarative_reporting_tail` did not exist; its order, completion-marker reuse, and failed-stage continuation focused tests then passed: `3 passed`.
-- WP-09 first-slice affected declarative tail, current Cross owner/specialization, selected Chief/Final chapter lanes, current Delivery materialization, Kernel sequential workflow, and import-boundary selection: `28 passed`.
-- WP-09 tail Trace Characterization initially failed because the declarative tail had no Trace adapter; the direct-current/declarative standard semantic Trace comparison selection then passed with the complete tail focused set: `4 passed`.
-- WP-10 Capability-package Characterization initially failed collection because `manyselves.capabilities` did not exist; the packaged definition graph, current-Agent projection, Legacy template-corpus equivalence, compatibility loader, and executable adapter selection then passed: `5 passed`.
-- WP-10 affected packaged Agent config/prompts, declarative module Lane/Cohort/tail, and Kernel import-boundary selection passed: `42 passed`.
-- WP-10 wheel build succeeded, and the built wheel contains the Capability entry file plus its Agent, Task, Contract, Tool, Workflow, and Recovery definition assets.
-- WP-11 generic projection Characterization initially failed collection because `manyselves.application.workflow_projection` did not exist; pure Capability/Workflow/schema/Run/Output/Cost/command projections plus OpenAPI path coverage then passed: `4 passed`.
-- WP-11 first-slice affected generic routes, complete OpenAPI contract, Distribution Reporting package, and selected current Reporting start/query/cancel compatibility selection passed: `26 passed`.
-- The canonical OpenAPI artifact and generated React TypeScript schema were refreshed; `npm run check:api` passed.
-- WP-11 React Characterization initially failed because the generic Workflow API and Run Workspace modules did not exist; the focused API, operable Workspace, Sidebar, and route selections then passed: `10 passed` total across the selected files/nodes.
-- Targeted ESLint passed for all WP-11 React paths; TypeScript `--noEmit` and the production Vite build passed. No browser/server or full frontend test regression was run.
-- WP-12 second-Capability Characterization initially failed collection because `manyselves.capabilities.parameter_adjustment` did not exist; the complete definition graph and both direct-finish and Agent/Goto execution cases then passed: `3 passed`.
-- WP-12 generic-projection Characterization initially recorded `4 failed, 1 passed` because the facade still projected only Reporting; the second Capability, async start, neutral Run state, value Output, and Reporting artifact Output selection then passed with the Capability tests: `8 passed`.
-- WP-12 affected generic Reporting and neutral HTTP Run routes passed: `2 passed`; the complete OpenAPI contract selection passed: `14 passed`. The OpenAPI route-dependency Characterization was made independent of an existing built frontend static `Mount`; no production route behavior changed.
-- WP-12 focused React Workflow API and Run Workspace selection passed: `3 passed`; generated API drift check, targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. The neutral completed run does not offer Reporting continuation input.
-- Program completion audit found that the declarative Reporting components were not connected to a complete selectable entry. Characterization initially failed collection because `declarative_reporting_runner` did not exist; the executable packaged workflow, module-stage execution/retry, service runner selection, controller default/explicit selection, tail continuation, generic API, and package adapter selection then passed: `29 passed`.
-- The directly affected Reporting service boundary/completion/input-snapshot and Kernel import-boundary selection passed: `55 passed`. No Provider was called. The new selection uses `report-declarative-*`, adds no mode-validation file, Gate, hash, or CAS, and leaves `report-*` on the current Legacy default.
-- WP-11 completion-polling Characterization initially failed because an active Run was queried only once; the focused Run Workspace/API selection then passed: `4 passed`. Targeted ESLint with zero warnings and TypeScript `--noEmit` passed.
-- Final affected Kernel/Runtime/Capability selection: `67 passed`.
-- Final affected declarative/Legacy Reporting, recovery, background execution, service boundary, completion, and input-snapshot selection: `165 passed`.
-- Final affected generic projection, OpenAPI, Legacy start, declarative Reporting route, and neutral Capability HTTP selection: `22 passed`.
-- Final frontend generated-API drift check passed; focused Run Workspace/API selection: `4 passed`; targeted ESLint, TypeScript `--noEmit`, and the Vite production build passed.
-- Final source and wheel distributions built successfully. The wheel contains both `distribution_reporting` and `parameter_adjustment` Capability definitions and assets.
-- Final incremental scan found no newly added hash, digest, SHA, or CAS logic in the Kernel, Runtime, Capability packages, declarative Reporting adapters, or generic projection. Kernel business-term inspection found no Reporting implementation dependency.
-- `uv lock --check` and `git diff --check` passed.
-- Ruff passed for every changed Python and test path. `git diff --check` passed.
-- No real Provider was called. No full regression was rerun after the user's instruction.
-- Chief definition Characterization was RED while `run-chief` remained an `invoke_tool`; after the slice, the package exposes the Chief Cohort, Chapter 1/3/4 Lane definitions, generic `chief-editor` Agent boundary, exact chapter Conversations, and no `run-reporting-chief`: `17 passed`.
-- Chief fresh failure/retry Characterization proved all three branches drained to typed outcomes, Chapter 1 stayed completed, inactive Chapter 4 stayed skipped, and same-Run retry invoked only failed Chapter 3 before deterministic reduction: `1 passed`.
-- Chief affected packaged definitions, current initial/recovery chapter behavior, chapter contracts/tool plumbing, direct Tail, one-parent Runner, and Kernel import boundary: `67 passed`. The protected structured-correction, Schema correction, Max Token, Tool Slice, productive-slice, No-progress, Tool Result reuse, Conversation isolation, and persisted-review-resume selection: `9 passed`.
-- No full regression, Provider, browser, server, or real project test ran for the Chief slice. Pytest emitted only the existing temporary-directory cleanup warnings.
+- FA-00 三项只读审计确认生产链仍为 `Generic /runs → Distribution binding → ReportingFacade → ReportingRunController → ReportingService → DeclarativeReportWorkflowRunner(ReportWorkflowRunner)`；82 个 Capability Contract 中有 41 个 model 路径仍指向 `manyselves.core.reporting.*`。
+- FA-00 将 `AGENTS.md`、产品定位、主架构方案、自主执行协议、官方研究和本状态文件统一改写为最终定义驱动形态；`git diff --check` 通过。
+- FA-01 新增 `tests/architecture/test_final_runtime_boundaries.py`。实现前 5 项均真实失败，分别覆盖 generic layer import、Binding host、Contract ownership、Runner inheritance 和五个文件入口；当前以 strict xfail 记录尚未修复的生产差异，任何完整修复都会先产生 XPASS，必须同步移除对应标记。
+- FA-01 顶层 Capability 导入纯度 Characterization 先失败，随后移除 `distribution_reporting.__init__` 对 compatibility adapters 的 eager import；focused Capability tests `25 passed`，架构边界选择 `5 xfailed`，定向 Ruff 与 `git diff --check` 通过。
+- 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
 
-- R-01 Microsoft Agent Framework decision: `reference`.
-- R-02 LangGraph decision: `reference`.
-- WP-06 implementation choice: the existing lightweight internal Compiler/Executor, using current dependencies only.
-- WP-06 explicit-exit loops use the plan's existing “maximum iterations or exit condition” alternative. No public loop metadata, business predicate, runtime safety gate, or iteration cap was added; existing declared `max_iterations` behavior remains available and unchanged.
-- A loop that re-enters a completed Subworkflow must execute a new child iteration; otherwise the prior child output overwrites the new loop state forever. The Runtime Host now recreates only completed child state on actual action re-entry. Start/resume still skips ordinary completed actions, while failed and WAITING children retain their exact nested snapshots. This changes no Definition field, public state field, Gate, hash/CAS behavior, or iteration cap.
-- No new production orchestration dependency is approved or added.
-- `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
-- WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
-- The original WP-08 standalone detailed-review Cohort uses its WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes its output only after all five typed Lane outcomes are completed.
-- The production Cohort reuses the existing `ReportWorkflowRunner._finalize_module_lanes` compatibility boundary, which contains the pre-existing `WorkflowReducer.write_module_barrier` call and historical completion metadata. The extraction moved that code without copying, expanding, or adding any hash/CAS calculation; generic branch retry depends only on WorkflowState outcomes.
-- The production-Lane lifecycle split mechanically extracts the existing attempt start/failure/completion bookkeeping and threads its existing `LaneTaskSpec` through a typed Capability context. It adds no digest/hash/CAS calculation or comparison; those historical optional fields remain untouched compatibility metadata, and retry still depends on typed WorkflowState outcomes.
-- The production-author split serializes the exact existing TaskEnvelope, including any pre-existing compatibility delivery-mode values, but adds no digest/hash/CAS calculation or comparison. Runtime specialization statically binds the five existing Agent/Task/Conversation identities and avoids a new dynamic module action or Kernel decision type.
-- The production-initial-Auditor split mechanically reuses the existing preflight, `ModuleReviewInput`, TaskEnvelope, finding/completion, and `ModuleReviewProgress` shapes. It introduces no digest/hash/CAS calculation or comparison; resume routing depends on the existing typed progress action and the same `module-auditor-{module_id}` identity, while the historical recheck delivery metadata remains untouched inside the current continuation.
-- The first production Author-revision split mechanically factors the existing `request_module_revision` operation into typed prepare and accept boundaries. The original Author identity, `module-{module_id}` Conversation, TaskEnvelope, patch application, diff, and pre-existing compatibility barrier are preserved; the historical SHA-256 write remains in one accept implementation and was moved once without copying, expanding, or adding hash/CAS logic.
-- The first production Auditor-recheck split mechanically extracts one shared compact-delta input/TaskEnvelope builder used by both declarative and Legacy rechecks. Existing unchanged-content metadata and `hash_retained` delivery descriptions remain single shared expressions; `hash_retained`, `subject_sha256`, and `hashlib` occurrence counts do not increase, and no hash/CAS algorithm or comparison was added.
-- Persisted module-recheck recovery projects the existing typed `ModuleReviewProgress` into the same declared Auditor action or terminal acceptance. Recheck preflight correction now carries only the existing bounded attempt/failure-signature state and returns through the same Author/Auditor Conversations. The obsolete whole-review continuation Tool is removed; corrupt or incomplete state is reported rather than replayed, while accepted exceptional Author responses carry the existing typed Main acceptance. No new validation chain, Gate, hash, CAS, lock, public interface, or production dependency is added.
-- Repeated module correction reuses the same typed acceptance data and the same declared revision/recheck actions; the only graph change is a `Goto` to the existing finding condition. It adds no iteration cap, validation gate, hash, CAS, or new retry decision, and exceptional/preflight behavior continues through the existing Capability boundary.
-- Module machine-preflight extraction preserves the exact existing validation, repeated-failure fingerprint, second-identical/third-total stopping rules, revision preparation/acceptance, progress artifact, and original `module-{module_id}` Conversation. The declarative Lane stores the already prepared typed correction only when that Agent call fails, marks that outcome for an explicit retry, and invokes the same declared correction turn without replaying the initial Author or counting an unchanged subject as a second machine attempt. This recovery marker is execution state rather than an acceptance Gate; it adds no hash/CAS calculation, validation chain, cap, public interface, lock, or dependency.
-- The Cross Cohort extraction moves the existing owner pipeline and aggregate code behind one Capability coordinator used by both Legacy and declarative entries. Existing forensic hash expressions remain in their original business records, `hashlib`, `completion_sha256`, and `subject_sha256` occurrence counts do not increase, and the new graph/retry path depends only on typed WorkflowState outcomes; no hash/CAS calculation or comparison was added.
-- The Cross initial-reviewer split reuses one shared TaskEnvelope builder and typed result-acceptance implementation for both Legacy and declarative entry points. The declarative owner WorkflowState carries the accepted result directly across the continuation boundary, so same-Run recovery does not need a new marker, hash, CAS, or Legacy Provider task-binding and cannot replay an already accepted initial Agent turn.
-- The first Cross owner revision split reuses the exact current `prepare_module_revision` and `accept_module_revision` functions; accepted/persisted candidates are passed into the existing owner-local lane and the old candidate scan is shared by Legacy and declarative paths. The pre-existing module barrier hash write remains in one accept implementation with unchanged occurrence counts; no hash/CAS calculation, comparison, or new validation gate was added.
-- The first Cross local-regression split parameterizes the existing typed initial-Auditor preparation/acceptance with its already-supported `local_regression` phase and mechanically moves the existing prior-completion/diff construction into one shared Capability helper used by Legacy and declarative owner closure. The existing changed-statement hash expression moved once and `hashlib`/`sha256` counts remain unchanged; routing depends on typed workflow state and adds no hash/CAS calculation, comparison, or extra acceptance gate.
-- The first Cross recheck split reuses the existing Cross input builder, reviewer TaskEnvelope, typed verdict acceptance, and original `cross-owner-{module_id}` identity. Same-run retry restores the existing module-review progress/completion artifacts into the typed local acceptance and invokes only an uncompleted recheck. No hash/CAS calculation, comparison, public interface, orchestration dependency, or acceptance Gate was added.
-- Repeated Cross correction reuses one shared typed pending/resolved/new-finding transition for Legacy and declarative paths. The declared back edge returns only when existing pending findings remain, and the existing completion promotion runs when they are empty; this adds no cap, hash, CAS, Gate definition, public interface, or orchestration dependency, while later rounds keep the same Author, Auditor, and Cross reviewer Conversations.
-- Cross no-finding completion calls the pre-existing `_verified_cross_owner_noop` and promotion helpers through one shared Capability boundary. Its historical semantic-key hash remains unchanged in one implementation; no hash/CAS expression, comparison, Gate, or new route predicate was added.
-- Recovered Cross rechecks reuse the acceptance already produced by `prepare_owner_recheck` and change only the existing false-branch target from the compatibility closure to typed round advancement. No new predicate, Tool, Gate, hash/CAS logic, or public boundary was added.
-- Cross Main exception extraction moves the existing exception input, TaskEnvelope, exact-finding acceptance, persisted decision, and `request_user`/`stop_incomplete` behavior into shared typed Capability boundaries used by both Legacy and declarative paths. The new graph declares the existing `main-agent`, original `main-cross-exception` Conversation, and only the two existing business routes; it reuses the pre-existing `_main_exception_lock` to preserve serialization and adds no lock, Gate, cap, hash/CAS expression, or production dependency.
-- Module Main exception extraction preserves the existing all-siblings-drained ordering by serializing each deferred typed Lane context into the Join outcome and resuming its file-defined Lane only after Join. It reuses the pre-existing `main-module-exception` Conversation, Main preparation/acceptance, and `_main_exception_lock`; the graph adds no Gate, cap, hash/CAS expression, lock, public interface, or production dependency. The generic failed-branch reset clears the already-owned nested state for only the reset Subworkflow action so a retried branch cannot reuse a stale post-Join result.
-- Initial Chief extraction preserves the existing Chapter 1/3/(optional 4) selection, chapter-local source projection, result-part validation, RecoveryStore records, deterministic reducer, and `chief-chapter-{id}` Conversation identities. The optional Chapter 4 `If` is the pre-existing special-topic business condition, not a new safety or acceptance Gate. Retry depends only on typed WorkflowState outcomes; no hash/CAS expression, cap, lock, public interface, orchestration dependency, or additional validation chain was introduced.
-- Final revision/recheck extraction preserves the existing affected-only routing, original Chief/Final Conversations, result-part and verdict contracts, common reduced subject, current maximum round count, r1 artifact recovery, terminal audit snapshot, and completion records. It intentionally keeps the Legacy r2+ non-reuse behavior instead of introducing new recovery identity checks. The existing unchanged-section SHA-256 projection is centralized in one Reporting-private helper (the `hashlib.sha256` occurrence count decreases from `9` to `8`) and is not added to Kernel/Runtime; no new hash/CAS expression or comparison is introduced.
-- Delivery extraction preserves the exact existing Render, public publication, run-scoped package materialization, version metadata, completion record, and mutable Reporting state order. The declared Subworkflow stores only the already-produced typed stage values in Reporting-owned WorkflowState, removes that private context at completion, and relies on the generic failed-Subworkflow resume semantics to avoid replaying a completed Render action. Existing `delivery_completion_ref` reuse is unchanged; no new Gate, hash/CAS expression, comparison, lock, validation chain, dependency, or public interface is introduced.
-- WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
-- The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
+- Microsoft Agent Framework: `reference`；官方当前 Declarative Workflow 证明 YAML→Executable Graph、Function Tool、HITL、Checkpoint/Subworkflow 可行。
+- LangGraph: `reference`；官方当前 Graph API 证明 State/Node/Edge、compile、parallel/subgraph/persistence 可行，并明确 Workflow 与 Agent 的职责差异。
+- Production runtime: 保持 Manyselves 内部轻量 Loader/Compiler/Kernel/Host；不新增外部编排依赖。
+- Capability architecture: 每个 Capability 有 Domain Runtime/Tools，不复制 Kernel。
+- Legacy compatibility: 已废止为最终要求；不新增 Adapter/Feature Flag 延长双路径。
 
-The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`. The production path uses the current dependency set and a lightweight internal Compiler/Executor.
-
-## Known blockers
-
-- None. The audit gaps are implementable with the current dependencies and
-  existing public compatibility adapters.
+完整来源和 POC 解释见 [`../research/DECLARATIVE_RUNTIME_LANDSCAPE.md`](../research/DECLARATIVE_RUNTIME_LANDSCAPE.md)。
 
 ## Active user constraints
 
-- Default to focused tests and affected test collections. Do not run a full regression suite unless the user explicitly requests it.
-- Do not add unnecessary safety gates, decision gates, hashes, CAS, or extra validation chains. Preserve existing mechanisms without expanding them. If one becomes necessary, explain the concrete need, insufficiency of existing mechanisms, impact, alternatives, and rollback before implementation; explicit user approval is required.
-- Do not create acceptance breakpoints or request intermediate real testing. Complete all four migration stages, the stateless Kernel, Definition layer, Reporting migration, generic projections, and second Capability before requesting one final real test.
+- 默认只运行 focused tests 和受影响测试，不做全量回归，除非用户明确要求；
+- Characterization First；
+- Kernel 业务无关；
+- 不把 Reporting 角色或流程变成 Kernel Action；
+- 不新增生产编排框架；
+- 默认禁止新增不必要的 Gate、判断门禁、Hash、CAS、锁和额外校验链；确有需要必须先解释并获得批准；
+- 保留结构化纠正、Schema 原 Conversation 修正、Max Token、Tool Slice、No-progress、Tool Result 复用、Conversation/Session 复用和 Same-run 恢复；
+- 中途不设置人工验收断点，自动推进到最终架构完成；
+- 最后只进行一次真实 Provider/项目/浏览器测试；真实长任务不持续高频监控，失败保留同一 Run 和现场。
 
-## Four-stage continuous sequence
+## Verification policy
 
-```text
-Stage 1: WP-00..WP-01 — Baseline and Definition layer
-Stage 2: WP-02..WP-06 — Stateless Kernel and generic Runtime
-Stage 3: WP-07..WP-10 — Reporting migration and Capability package
-Stage 4: WP-11..WP-12 — Generic API/UI projections and second Capability
-Final: one real Provider/project/browser/server test handoff
+每个切片记录实际命令。默认：
+
+```bash
+uv run ruff check <changed-python-and-test-paths>
+uv run pytest -q <focused-and-affected-tests> --maxfail=3
+git diff --check
 ```
 
-The original four-stage commit sequence and the reopened architecture audit are
-complete. [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md)
-is current and ready for the single isolated user-operated real test.
+前端只运行 focused Vitest、定向 ESLint、TypeScript 或受影响 build。任何窄选择都不得被描述为全仓库回归。
+
+## Completion evidence matrix
+
+最终完成前必须逐项填入当前证据：
+
+| Requirement | Evidence status |
+| --- | --- |
+| Stateless Kernel business-neutral | `foundation present; final audit pending` |
+| File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
+| One Generic Runtime Host | `foundation present; legacy host removal pending` |
+| Generic Agent/Tool/Conversation/Recovery | `partial; extraction pending` |
+| Capability-owned Reporting Domain Runtime | `not achieved` |
+| No Declarative→Legacy Runner inheritance/delegation | `not achieved` |
+| Generic Capability Binding/Application | `partial; Reporting host removal pending` |
+| Generic FastAPI/React for two capabilities | `foundation present; final neutrality audit pending` |
+| Legacy Runner/Facade/selectors absent from production/release | `not achieved` |
+| Recovery/Same-run behaviors on final path | `not yet reverified after final refactor` |
+| Focused/affected checks and builds | `pending for final refactor` |
+| Final real Provider/project/browser test | `not started` |
+| Docs/code/tests/release consistent | `not achieved` |
+
+只要一项仍为 partial、pending、missing 或 indirect，就不得宣称项目完成。
+
+## Next automatic sequence
+
+1. 执行 FA-02 通用 Runtime 提取；
+2. 执行 FA-03 Reporting Domain Runtime 解耦；
+3. 执行 FA-04 通用 Binding；
+4. 执行 FA-05 旧路径删除和物理归属收敛；
+5. 执行 FA-06 产品表面复审；
+6. 执行 FA-07 自动完成审计；
+7. 只在全部自动证据通过后进行最终一次真实测试。
 
 ## Resume instruction
 
-A new Codex session should receive only:
+新会话执行：
 
 ```text
-Read AGENTS.md and docs/implementation/RUNTIME_EXTRACTION_STATUS.md.
-Confirm the current branch and latest commit.
-Follow docs/CODEX_AUTONOMOUS_EXECUTION.md.
-Continue from Current work package / Current migration stage without repeating completed work.
+Run git status -sb, git branch --show-current, git log -1 --oneline.
+Read AGENTS.md and this status file completely.
+Continue from Current FA work package / Next automatic sequence.
+Do not restore Legacy compatibility as a target and do not ask between slices.
 ```
