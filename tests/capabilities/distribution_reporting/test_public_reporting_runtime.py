@@ -1,6 +1,7 @@
 """Characterization for the production public Reporting runtime binding."""
 
 import asyncio
+import hashlib
 import json
 from importlib.util import find_spec
 from pathlib import Path
@@ -13,10 +14,12 @@ from manyselves.capabilities.distribution_reporting.runtime import (
     preparation_tools,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TEMPLATE_ROLE_SKILL_IDS,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleSubmission,
     TaskEnvelope,
+    TemplateSkillBoundaryManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
@@ -52,6 +55,9 @@ from manyselves.capabilities.distribution_reporting.runtime.module_recheck_tools
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     _validate_findings,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_runtime import (
+    CapabilityModuleRuntime,
 )
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
@@ -333,6 +339,60 @@ def _patch_minimal_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _write_complete_template_skill_fixture(workspace: Path) -> None:
+    root = workspace / "Work/report-template-role-skills"
+    boundary = TemplateSkillBoundaryManifest(
+        transferred_categories=[
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ],
+        excluded_categories=[
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ],
+        boundary_statement=(
+            "Only reusable reporting methods and fact-free structural examples may be "
+            "transferred; every project fact, conclusion, threshold, and evidence identity "
+            "must remain scoped to the current run inputs."
+        ),
+    )
+    artifact_sha256: dict[str, str] = {}
+    for skill_id in TEMPLATE_ROLE_SKILL_IDS:
+        path = root / skill_id / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            "auditor-skill: preserve the review envelope\n"
+            if skill_id == "auditor-2.4"
+            else f"{skill_id}: preserve typed evidence boundaries.\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        artifact_sha256[f"{skill_id}/SKILL.md"] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+    boundary_path = root / "boundary.json"
+    boundary_path.write_text(boundary.model_dump_json(), encoding="utf-8")
+    artifact_sha256["boundary.json"] = hashlib.sha256(
+        boundary_path.read_bytes()
+    ).hexdigest()
+    (root / "source.json").write_text(
+        json.dumps(
+            {
+                "boundary_policy_version": boundary.policy_version,
+                "boundary_ref": "Work/report-template-role-skills/boundary.json",
+                "artifact_sha256": artifact_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.asyncio
 async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     tmp_path: Path,
@@ -341,6 +401,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     """The neutral Agent bridge completes before the next unbound Tool gap."""
 
     _patch_minimal_preparation(monkeypatch)
+    _write_complete_template_skill_fixture(tmp_path)
     snapshot = {
         "inventory_digest": "inventory",
         "files": [
@@ -374,9 +435,6 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         ),
         encoding="utf-8",
     )
-    auditor_skill = tmp_path / "Work/report-template-role-skills/auditor-2.4/SKILL.md"
-    auditor_skill.parent.mkdir(parents=True)
-    auditor_skill.write_text("auditor-skill: preserve the review envelope", encoding="utf-8")
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     execution = AgentExecutionService(bus, timeout=1)
@@ -392,7 +450,13 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         loops.append(loop)
         return loop
 
-    module_runtime = _BoundaryModuleRuntime(execution, session_factory)
+    module_runtime = CapabilityModuleRuntime(
+        tmp_path,
+        store=ReportingStore(tmp_path),
+        agent_execution=execution,
+        agent_session_factory=session_factory,
+        agent_invokers={"module-2.4-specialist": object()},
+    )
     store = InMemoryWorkflowStateStore()
     events = InMemoryWorkflowEventSink()
     captured_lane_contexts: list[DeclarativeModuleRuntimeLaneContext] = []
@@ -455,7 +519,10 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     author_loop = next(loop for loop in loops if "module-2.4-specialist" in loop.runtime_id)
     reviewer_loop = next(loop for loop in loops if "evidence-auditor" in loop.runtime_id)
     assert [message.turn_kind for message in author_loop.received] == ["task_initial"]
-    assert "author-skill: preserve evidence references" in author_loop.received[0].content
+    assert "author-2.4: preserve typed evidence boundaries" in (
+        author_loop.received[0].content
+    )
+    assert '"open_project_source"' in author_loop.received[0].content
     assert [message.turn_kind for message in reviewer_loop.received] == ["task_initial"]
     assert reviewer_loop.runtime_id == (
         "public-reporting:evidence-auditor:module-auditor-2.4"

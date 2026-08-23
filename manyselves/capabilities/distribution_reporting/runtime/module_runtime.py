@@ -2,9 +2,9 @@
 
 This module only assembles lifecycle functions that already belong to the
 distribution-reporting Capability.  It intentionally does not recreate the
-unmigrated lane start/author/revision/recheck/main-exception lifecycle from
-the legacy Reporting runner; absent attributes remain an explicit boundary
-for the next extraction slices.
+unmigrated revision/recheck/main-exception lifecycle from the legacy
+Reporting runner; absent attributes remain an explicit boundary for the next
+extraction slices.
 """
 
 from __future__ import annotations
@@ -20,6 +20,11 @@ from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessi
 
 from .models.module_cohort import DeclarativeModuleLaneOutcome
 from .models.module_lane import DeclarativeModuleRuntimeLaneContext
+from .module_authoring_preparation import (
+    build_module_dispatch,
+    prepare_current_module_authoring,
+    resume_current_module_authoring,
+)
 from .module_cohort_tools import complete_current_module_lane, reduce_module_cohort
 from .module_lane_tools import (
     accept_current_module_authoring,
@@ -52,10 +57,26 @@ def _context(value: Any) -> DeclarativeModuleRuntimeLaneContext:
     return DeclarativeModuleRuntimeLaneContext.model_validate(value)
 
 
-def _prepare_module_lanes(value: Any) -> Any:
-    """Keep the cohort's typed reporting state unchanged at its boundary."""
+def _prepare_module_lanes(
+    value: Any,
+    *,
+    workspace: Path,
+    store: ReportingStore,
+    global_root: Path | None = None,
+) -> Any:
+    """Build the shared dispatch once before the module lanes fan out."""
 
-    return value
+    if not isinstance(value, Mapping):
+        return value
+    state = deepcopy(dict(value))
+    if "module_dispatch" not in state:
+        build_module_dispatch(
+            state,
+            workspace=workspace,
+            store=store,
+            global_root=global_root,
+        )
+    return state
 
 
 def _start_module_lane(
@@ -140,15 +161,30 @@ class CapabilityModuleRuntime:
         agent_execution: AgentExecutionService,
         agent_session_factory: SessionFactory,
         agent_invokers: Mapping[str, AgentInvoker],
+        global_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.store = store
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
         self.agent_execution = agent_execution
         self.agent_session_factory = agent_session_factory
         self.agent_invokers = agent_invokers
 
-        self.prepare_lanes = _prepare_module_lanes
+        self.prepare_lanes = partial(
+            _prepare_module_lanes,
+            workspace=self.workspace,
+            store=store,
+            global_root=self.global_root,
+        )
         self.start_lane = _start_module_lane
+        self.prepare_author_lane = partial(
+            prepare_current_module_authoring,
+            workspace=self.workspace,
+            store=store,
+            global_root=self.global_root,
+        )
         self.author_requires_agent = _author_requires_agent
         self.lane_has_deferred_main_exception = _lane_has_deferred_main_exception
         self.lane_retries_preflight_revision = _lane_retries_preflight_revision
@@ -157,6 +193,7 @@ class CapabilityModuleRuntime:
             accept_current_module_authoring,
             store=store,
         )
+        self.resume_author_lane = resume_current_module_authoring
         self.can_review_lane = module_lane_can_review
         self.prepare_review_lane = partial(
             prepare_current_module_review,

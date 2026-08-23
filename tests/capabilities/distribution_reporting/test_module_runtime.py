@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime import (
     module_cohort_tools,
     module_lane_tools,
     module_review_preparation,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TEMPLATE_ROLE_SKILL_IDS,
+    TemplateSkillBoundaryManifest,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRuntimeLaneContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ReportRequest,
+    UserSupplement,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_cohort_tools import (
     complete_current_module_lane,
@@ -77,8 +91,10 @@ _PUBLIC_MODULE_RUNTIME_METHODS = (
 
 _CAPABILITY_AVAILABLE_METHODS = (
     "start_lane",
+    "prepare_author_lane",
     "author_requires_agent",
     "accept_author_lane",
+    "resume_author_lane",
     "can_review_lane",
     "prepare_review_lane",
     "review_preflight_needs_revision",
@@ -182,8 +198,6 @@ def test_module_runtime_marks_unmigrated_lifecycle_ports_explicitly(
 
     assert available == list(_CAPABILITY_AVAILABLE_METHODS)
     assert missing == [
-        "prepare_author_lane",
-        "resume_author_lane",
         "prepare_preflight_revision_lane",
         "accept_preflight_revision_lane",
         "resume_review_lane",
@@ -234,7 +248,279 @@ def test_public_runtime_exposes_migrated_lane_ports_without_boundary_runtime(
     assert "accept-current-module-recheck" in implementations
     assert "prepare-current-module-author-exception" in implementations
     assert "module-lane-has-deferred-main-exception" in implementations
-    assert "prepare-current-module-authoring" not in implementations
+    assert "prepare-current-module-authoring" in implementations
     assert "prepare-current-module-authoring" in (
         PublicReportingWorkflowRuntime._plan_tool_ids(plan)
+    )
+
+
+def _author_request() -> ReportRequest:
+    return ReportRequest(
+        operation="module_report",
+        instruction="完成模块 2.4 的完整正文和证据绑定",
+        target_modules=["2.4"],
+        execution_requirements=["保留当前项目证据边界"],
+        user_supplements=[
+            UserSupplement(
+                id="US-author-1",
+                content="当前 run 的模块正文必须明确标注待核实事实。",
+                scope="module",
+                target_ids=["2.4"],
+                stages=["module_authoring"],
+            )
+        ],
+        missing_evidence_policy="draft",
+        preparation_mode="serial",
+    )
+
+
+def _write_author_skill_fixture(workspace: Path) -> None:
+    root = workspace / "Work/report-template-role-skills"
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = TemplateSkillBoundaryManifest(
+        transferred_categories=[
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ],
+        excluded_categories=[
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ],
+        boundary_statement=(
+            "仅保留可跨项目复用的方法与无事实样例；当前项目事实、具体数值、客户名称、"
+            "风险结论和建议必须来自本 run 输入，禁止把模板内容当作项目证据。"
+            "所有跨项目方法均不得替代当前项目的结构化输入、证据和用户补充。"
+        ),
+    )
+    skill_text = "可复用的方法说明与无事实示例。" + (" 方法步骤。" * 80)
+    hashes: dict[str, str] = {}
+    for skill_id in TEMPLATE_ROLE_SKILL_IDS:
+        path = root / skill_id / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(skill_text, encoding="utf-8")
+        hashes[f"{skill_id}/SKILL.md"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    boundary_path = root / "boundary.json"
+    boundary_path.write_text(
+        json.dumps(manifest.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    hashes["boundary.json"] = hashlib.sha256(boundary_path.read_bytes()).hexdigest()
+    (root / "source.json").write_text(
+        json.dumps(
+            {
+                "boundary_policy_version": manifest.policy_version,
+                "boundary_ref": "Work/report-template-role-skills/boundary.json",
+                "artifact_sha256": hashes,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _author_state(workspace: Path, run_id: str, *, resume: bool = False) -> dict[str, Any]:
+    store = ReportingStore(workspace)
+    refs = {
+        "coverage": f"Work/runs/{run_id}/preparation/coverage.json",
+        "evidence": f"Work/runs/{run_id}/preparation/evidence.jsonl",
+        "manifest": f"Work/runs/{run_id}/preparation/manifest.json",
+    }
+    for name, ref in refs.items():
+        store.write_text(ref, f"{name}-{run_id}\n")
+    store.write_text(
+        f"Work/runs/{run_id}/preparation/completion.json",
+        "completion\n",
+    )
+    return {
+        "run_id": run_id,
+        "resume": resume,
+        "request": _author_request(),
+        "preparation_refs": refs,
+        "preparation_completion_ref": f"Work/runs/{run_id}/preparation/completion.json",
+        "evidence_index_ref": f"Work/runs/{run_id}/preparation/evidence-index.json",
+    }
+
+
+def _legacy_runner(workspace: Path) -> Any:
+    from manyselves.core.reporting.workflow import ReportWorkflowRunner
+
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = SimpleNamespace(
+        workspace=workspace,
+        store=ReportingStore(workspace),
+        global_root=None,
+    )
+    return runner
+
+
+def test_capability_module_authoring_matches_legacy_fresh_provider_contract(
+    tmp_path: Path,
+) -> None:
+    """RED characterization for the complete fresh author preparation contract."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+        build_module_dispatch,
+        prepare_current_module_authoring,
+    )
+
+    legacy_workspace = tmp_path / "legacy"
+    capability_workspace = tmp_path / "capability"
+    _write_author_skill_fixture(legacy_workspace)
+    _write_author_skill_fixture(capability_workspace)
+    legacy_state = _author_state(legacy_workspace, "run-author-fresh")
+    capability_state = _author_state(capability_workspace, "run-author-fresh")
+
+    legacy = _legacy_runner(legacy_workspace)
+    legacy_dispatch = legacy._build_module_dispatch(legacy_state, ("2.4",))
+    legacy_state["module_dispatch"] = legacy_dispatch
+    capability_dispatch = build_module_dispatch(
+        capability_state,
+        workspace=capability_workspace,
+        store=ReportingStore(capability_workspace),
+    )
+
+    legacy_task = legacy_dispatch.module_tasks[0].model_dump(
+        mode="json", exclude={"task_attempt_id"}
+    )
+    capability_task = capability_dispatch.module_tasks[0].model_dump(
+        mode="json", exclude={"task_attempt_id"}
+    )
+    assert capability_task == legacy_task
+    assert capability_state["module_knowledge_refs"] == legacy_state["module_knowledge_refs"]
+    assert capability_state["template_skill_refs"] == legacy_state["template_skill_refs"]
+
+    legacy_preparation = legacy._prepare_module_authoring(
+        "2.4",
+        legacy_state,
+        "public-reporting",
+        review=False,
+        checkpoint=False,
+    )
+    capability_context = prepare_current_module_authoring(
+        DeclarativeModuleRuntimeLaneContext(
+            module_id="2.4",
+            workflow_id="public-reporting",
+            reporting_state=capability_state,
+            status="ready",
+        ),
+        workspace=capability_workspace,
+        store=ReportingStore(capability_workspace),
+    )
+    assert capability_context.status == "author_ready"
+    assert capability_context.authoring is not None
+    capability_envelope = capability_context.authoring.envelope
+    assert capability_envelope is not None
+    assert capability_envelope.model_dump(
+        mode="json", exclude={"task_attempt_id"}
+    ) == legacy_preparation.envelope.model_dump(
+        mode="json", exclude={"task_attempt_id"}
+    )
+    assert capability_context.authoring.revision == legacy_preparation.revision
+
+
+def test_capability_module_authoring_preserves_resume_result_part_projection(
+    tmp_path: Path,
+) -> None:
+    """RED characterization for saved/rewrite parts and same-run resume identity."""
+
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+    from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+        build_module_dispatch,
+        prepare_current_module_authoring,
+    )
+
+    legacy_workspace = tmp_path / "legacy"
+    capability_workspace = tmp_path / "capability"
+    _write_author_skill_fixture(legacy_workspace)
+    _write_author_skill_fixture(capability_workspace)
+    legacy_state = _author_state(legacy_workspace, "run-author-resume", resume=True)
+    capability_state = _author_state(capability_workspace, "run-author-resume", resume=True)
+    legacy = _legacy_runner(legacy_workspace)
+    legacy._build_module_dispatch(legacy_state, ("2.4",))
+    capability_dispatch = build_module_dispatch(
+        capability_state,
+        workspace=capability_workspace,
+        store=ReportingStore(capability_workspace),
+    )
+    legacy_state["module_dispatch"] = legacy._build_module_dispatch(
+        legacy_state, ("2.4",)
+    )
+    capability_state["module_dispatch"] = capability_dispatch
+
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    for workspace in (legacy_workspace, capability_workspace):
+        root = workspace / "Work/runs/run-author-resume/drafts/module-2.4/r0"
+        (root / "_evidence").mkdir(parents=True, exist_ok=True)
+        for index, part_id in enumerate(part_ids):
+            (root / f"{part_id}.md").write_text(
+                f"正文 {part_id}", encoding="utf-8"
+            )
+            if index == 0:
+                (root / "_evidence" / f"{part_id}.json").write_text(
+                    json.dumps({"evidence_ids": []}), encoding="utf-8"
+                )
+        marker = root / "_authoring-context.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "authoring_context_sha256": (
+                        _legacy_runner(legacy_workspace)
+                        ._module_authoring_context_sha256(legacy_state, "2.4")
+                        if workspace == legacy_workspace
+                        else "placeholder"
+                    )
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    # Use the exact legacy marker for the capability workspace too, so both
+    # paths take the same saved-part branch without changing the contract.
+    capability_marker = capability_workspace / (
+        "Work/runs/run-author-resume/drafts/module-2.4/r0/_authoring-context.json"
+    )
+    capability_marker.write_text(
+        json.dumps(
+            {
+                "authoring_context_sha256": _legacy_runner(capability_workspace)
+                ._module_authoring_context_sha256(capability_state, "2.4")
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    legacy_preparation = legacy._prepare_module_authoring(
+        "2.4",
+        legacy_state,
+        "public-reporting",
+        review=False,
+        checkpoint=False,
+    )
+    capability_context = prepare_current_module_authoring(
+        DeclarativeModuleRuntimeLaneContext(
+            module_id="2.4",
+            workflow_id="public-reporting",
+            reporting_state=capability_state,
+            status="ready",
+        ),
+        workspace=capability_workspace,
+        store=ReportingStore(capability_workspace),
+    )
+    # Existing draft parts are a resume projection inside the Author envelope;
+    # ``author_resumed`` remains reserved for a cached typed submission.
+    assert capability_context.status == "author_ready"
+    assert capability_context.authoring is not None
+    assert capability_context.authoring.revision == legacy_preparation.revision
+    assert capability_context.authoring.envelope is not None
+    assert legacy_preparation.envelope is not None
+    assert capability_context.authoring.envelope.model_dump(
+        mode="json", exclude={"task_attempt_id"}
+    ) == legacy_preparation.envelope.model_dump(
+        mode="json", exclude={"task_attempt_id"}
     )

@@ -97,9 +97,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     RevisionResponse,
     StrictModel,
     TaskEnvelope,
-    TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
-    extra_numbered_submodule_headings,
     numbered_markdown_headings,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
@@ -112,7 +110,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     CrossDecisionPackView,
     FinalAuditSnapshot,
     FinalChapterLaneInput,
-    ModuleAuthoringInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
     TemplateDistillationInput,
@@ -145,6 +142,27 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleRecheckPreparation,
     ModuleReviewPreflightProgress,
     ModuleRevisionPreparation,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    ModuleAuthoringPreparationError,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    build_module_dispatch as capability_build_module_dispatch,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    inherit_module_result_parts as capability_inherit_module_result_parts,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    load_template_skill as capability_load_template_skill,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    module_author_inline_context as capability_module_author_inline_context,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    module_authoring_context_sha256 as capability_module_authoring_context_sha256,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+    prepare_module_authoring as capability_prepare_module_authoring,
 )
 from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
     ApprovedReport,
@@ -418,7 +436,7 @@ class AgentWorkflowError(RuntimeError):
     pass
 
 
-class AgentWorkflowBlocked(AgentWorkflowError):
+class AgentWorkflowBlocked(AgentWorkflowError):  # noqa: N818 - compatibility name
     def __init__(
         self, agent_id: str, task_id: str, reason: str, artifact_refs: list[str] | None = None
     ):
@@ -941,92 +959,10 @@ class ReportWorkflowRunner:
                 await self._budget.release()
 
     def _load_template_skill(self, state: dict) -> bool:
-        root = TEMPLATE_SKILL_ROOT
-        refs = {
-            skill_id: root / skill_id / "SKILL.md"
-            for skill_id in TEMPLATE_ROLE_SKILL_IDS
-        }
-        boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
-        required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
-        missing = [
-            path.as_posix()
-            for path in required
-            if not (self.service.workspace / path).is_file()
-        ]
-        if missing:
-            raise AgentWorkflowError(
-                "固定模板写作 Skill 与当前边界契约不兼容，缺少文件："
-                f"{', '.join(missing)}；请先单独运行 "
-                "operation=distill_template_skill 更新固定 Skill"
-            )
         try:
-            boundary = TemplateSkillBoundaryManifest.model_validate_json(
-                (self.service.workspace / boundary_ref).read_text(encoding="utf-8")
-            )
-            source_payload = json.loads(
-                (self.service.workspace / TEMPLATE_SKILL_SOURCE).read_text(
-                    encoding="utf-8"
-                )
-            )
-            if not isinstance(source_payload, dict):
-                raise ValueError("source.json must contain one JSON object")
-            expected_hashes = {
-                path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): self._sha256(
-                    self.service.workspace / path
-                )
-                for path in [*refs.values(), boundary_ref]
-            }
-        except (OSError, ValueError, AttributeError) as exc:
-            raise AgentWorkflowError(
-                "固定模板写作 Skill 的 boundary.json 或 source.json 无法解析；"
-                "请先单独运行 operation=distill_template_skill 更新固定 Skill"
-            ) from exc
-        mismatched = [
-            field
-            for field, actual, expected in (
-                (
-                    "boundary_policy_version",
-                    source_payload.get("boundary_policy_version"),
-                    boundary.policy_version,
-                ),
-                (
-                    "boundary_ref",
-                    source_payload.get("boundary_ref"),
-                    boundary_ref.as_posix(),
-                ),
-                (
-                    "artifact_sha256",
-                    source_payload.get("artifact_sha256"),
-                    expected_hashes,
-                ),
-            )
-            if actual != expected
-        ]
-        if mismatched:
-            raise AgentWorkflowError(
-                "固定模板写作 Skill 的 source.json 与当前边界契约或产物哈希不一致："
-                f"{', '.join(mismatched)}；请先单独运行 "
-                "operation=distill_template_skill 更新固定 Skill"
-            )
-        template_skill_text = {
-            key: (self.service.workspace / path).read_text(encoding="utf-8")
-            for key, path in refs.items()
-        }
-        poisoned = [
-            refs[key].as_posix()
-            for key, text in template_skill_text.items()
-            if "<persisted_result_part" in text.casefold()
-        ]
-        if poisoned:
-            raise AgentWorkflowError(
-                "固定模板写作 Skill 含有退休的内部历史令牌："
-                f"{', '.join(poisoned)}；必须恢复完整正文或重新蒸馏，禁止把该标记"
-                "继续注入报告 Agent"
-            )
-        state["template_skill_refs"] = {key: path.as_posix() for key, path in refs.items()}
-        state["template_skill_text"] = template_skill_text
-        state["template_skill_boundary"] = boundary
-        return True
+            return capability_load_template_skill(self.service.workspace, state)
+        except ModuleAuthoringPreparationError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
 
     def _require_template_skill(self, state: dict) -> None:
         self._load_template_skill(state)
@@ -1051,24 +987,14 @@ class ReportWorkflowRunner:
 
     def _module_author_inline_context(self, state: dict, module_id: str) -> str:
         """Build current authoring context instead of replaying stale dispatch text."""
-
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        knowledge_path = (self.service.workspace / knowledge_ref).resolve()
-        if (
-            not knowledge_path.is_relative_to(self.service.workspace)
-            or not knowledge_path.is_file()
-        ):
-            raise AgentWorkflowError(
-                f"module {module_id} knowledge is not a readable workspace artifact"
+        try:
+            return capability_module_author_inline_context(
+                state,
+                module_id,
+                workspace=self.service.workspace,
             )
-        return (
-            self._domain_knowledge_context(
-                knowledge_path.read_text(encoding="utf-8"),
-                knowledge_ref,
-            )
-            + "\n\n"
-            + self._template_skill_context(state, f"author-{module_id}")
-        )
+        except ModuleAuthoringPreparationError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
 
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
         """Let Template Distiller refresh the fixed project writing Skill."""
@@ -3246,83 +3172,14 @@ class ReportWorkflowRunner:
         module_id: str,
     ) -> str:
         """Fingerprint every durable input that makes a module draft reusable."""
-
-        request = state.get("request")
-
-        def ref_record(ref: str | None) -> dict[str, str | None] | None:
-            if not ref:
-                return None
-            path = (self.service.workspace / ref).resolve()
-            return {
-                "ref": ref,
-                "sha256": (
-                    self._sha256(path)
-                    if path.is_relative_to(self.service.workspace)
-                    and path.is_file()
-                    else None
-                ),
-            }
-
-        planned = None
-        dispatch = state.get("module_dispatch")
-        if dispatch is not None:
-            planned = next(
-                (
-                    item.model_dump(mode="json")
-                    for item in dispatch.module_tasks
-                    if item.agent_id == f"module-{module_id}-specialist"
-                ),
-                None,
-            )
-        supplement_constraints = (
-            self._user_supplement_constraints(
+        try:
+            return capability_module_authoring_context_sha256(
                 state,
-                stage="module_authoring",
-                target_ids={
-                    module_id,
-                    *REPORT_TAXONOMY[module_id].submodules,
-                },
+                module_id,
+                workspace=self.service.workspace,
             )
-            if request is not None
-            and hasattr(request, "user_supplements")
-            else []
-        )
-        payload = {
-            "version": 3,
-            "run_id": state["run_id"],
-            "module_id": module_id,
-            "required_submodule_ids": list(
-                REPORT_TAXONOMY[module_id].submodules
-            ),
-            "planned_task": planned,
-            "execution_requirements": list(
-                getattr(request, "execution_requirements", [])
-            ),
-            "missing_evidence_policy": getattr(
-                request, "missing_evidence_policy", None
-            ),
-            "supplement_constraints": supplement_constraints,
-            "coverage": ref_record(
-                state.get("preparation_refs", {}).get("coverage")
-            ),
-            "evidence": ref_record(
-                state.get("preparation_refs", {}).get("evidence")
-            ),
-            "manifest": ref_record(
-                state.get("preparation_refs", {}).get("manifest")
-            ),
-            "knowledge": ref_record(
-                state.get("module_knowledge_refs", {}).get(module_id)
-            ),
-        }
-        return hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        except ModuleAuthoringPreparationError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
 
     def _verify_resume_cross_owner_barrier(
         self,
@@ -4469,93 +4326,18 @@ class ReportWorkflowRunner:
         self, state: dict, module_ids: tuple[str, ...]
     ) -> ModuleDispatchPlan:
         """Build Main's deterministic fixed-module dispatch."""
-
-        request = state["request"]
-        knowledge = KnowledgeContextBuilder(
-            self.service.workspace,
-            state["run_id"],
-            global_root=getattr(self.service, "global_root", None),
-        )
-        if not self._load_template_skill(state):
-            raise AgentWorkflowError(
-                "fixed template-writing Skill must exist before module dispatch"
+        try:
+            self._load_template_skill(state)
+            return capability_build_module_dispatch(
+                state,
+                workspace=self.service.workspace,
+                store=self.service.store,
+                module_ids=module_ids,
+                global_root=getattr(self.service, "global_root", None),
+                template_skill_loaded=True,
             )
-        module_knowledge = {
-            module_id: knowledge.build_module(module_id) for module_id in module_ids
-        }
-        state["module_knowledge_refs"] = {
-            module_id: context.path.as_posix() for module_id, context in module_knowledge.items()
-        }
-        knowledge_snapshot_refs = sorted(
-            {
-                context.snapshot_ref.as_posix()
-                for context in module_knowledge.values()
-                if context.snapshot_ref is not None
-            }
-        )
-        state["knowledge_snapshot_refs"] = knowledge_snapshot_refs
-        preparation_refs = state["preparation_refs"]
-        tasks = [
-            TaskEnvelope(
-                task_id=f"module-{module_id}",
-                run_id=state["run_id"],
-                agent_id=f"module-{module_id}-specialist",
-                objective=f"完成报告模块 {module_id}。用户要求：{request.instruction}",
-                input_refs=[
-                    preparation_refs["coverage"],
-                    preparation_refs["evidence"],
-                    preparation_refs["manifest"],
-                    *(
-                        [state["preparation_completion_ref"]]
-                        if state.get("preparation_completion_ref")
-                        else []
-                    ),
-                    state["module_knowledge_refs"][module_id],
-                    *knowledge_snapshot_refs,
-                    *(
-                        [state["evidence_index_ref"]]
-                        if state.get("evidence_index_ref")
-                        else []
-                    ),
-                ],
-                constraints=[
-                    f"仅分析目标模块 {module_id}",
-                    "叶子任务内联当前叶子的项目/全局 Knowledge 增量与核心写作方法；整模块 Knowledge 和完整写作 Skill 以共享引用提供，仅在增量不足时按需读取",
-                    "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
-                    "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
-                    (
-                        "固定 taxonomy 是唯一合法的数字标题体系；正文只允许使用本任务"
-                        " required_submodule_ids 中的编号标题。现状、判断、原因、风险机理、"
-                        "建议和验证只能使用普通段落或无编号粗体标签，禁止自行生成下一级编号"
-                    ),
-                    f"缺失证据策略={request.missing_evidence_policy}",
-                    *self._evidence_policy_constraints(request.missing_evidence_policy),
-                    *request.execution_requirements,
-                    *self._user_supplement_constraints(
-                        state,
-                        stage="module_authoring",
-                        target_ids={
-                            module_id,
-                            *REPORT_TAXONOMY[module_id].submodules,
-                        },
-                    ),
-                ],
-                allowed_outputs=["module_submission"],
-                target_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
-                inline_context=self._module_author_inline_context(state, module_id),
-            )
-            for module_id in module_ids
-        ]
-        dispatch = ModuleDispatchPlan(
-            module_tasks=tasks,
-            rationale="Main 根据固定报告 taxonomy 和用户目标直接分配模块任务。",
-        )
-        self.service.store.write_run_model(
-            state["run_id"],
-            "workflow/module-dispatch.json",
-            dispatch,
-        )
-        return dispatch
+        except ModuleAuthoringPreparationError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
 
     def _write_handoff_contracts(self, state: dict) -> Path:
         """Legacy wrapper around the Capability-owned contract Tool."""
@@ -4580,22 +4362,13 @@ class ReportWorkflowRunner:
         to_revision: int,
     ) -> list[str]:
         """Seed a revision with untouched durable parts from its parent revision."""
-        if from_revision < 0 or to_revision <= from_revision:
-            return []
-        draft_base = self.service.workspace / (f"Work/runs/{run_id}/drafts/module-{module_id}")
-        source_root = draft_base / f"r{from_revision}"
-        target_root = draft_base / f"r{to_revision}"
-        if not source_root.is_dir():
-            return []
-        inherited: list[str] = []
-        target_root.mkdir(parents=True, exist_ok=True)
-        for submodule_id in REPORT_TAXONOMY[module_id].submodules:
-            source = source_root / f"{submodule_id}.md"
-            target = target_root / f"{submodule_id}.md"
-            if source.is_file() and not target.exists():
-                shutil.copy2(source, target)
-                inherited.append(submodule_id)
-        return inherited
+        return capability_inherit_module_result_parts(
+            self.service.workspace,
+            run_id,
+            module_id,
+            from_revision,
+            to_revision,
+        )
 
     def _lane_task_spec(self, state: dict, module_id: str) -> LaneTaskSpec:
         preparation_inputs = []
@@ -5528,247 +5301,30 @@ class ReportWorkflowRunner:
         review: bool,
         checkpoint: bool,
     ) -> _ModuleAuthoringPreparationContext:
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item for item in state["module_dispatch"].module_tasks if item.agent_id == specialist_id
-        )
-        resumed_payload = state.get("specialist_submissions", {}).get(module_id)
-        forced_fresh_revision = None
-        revision = (
-            resumed_payload.revision
-            if resumed_payload is not None
-            else int(forced_fresh_revision)
-            if forced_fresh_revision is not None
-            else 0
-        )
-        if (
-            state.get("resume")
-            and resumed_payload is None
-            and forced_fresh_revision is None
-        ):
-            draft_base = self.service.workspace / (
-                f"Work/runs/{state['run_id']}/drafts/module-{module_id}"
+        """Legacy adapter for the Capability-owned Author preparation."""
+
+        try:
+            preparation = capability_prepare_module_authoring(
+                module_id,
+                state,
+                workflow_id,
+                workspace=self.service.workspace,
+                store=self.service.store,
+                review=review,
+                checkpoint=checkpoint,
             )
-            persisted_revisions = [
-                int(path.name[1:])
-                for path in draft_base.glob("r*")
-                if path.is_dir() and path.name[1:].isdigit()
-            ]
-            if persisted_revisions:
-                revision = max(persisted_revisions)
-
-        authoring_context_sha256 = self._module_authoring_context_sha256(
-            state,
-            module_id,
-        )
-        draft_base = self.service.workspace / (
-            f"Work/runs/{state['run_id']}/drafts/module-{module_id}"
-        )
-        draft_root = draft_base / f"r{revision}"
-        context_marker = draft_root / "_authoring-context.json"
-        existing_parts = list(draft_root.glob("*.md"))
-        marker_matches = False
-        if context_marker.is_file():
-            try:
-                marker = json.loads(
-                    context_marker.read_text(encoding="utf-8")
-                )
-                marker_matches = (
-                    marker.get("authoring_context_sha256")
-                    == authoring_context_sha256
-                )
-            except (OSError, ValueError):
-                marker_matches = False
-        if existing_parts and not marker_matches:
-            persisted_revisions = [
-                int(path.name[1:])
-                for path in draft_base.glob("r*")
-                if path.is_dir() and path.name[1:].isdigit()
-            ]
-            revision = max([revision, *persisted_revisions]) + 1
-            forced_fresh_revision = revision
-            draft_root = draft_base / f"r{revision}"
-            context_marker = draft_root / "_authoring-context.json"
-        self.service.store.write_json(
-            context_marker.relative_to(
-                self.service.workspace
-            ).as_posix(),
-            {
-                "kind": "module_authoring_draft_context",
-                "run_id": state["run_id"],
-                "module_id": module_id,
-                "revision": revision,
-                "authoring_context_sha256": authoring_context_sha256,
-            },
-        )
-
-        resume_part_constraints: list[str] = []
-        resume_allowed_tools: list[str] = []
-        saved_parts: list[str] = []
-        rewrite_part_ids: list[str] = []
-        base_constraints = list(
-            dict.fromkeys(
-                [
-                    *planned.constraints,
-                    (
-                        "固定 taxonomy 是唯一合法的数字标题体系；正文只允许使用当前"
-                        " required_submodule_ids 中的编号标题。现状、判断、原因、风险机理、"
-                        "建议和验证只能使用普通段落或无编号粗体标签，禁止自行生成下一级编号"
-                    ),
-                    (
-                        "共享模块会话中，若 Provider 支持同一轮多个工具调用，应在一个"
-                        " assistant turn 内为所有 ready 小节分别调用 write_result_part，"
-                        "再在下一轮提交小型 module commit；小节是文档 part，不是独立任务或会话"
-                    ),
-                    *state["request"].execution_requirements,
-                    f"缺失证据策略={state['request'].missing_evidence_policy}",
-                    *self._evidence_policy_constraints(state["request"].missing_evidence_policy),
-                    *self._user_supplement_constraints(
-                        state,
-                        stage="module_authoring",
-                        target_ids={
-                            module_id,
-                            *REPORT_TAXONOMY[module_id].submodules,
-                        },
-                    ),
-                ]
-            )
-        )
-        if forced_fresh_revision is not None:
-            base_constraints.append(
-                "输入或用户补充约束已变化；本 revision 必须从当前上下文完整重写全部固定小节，禁止复用旧 draft parts"
-            )
-        if state.get("resume"):
-            if revision > 0 and forced_fresh_revision is None:
-                self._inherit_module_result_parts(
-                    state["run_id"], module_id, revision - 1, revision
-                )
-            saved_parts = sorted(path.stem for path in draft_root.glob("*.md"))
-            missing_parts = sorted(set(REPORT_TAXONOMY[module_id].submodules) - set(saved_parts))
-            for part_id in saved_parts:
-                part_path = draft_root / f"{part_id}.md"
-                binding_path = draft_root / "_evidence" / f"{part_id}.json"
-                binding_ready = False
-                if binding_path.is_file():
-                    try:
-                        binding = json.loads(binding_path.read_text(encoding="utf-8"))
-                    except (OSError, ValueError):
-                        binding = None
-                    binding_ready = isinstance(binding, dict) and isinstance(
-                        binding.get("evidence_ids"), list
-                    )
-                part_content = part_path.read_text(encoding="utf-8")
-                if (
-                    not binding_ready
-                    or "[[CLAIM:" in part_content
-                    or "<persisted_result_part" in part_content.casefold()
-                    or extra_numbered_submodule_headings(part_id, part_content)
-                ):
-                    rewrite_part_ids.append(part_id)
-            resume_part_constraints = [
-                "这是同一 run 的恢复任务；已有正文分段=" + (", ".join(saved_parts) or "无"),
-                "固定 taxonomy 尚缺正文分段=" + (", ".join(missing_parts) or "无"),
-                "当前协议只接收 write_result_part 逐项保存的完整读者可见正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写。",
-                "先调用 list_result_parts；必须重写或补绑定的 part="
-                + (", ".join(rewrite_part_ids) or "无"),
-            ]
-            if saved_parts:
-                resume_allowed_tools = [
-                    "search_project_evidence",
-                    "open_project_source",
-                    "list_result_parts",
-                    "write_result_part",
-                    "submit_result",
-                ]
-
-        base_constraints.append(
-            "模块作者只在本模块会话内工作；不得调用 query_peer/reply_peer。跨模块关系由后续五个 Cross owner 处理。"
-        )
-
-        module_input = ModuleAuthoringInput(
-            run_id=state["run_id"],
-            module_id=module_id,
-            revision=revision,
-            required_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
-            coverage_ref=state["preparation_refs"]["coverage"],
-            evidence_ref=state["preparation_refs"]["evidence"],
-            manifest_ref=state["preparation_refs"]["manifest"],
-            knowledge_ref=state["module_knowledge_refs"][module_id],
-            saved_part_ids=saved_parts,
-            rewrite_part_ids=rewrite_part_ids,
-        )
-        module_input_path = self.service.store.write_json(
-            (f"Work/runs/{state['run_id']}/context/module-authoring-{module_id}-r{revision}.json"),
-            module_input.model_dump(mode="json"),
-        )
-        module_input_ref = module_input_path.relative_to(self.service.workspace).as_posix()
-        module_authoring_tools = [
-            "search_project_evidence",
-            "open_project_source",
-            "search_reference_library",
-            "open_reference",
-            "web_search",
-            "open_web_source",
-            "inspect_document",
-            "inspect_image",
-            "calculate",
-            "open_artifact",
-            "search_text",
-            "report_gap",
-            "write_result_part",
-            "list_result_parts",
-            "report_blocked",
-            "submit_result",
-        ]
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": f"module-{module_id}",
-                    "run_id": state["run_id"],
-                    "agent_id": specialist_id,
-                    "allowed_outputs": ["module_submission"],
-                    "allowed_tools": (
-                        resume_allowed_tools
-                        if resume_allowed_tools
-                        else module_authoring_tools
-                    ),
-                    "target_submodule_ids": (
-                        sorted(set(rewrite_part_ids) | set(missing_parts))
-                        if state.get("resume") and saved_parts
-                        else list(REPORT_TAXONOMY[module_id].submodules)
-                    ),
-                    "constraints": list(
-                        dict.fromkeys([*base_constraints, *resume_part_constraints])
-                    ),
-                    "revision": revision,
-                    "input_refs": [
-                        module_input_ref,
-                        module_input.coverage_ref,
-                        module_input.evidence_ref,
-                        module_input.manifest_ref,
-                    ],
-                    "input_contract_kind": "module_authoring_input",
-                    "input_contract_ref": module_input_ref,
-                    "inline_context": planned.inline_context or "",
-                    "artifact_delivery_modes": {
-                        module_input_ref: "inline",
-                        module_input.coverage_ref: "reference",
-                        module_input.evidence_ref: "reference",
-                        module_input.manifest_ref: "reference",
-                    },
-                }
-            ).model_dump(mode="python")
-        )
+        except ModuleAuthoringPreparationError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
         return _ModuleAuthoringPreparationContext(
-            module_id=module_id,
-            state=state,
-            workflow_id=workflow_id,
-            specialist_id=specialist_id,
-            envelope=envelope,
-            resumed_payload=resumed_payload,
-            revision=revision,
-            review=review,
-            checkpoint=checkpoint,
+            module_id=preparation.module_id,
+            state=preparation.state,
+            workflow_id=preparation.workflow_id,
+            specialist_id=preparation.specialist_id,
+            envelope=preparation.envelope,
+            resumed_payload=preparation.resumed_payload,
+            revision=preparation.revision,
+            review=preparation.review,
+            checkpoint=preparation.checkpoint,
         )
 
     async def _resume_module_authoring(
@@ -6138,7 +5694,6 @@ class ReportWorkflowRunner:
     ) -> tuple[dict[str, str], list[str]]:
         """Build bounded, chapter-local Chief context without copying the report."""
 
-        run_id = str(state["run_id"])
         cross_ref = state.get("cross_review_completion_ref")
         source_refs = [str(cross_ref)] if cross_ref else []
         modules = state.get("module_submissions", {})
