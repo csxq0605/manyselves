@@ -173,3 +173,98 @@ async def test_typed_agent_turn_starts_correlates_and_maps_terminal_status() -> 
     assert "provider failed" in failed.error
     assert {message.session_id for message in loop.received} == {"session-typed"}
     assert len(loop.received) == 2
+
+
+@pytest.mark.asyncio
+async def test_typed_agent_turn_correlates_capability_terminal_identity() -> None:
+    """A TaskEnvelope terminal can differ from the Kernel action identity."""
+
+    from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+
+    class EnvelopeTerminalLoop:
+        def __init__(self) -> None:
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                await bus.publish(
+                    AgentResultMessage(
+                        sender="capability-agent",
+                        workflow_id=message.workflow_id,
+                        run_id=message.run_id,
+                        task_id="envelope-task",
+                        task_attempt_id="envelope-attempt",
+                        session_id=message.session_id,
+                        result_path="envelope-result.json",
+                        status="completed",
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    loop = EnvelopeTerminalLoop()
+    service = AgentExecutionService(bus, timeout=1)
+    turn = TypedAgentTurn(
+        execution=service,
+        workflow_id="workflow-typed",
+        conversation_key="typed-envelope",
+        runtime_id="kernel-agent-runtime",
+        session_id="session-envelope",
+        session_factory=lambda: loop,
+    )
+    try:
+        session = await turn.start_or_restore()
+        request = AgentTurnRequest(
+            content="typed task",
+            message_id="kernel-action-message",
+            workflow_id="workflow-typed",
+            run_id="run-envelope",
+            task_id="kernel-action-task",
+            task_attempt_id="kernel-action-attempt",
+        )
+        outcome = await turn.dispatch(
+            session,
+            request,
+            terminals=(
+                turn.result_terminal(
+                    run_id="run-envelope",
+                    task_id="kernel-action-task",
+                    task_attempt_id="kernel-action-attempt",
+                    sender="capability-agent",
+                    terminal_task_id="envelope-task",
+                    terminal_task_attempt_id="envelope-attempt",
+                ),
+            ),
+        )
+        result = turn.map_outcome(
+            outcome,
+            session_id=session.session_id,
+            decode_result=lambda result_ref: result_ref,
+        )
+    finally:
+        await service.close_workflow("workflow-typed")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status == "ok"
+    assert result.result == "envelope-result.json"

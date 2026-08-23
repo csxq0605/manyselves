@@ -62,18 +62,34 @@ class TypedAgentTurn:
         task_id: str,
         task_attempt_id: str,
         session_id: str | None = None,
+        sender: str | None = None,
+        terminal_task_id: str | None = None,
+        terminal_task_attempt_id: str | None = None,
     ) -> AgentTerminalSubscription:
-        """Build the exact typed-result correlation for one dispatched turn."""
+        """Build the exact typed-result correlation for one dispatched turn.
+
+        ``task_id`` and ``task_attempt_id`` identify the Kernel action by
+        default.  A Capability that dispatches an action for a different
+        ``TaskEnvelope`` identity may supply the terminal's actual sender and
+        task fields explicitly; no identity is inferred from the message.
+        """
 
         expected_session_id = session_id or self.session_id
+        expected_sender = self.runtime_id if sender is None else sender
+        expected_task_id = task_id if terminal_task_id is None else terminal_task_id
+        expected_task_attempt_id = (
+            task_attempt_id
+            if terminal_task_attempt_id is None
+            else terminal_task_attempt_id
+        )
 
         def matches(item: AgentResultMessage) -> bool:
             return (
-                item.sender == self.runtime_id
+                item.sender == expected_sender
                 and item.workflow_id == self.workflow_id
                 and item.run_id == run_id
-                and item.task_id == task_id
-                and item.task_attempt_id == task_attempt_id
+                and item.task_id == expected_task_id
+                and item.task_attempt_id == expected_task_attempt_id
                 and item.session_id == expected_session_id
             )
 
