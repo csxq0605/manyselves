@@ -7,7 +7,15 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .reporting import EvidenceItem, PhotoAsset, ReportingModel, SourceLocation
+from .reporting import (
+    CoverageMatrix,
+    EvidenceItem,
+    PhotoAsset,
+    ReportingModel,
+    ReportRequest,
+    SourceLocation,
+    SpecialTopicPlan,
+)
 
 
 class ManifestFile(ReportingModel):
@@ -67,3 +75,28 @@ class MappingGap(ReportingModel):
 class MappingResult(ReportingModel):
     evidence_items: list[EvidenceItem]
     gaps: list[MappingGap]
+
+
+class PreparationContext(ReportingModel):
+    """Serializable state passed through the file-defined preparation workflow."""
+
+    run_id: str = Field(min_length=1)
+    request: ReportRequest
+    resume: bool = False
+    input_snapshot_ref: str | None = None
+    input_snapshot_digest: str | None = None
+    project_manifest: ProjectManifest | None = None
+    preparation_worker_results: list[FilePreparationResult] = Field(
+        default_factory=list
+    )
+    parsed_artifacts: list[ParsedArtifact] = Field(default_factory=list)
+    preparation_parallelism: dict[str, Any] = Field(default_factory=dict)
+    evidence_items: list[EvidenceItem] = Field(default_factory=list)
+    photo_assets: list[PhotoAsset] = Field(default_factory=list)
+    photo_evidence_adjacency: dict[str, Any] = Field(default_factory=dict)
+    mapping_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    coverage_matrix: CoverageMatrix | None = None
+    report_taxonomy: dict[str, Any] = Field(default_factory=dict)
+    special_topic_plan: SpecialTopicPlan | None = None
+    preparation_refs: dict[str, str] = Field(default_factory=dict)
+    preparation_completion_ref: str | None = None

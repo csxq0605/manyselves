@@ -233,8 +233,9 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "distribution-final-recheck-cohort",
         "distribution-final-recheck-lane",
         "distribution-final-review-cycle",
-        "distribution-report-delivery",
-        "distribution-module-review-lane",
+            "distribution-report-delivery",
+            "distribution-reporting-preparation",
+            "distribution-module-review-lane",
         "distribution-module-runtime-lane",
         "distribution-module-cohort",
         "distribution-reporting-tail",
@@ -896,12 +897,15 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
     plan = plan.plan
 
     assert [action.kind for action in plan.actions] == [
+        "if",
+        "subworkflow",
         "subworkflow",
         "if",
         "subworkflow",
         "end_workflow",
     ]
     assert plan.workflow_ids == [
+        "distribution-reporting-preparation",
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]

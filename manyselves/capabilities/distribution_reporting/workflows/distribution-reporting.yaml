@@ -20,8 +20,24 @@ input_variable: reporting-state
 output_contract: distribution_reporting_output
 state:
   reporting-state: {}
+  preparation-context: {}
+  preparation-complete: false
   full-report: false
 actions:
+- id: choose-preparation-entry
+  kind: if
+  condition:
+    variable: preparation-complete
+    operator: truthy
+  then: run-module-cohort
+  otherwise: run-reporting-preparation
+- id: run-reporting-preparation
+  kind: subworkflow
+  workflow: distribution-reporting-preparation
+  input_variable: preparation-context
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: reporting-state
 - id: run-module-cohort
   kind: subworkflow
   workflow: distribution-module-cohort

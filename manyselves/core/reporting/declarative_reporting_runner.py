@@ -482,6 +482,8 @@ def _compile_reporting_runtime(
     definitions = specialized_definitions
     workflow.state = {
         "reporting-state": deepcopy(dict(reporting_state)),
+        "preparation-context": deepcopy(dict(reporting_state)),
+        "preparation-complete": True,
         "full-report": full_report,
     }
     executors = build_builtin_executor_registry()
@@ -919,6 +921,18 @@ async def execute_declarative_module_stage(
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
     runtime_tools = {
+        **{
+            tool_id: (lambda context: context)
+            for tool_id in (
+                "build-manifest",
+                "prepare-report-taxonomy",
+                "parse-artifacts",
+                "normalize-evidence",
+                "evaluate-coverage",
+                "persist-preparation-snapshot",
+                "restore-preparation-snapshot",
+            )
+        },
         **module_tools,
         "prepare-cross-owner-cohort": prepare_cross_with_boundary,
         "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
