@@ -1,0 +1,254 @@
+"""Characterization for the Capability-owned Final Chief revision Provider path."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ChapterScopedFinalReviewFinding,
+    ChapterScopedFinalReviewTargetChange,
+    ChiefChapterLaneRevisionSubmission,
+    TaskEnvelope,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalChiefRevisionContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.config.schema import AgentDefaults
+from manyselves.core.loops.bus import MessageBus
+from manyselves.interfaces.types import UserMessage
+from manyselves.kernel.conversations import (
+    ConversationKey,
+    ConversationMode,
+    ConversationRecord,
+)
+from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.runtime.agent_execution import AgentExecutionService
+
+
+def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContext:
+    finding = ChapterScopedFinalReviewFinding(
+        id="F-1-001",
+        target_section_ids=["1.2"],
+        target_changes=[
+            ChapterScopedFinalReviewTargetChange(
+                target_section_id="1.2",
+                required_change="补充可核验的事实边界、责任主体与后续动作。",
+                reviewer_checks=["章节明确给出事实边界、责任主体与后续动作"],
+            )
+        ],
+        category="traceability",
+        impact="blocking",
+        observation="当前章节没有把行动责任与后续核验方式写清楚，读者无法直接执行。",
+        evidence_refs=["Work/runs/final-chief-provider-run/edited-r0.json"],
+    )
+    contract = ChiefChapterLaneInput(
+        phase="revision",
+        run_id=run_id,
+        subject_ref=f"Work/runs/{run_id}/edited-r0.json",
+        chapter_id="1",
+        section_ids=list(CHAPTER1_SECTION_IDS),
+        section_bodies={section_id: "当前章节正文。" for section_id in CHAPTER1_SECTION_IDS},
+        assigned_findings=[finding],
+        revision=1,
+    )
+    input_ref = f"Work/runs/{run_id}/context/chief-chapter-1-input-r1.json"
+    store = ReportingStore(tmp_path)
+    store.write_json(input_ref, contract.model_dump(mode="json"))
+    store.write_json(contract.subject_ref, {"kind": "existing-edited-report"})
+    envelope = TaskEnvelope(
+        task_id="chief-chapter-1-r1",
+        run_id=run_id,
+        agent_id="chief-editor",
+        objective="只修订 Chapter 1 被 Final 指定的 finding 小节。",
+        input_refs=[input_ref],
+        constraints=["只提交 chief_chapter_lane_revision_submission。"],
+        allowed_outputs=["chief_chapter_lane_revision_submission"],
+        allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+        revision=1,
+        prior_result_ref=contract.subject_ref,
+        input_contract_kind="chief_chapter_lane_input",
+        input_contract_ref=input_ref,
+        artifact_delivery_modes={
+            input_ref: "inline",
+            contract.subject_ref: "hash_retained",
+        },
+        inline_context="Final Chief revision skill: keep the patch inside the assigned lane.",
+    )
+    return DeclarativeFinalChiefRevisionContext(
+        chapter_id="1",
+        status="ready",
+        contract=contract,
+        input_ref=input_ref,
+        envelope=envelope,
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_session(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.final_chief_provider import (
+        build_final_chief_provider_composition,
+    )
+
+    run_id = "final-chief-provider-run"
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    built: list[dict[str, object]] = []
+    loops: list[object] = []
+    context = _context(tmp_path, run_id)
+
+    class Loop:
+        def __init__(self, kwargs: dict[str, object]) -> None:
+            self.kwargs = kwargs
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.kwargs["agent_type"]:
+                    return
+                self.received.append(message)
+                tools = self.kwargs["tools"]
+                written = await tools.get("write_result_part")(
+                    part_id="findings_overview",
+                    content="已补充事实边界、责任主体与后续动作，便于读者执行。",
+                )
+                listed = await tools.get("list_result_parts")()
+                assert written["persisted"] is True
+                assert listed["complete"] is True
+                await tools.get("submit_result")(
+                    kind="chief_chapter_lane_revision_submission",
+                    run_id=run_id,
+                    base_subject_ref=context.contract.subject_ref,
+                    chapter_id="1",
+                    revision=1,
+                    section_ids=["1.2"],
+                    part_refs={"findings_overview": written["artifact_ref"]},
+                    revision_responses=[
+                        {
+                            "finding_id": "F-1-001",
+                            "action": "implemented",
+                            "summary": "已补充事实边界、责任主体与后续动作，便于执行。",
+                            "changed_target_ids": ["1.2"],
+                        }
+                    ],
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def loop_builder(**kwargs: object) -> Loop:
+        built.append(kwargs)
+        loop = Loop(kwargs)
+        loops.append(loop)
+        return loop
+
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    composition = build_final_chief_provider_composition(
+        services,
+        execution=AgentExecutionService(bus, timeout=1),
+        loop_builder=loop_builder,
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-chief-provider-conversation",
+        key=ConversationKey(
+            agent_id="chief-editor",
+            value="chief-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    agent = AgentDefinition(
+        id="chief-editor",
+        version="1.0.0",
+        description="Chief Editor",
+        instructions="修订指定章节并提交 typed revision patch。",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="final-chief-chapter-revision",
+        version="1.0.0",
+        description="Final Chief revision lane",
+        agent=agent.id,
+        objective="Revise only the assigned chapter finding.",
+        input_contract="declarative_final_chief_revision_context",
+        output_contract="declarative_final_chief_revision_agent_result",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    try:
+        first = await composition.agent_invokers[agent.id].invoke(
+            agent,
+            task,
+            context.model_dump(mode="json"),
+            conversation,
+            task_id="invoke-final-chief-action",
+        )
+        second = await composition.agent_invokers[agent.id].invoke(
+            agent,
+            task,
+            context.model_dump(mode="json"),
+            conversation,
+            task_id="invoke-final-chief-action-again",
+        )
+    finally:
+        await composition.close()
+        bus.shutdown()
+        await bus_task
+
+    assert first.status == "ok"
+    assert second.status == "ok"
+    assert len(loops) == 1
+    assert len(built) == 1
+    assert built[0]["llm_provider"] is services.active_provider
+    assert set(loops[0].kwargs["tools"].get_all()) == {
+        "write_result_part",
+        "list_result_parts",
+        "submit_result",
+    }
+    assert [message.session_id for message in loops[0].received] == [
+        conversation.external_session_id,
+        conversation.external_session_id,
+    ]
+    result_path = tmp_path / f"Work/runs/{run_id}/results/chief-chapter-1-r1.json"
+    loaded = load_agent_result_payload(tmp_path, result_path)
+    assert isinstance(loaded.payload, ChiefChapterLaneRevisionSubmission)
+    assert loaded.identity.task_id == "chief-chapter-1-r1"
+    assert loaded.identity.agent_id == "chief-editor"
+    assert loaded.identity.session_id == conversation.external_session_id

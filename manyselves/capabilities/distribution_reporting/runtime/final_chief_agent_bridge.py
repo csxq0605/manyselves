@@ -7,8 +7,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChiefChapterLaneRevisionSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
     DeclarativeFinalChiefRevisionAgentResult,
@@ -44,11 +48,13 @@ class FinalChiefAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        terminal_task_attempt_id: str = "",
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -97,6 +103,7 @@ class FinalChiefAgentBridge:
     ) -> AgentInvocationOutcome:
         context = DeclarativeFinalChiefRevisionContext.model_validate(value)
         contract = ChiefChapterLaneInput.model_validate(context.contract)
+        envelope = TaskEnvelope.model_validate(context.envelope)
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
         typed_turn = TypedAgentTurn(
@@ -154,6 +161,9 @@ class FinalChiefAgentBridge:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=envelope.agent_id,
+            terminal_task_id=envelope.task_id,
+            terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
         outcome = await typed_turn.dispatch(
             session,
@@ -191,10 +201,8 @@ class FinalChiefAgentBridge:
         )
 
     def _read_submission(self, result_ref: str) -> ChiefChapterLaneRevisionSubmission:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
         return ChiefChapterLaneRevisionSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
+            load_agent_result_payload(self.workspace, result_ref).payload
         )
 
     def _runtime_id(

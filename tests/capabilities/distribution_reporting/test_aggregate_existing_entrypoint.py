@@ -1425,23 +1425,30 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         (chief_part_root / f"{part_id}.md").write_text(body, encoding="utf-8")
     chief_result_path.write_text(
         json.dumps(
-            ChiefChapterLaneRevisionSubmission(
+            AgentResult(
+                task_id="chief-chapter-1-r1",
                 run_id=run_id,
-                base_subject_ref=(
-                    f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+                agent_id="chief-editor",
+                session_id="chief-chapter-1",
+                status=AgentRunStatus.COMPLETED,
+                payload=ChiefChapterLaneRevisionSubmission(
+                    run_id=run_id,
+                    base_subject_ref=(
+                        f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+                    ),
+                    chapter_id="1",
+                    revision=1,
+                    section_ids=["1.1", "1.2", "1.3"],
+                    part_refs=chief_part_refs,
+                    revision_responses=[
+                        RevisionResponse(
+                            finding_id="F-final-1",
+                            action="implemented",
+                            summary="The requested chapter-local change was implemented.",
+                            changed_target_ids=["1.1"],
+                        )
+                    ],
                 ),
-                chapter_id="1",
-                revision=1,
-                section_ids=["1.1", "1.2", "1.3"],
-                part_refs=chief_part_refs,
-                revision_responses=[
-                    RevisionResponse(
-                        finding_id="F-final-1",
-                        action="implemented",
-                        summary="The requested chapter-local change was implemented.",
-                        changed_target_ids=["1.1"],
-                    )
-                ],
             ).model_dump(mode="json"),
             ensure_ascii=False,
         ),
@@ -1516,12 +1523,12 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
                         else result_refs[message.session_id.removeprefix("final-chapter-")]
                     )
                     terminal_task_id = (
-                        message.task_id
+                        "chief-chapter-1-r1"
                         if message.session_id.startswith("chief-chapter-")
                         else f"final-chapter-{message.session_id.removeprefix('final-chapter-')}-r0"
                     )
                     terminal_sender = (
-                        self.runtime_id
+                        "chief-editor"
                         if message.session_id.startswith("chief-chapter-")
                         else "chief-editor-auditor"
                     )
@@ -1533,9 +1540,7 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
                         run_id=message.run_id,
                         result_path=result_path,
                         task_attempt_id=(
-                            message.task_attempt_id
-                            if message.session_id.startswith("chief-chapter-")
-                            else ""
+                            ""
                         ),
                         session_id=message.session_id,
                     )
