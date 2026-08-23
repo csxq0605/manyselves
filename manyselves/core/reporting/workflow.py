@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.evidence_readiness import (
@@ -82,6 +82,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TemplateSkillSubmission,
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+    MaterializedDeliveryReceipt,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     AggregateEditorInput,
@@ -176,7 +180,6 @@ from .assets import (
 from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
-from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .input_snapshot import RunInputSnapshotStore
 from .research.knowledge_context import KnowledgeContextBuilder
@@ -247,41 +250,6 @@ class _ModuleAuthoringPreparationContext:
     revision: int
     review: bool
     checkpoint: bool
-
-
-class _DeliveryContext(BaseModel):
-    """Capability-owned values passed through the synchronous Delivery stages."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # The workflow state remains the runner-owned mutable mapping.  Keeping it
-    # opaque here preserves the existing in-place completion updates while the
-    # delivery artifacts crossing stage boundaries stay typed.
-    state: Any
-    final_audit_snapshot_ref: str
-    claim_ledger_path: Path
-    source_ledger_path: Path
-    evidence_snapshot_path: Path
-    approved_module_paths: dict[str, Path]
-    edited_submission_path: Path
-    request_snapshot_path: Path
-    photo_manifest_path: Path
-    delivery_markdown: str
-    report_state_path: Path
-    markdown_path: Path
-    source_index_markdown: str
-    source_index_path: Path
-    source_index_docx_path: Path
-    template_snapshot: Path
-    template_provenance_path: Path
-    output: Path
-    render_result_ref: Path
-    public_markdown: Path | None = None
-    public_docx: Path | None = None
-    public_source_index: Path | None = None
-    public_source_index_docx: Path | None = None
-    receipt: MaterializedDeliveryReceipt | None = None
-    receipt_path: Path | None = None
 
 
 class FullReportCheckpoint(StrictModel):
@@ -8392,7 +8360,7 @@ class ReportWorkflowRunner:
         context = self._publish_and_materialize_delivery(context)
         self._complete_delivery(context)
 
-    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+    def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
         if "final_review_completion_ref" not in state:
             raise AgentWorkflowError(
                 "delivery requires an independent final review completion record"
@@ -8541,7 +8509,7 @@ class ReportWorkflowRunner:
                 protected_prose_verified=True,
             ).model_dump(mode="json"),
         )
-        return _DeliveryContext(
+        return DeliveryContext(
             state=state,
             final_audit_snapshot_ref=final_audit_snapshot_ref,
             claim_ledger_path=claim_ledger_path,
@@ -8565,8 +8533,8 @@ class ReportWorkflowRunner:
 
     def _publish_and_materialize_delivery(
         self,
-        context: _DeliveryContext,
-    ) -> _DeliveryContext:
+        context: DeliveryContext,
+    ) -> DeliveryContext:
         state = context.state
         delivery_markdown = context.delivery_markdown
         report_state_path = context.report_state_path
@@ -8618,7 +8586,7 @@ class ReportWorkflowRunner:
             }
         )
 
-    def _complete_delivery(self, context: _DeliveryContext) -> None:
+    def _complete_delivery(self, context: DeliveryContext) -> None:
         state = context.state
         receipt = context.receipt
         receipt_path = context.receipt_path

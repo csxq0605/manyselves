@@ -7,10 +7,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     EditedReportSubmission,
     ModuleSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+)
 from manyselves.core.reporting.declarative_reporting_tail import (
     execute_declarative_reporting_tail,
 )
-from manyselves.core.reporting.workflow import _DeliveryContext
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -37,29 +39,29 @@ class _TailRunner:
         state["chief_editor_session_key"] = "chief-editor"
         state["approved_module_text"] = {"2.1": "approved"}
 
-    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+    def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
         self.calls.append("prepare")
         self._fail("prepare")
         return _delivery_context(state)
 
     def _publish_and_materialize_delivery(
         self,
-        context: _DeliveryContext,
-    ) -> _DeliveryContext:
+        context: DeliveryContext,
+    ) -> DeliveryContext:
         self.calls.append("publish")
         self._fail("publish")
         return context
 
-    def _complete_delivery(self, context: _DeliveryContext) -> None:
+    def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         self._fail("complete")
         context.state["delivery_completion_ref"] = "delivery.json"
         context.state["delivery_status"] = "delivered"
 
 
-def _delivery_context(state: dict) -> _DeliveryContext:
+def _delivery_context(state: dict) -> DeliveryContext:
     root = Path("Work") / "runs" / str(state["run_id"])
-    return _DeliveryContext(
+    return DeliveryContext(
         state=state,
         final_audit_snapshot_ref=f"{root}/final-audit.json",
         claim_ledger_path=root / "claims.json",
@@ -184,7 +186,7 @@ async def _capture_current_tail_trace(
             tool_id=tool_id,
         )
         result = invoke()
-        if isinstance(result, _DeliveryContext):
+        if isinstance(result, DeliveryContext):
             delivery_context = result
         trace.record(
             SemanticEventKind.ACTION_COMPLETED,

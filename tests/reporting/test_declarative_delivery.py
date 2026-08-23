@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     OutputArtifact,
@@ -12,12 +15,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.core.reporting.declarative_delivery import (
     DeclarativeDeliveryRuntime,
 )
-from manyselves.core.reporting.workflow import _DeliveryContext
 
 
-def _context(state: dict) -> _DeliveryContext:
+def _context(state: dict) -> DeliveryContext:
     path = Path("Work/runs/run-delivery")
-    return _DeliveryContext(
+    return DeliveryContext(
         state=state,
         final_audit_snapshot_ref=f"{path}/final-audit.json",
         claim_ledger_path=path / "claims.json",
@@ -44,19 +46,19 @@ class _DeliveryRunner:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+    def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
         self.calls.append("prepare")
         return _context(state)
 
     def _publish_and_materialize_delivery(
         self,
-        context: _DeliveryContext,
-    ) -> _DeliveryContext:
+        context: DeliveryContext,
+    ) -> DeliveryContext:
         self.calls.append("publish")
         assert context.state["run_id"] == "run-delivery"
         return context
 
-    def _complete_delivery(self, context: _DeliveryContext) -> None:
+    def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         context.state["delivery_completion_ref"] = "delivery-completion.json"
         context.state["output_artifacts"] = [
@@ -103,7 +105,7 @@ def test_delivery_runtime_preserves_existing_completion_without_reexecution() ->
 
 def test_delivery_runtime_restores_serialized_business_state_before_prepare() -> None:
     class _TypedDeliveryRunner(_DeliveryRunner):
-        def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+        def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
             assert isinstance(state["request"], ReportRequest)
             assert isinstance(state["evidence_items"][0], EvidenceItem)
             assert isinstance(state["photo_assets"][0], PhotoAsset)

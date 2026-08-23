@@ -11,6 +11,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     EditedReportSubmission,
     ModuleSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
@@ -24,8 +27,6 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.executors import ExecutorRegistry
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowCompiler
-
-from .workflow import _DeliveryContext
 
 _DELIVERY_CONTEXT_KEY = "_declarative_delivery_context"
 
@@ -98,7 +99,7 @@ class DeclarativeDeliveryRuntime:
     @staticmethod
     def _save_context(
         state: dict[str, Any],
-        context: _DeliveryContext,
+        context: DeliveryContext,
     ) -> None:
         state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
             mode="json",
@@ -106,8 +107,8 @@ class DeclarativeDeliveryRuntime:
         )
 
     @staticmethod
-    def _load_context(state: dict[str, Any]) -> _DeliveryContext:
-        return _DeliveryContext.model_validate(
+    def _load_context(state: dict[str, Any]) -> DeliveryContext:
+        return DeliveryContext.model_validate(
             {
                 "state": state,
                 **state[_DELIVERY_CONTEXT_KEY],

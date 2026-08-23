@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from types import MethodType
 
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+)
 from manyselves.core.reporting.workflow import (
     ReportWorkflowRunner,
-    _DeliveryContext,
 )
 
 
 def test_deliver_runs_prepare_publish_complete_in_order() -> None:
     runner = object.__new__(ReportWorkflowRunner)
     state = {"run_id": "run-delivery-boundaries"}
-    context = _DeliveryContext.model_construct(state=state)
+    context = DeliveryContext.model_construct(state=state)
     calls: list[tuple[str, object]] = []
 
     def prepare(self, received):

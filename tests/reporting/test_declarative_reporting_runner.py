@@ -22,6 +22,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
+    DeliveryContext,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ModuleRevisionInput,
     ValidationFailure,
@@ -74,7 +77,6 @@ from manyselves.core.reporting.workflow import (
     ReportingNeedsDecisionError,
     ReportingRunBudget,
     ReportWorkflowRunner,
-    _DeliveryContext,
 )
 from manyselves.core.tools.task_board import TaskBoard
 from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
@@ -2682,7 +2684,7 @@ class _TopLevelTailRunner:
             improvement_action_plan="actions",
         )
 
-    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+    def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
         self.calls.append("prepare")
         self._trace("delivery-prepare")
         self._fail("prepare")
@@ -2690,23 +2692,23 @@ class _TopLevelTailRunner:
 
     def _publish_and_materialize_delivery(
         self,
-        context: _DeliveryContext,
-    ) -> _DeliveryContext:
+        context: DeliveryContext,
+    ) -> DeliveryContext:
         self.calls.append("publish")
         self._trace("delivery-publish")
         self._fail("publish")
         return context
 
-    def _complete_delivery(self, context: _DeliveryContext) -> None:
+    def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         self._trace("delivery-complete")
         self._fail("complete")
         context.state["delivery_completion_ref"] = "delivery.json"
 
 
-def _top_level_delivery_context(state: dict) -> _DeliveryContext:
+def _top_level_delivery_context(state: dict) -> DeliveryContext:
     root = Path("Work") / "runs" / str(state["run_id"])
-    return _DeliveryContext(
+    return DeliveryContext(
         state=state,
         final_audit_snapshot_ref=f"{root}/final-audit.json",
         claim_ledger_path=root / "claims.json",
