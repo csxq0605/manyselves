@@ -23,7 +23,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     FinalChapterLaneInput,
 )
-from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -34,9 +33,9 @@ from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.runtime.agent_execution import (
     AgentExecutionService,
     AgentSessionLoop,
-    AgentTerminalSubscription,
     AgentTurnRequest,
 )
+from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 
@@ -108,14 +107,16 @@ class FinalChapterAgentBridge:
         contract = FinalChapterLaneInput.model_validate(context.contract)
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
+        typed_turn = TypedAgentTurn(
+            execution=self.execution,
+            workflow_id=self.workflow_id,
+            conversation_key=conversation.key.value,
+            runtime_id=runtime_id,
+            session_id=session_id,
+            session_factory=lambda: self.session_factory(runtime_id),
+        )
         try:
-            session = await self.execution.start_or_restore(
-                workflow_id=self.workflow_id,
-                conversation_key=conversation.key.value,
-                runtime_id=runtime_id,
-                session_id=session_id,
-                session_factory=lambda: self.session_factory(runtime_id),
-            )
+            session = await typed_turn.start_or_restore()
         except Exception as exc:
             return AgentInvocationOutcome(
                 status="failed",
@@ -155,70 +156,21 @@ class FinalChapterAgentBridge:
             task_attempt_id=task_id,
             turn_kind="task_initial",
         )
-        terminal = AgentTerminalSubscription(
-            kind="typed_result",
-            message_type=AgentResultMessage,
-            predicate=lambda item: self._matches_result(
-                item,
-                runtime_id=runtime_id,
-                run_id=contract.run_id,
-                task_id=task_id,
-                session_id=session.session_id,
-            ),
+        terminal = typed_turn.result_terminal(
+            run_id=contract.run_id,
+            task_id=task_id,
+            task_attempt_id=task_id,
+            session_id=session.session_id,
         )
-        outcome = await self.execution.dispatch_turn(
+        outcome = await typed_turn.dispatch(
             session,
             request,
             terminals=(terminal,),
         )
-        if outcome.kind == "typed_result":
-            message = outcome.message
-            if not isinstance(message, AgentResultMessage):
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session.session_id,
-                    error="typed terminal was not an AgentResultMessage",
-                )
-            if message.status != "completed":
-                status = "blocked" if message.status == "blocked" else "incomplete"
-                return AgentInvocationOutcome(
-                    status=status,
-                    session_id=session.session_id,
-                    error=message.status,
-                )
-            try:
-                submission = self._read_submission(message.result_path)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session.session_id,
-                    error=str(exc),
-                )
-            result = DeclarativeFinalChapterAgentResult(
-                status="completed",
-                submission=submission,
-            )
-            return AgentInvocationOutcome(
-                status="ok",
-                result=result.model_dump(mode="json"),
-                session_id=session.session_id,
-            )
-        if outcome.kind == "error":
-            return AgentInvocationOutcome(
-                status="failed",
-                session_id=session.session_id,
-                error=str(outcome.message),
-            )
-        if isinstance(outcome.message, AgentResponse):
-            return AgentInvocationOutcome(
-                status="incomplete",
-                session_id=session.session_id,
-                error="Agent turn ended without a typed result",
-            )
-        return AgentInvocationOutcome(
-            status="failed",
+        return TypedAgentTurn.map_outcome(
+            outcome,
             session_id=session.session_id,
-            error="Agent turn returned an unknown terminal",
+            decode_result=self._decode_result,
         )
 
     def _prompt(
@@ -253,30 +205,19 @@ class FinalChapterAgentBridge:
             json.loads(path.read_text(encoding="utf-8"))
         )
 
+    def _decode_result(self, result_ref: str) -> dict[str, Any]:
+        submission = self._read_submission(result_ref)
+        return DeclarativeFinalChapterAgentResult(
+            status="completed",
+            submission=submission,
+        ).model_dump(mode="json")
+
     def _runtime_id(
         self,
         agent: AgentDefinition,
         conversation: ConversationRecord,
     ) -> str:
         return f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
-
-    def _matches_result(
-        self,
-        item: AgentResultMessage,
-        *,
-        runtime_id: str,
-        run_id: str,
-        task_id: str,
-        session_id: str,
-    ) -> bool:
-        return (
-            item.sender == runtime_id
-            and item.workflow_id == self.workflow_id
-            and item.run_id == run_id
-            and item.task_id == task_id
-            and item.task_attempt_id == task_id
-            and item.session_id == session_id
-        )
 
 
 __all__ = ["FinalChapterAgentBridge"]
