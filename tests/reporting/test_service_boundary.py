@@ -269,6 +269,103 @@ def test_snapshot_content_keeps_existing_file_if_view_staging_fails(
     assert list(target.parent.glob(".*.cas-view")) == []
 
 
+def test_capability_snapshot_content_preserves_existing_three_path_semantics(
+    tmp_path: Path,
+) -> None:
+    """The Capability helper keeps first-ingest, same-target, and replacement behavior."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.content_snapshot import (
+        snapshot_content,
+    )
+    from manyselves.core.artifacts.content_store import ContentAddressedStore
+
+    store = ContentAddressedStore(tmp_path)
+    source = tmp_path / "Inputs/source.bin"
+    first_target = tmp_path / "Work/runs/run-a/source.bin"
+    replacement_target = tmp_path / "Work/runs/run-b/source.bin"
+    source.parent.mkdir(parents=True)
+    replacement_target.parent.mkdir(parents=True)
+    source.write_bytes(b"same-photo-bytes")
+
+    first = snapshot_content(tmp_path, store, source, first_target)
+    same_target = snapshot_content(tmp_path, store, source, first_target)
+    replacement_target.write_bytes(source.read_bytes())
+    replaced = snapshot_content(
+        tmp_path,
+        store,
+        source,
+        replacement_target,
+        replace_existing_with_view=True,
+    )
+
+    assert first[0].is_symlink()
+    assert same_target == first
+    assert replaced[0] == replacement_target
+    assert replaced[0].is_symlink()
+    assert first[1:] == replaced[1:]
+
+
+def test_service_snapshot_content_delegates_to_capability_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy Service remains a thin compatibility caller for the Capability helper."""
+
+    import manyselves.core.reporting.service as service_module
+    from manyselves.capabilities.distribution_reporting.runtime.content_snapshot import (
+        snapshot_content,
+    )
+
+    assert service_module.capability_snapshot_content is snapshot_content
+
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Inputs/source.bin"
+    target = tmp_path / "Work/runs/run-a/source.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source")
+    observed: list[tuple[Path, object, Path, Path, bool]] = []
+
+    def spy(
+        workspace: Path,
+        content_store: object,
+        received_source: Path,
+        received_target: Path,
+        *,
+        replace_existing_with_view: bool = False,
+    ) -> tuple[Path, str, Path]:
+        observed.append(
+            (
+                workspace,
+                content_store,
+                received_source,
+                received_target,
+                replace_existing_with_view,
+            )
+        )
+        return received_target, "digest", Path("blob-ref")
+
+    monkeypatch.setattr(
+        "manyselves.core.reporting.service.capability_snapshot_content",
+        spy,
+    )
+
+    result = service.snapshot_content(
+        source,
+        target,
+        replace_existing_with_view=True,
+    )
+
+    assert result == (target, "digest", Path("blob-ref"))
+    assert observed == [
+        (tmp_path.resolve(), service.content_store, source, target, True)
+    ]
+
+
 @pytest.mark.asyncio
 async def test_service_retains_same_identity_registry_while_waiting_for_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

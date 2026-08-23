@@ -24,6 +24,9 @@ from manyselves.capabilities.distribution_reporting.domain.evidence_readiness im
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
+from manyselves.capabilities.distribution_reporting.runtime.content_snapshot import (
+    snapshot_content as capability_snapshot_content,
+)
 from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
     RunInputSnapshotStore,
 )
@@ -166,50 +169,15 @@ class ReportingService:
         *,
         replace_existing_with_view: bool = False,
     ) -> tuple[Path, str, Path]:
-        """Ingest bytes once and expose an immutable project-local compatibility view."""
+        """Compatibility wrapper for the Capability-owned snapshot helper."""
 
-        source = Path(source)
-        target = Path(target)
-        validate_bound_project_write_lease(self.workspace)
-        blob = self.content_store.ingest_file(source)
-        trusted = self.content_store.issue_trusted_handle(
-            blob,
-            lineage_id=(
-                "snapshot:"
-                + (
-                    target.relative_to(self.workspace).as_posix()
-                    if target.resolve().is_relative_to(self.workspace)
-                    else target.as_posix()
-                )
-            ),
+        return capability_snapshot_content(
+            self.workspace,
+            self.content_store,
+            source,
+            target,
+            replace_existing_with_view=replace_existing_with_view,
         )
-        if target.exists() or target.is_symlink():
-            if not target.is_file():
-                raise ValueError(f"content snapshot target is not a file: {target}")
-            target_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
-            if target_sha256 != blob.sha256:
-                raise ValueError(
-                    "immutable content snapshot already exists with different bytes: "
-                    f"{target}"
-                )
-            if replace_existing_with_view and target.resolve() != blob.path:
-                staged = target.with_name(
-                    f".{target.name}.{uuid.uuid4().hex}.cas-view"
-                )
-                try:
-                    self.content_store.link_trusted_view(
-                        trusted,
-                        staged,
-                        final_path=target,
-                    )
-                    validate_bound_project_write_lease(self.workspace)
-                    os.replace(staged, target)
-                finally:
-                    staged.unlink(missing_ok=True)
-        else:
-            validate_bound_project_write_lease(self.workspace)
-            self.content_store.link_trusted_view(trusted, target)
-        return target, blob.sha256, blob.relative_path
 
     def _agent_runner_for(self, workflow_id: str) -> ReportingAgentRunner:
         """Return the one identity registry retained by a live workflow."""
