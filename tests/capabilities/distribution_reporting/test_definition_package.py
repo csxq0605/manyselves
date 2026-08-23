@@ -211,6 +211,8 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "template-distiller",
     }
     assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
+        "full-report",
+        "module-report",
         "render-existing",
         "distill-template-skill",
         "distribution-aggregate-existing",
