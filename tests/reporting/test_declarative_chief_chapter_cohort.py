@@ -6,13 +6,15 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.chief_chapter import (
+    DeclarativeChiefChapterOutcome,
+)
 from manyselves.core.reporting.agentic_models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     ChiefChapterLaneSubmission,
     ModuleSubmission,
 )
 from manyselves.core.reporting.declarative_chief_chapter_cohort import (
-    DeclarativeChiefChapterOutcome,
     DeclarativeChiefChapterRuntime,
     compile_chief_chapter_workflows,
     retry_failed_chief_chapter_lanes,

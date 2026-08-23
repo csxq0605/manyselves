@@ -8,10 +8,11 @@ from copy import deepcopy
 from inspect import isawaitable
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict
-
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    chief_chapter as chief_chapter_models,
 )
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -50,50 +51,6 @@ from .models import (
 )
 
 CHIEF_CHAPTER_IDS = ("1", "3", "4")
-
-
-class DeclarativeChiefChapterAgentResult(BaseModel):
-    """Typed adapter result that keeps one failed Agent inside its branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: ChiefChapterLaneSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeChiefChapterContext(BaseModel):
-    """Serializable preparation and result for one declared Chief branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal[
-        "ready",
-        "resumed",
-        "accepted",
-        "skipped",
-        "compatibility",
-        "failed",
-    ]
-    contract: ChiefChapterLaneInput | None = None
-    input_ref: str | None = None
-    envelope: TaskEnvelope | None = None
-    submission: ChiefChapterLaneSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
-
-
-class DeclarativeChiefChapterOutcome(BaseModel):
-    """Serializable terminal outcome joined after all Chief branches drain."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["completed", "skipped", "failed"]
-    submission: ChiefChapterLaneSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
 
 
 class _ChiefChapterInvoker:
@@ -150,7 +107,7 @@ class _ChiefChapterInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeChiefChapterContext.model_validate(value)
+        context = chief_chapter_models.DeclarativeChiefChapterContext.model_validate(value)
         envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
@@ -167,14 +124,14 @@ class _ChiefChapterInvoker:
                 **runner_kwargs,
             )
             submission = ChiefChapterLaneSubmission.model_validate(payload)
-            result = DeclarativeChiefChapterAgentResult(
+            result = chief_chapter_models.DeclarativeChiefChapterAgentResult(
                 status="completed",
                 submission=submission,
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeChiefChapterAgentResult(
+            result = chief_chapter_models.DeclarativeChiefChapterAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -267,12 +224,15 @@ class DeclarativeChiefChapterRuntime:
         self.current_state = state
         return deepcopy(state)
 
-    def prepare_lane(self, values: Mapping[str, Any]) -> DeclarativeChiefChapterContext:
+    def prepare_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> chief_chapter_models.DeclarativeChiefChapterContext:
         """Prepare or recover one exact initial Chief chapter Agent turn."""
 
         chapter_id = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
         if not self._production:
-            return DeclarativeChiefChapterContext(
+            return chief_chapter_models.DeclarativeChiefChapterContext(
                 chapter_id=chapter_id,
                 status=(
                     "compatibility"
@@ -281,7 +241,7 @@ class DeclarativeChiefChapterRuntime:
                 ),
             )
         if "chief_candidate_ref" in self.current_state:
-            return DeclarativeChiefChapterContext(
+            return chief_chapter_models.DeclarativeChiefChapterContext(
                 chapter_id=chapter_id,
                 status="resumed",
             )
@@ -290,7 +250,7 @@ class DeclarativeChiefChapterRuntime:
         run_id = str(state["run_id"])
         active_chapters = self._current_runner._chapter_lane_ids(state)
         if chapter_id not in active_chapters:
-            return DeclarativeChiefChapterContext(
+            return chief_chapter_models.DeclarativeChiefChapterContext(
                 chapter_id=chapter_id,
                 status="skipped",
             )
@@ -348,7 +308,7 @@ class DeclarativeChiefChapterRuntime:
         )
         if recovered is not None and existing_input_matches:
             submission, output_ref = recovered
-            return DeclarativeChiefChapterContext(
+            return chief_chapter_models.DeclarativeChiefChapterContext(
                 chapter_id=chapter_id,
                 status="resumed",
                 contract=contract,
@@ -386,7 +346,7 @@ class DeclarativeChiefChapterRuntime:
                 (chapter_id,),
             ),
         )
-        return DeclarativeChiefChapterContext(
+        return chief_chapter_models.DeclarativeChiefChapterContext(
             chapter_id=chapter_id,
             status="ready",
             contract=contract,
@@ -395,7 +355,9 @@ class DeclarativeChiefChapterRuntime:
         )
 
     @staticmethod
-    def requires_agent(context: DeclarativeChiefChapterContext) -> bool:
+    def requires_agent(
+        context: chief_chapter_models.DeclarativeChiefChapterContext,
+    ) -> bool:
         """Return the explicit Agent branch decision."""
 
         return context.status == "ready"
@@ -403,11 +365,15 @@ class DeclarativeChiefChapterRuntime:
     def accept_lane(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeChiefChapterContext:
+    ) -> chief_chapter_models.DeclarativeChiefChapterContext:
         """Validate and persist one typed Chief chapter submission."""
 
-        context = DeclarativeChiefChapterContext.model_validate(values["context"])
-        result = DeclarativeChiefChapterAgentResult.model_validate(values["result"])
+        context = chief_chapter_models.DeclarativeChiefChapterContext.model_validate(
+            values["context"]
+        )
+        result = chief_chapter_models.DeclarativeChiefChapterAgentResult.model_validate(
+            values["result"]
+        )
         if result.status == "failed":
             self._record_lane_failure(context.chapter_id, result.error)
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -452,11 +418,13 @@ class DeclarativeChiefChapterRuntime:
 
     async def complete_lane(
         self,
-        context: DeclarativeChiefChapterContext,
-    ) -> DeclarativeChiefChapterOutcome:
+        context: chief_chapter_models.DeclarativeChiefChapterContext,
+    ) -> chief_chapter_models.DeclarativeChiefChapterOutcome:
         """Promote one terminal branch without mutating sibling branch state."""
 
-        context = DeclarativeChiefChapterContext.model_validate(context)
+        context = chief_chapter_models.DeclarativeChiefChapterContext.model_validate(
+            context
+        )
         if context.status == "compatibility":
             try:
                 if not self._compatibility_invoked:
@@ -471,27 +439,27 @@ class DeclarativeChiefChapterRuntime:
                         await result
                     self._compatibility_invoked = True
             except BaseException as exc:
-                return DeclarativeChiefChapterOutcome(
+                return chief_chapter_models.DeclarativeChiefChapterOutcome(
                     chapter_id=context.chapter_id,
                     status="failed",
                     error=str(exc),
                 )
-            return DeclarativeChiefChapterOutcome(
+            return chief_chapter_models.DeclarativeChiefChapterOutcome(
                 chapter_id=context.chapter_id,
                 status="completed",
             )
         if context.status == "failed":
-            return DeclarativeChiefChapterOutcome(
+            return chief_chapter_models.DeclarativeChiefChapterOutcome(
                 chapter_id=context.chapter_id,
                 status="failed",
                 error=context.error,
             )
         if context.status == "skipped":
-            return DeclarativeChiefChapterOutcome(
+            return chief_chapter_models.DeclarativeChiefChapterOutcome(
                 chapter_id=context.chapter_id,
                 status="skipped",
             )
-        return DeclarativeChiefChapterOutcome(
+        return chief_chapter_models.DeclarativeChiefChapterOutcome(
             chapter_id=context.chapter_id,
             status="completed",
             submission=context.submission,
@@ -503,7 +471,9 @@ class DeclarativeChiefChapterRuntime:
 
         if not self._production:
             outcomes = {
-                chapter_id: DeclarativeChiefChapterOutcome.model_validate(outcome)
+                chapter_id: chief_chapter_models.DeclarativeChiefChapterOutcome.model_validate(
+                    outcome
+                )
                 for chapter_id, outcome in dict(values["outcomes"]).items()
             }
             failures = {
@@ -521,7 +491,9 @@ class DeclarativeChiefChapterRuntime:
         if "chief_candidate_ref" in state:
             return state
         outcomes = {
-            chapter_id: DeclarativeChiefChapterOutcome.model_validate(outcome)
+            chapter_id: chief_chapter_models.DeclarativeChiefChapterOutcome.model_validate(
+                outcome
+            )
             for chapter_id, outcome in dict(values["outcomes"]).items()
         }
         failures = {
@@ -692,7 +664,7 @@ def retry_failed_chief_chapter_lanes(
         chapter_id
         for chapter_id in CHIEF_CHAPTER_IDS
         if chapter_id in branches
-        and DeclarativeChiefChapterOutcome.model_validate(
+        and chief_chapter_models.DeclarativeChiefChapterOutcome.model_validate(
             branches[chapter_id][f"outcome-{chapter_id}"]
         ).status
         == "failed"
@@ -717,9 +689,6 @@ def _restore_modules(state: dict[str, Any]) -> None:
 
 
 __all__ = [
-    "DeclarativeChiefChapterAgentResult",
-    "DeclarativeChiefChapterContext",
-    "DeclarativeChiefChapterOutcome",
     "DeclarativeChiefChapterRuntime",
     "compile_chief_chapter_workflows",
     "register_chief_chapter_lane_specializations",

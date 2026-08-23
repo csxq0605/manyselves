@@ -2,4 +2,4 @@ id: declarative_chief_chapter_agent_result
 version: 1.0.0
 description: Typed result returned by one Chief chapter Agent invocation
 adapter: pydantic
-model: manyselves.core.reporting.declarative_chief_chapter_cohort:DeclarativeChiefChapterAgentResult
+model: manyselves.capabilities.distribution_reporting.runtime.models.chief_chapter:DeclarativeChiefChapterAgentResult
