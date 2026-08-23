@@ -12,8 +12,10 @@ tools:
 - report_blocked
 accepts:
 - output_artifacts
+- template_distillation_input
 produces:
 - output_artifacts
+- template_skill_submission
 conversation_mode: task
 limits:
   max_turns: 10
@@ -46,4 +48,3 @@ limits:
 <deliverables>
 只提交当前 contract 允许的蒸馏结果。
 </deliverables>
-

@@ -1,0 +1,6 @@
+id: template-skill-materialization
+version: 1.0.0
+description: Fixed-path fourteen Skill, boundary, and source artifacts produced by the distillation entrypoint
+output_type: artifact
+contract: template_skill_materialization
+label: Template Skill materialization

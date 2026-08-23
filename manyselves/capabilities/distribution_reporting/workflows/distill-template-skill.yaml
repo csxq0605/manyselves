@@ -1,0 +1,51 @@
+id: distill-template-skill
+version: 1.0.0
+description: Distill one report template through a generic Agent task and materialize its fourteen Skills
+tasks:
+- template-skill-distillation
+recovery:
+- current-reporting-recovery
+outputs:
+- template-skill-materialization
+input_contract: template_distillation_input
+input_variable: template-distillation-input
+output_contract: template_skill_materialization
+state:
+  prepared-template-distillation-input: {}
+  template-distillation-conversation: {}
+  template-distillation-result: {}
+  materialized-template-skill: {}
+actions:
+- id: prepare-template-distillation
+  kind: invoke_tool
+  tool: prepare-template-distillation
+  input_variable: template-distillation-input
+  output_variable: prepared-template-distillation-input
+- id: create-template-distillation-conversation
+  kind: create_conversation
+  agent: template-distiller
+  conversation_key: template-distillation
+  mode: run
+  output_variable: template-distillation-conversation
+- id: invoke-template-distiller
+  kind: invoke_agent
+  agent: template-distiller
+  task: template-skill-distillation
+  conversation_variable: template-distillation-conversation
+  input_variable: prepared-template-distillation-input
+  output_variable: template-distillation-result
+- id: materialize-template-skill
+  kind: invoke_tool
+  tool: materialize-template-skill
+  input_variable: template-distillation-result
+  output_variable: materialized-template-skill
+- id: publish-template-skill-materialization
+  kind: publish_result
+  output: template-skill-materialization
+  input_variable: materialized-template-skill
+  output_name: result
+- id: finish-template-skill
+  kind: end_workflow
+  output_variable: materialized-template-skill
+  output_name: result
+  output_contract: template_skill_materialization

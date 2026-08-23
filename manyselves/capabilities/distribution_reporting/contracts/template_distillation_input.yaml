@@ -1,0 +1,5 @@
+id: template_distillation_input
+version: 1.0.0
+description: One current-run template view and the fourteen required reusable Skill parts
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.inputs:TemplateDistillationInput

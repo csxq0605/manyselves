@@ -1,0 +1,5 @@
+id: template_skill_materialization
+version: 1.0.0
+description: Fixed-path boundary and source artifacts produced by template Skill materialization
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.template_distillation:TemplateSkillMaterialization
