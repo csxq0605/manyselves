@@ -92,6 +92,9 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     exclusive_file_lock,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_tools import (
+    build_template_distillation_provider_tools,
+)
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
@@ -2443,6 +2446,28 @@ class ReportingAgentRunner:
                 raise ValueError(
                     "template distillation template_ref is not one canonical workspace file"
                 )
+            continuation_reader = _IndexedOpenToolResultTool(
+                gateway,
+                result_index=result_index,
+                task_id=envelope.task_id,
+            )
+            template_registry = build_template_distillation_provider_tools(
+                self.workspace,
+                envelope=envelope,
+                template_input=template_inspection,
+                session_id=session_id,
+                workflow_id=workflow_id,
+                bus=self.bus,
+                store=self.store,
+                tool_names=access.tool_names,
+                continuation_reader=continuation_reader,
+                task_correlation=task_correlation,
+                recovery_event_callback=recovery_event_callback,
+            )
+            template_registry.capabilities = access.capabilities  # type: ignore[attr-defined]
+            template_registry.capability_access = access  # type: ignore[attr-defined]
+            template_registry.result_index = result_index  # type: ignore[attr-defined]
+            return template_registry
         input_contract = self._input_contract(envelope)
         if len(envelope.allowed_outputs) > 1:
             raise ValueError(

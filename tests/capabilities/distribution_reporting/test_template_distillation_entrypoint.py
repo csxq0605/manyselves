@@ -286,6 +286,75 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
         await bus_task
 
 
+def test_template_provider_tool_builder_owns_the_exact_agent_tool_set(
+    tmp_path: Path,
+) -> None:
+    """The Provider-facing Template tools are assembled by the Capability."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.storage import (
+        ReportingStore,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
+        TEMPLATE_DISTILLATION_ALLOWED_TOOLS,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.template_tools import (
+        build_template_distillation_provider_tools,
+    )
+    from manyselves.core.loops.bus import MessageBus
+
+    run_id = "template-provider-tools"
+    template_input = TemplateDistillationInput(
+        run_id=run_id,
+        template_ref=f"Work/runs/{run_id}/templates/template-for-skill.docx",
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    envelope = TaskEnvelope(
+        task_id="template-skill-distillation",
+        run_id=run_id,
+        agent_id="template-distiller",
+        objective="distill one template",
+        allowed_outputs=["template_skill_submission"],
+        allowed_tools=list(TEMPLATE_DISTILLATION_ALLOWED_TOOLS),
+        input_refs=[
+            f"Work/runs/{run_id}/context/template-distillation-input.json",
+            template_input.template_ref,
+        ],
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=(
+            f"Work/runs/{run_id}/context/template-distillation-input.json"
+        ),
+    )
+
+    registry = build_template_distillation_provider_tools(
+        tmp_path,
+        envelope=envelope,
+        template_input=template_input,
+        session_id="template-provider-session",
+        workflow_id="distill-template-skill",
+        bus=MessageBus(),
+        store=ReportingStore(tmp_path),
+        tool_names=TEMPLATE_DISTILLATION_ALLOWED_TOOLS,
+    )
+
+    assert set(registry.get_all()) == set(TEMPLATE_DISTILLATION_ALLOWED_TOOLS)
+    assert registry._schema_cache["submit_result"]["properties"]["kind"]["const"] == (
+        "template_skill_submission"
+    )
+    assert "boundary_manifest" not in registry._schema_cache["submit_result"]["properties"]
+    assert registry.get("write_result_part").expected_part_ids == TEMPLATE_ROLE_SKILL_IDS
+    assert registry._schema_cache["write_result_part"]["required"] == [
+        "part_id",
+        "content",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_template_distillation_bridge_uses_generic_agent_execution_service(
     tmp_path: Path,
