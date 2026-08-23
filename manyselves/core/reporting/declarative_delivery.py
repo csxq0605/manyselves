@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
+from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
+    build_delivery_tool_implementations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     EditedReportSubmission,
     ModuleSubmission,
@@ -20,6 +24,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     SpecialTopicPlan,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionRegistry,
@@ -49,9 +54,25 @@ def compile_delivery_workflow(
 class DeclarativeDeliveryRuntime:
     """Bind three declared actions to the current Reporting delivery semantics."""
 
-    def __init__(self, runner: Any) -> None:
+    def __init__(
+        self,
+        runner: Any,
+        *,
+        workspace: Path | None = None,
+        store: ReportingStore | None = None,
+        publish_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         self._runner = getattr(runner, "_runner", runner)
         self.current_state: dict[str, Any] = {}
+        service = getattr(self._runner, "service", None)
+        workspace = workspace or getattr(service, "workspace", None)
+        store = store or getattr(service, "store", None)
+        if publish_tool is None and workspace is not None:
+            publish_tool = build_delivery_tool_implementations(
+                workspace=Path(workspace),
+                store=store or ReportingStore(Path(workspace)),
+            )["publish-materialize-delivery"]
+        self._publish_tool = publish_tool
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         self._restore_state(state)
@@ -67,10 +88,12 @@ class DeclarativeDeliveryRuntime:
         self.current_state = state
         if "delivery_completion_ref" in state:
             return state
-        context = self._runner._publish_and_materialize_delivery(
-            self._load_context(state)
-        )
-        self._save_context(state, context)
+        if self._publish_tool is None:
+            raise RuntimeError("Delivery publish Tool requires a workspace binding")
+        result = self._publish_tool(state)
+        if result is not state:
+            state.clear()
+            state.update(result)
         return state
 
     def complete(self, state: dict[str, Any]) -> dict[str, Any]:

@@ -86,6 +86,7 @@ async def execute_declarative_reporting_tail(
     workflow_id: str,
     state_store: WorkflowStateStore,
     trace: SemanticTraceRecorder | None = None,
+    publish_tool: Any | None = None,
 ) -> WorkflowState:
     """Run current tail stages through neutral actions without changing default routing."""
 
@@ -185,7 +186,10 @@ async def execute_declarative_reporting_tail(
         workflow_id,
     )
     final_review_runtime = DeclarativeFinalReviewRuntime(runner, state, workflow_id)
-    delivery_runtime = DeclarativeDeliveryRuntime(runner)
+    delivery_runtime = DeclarativeDeliveryRuntime(
+        runner,
+        publish_tool=publish_tool,
+    )
     delivery_tools = {
         "prepare-render-delivery": delivery_runtime.prepare,
         "publish-materialize-delivery": delivery_runtime.publish,

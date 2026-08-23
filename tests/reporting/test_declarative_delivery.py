@@ -58,6 +58,11 @@ class _DeliveryRunner:
         assert context.state["run_id"] == "run-delivery"
         return context
 
+    def _publish_state(self, state: dict) -> dict:
+        self.calls.append("publish")
+        assert state["run_id"] == "run-delivery"
+        return state
+
     def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         context.state["delivery_completion_ref"] = "delivery-completion.json"
@@ -75,7 +80,10 @@ def test_delivery_runtime_persists_context_between_declared_actions() -> None:
 
     prepared = DeclarativeDeliveryRuntime(runner).prepare(state)
     restored = json.loads(json.dumps(prepared))
-    published = DeclarativeDeliveryRuntime(runner).publish(restored)
+    published = DeclarativeDeliveryRuntime(
+        runner,
+        publish_tool=runner._publish_state,
+    ).publish(restored)
     restored = json.loads(json.dumps(published))
     completed = DeclarativeDeliveryRuntime(runner).complete(restored)
 

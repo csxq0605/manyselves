@@ -52,6 +52,11 @@ class _TailRunner:
         self._fail("publish")
         return context
 
+    def _publish_state(self, state: dict) -> dict:
+        self.calls.append("publish")
+        self._fail("publish")
+        return state
+
     def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         self._fail("complete")
@@ -223,6 +228,7 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
         state=state,
         workflow_id="workflow-wp09-tail",
         state_store=store,
+        publish_tool=runner._publish_state,
     )
 
     assert runner.calls == ["cross", "chief", "prepare", "publish", "complete"]
@@ -245,6 +251,7 @@ async def test_declarative_reporting_tail_matches_current_stage_trace(
         workflow_id=workflow_id,
         state_store=FileWorkflowStateStore(tmp_path / "declarative"),
         trace=trace,
+        publish_tool=declarative_runner._publish_state,
     )
     current = await _capture_current_tail_trace(
         _TailRunner(),
@@ -275,6 +282,7 @@ async def test_declarative_reporting_tail_skips_current_completion_markers(
         state=state,
         workflow_id="workflow-wp09-resume",
         state_store=FileWorkflowStateStore(tmp_path),
+        publish_tool=runner._publish_state,
     )
 
     assert runner.calls == ["prepare", "publish", "complete"]
@@ -297,6 +305,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
             state=state,
             workflow_id="workflow-wp09-failed-tail",
             state_store=store,
+            publish_tool=failing._publish_state,
         )
 
     assert failing.calls == ["cross", "chief"]
@@ -310,6 +319,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
         state=state,
         workflow_id="workflow-wp09-failed-tail",
         state_store=store,
+        publish_tool=resumed._publish_state,
     )
 
     assert resumed.calls == ["chief", "prepare", "publish", "complete"]
@@ -334,6 +344,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
             state=state,
             workflow_id="workflow-wp09-failed-delivery-publish",
             state_store=store,
+            publish_tool=failing._publish_state,
         )
 
     assert failing.calls == ["cross", "chief", "prepare", "publish"]
@@ -348,6 +359,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
         state=state,
         workflow_id="workflow-wp09-failed-delivery-publish",
         state_store=store,
+        publish_tool=resumed._publish_state,
     )
 
     assert resumed.calls == ["publish", "complete"]

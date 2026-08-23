@@ -14,6 +14,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     report_taxonomy_snapshot,
     reset_report_taxonomy,
 )
+from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
+    delivery_root,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     FINAL_AUDIT_SECTION_IDS,
@@ -3305,7 +3308,7 @@ def test_restore_delivery_ignores_status_without_a_readable_receipt(
 
 def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
     assert (
-        ReportWorkflowRunner._delivery_root(tmp_path, "run-delivery")
+        delivery_root(tmp_path, "run-delivery")
         == tmp_path / "Work/runs/run-delivery/delivery"
     )
 

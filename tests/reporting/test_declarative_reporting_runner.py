@@ -2699,6 +2699,12 @@ class _TopLevelTailRunner:
         self._fail("publish")
         return context
 
+    def _publish_state(self, state: dict) -> dict:
+        self.calls.append("publish")
+        self._trace("delivery-publish")
+        self._fail("publish")
+        return state
+
     def _complete_delivery(self, context: DeliveryContext) -> None:
         self.calls.append("complete")
         self._trace("delivery-complete")
@@ -2763,6 +2769,7 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         state_store=FileWorkflowStateStore(tmp_path),
         tail_runner=tail,
         event_sink=FileWorkflowEventSink(tmp_path),
+        publish_tool=tail._publish_state,
     )
 
     assert tail.calls == ["cross", "chief", "prepare", "publish", "complete"]
@@ -2856,6 +2863,7 @@ async def test_declarative_stage_boundaries_precede_next_stage_effects(
         state_store=FileWorkflowStateStore(tmp_path),
         tail_runner=tail,
         stage_boundary=stage_boundary,
+        publish_tool=tail._publish_state,
     )
 
     assert completed.status is WorkflowStatus.COMPLETED
@@ -2915,6 +2923,7 @@ async def test_declarative_stage_failure_does_not_emit_future_boundaries(
             state_store=FileWorkflowStateStore(tmp_path),
             tail_runner=tail,
             stage_boundary=stage_boundary,
+            publish_tool=tail._publish_state,
         )
 
     assert trace == [
@@ -3044,6 +3053,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
             workflow_id=f"full-power-distribution-report:{run_id}",
             state_store=store,
             tail_runner=failing_tail,
+            publish_tool=failing_tail._publish_state,
         )
 
     failed = store.load(run_id)
@@ -3070,6 +3080,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
         workflow_id=f"full-power-distribution-report:{run_id}",
         state_store=store,
         tail_runner=resumed_tail,
+        publish_tool=resumed_tail._publish_state,
     )
 
     assert module_calls == 1

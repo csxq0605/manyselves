@@ -592,6 +592,7 @@ async def execute_declarative_module_stage(
         Callable[[tuple[str, ...], dict[str, Any], str], Awaitable[None]] | None
     ) = None,
     workspace: Path | None = None,
+    publish_tool: Callable[[dict[str, Any]], Any] | None = None,
     stage_boundary: (
         Callable[[dict[str, Any], str, str], Awaitable[None]] | None
     ) = None,
@@ -827,7 +828,11 @@ async def execute_declarative_module_stage(
         state,
         workflow_id,
     )
-    delivery_runtime = DeclarativeDeliveryRuntime(tail_runner)
+    delivery_runtime = DeclarativeDeliveryRuntime(
+        tail_runner,
+        workspace=workspace,
+        publish_tool=publish_tool,
+    )
 
     async def prepare_cross_with_boundary(
         current_state: dict[str, Any],
