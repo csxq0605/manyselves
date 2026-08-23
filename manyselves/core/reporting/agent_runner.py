@@ -40,6 +40,7 @@ from ...runtime.agent_execution import (
     AgentRecoveryCompleted,
     AgentRecoveryDirective,
     AgentRecoveryObservation,
+    AgentRecoveryProgress,
     AgentRecoveryRequired,
     AgentRecoveryStopped,
     AgentSessionRestore,
@@ -3453,28 +3454,6 @@ class ReportingAgentRunner:
                 )
             return decision
 
-        def observe_recovery_progress(
-            progressed: bool,
-            detail: dict[str, Any] | None = None,
-        ):
-            decision = recovery_driver.observe_progress(
-                progressed=progressed,
-                detail=detail,
-            )
-            if decision is not None and decision.action is RecoveryActionKind.FAIL:
-                raise RuntimeError(
-                    f"recovery policy {recovery_policy.id} failed no_progress"
-                )
-            if decision is not None and decision.action not in {
-                RecoveryActionKind.CONTINUE,
-                RecoveryActionKind.STOP,
-            }:
-                raise RuntimeError(
-                    f"recovery policy action {decision.action.value} does not match "
-                    "the reporting no-progress path requiring stop"
-                )
-            return decision
-
         async def recovery_event_callback(
             event_kind: str,
             detail: dict[str, Any],
@@ -4200,22 +4179,6 @@ class ReportingAgentRunner:
                         and state["no_progress_observations"]
                         >= limits["max_no_progress_observations"]
                     )
-                    progress_decision = (
-                        observe_recovery_progress(
-                            False,
-                            {
-                                "task_id": envelope.task_id,
-                                "turn_kind": continuation_kind,
-                            },
-                        )
-                        if stalled
-                        else None
-                    )
-                    policy_stopped = (
-                        stalled
-                        if progress_decision is None
-                        else progress_decision.action is RecoveryActionKind.STOP
-                    )
                     event = {
                         "sequence": len(state["events"]) + 1,
                         "origin_turn_kind": origin_turn_kind,
@@ -4227,12 +4190,8 @@ class ReportingAgentRunner:
                         "result_parts": snapshot["result_parts"],
                         "continuations_already_issued": count,
                     }
-                    if policy_stopped or profile_limit_reached:
-                        stop_reason = (
-                            "repeated_no_progress"
-                            if policy_stopped
-                            else "execution_profile_continuation_limit"
-                        )
+                    if profile_limit_reached:
+                        stop_reason = "execution_profile_continuation_limit"
                         event.update(
                             {"decision": "stop", "stop_reason": stop_reason}
                         )
@@ -4260,10 +4219,21 @@ class ReportingAgentRunner:
                         nonlocal observed_boundary
                         if observed_boundary:
                             observed_boundary = False
-                            return AgentRecoveryRequired(
-                                event_kind=recovery_event_kind,
-                                fallback_action=RecoveryActionKind.CONTINUE,
-                                detail={"task_id": envelope.task_id},
+                            return AgentRecoveryProgress(
+                                kind=(
+                                    "no_progress"
+                                    if stalled
+                                    else "progressed"
+                                ),
+                                continuation=AgentRecoveryRequired(
+                                    event_kind=recovery_event_kind,
+                                    fallback_action=RecoveryActionKind.CONTINUE,
+                                    detail={"task_id": envelope.task_id},
+                                ),
+                                detail={
+                                    "task_id": envelope.task_id,
+                                    "turn_kind": continuation_kind,
+                                },
                             )
                         if outcome.kind == "typed_result":
                             return AgentRecoveryCompleted(
@@ -4362,15 +4332,38 @@ class ReportingAgentRunner:
 
                     async def stop_continuation_recovery(
                         outcome: AgentTurnOutcome,
-                        _directive: AgentRecoveryDirective,
+                        directive: AgentRecoveryDirective,
                     ) -> AgentResponse:
                         response = cast(AgentResponse, outcome.message)
+                        stop_reason = (
+                            "repeated_no_progress"
+                            if directive.event_kind
+                            is RecoveryEventKind.NO_PROGRESS
+                            else "recovery_policy_stop"
+                        )
+                        if directive.event_kind is RecoveryEventKind.NO_PROGRESS:
+                            event.update(
+                                {
+                                    "decision": "stop",
+                                    "stop_reason": stop_reason,
+                                }
+                            )
+                            state["events"].append(event)
+                            state["status"] = "stopped"
+                            state["stop_reason"] = stop_reason
+                            state["stop_turn_kind"] = continuation_kind
+                            save_state(state)
                         return response.model_copy(
                             update={
                                 "content": (
                                     f"{CONTINUATION_HARNESS_STOPPED}"
-                                    f"recovery_policy_stop;turn_kind="
-                                    f"{continuation_kind}"
+                                    f"{stop_reason};turn_kind={continuation_kind}"
+                                    + (
+                                        f";state_ref={continuation_ref}"
+                                        if directive.event_kind
+                                        is RecoveryEventKind.NO_PROGRESS
+                                        else ""
+                                    )
                                 ),
                                 "internal": True,
                             }
@@ -4428,6 +4421,11 @@ class ReportingAgentRunner:
                             runtime_id=runtime_id,
                         ),
                     )
+                    if (
+                        isinstance(turn, AgentResponse)
+                        and turn.content.startswith(CONTINUATION_HARNESS_STOPPED)
+                    ):
+                        return turn
                 if continuation_path.is_file():
                     state = load_state()
                     state["status"] = (

@@ -1823,8 +1823,9 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
 def _observe_runtime_recovery_events(
     monkeypatch: pytest.MonkeyPatch,
     runner: ReportingAgentRunner,
-) -> list[RecoveryEventKind]:
+) -> tuple[list[RecoveryEventKind], list[str]]:
     events: list[RecoveryEventKind] = []
+    progress: list[str] = []
     execute_with_recovery = runner._agent_execution.execute_with_recovery
 
     async def observe_runtime_recovery(*args, **kwargs):
@@ -1834,6 +1835,9 @@ def _observe_runtime_recovery_events(
             observation = await interpret(outcome, request)
             if isinstance(observation, agent_runner_module.AgentRecoveryRequired):
                 events.append(observation.event_kind)
+            if isinstance(observation, agent_runner_module.AgentRecoveryProgress):
+                progress.append(observation.kind)
+                events.append(observation.continuation.event_kind)
             return observation
 
         kwargs["interpret"] = observe_interpret
@@ -1844,7 +1848,7 @@ def _observe_runtime_recovery_events(
         "execute_with_recovery",
         observe_runtime_recovery,
     )
-    return events
+    return events, progress
 
 
 @pytest.mark.asyncio
@@ -1865,7 +1869,10 @@ async def test_max_tokens_continues_same_identity_without_submission_correction(
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=5), timeout=5
     )
-    recovery_events = _observe_runtime_recovery_events(monkeypatch, runner)
+    recovery_events, _progress = _observe_runtime_recovery_events(
+        monkeypatch,
+        runner,
+    )
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id="run-max-tokens-continuation",
@@ -2505,7 +2512,10 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
     )
-    recovery_events = _observe_runtime_recovery_events(monkeypatch, runner)
+    recovery_events, _progress = _observe_runtime_recovery_events(
+        monkeypatch,
+        runner,
+    )
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id="run-continuation",
@@ -2560,12 +2570,17 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
 @pytest.mark.asyncio
 async def test_productive_tool_slices_have_no_profile_count_limit(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     provider = ProductiveManyToolSlicesProvider()
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
+    )
+    _events, runtime_progress = _observe_runtime_recovery_events(
+        monkeypatch,
+        runner,
     )
     envelope = TaskEnvelope(
         task_id="module-2.1",
@@ -2593,6 +2608,7 @@ async def test_productive_tool_slices_have_no_profile_count_limit(
         await bus_task
 
     assert result.status is AgentRunStatus.COMPLETED
+    assert "progressed" in runtime_progress
     continuation_paths = list(
         (
             tmp_path
@@ -2609,12 +2625,17 @@ async def test_productive_tool_slices_have_no_profile_count_limit(
 @pytest.mark.asyncio
 async def test_repeated_no_progress_continuation_stops_at_profile_harness_boundary(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     provider = RepeatingNoProgressToolProvider()
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
+    )
+    _events, runtime_progress = _observe_runtime_recovery_events(
+        monkeypatch,
+        runner,
     )
     envelope = TaskEnvelope(
         task_id="module-2.1",
@@ -2641,6 +2662,7 @@ async def test_repeated_no_progress_continuation_stops_at_profile_harness_bounda
         await bus_task
 
     assert result.status is AgentRunStatus.INCOMPLETE
+    assert "no_progress" in runtime_progress
     assert result.reason.startswith("continuation harness stopped")
     assert provider.calls == 4
     assert all(value == 32768 for value in provider.max_tokens_seen)

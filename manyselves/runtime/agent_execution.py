@@ -130,8 +130,20 @@ class AgentRecoveryStopped:
     reason: str = "terminal_stop"
 
 
+@dataclass(frozen=True)
+class AgentRecoveryProgress:
+    """A typed progress observation preceding one recoverable boundary."""
+
+    kind: Literal["progressed", "no_progress"]
+    continuation: AgentRecoveryRequired
+    detail: Mapping[str, Any]
+
+
 AgentRecoveryObservation = (
-    AgentRecoveryCompleted | AgentRecoveryRequired | AgentRecoveryStopped
+    AgentRecoveryCompleted
+    | AgentRecoveryRequired
+    | AgentRecoveryStopped
+    | AgentRecoveryProgress
 )
 
 
@@ -387,20 +399,47 @@ class AgentExecutionService:
                 )
                 return await stop(outcome, directive)
 
-            decision = recovery.decide(
-                observation.event_kind,
-                observation.detail,
-            )
+            recovery_request = observation
+            if isinstance(observation, AgentRecoveryProgress):
+                recovery_request = observation.continuation
+                if observation.kind == "progressed":
+                    recovery.observe_progress(
+                        progressed=True,
+                        detail=observation.detail,
+                    )
+                    decision = recovery.decide(
+                        recovery_request.event_kind,
+                        recovery_request.detail,
+                    )
+                    directive_event_kind = recovery_request.event_kind
+                    fallback_action = recovery_request.fallback_action
+                    directive_detail = recovery_request.detail
+                else:
+                    decision = recovery.observe_progress(
+                        progressed=False,
+                        detail=observation.detail,
+                    )
+                    directive_event_kind = RecoveryEventKind.NO_PROGRESS
+                    fallback_action = RecoveryActionKind.STOP
+                    directive_detail = observation.detail
+            else:
+                decision = recovery.decide(
+                    recovery_request.event_kind,
+                    recovery_request.detail,
+                )
+                directive_event_kind = recovery_request.event_kind
+                fallback_action = recovery_request.fallback_action
+                directive_detail = recovery_request.detail
             directive = AgentRecoveryDirective(
-                event_kind=observation.event_kind,
+                event_kind=directive_event_kind,
                 action=(
-                    observation.fallback_action
+                    fallback_action
                     if decision is None
                     else decision.action
                 ),
                 prompt=None if decision is None else decision.prompt,
                 reason=None if decision is None else decision.reason,
-                detail=observation.detail,
+                detail=directive_detail,
             )
             if directive.action is RecoveryActionKind.STOP:
                 return await stop(outcome, directive)
@@ -411,7 +450,7 @@ class AgentExecutionService:
                 )
             if directive.action is RecoveryActionKind.REUSE_RESULT:
                 return await reuse_result(outcome, directive)
-            request = await build_turn(directive, observation)
+            request = await build_turn(directive, recovery_request)
 
     async def wait_until_turn_complete(
         self,

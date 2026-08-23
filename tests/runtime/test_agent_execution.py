@@ -14,6 +14,7 @@ from manyselves.runtime.agent_execution import (
     AgentRecoveryCompleted,
     AgentRecoveryDirective,
     AgentRecoveryExecutionError,
+    AgentRecoveryProgress,
     AgentRecoveryRequired,
     AgentSessionRestore,
     AgentTerminalSubscription,
@@ -333,6 +334,166 @@ async def test_recovery_loop_fails_on_declared_fail_action() -> None:
             stop=stop,
             reuse_result=reuse_result,
         )
+
+    await service.close_workflow("workflow-1")
+    bus.shutdown()
+    await bus_task
+
+
+@pytest.mark.asyncio
+async def test_recovery_loop_owns_progress_observation_and_continuation() -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loop = ScriptedAgentLoop(bus, "runtime-agent", ["boundary", "accepted"])
+    service = AgentExecutionService(bus, timeout=1)
+    session = await service.start_or_restore(
+        workflow_id="workflow-1",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-15",
+        session_factory=lambda: loop,
+    )
+    initial = AgentTurnRequest(
+        content="initial task",
+        message_id="task-1",
+        workflow_id="workflow-1",
+        run_id="run-1",
+        task_id="task-1",
+        task_attempt_id="attempt-1",
+    )
+    progress_observations: list[bool] = []
+
+    class ObservedRecoveryDriver(AgentRecoveryDriver):
+        def observe_progress(self, *, progressed, detail=None):
+            progress_observations.append(progressed)
+            return super().observe_progress(
+                progressed=progressed,
+                detail=detail,
+            )
+
+    async def interpret(outcome, _request):
+        response = outcome.message
+        if response.content == "accepted":
+            return AgentRecoveryCompleted(result="accepted")
+        return AgentRecoveryProgress(
+            kind="progressed",
+            continuation=AgentRecoveryRequired(
+                event_kind=RecoveryEventKind.TOOL_SLICE_BOUNDARY,
+                fallback_action=RecoveryActionKind.CONTINUE,
+            ),
+            detail={"turn_kind": "tool_slice_continuation"},
+        )
+
+    async def build_turn(_directive, _observation):
+        return AgentTurnRequest(
+            **{
+                **initial.__dict__,
+                "content": "continue",
+                "internal": True,
+                "turn_kind": "tool_slice_continuation",
+            }
+        )
+
+    async def stop(_outcome, _directive):
+        return "stopped"
+
+    async def reuse_result(_outcome, _directive):
+        return "reused"
+
+    result = await service.execute_with_recovery(
+        session,
+        initial,
+        recovery=ObservedRecoveryDriver(
+            RecoveryPolicyDefinition(
+                id="continue-progress",
+                version="1.0.0",
+                description="Continue productive work",
+                rules={
+                    "tool_slice_boundary": RecoveryRule(action="continue"),
+                    "no_progress": RecoveryRule(action="stop"),
+                },
+            )
+        ),
+        interpret=interpret,
+        build_turn=build_turn,
+        stop=stop,
+        reuse_result=reuse_result,
+    )
+
+    assert result == "accepted"
+    assert progress_observations == [True]
+    assert [item.turn_kind for item in loop.received] == [
+        "task_initial",
+        "tool_slice_continuation",
+    ]
+    assert {item.session_id for item in loop.received} == {"provider-session-15"}
+
+    await service.close_workflow("workflow-1")
+    bus.shutdown()
+    await bus_task
+
+
+@pytest.mark.asyncio
+async def test_recovery_loop_stops_no_progress_without_another_turn() -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loop = ScriptedAgentLoop(bus, "runtime-agent", ["boundary"])
+    service = AgentExecutionService(bus, timeout=1)
+    session = await service.start_or_restore(
+        workflow_id="workflow-1",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-16",
+        session_factory=lambda: loop,
+    )
+    initial = AgentTurnRequest(
+        content="initial task",
+        message_id="task-1",
+        workflow_id="workflow-1",
+        run_id="run-1",
+        task_id="task-1",
+        task_attempt_id="attempt-1",
+    )
+
+    async def interpret(_outcome, _request):
+        return AgentRecoveryProgress(
+            kind="no_progress",
+            continuation=AgentRecoveryRequired(
+                event_kind=RecoveryEventKind.TOOL_SLICE_BOUNDARY,
+                fallback_action=RecoveryActionKind.CONTINUE,
+            ),
+            detail={"turn_kind": "tool_slice_continuation"},
+        )
+
+    async def build_turn(_directive, _observation):
+        return initial
+
+    async def stop(_outcome, directive):
+        assert directive.event_kind is RecoveryEventKind.NO_PROGRESS
+        return "stopped"
+
+    async def reuse_result(_outcome, _directive):
+        return "reused"
+
+    result = await service.execute_with_recovery(
+        session,
+        initial,
+        recovery=AgentRecoveryDriver(
+            RecoveryPolicyDefinition(
+                id="stop-no-progress",
+                version="1.0.0",
+                description="Stop stalled work",
+                rules={"no_progress": RecoveryRule(action="stop")},
+            )
+        ),
+        interpret=interpret,
+        build_turn=build_turn,
+        stop=stop,
+        reuse_result=reuse_result,
+    )
+
+    assert result == "stopped"
+    assert len(loop.received) == 1
 
     await service.close_workflow("workflow-1")
     bus.shutdown()
