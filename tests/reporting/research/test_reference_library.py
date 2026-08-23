@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.research.reference_library import ReferenceLibrary
+from manyselves.capabilities.distribution_reporting.runtime.research.reference_library import (
+    ReferenceLibrary,
+)
 
 
 def _write(path: Path, content: str) -> None:

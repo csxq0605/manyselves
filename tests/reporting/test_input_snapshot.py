@@ -11,9 +11,11 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
     RunInputSnapshotStore,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportRequest
+from manyselves.capabilities.distribution_reporting.runtime.research.reference_library import (
+    ReferenceLibrary,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.tools.task_board import TaskBoard
 

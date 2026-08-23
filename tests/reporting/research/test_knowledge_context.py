@@ -5,7 +5,9 @@ import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
-from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
+from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
+    KnowledgeContextBuilder,
+)
 
 
 def _write(path: Path, content: str) -> None:

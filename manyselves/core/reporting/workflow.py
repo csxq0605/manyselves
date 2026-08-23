@@ -155,6 +155,9 @@ from manyselves.capabilities.distribution_reporting.runtime.rendering.source_ind
 from manyselves.capabilities.distribution_reporting.runtime.report_validation import (
     validate_final_report_structure as capability_validate_final_report_structure,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
+    KnowledgeContextBuilder,
+)
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
     project_evidence_locator,
@@ -198,7 +201,6 @@ from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
 from .distributed_runtime import LocalEventStore
-from .research.knowledge_context import KnowledgeContextBuilder
 from .review_lifecycle import (
     DeferredMainDecision,
     accept_module_initial_review,

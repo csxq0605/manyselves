@@ -64,6 +64,25 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     CHIEF_RESULT_PART_IDS,
     CHIEF_SECTION_RESULT_PART_IDS,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.evidence_memory import (
+    EvidenceResearchMemory,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.reference_library import (
+    ReferenceLibrary,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.web import (
+    BraveWebResearchBackend,
+    DisabledWebResearchBackend,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research_tools import (
+    OpenProjectSourceTool,
+    OpenReferenceTool,
+    OpenWebSourceTool,
+    PublishResearchNoteTool,
+    SearchProjectEvidenceTool,
+    SearchReferenceLibraryTool,
+    WebSearchTool,
+)
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     IdentityLease,
@@ -122,15 +141,6 @@ from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchT
 from ..tools.document_tool import InspectDocumentTool
 from ..tools.outcomes import ToolOutcome
 from ..tools.registry import Tool, ToolRegistry
-from ..tools.reporting_research_tools import (
-    OpenProjectSourceTool,
-    OpenReferenceTool,
-    OpenWebSourceTool,
-    PublishResearchNoteTool,
-    SearchProjectEvidenceTool,
-    SearchReferenceLibraryTool,
-    WebSearchTool,
-)
 from ..tools.result_memory import RunToolResultIndex
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
 from .capabilities import (
@@ -158,9 +168,6 @@ from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
 from .module_skills import ModuleSkillLibrary
 from .prompts import PromptAssembler
 from .provider_admission import ProviderAdmissionController
-from .research.evidence_memory import EvidenceResearchMemory
-from .research.reference_library import ReferenceLibrary
-from .research.web import BraveWebResearchBackend, DisabledWebResearchBackend
 from .session_summary import SessionSummaryBuilder, SessionSummaryStore
 from .skills.resolver import RuntimeSkillResolver
 from .versions import SkillProvenance

@@ -14,13 +14,13 @@ from manyselves.capabilities.distribution_reporting.runtime.research.project_evi
 )
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.tools.registry import Tool
+from manyselves.interfaces.types import ResearchNotePublishedMessage
 
-from ...interfaces.types import ResearchNotePublishedMessage
-from ..loops.bus import MessageBus
-from ..reporting.research.evidence_memory import EvidenceResearchMemory
-from ..reporting.research.reference_library import ReferenceLibrary
-from ..reporting.research.web import WebResearchBackend
-from .registry import Tool
+from .research.evidence_memory import EvidenceResearchMemory
+from .research.reference_library import ReferenceLibrary
+from .research.web import WebResearchBackend
 
 
 class SearchProjectEvidenceTool(Tool):

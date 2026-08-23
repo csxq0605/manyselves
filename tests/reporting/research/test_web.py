@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
-from manyselves.core.reporting.research.web import (
+from manyselves.capabilities.distribution_reporting.runtime.research.web import (
     DisabledWebResearchBackend,
     OpenedWebSource,
     WebSearchHit,
 )
-from manyselves.core.tools.reporting_research_tools import (
+from manyselves.capabilities.distribution_reporting.runtime.research_tools import (
     OpenWebSourceTool,
     WebSearchTool,
 )
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 
 
 class PermissiveFakeWebBackend:
