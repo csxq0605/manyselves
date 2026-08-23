@@ -1,5 +1,7 @@
 """Characterization for the production public Reporting runtime binding."""
 
+import asyncio
+import json
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -7,6 +9,9 @@ from typing import Any
 import pytest
 
 from manyselves.capabilities.distribution_reporting.runtime import preparation_tools
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRuntimeLaneContext,
 )
@@ -16,7 +21,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
 )
+from manyselves.core.loops.bus import MessageBus
+from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.workflow import WorkflowStatus
+from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink
 
@@ -29,38 +37,76 @@ def test_public_reporting_runtime_binding_module_exists() -> None:
     ) is not None
 
 
-class _BoundaryAgent:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+def test_module_authoring_agent_bridge_module_exists() -> None:
+    """Characterize the missing neutral Agent bridge before implementation."""
 
-    async def invoke(self, _agent, task, _value, _conversation, *, task_id: str):
-        self.calls.append(task.id)
-        raise RuntimeError(
-            "stopped at the existing module Agent adapter boundary"
-        )
+    assert find_spec(
+        "manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge"
+    ) is not None
 
-    async def invoke_with_recovery(
-        self,
-        agent,
-        task,
-        value,
-        conversation,
-        *,
-        task_id: str,
-        recovery_policy,
-    ):
-        return await self.invoke(
-            agent,
-            task,
-            value,
-            conversation,
-            task_id=task_id,
-        )
+
+def _module_submission(module_id: str = "2.4") -> ModuleSubmission:
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+
+    return ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            submodule_id: f"内容 {submodule_id}"
+            for submodule_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+
+
+class _ScriptedModuleAgentLoop:
+    def __init__(self, bus: MessageBus, runtime_id: str, result_ref: str) -> None:
+        self.bus = bus
+        self.runtime_id = runtime_id
+        self.result_ref = result_ref
+        self.received: list[UserMessage] = []
+        self._callback = None
+
+    def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+        del messages, task_boundaries, handoff_summary
+
+    async def start(self) -> None:
+        async def respond(message: UserMessage) -> None:
+            if message.agent_type != self.runtime_id:
+                return
+            self.received.append(message)
+            await self.bus.publish(
+                AgentResultMessage(
+                    sender=self.runtime_id,
+                    workflow_id=message.workflow_id,
+                    task_id=message.task_id,
+                    run_id=message.run_id,
+                    result_path=self.result_ref,
+                    task_attempt_id=message.task_attempt_id,
+                    session_id=message.session_id,
+                )
+            )
+
+        self._callback = respond
+        self.bus.subscribe(UserMessage, respond)
+
+    async def stop(self) -> None:
+        if self._callback is not None:
+            self.bus.unsubscribe(UserMessage, self._callback)
+
+    async def wait_until_turn_complete(self) -> None:
+        return None
 
 
 class _BoundaryModuleRuntime:
-    def __init__(self, agent: _BoundaryAgent) -> None:
-        self.agent_invokers = {"module-2.4-specialist": agent}
+    def __init__(self, execution: AgentExecutionService, session_factory) -> None:
+        self.agent_invokers = {"module-2.4-specialist": object()}
+        self.agent_execution = execution
+        self.agent_session_factory = session_factory
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
@@ -128,11 +174,11 @@ def _patch_minimal_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_module_report_host_reaches_only_selected_module_agent_boundary(
+async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Preparation/readiness complete before the selected module Agent boundary."""
+    """The neutral Agent bridge completes before the next unbound Tool gap."""
 
     _patch_minimal_preparation(monkeypatch)
     snapshot = {
@@ -145,9 +191,26 @@ async def test_module_report_host_reaches_only_selected_module_agent_boundary(
             }
         ],
     }
-    agent = _BoundaryAgent()
-    module_runtime = _BoundaryModuleRuntime(agent)
+    result_ref = "Work/runs/public-module-boundary/results/module-2.4.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_module_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    execution = AgentExecutionService(bus, timeout=1)
+    loops: list[_ScriptedModuleAgentLoop] = []
+
+    def session_factory(runtime_id: str) -> _ScriptedModuleAgentLoop:
+        loop = _ScriptedModuleAgentLoop(bus, runtime_id, result_ref)
+        loops.append(loop)
+        return loop
+
+    module_runtime = _BoundaryModuleRuntime(execution, session_factory)
     store = InMemoryWorkflowStateStore()
+    events = InMemoryWorkflowEventSink()
     runtime = PublicReportingWorkflowRuntime(
         tmp_path,
         input_snapshot=lambda _run_id: snapshot,
@@ -155,7 +218,7 @@ async def test_module_report_host_reaches_only_selected_module_agent_boundary(
         runtime_photo_ids=lambda _evidence, _photos: None,
         module_runtime=module_runtime,
         state_store=store,
-        events=InMemoryWorkflowEventSink(),
+        events=events,
     )
     request = ReportRequest(
         operation="module_report",
@@ -178,15 +241,38 @@ async def test_module_report_host_reaches_only_selected_module_agent_boundary(
     )
 
     run_id = "public-module-boundary"
-    with pytest.raises(RuntimeError, match="existing module Agent adapter boundary"):
-        await runtime.execute(request, run_id)
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="missing tool adapter: accept-current-module-authoring",
+        ):
+            await runtime.execute(request, run_id)
+    finally:
+        await execution.close_workflow("public-reporting")
+        bus.shutdown()
+        await bus_task
 
     state = store.load(run_id)
     assert state.status is WorkflowStatus.FAILED
     assert state.actions["run-reporting-preparation"].status.value == "completed"
     assert state.actions["run-evidence-readiness"].status.value == "completed"
     assert state.actions["build-reporting-state"].status.value == "completed"
-    assert agent.calls == ["module-2.4-authoring"]
+    assert len(loops) == 1
+    assert [message.turn_kind for message in loops[0].received] == ["task_initial"]
+    assert any(
+        event.kind == "action.completed"
+        and event.action_id == "invoke-current-module-author"
+        for event in events.events
+    )
+    assert any(
+        event.kind == "action.failed"
+        and event.action_id == "accept-current-module-authoring"
+        for event in events.events
+    )
+    lane_state = state.model_dump(mode="json")["subworkflow_states"][
+        "run-module-cohort"
+    ]["subworkflow_states"]["execute-module-2.4"]
+    assert lane_state["variables"]["module-author-result"]["module"]["module_id"] == "2.4"
 
 
 def test_full_report_stops_at_existing_tail_specialization_boundary(

@@ -42,6 +42,7 @@ from .entrypoint_tools import (
 from .evidence_readiness import build_evidence_readiness_tool_implementations
 from .models.module_cohort import DeclarativeModuleLaneOutcome
 from .models.reporting import ReportRequest
+from .module_agent_bridge import ModuleAuthoringAgentBridge
 from .module_lane_definitions import register_module_runtime_lane_specializations
 from .preparation_tools import build_preparation_tool_implementations
 from .storage import ReportingStore
@@ -325,7 +326,19 @@ class PublicReportingWorkflowRuntime:
     def _agent_invokers(self) -> Mapping[str, AgentInvoker]:
         if self.module_runtime is None:
             return {}
-        return getattr(self.module_runtime, "agent_invokers", {})
+        invokers = dict(getattr(self.module_runtime, "agent_invokers", {}))
+        execution = getattr(self.module_runtime, "agent_execution", None)
+        session_factory = getattr(self.module_runtime, "agent_session_factory", None)
+        if execution is None or not callable(session_factory):
+            return invokers
+        for agent_id in tuple(invokers):
+            if agent_id.startswith("module-") and agent_id.endswith("-specialist"):
+                invokers[agent_id] = ModuleAuthoringAgentBridge(
+                    self.workspace,
+                    execution=execution,
+                    session_factory=session_factory,
+                )
+        return invokers
 
     @staticmethod
     def _plan_tool_ids(plan: ResolvedPlan) -> tuple[str, ...]:
