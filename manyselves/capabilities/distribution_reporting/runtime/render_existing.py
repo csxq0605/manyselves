@@ -264,7 +264,10 @@ class RenderExistingWorkflowRuntime:
         _capability, registry, contracts, _tools, plan = self._compiled()
         if plan.input_contract is None or plan.input_variable is None:
             raise TypeError("render-existing workflow has no declared input binding")
-        request = contracts[plan.input_contract].validate(values)
+        public_request = contracts[plan.input_contract].validate(values)
+        request = RenderExistingRequest.model_validate(
+            public_request.model_dump(mode="python")
+        )
         run_id = f"{workflow_id}-{command_id.hex}"
         try:
             state = self._store.load(run_id)

@@ -7,6 +7,7 @@ the generic application has allocated a Run.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import ConfigDict, Field
@@ -102,8 +103,7 @@ class PublicRenderExistingRequest(_PublicReportRequest):
 
     operation: Literal["render_existing"] = "render_existing"
     instruction: str = "Render the existing Markdown report as DOCX."
-    source_markdown_ref: str = Field(
-        min_length=1,
+    source_markdown_ref: Path = Field(
         description="Project-relative Markdown report to render.",
     )
 

@@ -6,12 +6,15 @@ from uuid import UUID
 
 import pytest
 
+from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
 from manyselves.capabilities.distribution_reporting.adapters.runtime import (
     DistributionReportingRuntimeBinding,
 )
+from manyselves.config.schema import AgentDefaults
+from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.definitions import DefinitionKind
 
 
@@ -31,7 +34,16 @@ async def test_render_existing_starts_through_the_generic_host(
     source.parent.mkdir(parents=True)
     source.write_text("# Approved\n\nExisting approved prose.\n", encoding="utf-8")
 
-    binding = DistributionReportingRuntimeBinding(tmp_path, object())
+    binding = DistributionReportingRuntimeBinding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
     started = await binding.start(
         UUID("50000000-0000-4000-8000-000000000001"),
         "render-existing",
