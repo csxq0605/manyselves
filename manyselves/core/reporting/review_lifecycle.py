@@ -62,7 +62,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     FinalReviewInput,
     ModuleReviewInput,
     ModuleRevisionDiff,
-    ModuleRevisionInput,
     RequestedModuleChange,
     ReviewClaimStatement,
     ReviewCompletionRecord,
@@ -79,6 +78,19 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_delta import (
     build_module_recheck_delta,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    ModuleRevisionAcceptanceError,
+    ModuleRevisionPreparationError,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    accept_module_revision as capability_accept_module_revision,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    apply_module_revision as capability_apply_module_revision,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+    prepare_module_revision as capability_prepare_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
@@ -325,49 +337,17 @@ def _apply_module_patch(
     target_submodule_ids: set[str],
     required_finding_ids: set[str],
 ) -> ModuleSubmission:
-    if patch.module_id != baseline.module_id:
-        raise ReviewLifecycleError("module patch belongs to a different module")
-    if patch.base_revision != baseline.revision:
-        raise ReviewLifecycleError("module patch base_revision does not match the supplied subject")
-    if set(patch.submodule_narratives) - target_submodule_ids:
-        raise ReviewLifecycleError("module patch replaces an unassigned submodule")
-    _validate_responses(
-        patch.revision_responses,
-        required_finding_ids,
-        target_submodule_ids,
-    )
-    baseline_claims = {claim.id: claim for claim in baseline.claims}
-    for claim_id in patch.claim_ids_remove:
-        claim = baseline_claims.get(claim_id)
-        if claim is None:
-            raise ReviewLifecycleError(f"module patch removes unknown Claim id: {claim_id}")
-        if claim.submodule_id not in target_submodule_ids:
-            raise ReviewLifecycleError(f"module patch removes out-of-scope Claim id: {claim_id}")
-        del baseline_claims[claim_id]
-    for claim in patch.claims_upsert:
-        if claim.module_id != baseline.module_id:
-            raise ReviewLifecycleError(f"module patch Claim belongs to another module: {claim.id}")
-        if claim.submodule_id not in target_submodule_ids:
-            raise ReviewLifecycleError(f"module patch changes out-of-scope Claim id: {claim.id}")
-        baseline_claims[claim.id] = claim
-    claim_source_ids = {
-        source_id for claim in baseline_claims.values() for source_id in claim.source_ids
-    }
-    if not claim_source_ids.issubset(set(patch.source_ids)):
-        raise ReviewLifecycleError(
-            "module patch source_ids do not cover every resulting Claim source"
+    """Keep the legacy error boundary around the Capability implementation."""
+
+    try:
+        return capability_apply_module_revision(
+            baseline,
+            patch,
+            target_submodule_ids=target_submodule_ids,
+            required_finding_ids=required_finding_ids,
         )
-    narratives = dict(baseline.submodule_narratives)
-    narratives.update(patch.submodule_narratives)
-    return ModuleSubmission(
-        module_id=baseline.module_id,
-        submodule_narratives=narratives,
-        claims=list(baseline_claims.values()),
-        source_ids=patch.source_ids,
-        unresolved_questions=patch.unresolved_questions,
-        revision=patch.revision,
-        revision_responses=patch.revision_responses,
-    )
+    except ValueError as exc:
+        raise ReviewLifecycleError(str(exc)) from exc
 
 
 def _validate_module_findings(
@@ -1450,141 +1430,38 @@ async def prepare_module_revision(
     validation_ref: str | None = None,
     validation_target_submodule_ids: set[str] | None = None,
 ) -> review_models.ModuleRevisionPreparation:
-    """Prepare one complete module revision for a generic Agent runtime.
+    """Delegate the shared module revision preparation contract to Capability."""
 
-    Module-level revision is the only supported revision protocol.  A single
-    specialist receives the exact assigned submodule slice, writes one typed
-    ``module_revision_submission``, and the runtime applies that patch once;
-    there is no leaf fan-out or reducer merge to reconstruct the module.
-    """
-
-    module_findings = module_findings or []
-    cross_findings = cross_findings or []
-    requested_changes = requested_changes or []
-    validation_target_submodule_ids = validation_target_submodule_ids or set()
-    validation_report = (
-        ValidationReport.model_validate_json(
-            (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
-        )
-        if validation_ref
-        else None
-    )
-    required_ids = {
-        *(finding.id for finding in module_findings),
-        *(finding.id for finding in cross_findings),
-        *(change.id for change in requested_changes),
-    }
-    targets = {
-        *(finding.target_submodule_id for finding in module_findings),
-        *(target_id for finding in cross_findings for target_id in finding.target_submodule_ids),
-        *(target_id for change in requested_changes for target_id in change.target_submodule_ids),
-        *validation_target_submodule_ids,
-    }
-    if validation_report is not None:
-        validation_subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{subject.revision}.json"
-        )
-        _require_validation_binding(
-            runner,
-            validation_report,
-            subject_ref=validation_subject_ref,
-            subject_revision=subject.revision,
-        )
-        if not targets:
-            raise ReviewLifecycleError(
-                "failed structural validation requires explicit module-local correction targets"
-            )
-    if not targets:
-        raise ReviewLifecycleError(
-            f"module revision requires at least one target submodule: {subject.module_id}"
-        )
-    revision_input = ModuleRevisionInput(
-        run_id=state["run_id"],
-        module_id=subject.module_id,
-        subject_ref=(
-            f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{subject.revision}.json"
-        ),
-        subject=module_content_view(subject, targets),
-        target_submodule_ids=sorted(targets),
-        module_findings=module_findings,
-        cross_findings=cross_findings,
-        requested_changes=requested_changes,
-        validation_report_ref=validation_ref,
-        validation_report=validation_report,
-    )
-    input_ref = _write_model(
-        runner,
-        (
-            f"Work/runs/{state['run_id']}/reviews/module-revision-input-"
-            f"{subject.module_id}-r{subject.revision + 1}.json"
-        ),
-        revision_input,
-    )
-    subject_path = runner.service.workspace / revision_input.subject_ref
-    if not subject_path.is_file():
-        _write_model(runner, revision_input.subject_ref, subject)
-    specialist_id = f"module-{subject.module_id}-specialist"
-    revision = subject.revision + 1
-    envelope = TaskEnvelope(
-        task_id=f"module-revision-r{revision}-{subject.module_id}",
-        run_id=state["run_id"],
-        agent_id=specialist_id,
-        objective=(
-            f"以完整模块 {subject.module_id} 的单一作者身份，一次完成所有明确分配的"
-            "定向修订；只替换受影响小节，不重复提交未变正文。"
-        ),
-        input_refs=[input_ref],
-        constraints=[
-            f"唯一写作范围是模块 {subject.module_id}",
-            f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
-            "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
-            "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
-            "disputed 或 needs_input 不得伪造 changed_target_ids",
-            *(
-                [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
-                if validation_report is not None
-                else []
+    try:
+        return await capability_prepare_module_revision(
+            workspace=runner.service.workspace,
+            store=runner.service.store,
+            state=state,
+            workflow_id=workflow_id,
+            subject=subject,
+            module_findings=module_findings,
+            cross_findings=cross_findings,
+            requested_changes=requested_changes,
+            validation_ref=validation_ref,
+            validation_target_submodule_ids=validation_target_submodule_ids,
+            validate_validation_binding=(
+                lambda report, subject_ref, subject_revision: _require_validation_binding(
+                    runner,
+                    report,
+                    subject_ref=subject_ref,
+                    subject_revision=subject_revision,
+                )
             ),
-            *runner._user_supplement_constraints(
-                state,
-                stage="module_authoring",
-                target_ids={
-                    subject.module_id,
-                    *targets,
-                    *(claim.id for claim in subject.claims if claim.submodule_id in targets),
-                },
+            user_supplement_constraints=(
+                lambda current_state, stage, target_ids: runner._user_supplement_constraints(
+                    current_state,
+                    stage=stage,
+                    target_ids=target_ids,
+                )
             ),
-        ],
-        allowed_outputs=["module_revision_submission"],
-        revision=revision,
-        prior_result_ref=revision_input.subject_ref,
-        artifact_delivery_modes={
-            input_ref: "inline",
-            revision_input.subject_ref: "hash_retained",
-        },
-        target_submodule_ids=sorted(targets),
-        input_contract_kind="module_revision_input",
-        input_contract_ref=input_ref,
-        # The stable author Skill and domain Knowledge were supplied by the
-        # first task of this persistent specialist identity.  This revision
-        # carries only the changed business contract.
-        inline_context="",
-    )
-    return review_models.ModuleRevisionPreparation(
-        run_id=state["run_id"],
-        module_id=subject.module_id,
-        workflow_id=workflow_id,
-        specialist_id=specialist_id,
-        session_key=f"module-{subject.module_id}",
-        subject=subject,
-        revision_input=revision_input,
-        input_ref=input_ref,
-        subject_ref=revision_input.subject_ref,
-        revision=revision,
-        target_submodule_ids=sorted(targets),
-        required_finding_ids=sorted(required_ids),
-        envelope=envelope,
-    )
+        )
+    except ModuleRevisionPreparationError as exc:
+        raise ReviewLifecycleError(str(exc)) from exc
 
 
 def accept_module_revision(
@@ -1593,51 +1470,17 @@ def accept_module_revision(
     preparation: review_models.ModuleRevisionPreparation,
     result: ModuleRevisionSubmission,
 ) -> tuple[ModuleSubmission, str]:
-    """Apply and persist one prepared module-author revision submission."""
+    """Delegate acceptance while preserving the legacy error boundary."""
 
-    if not isinstance(result, ModuleRevisionSubmission):
-        raise ReviewLifecycleError(
-            f"module specialist returned the wrong revision type for {preparation.module_id}"
+    try:
+        return capability_accept_module_revision(
+            workspace=runner.service.workspace,
+            store=runner.service.store,
+            preparation=preparation,
+            result=result,
         )
-    revised = _apply_module_patch(
-        preparation.subject,
-        result,
-        target_submodule_ids=set(preparation.target_submodule_ids),
-        required_finding_ids=set(preparation.required_finding_ids),
-    )
-    subject_ref = _write_model(
-        runner,
-        f"Work/runs/{preparation.run_id}/modules/"
-        f"{preparation.module_id}-r{preparation.revision}.json",
-        revised,
-    )
-    runner.service.store.write_json(
-        (
-            f"Work/runs/{preparation.run_id}/reviews/module-diff-"
-            f"{preparation.module_id}-r{preparation.revision}.json"
-        ),
-        build_revision_diff(preparation.subject, revised),
-    )
-    runner.service.store.write_json(
-        (
-            f"Work/runs/{preparation.run_id}/reviews/module-revisions/"
-            f"{preparation.module_id}/r{preparation.revision}/module-barrier.json"
-        ),
-        {
-            "kind": "module_revision_barrier",
-            "version": 1,
-            "run_id": preparation.run_id,
-            "module_id": preparation.module_id,
-            "base_revision": preparation.subject.revision,
-            "revision": preparation.revision,
-            "target_submodule_ids": sorted(preparation.target_submodule_ids),
-            "subject_ref": subject_ref,
-            "subject_sha256": hashlib.sha256(
-                (runner.service.workspace / subject_ref).read_bytes()
-            ).hexdigest(),
-        },
-    )
-    return revised, subject_ref
+    except ModuleRevisionAcceptanceError as exc:
+        raise ReviewLifecycleError(str(exc)) from exc
 
 
 def accept_module_initial_review_preflight_revision(
