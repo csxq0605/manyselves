@@ -9,10 +9,10 @@ Completed-result reuse now uses the existing neutral recovery service when a
 Capability-owned loader supplies an already verified typed result.  Natural
 language without a submission now uses the same generic recovery driver for
 one Capability-owned typed correction turn.  The existing AgentLoop max-token
-marker also uses that driver for one continuation turn.  Schema-invalid tool
-submissions and durable tool-slice/no-progress recovery remain outside this
-bridge until their existing implementations can be observed without copying
-their policy or persistence semantics.
+marker and tool-slice marker also use that driver for one continuation turn.
+Schema-invalid tool submissions and durable no-progress recovery remain outside
+this bridge until their existing implementations can be observed without
+copying their policy or persistence semantics.
 """
 
 from __future__ import annotations
@@ -29,7 +29,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     TemplateDistillationInput,
 )
-from manyselves.core.loops.agent_loop import AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+from manyselves.core.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AGENT_TURN_CONTINUATION_REQUIRED,
+)
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -121,9 +124,9 @@ class TemplateDistillationAgentBridge:
         """Reuse a Capability-loaded completion, then run one typed turn.
 
         Existing completed-result, natural-language, and AgentLoop max-token
-        boundaries are interpreted here.  Schema-invalid tool submissions are
-        still owned by the Reporting tool callback because the neutral
-        ``ToolResult`` message has no task/session correlation.
+        and tool-slice boundaries are interpreted here.  Schema-invalid tool
+        submissions are still owned by the Reporting tool callback because the
+        neutral ``ToolResult`` message has no task/session correlation.
         """
 
         return await self._invoke_once(
@@ -281,6 +284,12 @@ class TemplateDistillationAgentBridge:
                         fallback_action=RecoveryActionKind.CONTINUE,
                         detail={"task_id": task.id},
                     )
+                if outcome.message.content == AGENT_TURN_CONTINUATION_REQUIRED:
+                    return AgentRecoveryRequired(
+                        event_kind=RecoveryEventKind.TOOL_SLICE_BOUNDARY,
+                        fallback_action=RecoveryActionKind.CONTINUE,
+                        detail={"task_id": task.id},
+                    )
                 return AgentRecoveryRequired(
                     event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
                     fallback_action=RecoveryActionKind.CORRECT,
@@ -292,8 +301,9 @@ class TemplateDistillationAgentBridge:
             directive: AgentRecoveryDirective,
             _observation: AgentRecoveryRequired,
         ) -> AgentTurnRequest:
-            max_tokens_continuation = (
-                directive.event_kind is RecoveryEventKind.MAX_TOKENS
+            max_tokens_continuation = directive.event_kind is RecoveryEventKind.MAX_TOKENS
+            tool_slice_continuation = (
+                directive.event_kind is RecoveryEventKind.TOOL_SLICE_BOUNDARY
             )
             return AgentTurnRequest(
                 content=(
@@ -301,12 +311,16 @@ class TemplateDistillationAgentBridge:
                     or (
                         self._max_tokens_prompt(agent, task)
                         if max_tokens_continuation
+                        else self._tool_slice_prompt(agent, task)
+                        if tool_slice_continuation
                         else self._correction_prompt(agent, task)
                     )
                 ),
                 message_id=(
                     f"{task_id}:{input_value.run_id}:max-tokens-continuation"
                     if max_tokens_continuation
+                    else f"{task_id}:{input_value.run_id}:tool-slice-continuation"
+                    if tool_slice_continuation
                     else f"{task_id}:{input_value.run_id}:correction"
                 ),
                 workflow_id=self.workflow_id,
@@ -317,6 +331,8 @@ class TemplateDistillationAgentBridge:
                 turn_kind=(
                     "max_tokens_continuation"
                     if max_tokens_continuation
+                    else "tool_slice_continuation"
+                    if tool_slice_continuation
                     else "submission_correction"
                 ),
             )
@@ -486,6 +502,22 @@ class TemplateDistillationAgentBridge:
                 "不要从头重复读取或检索。完成后立即调用 submit_result 提交"
                 " template_skill_submission。",
                 "</max_tokens_continuation>",
+            )
+        )
+
+    @staticmethod
+    def _tool_slice_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+    ) -> str:
+        return "\n\n".join(
+            (
+                "<tool_slice_continuation>",
+                "上一轮达到工具执行片段边界，任务尚未完成；已完成的 Tool result 已保留。",
+                f"你仍是 {agent.id}，当前任务是 {task.id}；使用同一会话和已有上下文，"
+                "只继续尚未完成的部分，不要重跑已完成的工具或重读已有结果。"
+                "完成后立即调用 submit_result 提交 template_skill_submission。",
+                "</tool_slice_continuation>",
             )
         )
 
