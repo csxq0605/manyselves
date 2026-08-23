@@ -1050,3 +1050,156 @@ async def test_module_provider_tools_assemble_artifact_tools_and_reuse_completed
     second_search = await search_text("artifact-ref", "evidence")
     assert first_search == second_search
     assert gateway.search_calls == [("artifact-ref", "evidence")]
+
+
+def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
+    tmp_path: Path,
+) -> None:
+    """The Provider bridge derives per-task artifact resources from the envelope."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        ModuleAuthoringInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.artifacts.gateway import ArtifactGateway, ArtifactGrant
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+
+    def make_context(run_id: str, task_id: str) -> DeclarativeModuleRuntimeLaneContext:
+        refs = {
+            "coverage": f"Work/runs/{run_id}/preparation/coverage.json",
+            "evidence": f"Work/runs/{run_id}/preparation/evidence.jsonl",
+            "manifest": f"Work/runs/{run_id}/preparation/manifest.json",
+            "knowledge": f"Work/runs/{run_id}/knowledge/module-2.4.md",
+        }
+        for name, ref in refs.items():
+            path = tmp_path / ref
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{name}-{run_id}\n", encoding="utf-8")
+        contract_ref = f"Work/runs/{run_id}/context/module-input.json"
+        contract = ModuleAuthoringInput(
+            run_id=run_id,
+            module_id="2.4",
+            revision=0,
+            required_submodule_ids=part_ids,
+            coverage_ref=refs["coverage"],
+            evidence_ref=refs["evidence"],
+            manifest_ref=refs["manifest"],
+            knowledge_ref=refs["knowledge"],
+        )
+        contract_path = tmp_path / contract_ref
+        contract_path.parent.mkdir(parents=True, exist_ok=True)
+        contract_path.write_text(contract.model_dump_json(), encoding="utf-8")
+        envelope = TaskEnvelope(
+            task_id=task_id,
+            run_id=run_id,
+            agent_id=agent.id,
+            objective=task.objective,
+            allowed_outputs=["module_submission"],
+            allowed_tools=list(task.tools),
+            input_refs=[contract_ref, *refs.values()],
+            target_submodule_ids=part_ids,
+            input_contract_kind="module_authoring_input",
+            input_contract_ref=contract_ref,
+        )
+        return DeclarativeModuleRuntimeLaneContext(
+            module_id="2.4",
+            workflow_id="public-reporting",
+            reporting_state={"run_id": run_id},
+            status="author_ready",
+            authoring=DeclarativeModuleAuthoringPreparation(
+                specialist_id=agent.id,
+                envelope=envelope,
+                revision=0,
+                review=False,
+                checkpoint=False,
+            ),
+        )
+
+    captured: list[dict[str, Any]] = []
+
+    def tool_builder(*args: Any, **kwargs: Any) -> ToolRegistry:
+        del args
+        captured.append(kwargs)
+        return ToolRegistry()
+
+    bus = MessageBus()
+    runtime = ModuleProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=AgentExecutionService(bus),
+        tool_builder=tool_builder,
+    )
+    conversations = ConversationRegistry()
+    contexts = (
+        make_context("module-provider-run-a", "module-2.4-task-a"),
+        make_context("module-provider-run-b", "module-2.4-task-b"),
+    )
+    for context, run_id in zip(contexts, ("module-provider-run-a", "module-provider-run-b")):
+        conversation = conversations.create_or_resolve(
+            ConversationKey(agent_id=agent.id, value=run_id, mode="run"),
+            run_id=run_id,
+        )
+        runtime._bridge(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id=f"dispatch-{run_id}",
+        )
+
+    assert len(captured) == 2
+    first, second = (item["dependencies"] for item in captured)
+    assert isinstance(first.artifact_gateway, ArtifactGateway)
+    assert isinstance(second.artifact_gateway, ArtifactGateway)
+    assert first.artifact_gateway.grant == ArtifactGrant(
+        "public-reporting",
+        "module-2.4-task-a",
+        agent.id,
+        "public-reporting:module-provider-run-a",
+    )
+    assert second.artifact_gateway.grant == ArtifactGrant(
+        "public-reporting",
+        "module-2.4-task-b",
+        agent.id,
+        "public-reporting:module-provider-run-b",
+    )
+    assert first.artifact_access.gateway is first.artifact_gateway
+    assert second.artifact_access.gateway is second.artifact_gateway
+    assert first.result_index is not second.result_index
+    assert first.result_index.run_id == "module-provider-run-a"
+    assert second.result_index.run_id == "module-provider-run-b"
+    assert first.result_index.path != second.result_index.path
+    assert set(task.tools).issubset(set(captured[0]["tool_names"]))
+    assert first.artifact_access.readable_refs
+    assert second.artifact_access.readable_refs

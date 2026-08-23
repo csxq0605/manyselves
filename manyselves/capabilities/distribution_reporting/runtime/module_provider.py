@@ -17,7 +17,7 @@ remains outside this initial-turn slice.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -68,6 +68,7 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
     SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.core.artifacts.gateway import ArtifactGateway, ArtifactGrant
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.tools.document_tool import InspectDocumentTool
@@ -85,6 +86,7 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
+from .artifact_access import compile_agent_access, scoped_gateway
 from .contracts.submissions import submission_schema
 from .module_provider_tools import (
     CalculateTool,
@@ -372,6 +374,10 @@ class ModuleProviderRuntime:
         self.loop_builder = loop_builder
         self.dependencies = dependencies or ModuleProviderDependencies()
         self.tool_builder = tool_builder
+        self._artifact_root = ArtifactGateway(
+            self.workspace,
+            ArtifactGrant("root", "root", "workflow", "root"),
+        )
         self.agent_invokers: dict[str, AgentInvoker] = {
             agent_id: self for agent_id in self.agent_ids
         }
@@ -443,7 +449,20 @@ class ModuleProviderRuntime:
             f"{self.workflow_id}:{conversation.key.value}"
         )
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
-        dependencies = self.dependencies
+        dependencies = self._compose_artifact_dependencies(
+            agent,
+            envelope,
+            session_id=session_id,
+        )
+        tool_names = list(task.tools)
+        if dependencies.artifact_access is not None and (
+            dependencies.artifact_gateway is not None
+            and dependencies.result_index is not None
+            and self.dependencies.artifact_gateway is None
+            and self.dependencies.artifact_access is None
+            and self.dependencies.result_index is None
+        ):
+            tool_names = list(dependencies.artifact_access.tool_names)
         tools = self.tool_builder(
             self.workspace,
             envelope=envelope,
@@ -453,7 +472,7 @@ class ModuleProviderRuntime:
             bus=self.services.bus,
             store=self.store,
             global_knowledge_root=self.services.global_knowledge_root,
-            tool_names=list(task.tools),
+            tool_names=tool_names,
             expected_part_ids=_module_result_part_ids(self.workspace, envelope),
             dependencies=dependencies,
         )
@@ -487,6 +506,48 @@ class ModuleProviderRuntime:
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
+        )
+
+    def _compose_artifact_dependencies(
+        self,
+        agent: AgentDefinition,
+        envelope: TaskEnvelope,
+        *,
+        session_id: str,
+    ) -> ModuleProviderDependencies:
+        """Resolve existing artifact resources for one prepared Provider task.
+
+        Explicit dependencies remain a compatibility injection point for the
+        focused/offline callers that own their gateway or result index.  The
+        production-shaped path has no such injection, so it mechanically
+        follows the existing gateway/access/index composition using only the
+        prepared envelope and typed input contract.
+        """
+
+        if (
+            self.dependencies.artifact_gateway is not None
+            or self.dependencies.artifact_access is not None
+            or self.dependencies.result_index is not None
+        ):
+            return self.dependencies
+        gateway = scoped_gateway(
+            self._artifact_root,
+            workflow_id=self.workflow_id,
+            envelope=envelope,
+            agent_id=agent.id,
+            session_id=session_id,
+        )
+        access = compile_agent_access(
+            agent,
+            envelope,
+            gateway=gateway,
+        )
+        result_index = RunToolResultIndex(self.workspace, envelope.run_id)
+        return replace(
+            self.dependencies,
+            artifact_gateway=gateway,
+            artifact_access=access,
+            result_index=result_index,
         )
 
     @staticmethod
