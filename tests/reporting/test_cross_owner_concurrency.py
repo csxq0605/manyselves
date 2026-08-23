@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+    DeclarativeCrossOwnerPipelineOutcome,
+)
 from manyselves.core.reporting import review_lifecycle as lifecycle
 from manyselves.core.reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
@@ -24,7 +27,6 @@ from manyselves.core.reporting.agentic_models import (
     WorkflowDecisionSubmission,
 )
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
-    DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRuntime,
     compile_cross_owner_workflows,
     retry_failed_cross_owner_pipelines,
@@ -184,6 +186,7 @@ class _CrossFindingRunner(_Runner):
         workflow_id,
         *,
         session_key=None,
+        **_kwargs,
     ):
         del artifacts
         session = session_key or ""
@@ -308,6 +311,7 @@ class _CrossExceptionRunner(_CrossFindingRunner):
         workflow_id,
         *,
         session_key=None,
+        **_kwargs,
     ):
         session = session_key or ""
         if agent_id == "main-agent":
@@ -1081,6 +1085,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
             _workflow_id,
             *,
             session_key=None,
+            **_kwargs,
         ):
             owner_module_id = envelope.task_id.split("-")[2]
             self.calls.append((envelope.task_id, session_key or ""))
@@ -1283,6 +1288,7 @@ async def test_fast_cross_owner_enters_local_pipeline_without_waiting_for_slow_i
             _workflow_id,
             *,
             session_key=None,
+            **_kwargs,
         ):
             owner_module_id = envelope.task_id.split("-")[2]
             self.calls.append((owner_module_id, session_key or ""))
@@ -1638,6 +1644,7 @@ async def test_declarative_cross_owner_recheck_regression_uses_next_declared_rev
             workflow_id,
             *,
             session_key=None,
+            **_kwargs,
         ):
             del artifacts
             session = session_key or ""
@@ -1838,7 +1845,7 @@ async def test_declarative_cross_owner_recovered_recheck_advances_without_compat
     runner = _CrossFindingRunner(tmp_path)
     _write_modules(runner, run_id)
     state = _state(run_id)
-    _write_initial_module_completion(runner, state, "2.1")
+    initial_completion_ref = _write_initial_module_completion(runner, state, "2.1")
 
     first = await _execute_declarative_cross_owner_pipeline(
         runner,
@@ -1846,6 +1853,11 @@ async def test_declarative_cross_owner_recovered_recheck_advances_without_compat
         "workflow-cross-declarative-recovered-recheck",
     )
     assert first.status is WorkflowStatus.COMPLETED
+    cross_completion_ref = (
+        f"Work/runs/{run_id}/reviews/module/cross-r1/2.1/completion-r1.json"
+    )
+    assert state["module_review_completion_refs"]["2.1"] == initial_completion_ref
+    assert (runner.service.workspace / cross_completion_ref).is_file()
     calls_after_first = list(runner.agent_calls)
 
     async def _unexpected_compatibility(*_args, **_kwargs):
@@ -1867,7 +1879,7 @@ async def test_declarative_cross_owner_recovered_recheck_advances_without_compat
     result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
         recovered.outputs["result"]
     )
-    assert result.status == "completed"
+    assert result.status == "completed", result.error
     assert result.pipeline is not None
     assert result.pipeline["lane"]["module"]["revision"] == 1
     assert runner.agent_calls == calls_after_first
@@ -2004,6 +2016,7 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
             _workflow_id,
             *,
             session_key=None,
+            **_kwargs,
         ):
             session = session_key or ""
             self.agent_calls.append((agent_id, envelope.task_id, session))

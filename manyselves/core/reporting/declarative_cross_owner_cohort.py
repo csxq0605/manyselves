@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    cross_owner as cross_owner_models,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
@@ -69,17 +72,6 @@ from .review_lifecycle import (
 )
 
 
-class DeclarativeCrossOwnerPipelineOutcome(BaseModel):
-    """Serializable result retained after one Cross owner branch drains."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    owner_module_id: str
-    status: Literal["completed", "failed"]
-    pipeline: dict[str, Any] | None = None
-    error: str | None = None
-
-
 class DeclarativeCrossOwnerInitialAgentResult(BaseModel):
     """Typed result returned by the declared initial Cross reviewer."""
 
@@ -108,15 +100,6 @@ class DeclarativeMainExceptionAgentResult(BaseModel):
     status: Literal["completed", "failed"]
     submission: WorkflowDecisionSubmission | None = None
     error: str | None = None
-
-
-class DeclarativeMainExceptionUserInput(BaseModel):
-    """Capability-owned decision supplied through the generic Interaction."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    decision: Literal["accept_dispute", "return_to_author", "stop_incomplete"]
-    rationale: str
 
 
 class DeclarativeCrossOwnerRuntimeContext(BaseModel):
@@ -1029,7 +1012,9 @@ class DeclarativeCrossOwnerRuntime:
         """Apply validated Interaction input to the prepared exception."""
 
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
-        supplied = DeclarativeMainExceptionUserInput.model_validate(values["input"])
+        supplied = cross_owner_models.DeclarativeMainExceptionUserInput.model_validate(
+            values["input"]
+        )
         preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
         try:
             acceptance = cast(
@@ -1386,12 +1371,12 @@ class DeclarativeCrossOwnerRuntime:
     async def complete_owner_round(
         self,
         context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerPipelineOutcome:
+    ) -> cross_owner_models.DeclarativeCrossOwnerPipelineOutcome:
         """Promote one closed typed round."""
 
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status != "round_completed" or context.round_progress is None:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
                 status="failed",
                 error=context.error or "Cross owner round is not complete",
@@ -1402,12 +1387,12 @@ class DeclarativeCrossOwnerRuntime:
                 self._coordinator,
             ).complete_owner_round(context.round_progress)
         except BaseException as exc:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
                 status="failed",
                 error=str(exc),
             )
-        return DeclarativeCrossOwnerPipelineOutcome(
+        return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id=context.owner_module_id,
             status="completed",
             pipeline=pipeline.model_dump(mode="json"),
@@ -1416,18 +1401,18 @@ class DeclarativeCrossOwnerRuntime:
     async def complete_owner_without_findings(
         self,
         context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerPipelineOutcome:
+    ) -> cross_owner_models.DeclarativeCrossOwnerPipelineOutcome:
         """Complete the ordinary accepted initial result with no findings."""
 
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status == "failed":
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
                 status="failed",
                 error=context.error,
             )
         if self._aggregate_recovered:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
                 status="completed",
                 pipeline={},
@@ -1441,12 +1426,12 @@ class DeclarativeCrossOwnerRuntime:
                 cast(CrossOwnerInitialReviewAcceptance, context.acceptance)
             )
         except BaseException as exc:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
                 status="failed",
                 error=str(exc),
             )
-        return DeclarativeCrossOwnerPipelineOutcome(
+        return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id=context.owner_module_id,
             status="completed",
             pipeline=pipeline.model_dump(mode="json"),
@@ -1455,7 +1440,7 @@ class DeclarativeCrossOwnerRuntime:
     async def execute_owner(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerPipelineOutcome:
+    ) -> cross_owner_models.DeclarativeCrossOwnerPipelineOutcome:
         """Execute and drain one owner without mutating sibling branch state."""
 
         owner_module_id = str(values["owner_module_id"])
@@ -1476,7 +1461,7 @@ class DeclarativeCrossOwnerRuntime:
             values.get("recheck_acceptance"),
         )
         if self._aggregate_recovered:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=owner_module_id,
                 status="completed",
                 pipeline={},
@@ -1498,12 +1483,12 @@ class DeclarativeCrossOwnerRuntime:
                         await result
                     self._compatibility_invoked = True
             except BaseException as exc:
-                return DeclarativeCrossOwnerPipelineOutcome(
+                return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                     owner_module_id=owner_module_id,
                     status="failed",
                     error=str(exc),
                 )
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=owner_module_id,
                 status="completed",
                 pipeline={"compatibility": True},
@@ -1517,12 +1502,12 @@ class DeclarativeCrossOwnerRuntime:
                 recheck_acceptance=recheck_acceptance,
             )
         except BaseException as exc:
-            return DeclarativeCrossOwnerPipelineOutcome(
+            return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=owner_module_id,
                 status="failed",
                 error=str(exc),
             )
-        return DeclarativeCrossOwnerPipelineOutcome(
+        return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id=owner_module_id,
             status="completed",
             pipeline=pipeline.model_dump(mode="json"),
@@ -1532,7 +1517,11 @@ class DeclarativeCrossOwnerRuntime:
         """Finalize the five drained outcomes and publish the shared state."""
 
         outcomes = {
-            module_id: DeclarativeCrossOwnerPipelineOutcome.model_validate(outcome)
+            module_id: (
+                cross_owner_models.DeclarativeCrossOwnerPipelineOutcome.model_validate(
+                    outcome
+                )
+            )
             for module_id, outcome in dict(values["outcomes"]).items()
         }
         failures = {
@@ -1569,7 +1558,7 @@ def retry_failed_cross_owner_pipelines(
         module_id
         for module_id in REPORT_MODULE_IDS
         if module_id in branches
-        and DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        and cross_owner_models.DeclarativeCrossOwnerPipelineOutcome.model_validate(
             branches[module_id][f"outcome-{module_id}"]
         ).status
         == "failed"
@@ -1595,7 +1584,6 @@ def _restore_modules(state: dict[str, Any]) -> None:
 
 __all__ = [
     "DeclarativeCrossOwnerRuntime",
-    "DeclarativeCrossOwnerPipelineOutcome",
     "compile_cross_owner_workflows",
     "register_cross_owner_pipeline_specializations",
     "retry_failed_cross_owner_pipelines",

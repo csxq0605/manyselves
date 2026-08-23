@@ -271,6 +271,83 @@ def test_module_lane_outcome_contract_preserves_join_state() -> None:
         )
 
 
+def test_cross_owner_contract_models_are_owned_by_the_capability() -> None:
+    _, registry = load_distribution_reporting_capability()
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.runtime.models.cross_owner"
+    )
+    contract_models = {
+        "declarative_cross_owner_pipeline_outcome": (
+            "DeclarativeCrossOwnerPipelineOutcome"
+        ),
+        "declarative_main_exception_user_input": (
+            "DeclarativeMainExceptionUserInput"
+        ),
+    }
+
+    for contract_id, model_name in contract_models.items():
+        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
+        assert isinstance(definition, ContractDefinition)
+        assert definition.model == f"{module_name}:{model_name}"
+        model = getattr(import_module(module_name), model_name)
+        assert model.__module__ == module_name
+
+
+def test_core_cross_owner_module_does_not_expose_capability_contract_models() -> None:
+    old_module = import_module(
+        "manyselves.core.reporting.declarative_cross_owner_cohort"
+    )
+
+    assert "DeclarativeCrossOwnerPipelineOutcome" not in vars(old_module)
+    assert "DeclarativeMainExceptionUserInput" not in vars(old_module)
+
+
+def test_cross_owner_contract_models_preserve_pipeline_and_interaction_values() -> None:
+    module = import_module(
+        "manyselves.capabilities.distribution_reporting.runtime.models.cross_owner"
+    )
+
+    outcome = module.DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        {
+            "owner_module_id": "2.1",
+            "status": "completed",
+            "pipeline": {"completion_ref": "cross/2.1/completion.json"},
+        }
+    )
+    user_input = module.DeclarativeMainExceptionUserInput.model_validate(
+        {
+            "decision": "return_to_author",
+            "rationale": "The original author must address the remaining finding.",
+        }
+    )
+
+    assert outcome.model_dump(mode="json", exclude_none=True) == {
+        "owner_module_id": "2.1",
+        "status": "completed",
+        "pipeline": {"completion_ref": "cross/2.1/completion.json"},
+    }
+    assert user_input.model_dump(mode="json") == {
+        "decision": "return_to_author",
+        "rationale": "The original author must address the remaining finding.",
+    }
+    with pytest.raises(ValueError):
+        module.DeclarativeCrossOwnerPipelineOutcome.model_validate(
+            {
+                "owner_module_id": "2.1",
+                "status": "failed",
+                "unexpected": True,
+            }
+        )
+    with pytest.raises(ValueError):
+        module.DeclarativeMainExceptionUserInput.model_validate(
+            {
+                "decision": "accept_dispute",
+                "rationale": "Accepted at the declared evidence boundary.",
+                "unexpected": True,
+            }
+        )
+
+
 def test_pure_read_agent_tools_match_their_python_execution_metadata() -> None:
     _, registry = load_distribution_reporting_capability()
 

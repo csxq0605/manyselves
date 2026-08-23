@@ -969,9 +969,7 @@ def _restore_completed_module_review(
 ) -> str | None:
     """Restore the existing verified completion record shared by both runtimes."""
 
-    completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
-    if completion_ref is None:
-        completion_ref = f"{review_root}/completion-r{progress.current.revision}.json"
+    completion_ref = f"{review_root}/completion-r{progress.current.revision}.json"
     completion_path = runner.service.workspace / completion_ref
     if not completion_path.is_file():
         return None
@@ -996,7 +994,6 @@ def _restore_completed_module_review(
         raise ReviewLifecycleError(
             "completed module review marker does not bind the current subject"
         )
-    state.setdefault("module_review_completion_refs", {})[module_id] = str(completion_ref)
     return str(completion_ref)
 
 

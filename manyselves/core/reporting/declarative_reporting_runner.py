@@ -15,6 +15,9 @@ from manyselves.capabilities.distribution_reporting import (
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+    DeclarativeMainExceptionUserInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_cohort import (
     DeclarativeModuleLaneOutcome,
 )
@@ -83,7 +86,6 @@ from .declarative_chief_chapter_cohort import (
 from .declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
     DeclarativeMainExceptionAgentResult,
-    DeclarativeMainExceptionUserInput,
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
 )
