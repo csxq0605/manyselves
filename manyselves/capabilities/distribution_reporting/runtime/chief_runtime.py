@@ -17,6 +17,9 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
     _chief_template_skill_context,
     _render_special_topic_analysis,
@@ -227,11 +230,13 @@ class ChiefChapterAgentInvoker:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
+        terminal_task_attempt_id: str = "",
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -323,6 +328,9 @@ class ChiefChapterAgentInvoker:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=context.envelope.agent_id,
+            terminal_task_id=context.envelope.task_id,
+            terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
         outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
         return TypedAgentTurn.map_outcome(
@@ -351,11 +359,8 @@ class ChiefChapterAgentInvoker:
         )
 
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
-        submission = ChiefChapterLaneSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
+        loaded = load_agent_result_payload(self.workspace, result_ref)
+        submission = ChiefChapterLaneSubmission.model_validate(loaded.payload)
         return DeclarativeChiefChapterAgentResult(
             status="completed",
             submission=submission,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +12,8 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CHIEF_SECTION_RESULT_PART_IDS,
+    AgentResult,
+    AgentRunStatus,
     ChiefChapterLaneSubmission,
     ModuleSubmission,
 )
@@ -232,7 +233,15 @@ async def test_chief_runtime_initial_agent_uses_generic_session_and_typed_result
         revision=0,
     )
     result_path.write_text(
-        json.dumps(submission.model_dump(mode="json")), encoding="utf-8"
+        AgentResult(
+            task_id="chief-chapter-1",
+            run_id=run_id,
+            agent_id="chief-editor",
+            session_id="chief-workflow:chief-chapter-1",
+            status=AgentRunStatus.COMPLETED,
+            payload=submission,
+        ).model_dump_json(),
+        encoding="utf-8",
     )
 
     bus = MessageBus()
@@ -255,12 +264,12 @@ async def test_chief_runtime_initial_agent_uses_generic_session_and_typed_result
                 self.received.append(message)
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender="chief-editor",
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
+                        task_id="chief-chapter-1",
                         run_id=message.run_id,
                         result_path=result_ref,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
