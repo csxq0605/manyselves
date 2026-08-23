@@ -8,6 +8,13 @@ import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
+    ListResultPartsTool,
+    SubmissionValidationError,
+    SubmitResultTool,
+    WriteResultPartsTool,
+    WriteResultPartTool,
+)
 from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
     KIND_EXAMPLES,
     render_submission_contract,
@@ -38,13 +45,6 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.tools.reporting_collaboration_tools import (
-    ListResultPartsTool,
-    SubmissionValidationError,
-    SubmitResultTool,
-    WriteResultPartsTool,
-    WriteResultPartTool,
-)
 
 
 def _special_topic_plan() -> dict:

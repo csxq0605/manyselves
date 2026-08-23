@@ -17,6 +17,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_final_report_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
+    SubmitResultTool,
+)
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     delivery_root,
 )
@@ -103,7 +106,6 @@ from manyselves.core.reporting.workflow import (
     FullReportCheckpoint,
     ReportWorkflowRunner,
 )
-from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
 from manyselves.core.tools.task_board import TaskBoard
 
 

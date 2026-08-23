@@ -84,8 +84,10 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskCorrelation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-
-from ...interfaces.types import (
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.tools.document_tool import InspectDocumentTool
+from manyselves.core.tools.registry import Tool
+from manyselves.interfaces.types import (
     AgentResultMessage,
     BlockedNoticeMessage,
     PeerQueryMessage,
@@ -93,10 +95,8 @@ from ...interfaces.types import (
     ProgressNoteMessage,
     UserMessage,
 )
-from ..loops.bus import MessageBus
-from ..reporting.message_router import artifact_path_refs, source_record_ids
-from .document_tool import InspectDocumentTool
-from .registry import Tool
+
+from .message_router import artifact_path_refs, source_record_ids
 
 _PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
 

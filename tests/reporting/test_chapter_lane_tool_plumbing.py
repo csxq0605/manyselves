@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
+    ListResultPartsTool,
+    SubmitResultTool,
+    WriteResultPartTool,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
@@ -24,11 +29,6 @@ from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.config import load_packaged_agents
-from manyselves.core.tools.reporting_collaboration_tools import (
-    ListResultPartsTool,
-    SubmitResultTool,
-    WriteResultPartTool,
-)
 
 RUN = "run-chapter-tools"
 CHIEF_SUBJECT = f"Work/runs/{RUN}/edited-revisions/chief-r0.json"

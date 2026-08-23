@@ -1,5 +1,7 @@
+from manyselves.capabilities.distribution_reporting.runtime.message_router import (
+    WorkflowMessageRouter,
+)
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.message_router import WorkflowMessageRouter
 from manyselves.interfaces.types import ProgressNoteMessage
 
 
