@@ -50,11 +50,11 @@ from manyselves.runtime.agent_execution import (
     AgentRecoveryRequired,
     AgentRecoveryStopped,
     AgentSessionLoop,
-    AgentTerminalSubscription,
     AgentTurnOutcome,
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
@@ -196,14 +196,16 @@ class TemplateDistillationAgentBridge:
         session_id = conversation.external_session_id or (
             f"{self.workflow_id}:{conversation.key.value}"
         )
+        typed_turn = TypedAgentTurn(
+            execution=self.execution,
+            workflow_id=self.workflow_id,
+            conversation_key=conversation.key.value,
+            runtime_id=runtime_id,
+            session_id=session_id,
+            session_factory=lambda: self.session_factory(runtime_id),
+        )
         try:
-            session = await self.execution.start_or_restore(
-                workflow_id=self.workflow_id,
-                conversation_key=conversation.key.value,
-                runtime_id=runtime_id,
-                session_id=session_id,
-                session_factory=lambda: self.session_factory(runtime_id),
-            )
+            session = await typed_turn.start_or_restore()
         except Exception as exc:
             return AgentInvocationOutcome(
                 status="failed",
@@ -235,24 +237,25 @@ class TemplateDistillationAgentBridge:
             task_attempt_id=task_id,
             turn_kind="task_initial",
         )
-        terminal = AgentTerminalSubscription(
-            kind="typed_result",
-            message_type=AgentResultMessage,
-            predicate=lambda item: self._matches_result(
-                item,
-                runtime_id=runtime_id,
-                run_id=input_value.run_id,
-                task_id=task_id,
-                session_id=session.session_id,
-            ),
+        terminal = typed_turn.result_terminal(
+            run_id=input_value.run_id,
+            task_id=task_id,
+            task_attempt_id=task_id,
+            session_id=session.session_id,
         )
         if recovery_policy is None:
-            outcome = await self.execution.dispatch_turn(
+            outcome = await typed_turn.dispatch(
                 session,
                 initial_request,
                 terminals=(terminal,),
             )
-            return self._outcome_to_invocation(outcome, session.session_id)
+            return typed_turn.map_outcome(
+                outcome,
+                session_id=session.session_id,
+                decode_result=lambda result_ref: self._read_submission(
+                    result_ref
+                ).model_dump(mode="json"),
+            )
 
         async def interpret(
             outcome: AgentTurnOutcome,
@@ -379,52 +382,6 @@ class TemplateDistillationAgentBridge:
             error="Agent recovery returned an unknown result",
         )
 
-    def _outcome_to_invocation(
-        self,
-        outcome: AgentTurnOutcome,
-        session_id: str,
-    ) -> AgentInvocationOutcome:
-        if outcome.kind == "typed_result":
-            message = outcome.message
-            if not isinstance(message, AgentResultMessage):
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session_id,
-                    error="typed terminal was not an AgentResultMessage",
-                )
-            if message.status != "completed":
-                status = "blocked" if message.status == "blocked" else "incomplete"
-                return AgentInvocationOutcome(
-                    status=status,  # type: ignore[arg-type]
-                    session_id=session_id,
-                    error=message.status,
-                )
-            try:
-                submission = self._read_submission(message.result_path)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session_id,
-                    error=str(exc),
-                )
-            return self._completed_outcome(submission, session_id)
-        if outcome.kind == "error":
-            return AgentInvocationOutcome(
-                status="failed",
-                session_id=session_id,
-                error=str(outcome.message),
-            )
-        if isinstance(outcome.message, AgentResponse):
-            return self._incomplete_outcome(
-                "Agent turn ended without a typed result",
-                session_id,
-            )
-        return AgentInvocationOutcome(
-            status="failed",
-            session_id=session_id,
-            error="Agent turn returned an unknown terminal",
-        )
-
     @staticmethod
     def _completed_outcome(
         submission: TemplateSkillSubmission,
@@ -527,24 +484,5 @@ class TemplateDistillationAgentBridge:
         return TemplateSkillSubmission.model_validate(
             json.loads(path.read_text(encoding="utf-8"))
         )
-
-    def _matches_result(
-        self,
-        item: AgentResultMessage,
-        *,
-        runtime_id: str,
-        run_id: str,
-        task_id: str,
-        session_id: str,
-    ) -> bool:
-        return (
-            item.sender == runtime_id
-            and item.workflow_id == self.workflow_id
-            and item.run_id == run_id
-            and item.task_id == task_id
-            and item.task_attempt_id == task_id
-            and item.session_id == session_id
-        )
-
 
 __all__ = ["TemplateDistillationAgentBridge"]
