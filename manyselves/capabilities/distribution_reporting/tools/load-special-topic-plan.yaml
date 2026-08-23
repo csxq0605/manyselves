@@ -1,0 +1,10 @@
+id: load-special-topic-plan
+version: 1.0.0
+description: Load the optional full-report Chapter 4 plan from frozen Inputs
+implementation: capability:distribution-reporting:load-special-topic-plan
+input_contract: preparation_context
+output_contract: preparation_context
+side_effect: pure_read
+parallel_safe: false
+reuse_result: false
+model_visible: false

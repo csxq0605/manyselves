@@ -100,3 +100,5 @@ class PreparationContext(ReportingModel):
     special_topic_plan: SpecialTopicPlan | None = None
     preparation_refs: dict[str, str] = Field(default_factory=dict)
     preparation_completion_ref: str | None = None
+    evidence_index_ref: str | None = None
+    source_ledger_ref: str | None = None

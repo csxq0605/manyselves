@@ -23,6 +23,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 from manyselves.capabilities.distribution_reporting.runtime.intake import (
     manifest as manifest_runtime,
 )
+from manyselves.capabilities.distribution_reporting.runtime.intake.special_topics import (
+    load_special_topic_plan,
+)
 from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
     canonicalize_photo_bindings,
 )
@@ -42,6 +45,11 @@ from manyselves.capabilities.distribution_reporting.runtime.preparation import (
 from manyselves.capabilities.distribution_reporting.runtime.preparation_snapshot import (
     PreparationSnapshotStore,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
+    ProjectEvidenceIndex,
+    project_evidence_locator,
+)
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
@@ -70,7 +78,7 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 
 
 class PreparationTools:
-    """Five fine-grained, file-defined preparation Tool implementations."""
+    """Fine-grained, file-defined preparation Tool implementations."""
 
     def __init__(
         self,
@@ -407,6 +415,55 @@ class PreparationTools:
         self.store.write_json("Work/coverage.json", coverage.model_dump(mode="json"))
         return context
 
+    def load_special_topic_plan(self, context: PreparationContext) -> PreparationContext:
+        """Load the optional Chapter 4 plan for full-report preparation only."""
+
+        if context.request.operation == "full_report":
+            context.special_topic_plan = load_special_topic_plan(self.workspace)
+        else:
+            context.special_topic_plan = None
+        return context
+
+    def finalize_preparation(self, context: PreparationContext) -> PreparationContext:
+        """Materialize the normalized evidence index and source ledger after Persist."""
+
+        evidence_index = ProjectEvidenceIndex(self.workspace, context.run_id)
+        evidence_index.items()
+        evidence_index_ref = evidence_index.snapshot_manifest_ref()
+        if evidence_index_ref is not None:
+            evidence_ref = evidence_index_ref.as_posix()
+            context.evidence_index_ref = evidence_ref
+            context.preparation_refs = {
+                **context.preparation_refs,
+                "evidence_index": evidence_ref,
+            }
+
+        ledger = SourceLedger(self.workspace, context.run_id)
+        ledger.register_many(
+            [
+                {
+                    "kind": "project_evidence",
+                    "evidence_id": item.id,
+                    "title": item.subject,
+                    "locator": project_evidence_locator(item),
+                    "content": item.model_dump_json(),
+                }
+                for item in context.evidence_items
+            ]
+        )
+        if not ledger.path.is_file():
+            self.store.write_json(
+                ledger.path.relative_to(self.workspace).as_posix(),
+                [],
+            )
+        source_ledger_ref = ledger.path.relative_to(self.workspace).as_posix()
+        context.source_ledger_ref = source_ledger_ref
+        context.preparation_refs = {
+            **context.preparation_refs,
+            "source_ledger": source_ledger_ref,
+        }
+        return context
+
     def _load_snapshot(self, run_id: str) -> Any:
         if callable(self.input_snapshot):
             return self.input_snapshot(run_id)
@@ -446,7 +503,7 @@ def build_preparation_tool_implementations(
     runtime_photo_ids: RuntimePhotoIDs,
     store: ReportingStore,
 ) -> dict[str, Any]:
-    """Bind the seven file-declared preparation Tool implementation IDs."""
+    """Bind the nine file-declared preparation Tool implementation IDs."""
 
     tools = build_preparation_tools(
         workspace=workspace,
@@ -462,7 +519,9 @@ def build_preparation_tool_implementations(
         "parse-artifacts": tools.parse_artifacts,
         "normalize-evidence": tools.normalize_evidence,
         "evaluate-coverage": tools.evaluate_coverage,
+        "load-special-topic-plan": tools.load_special_topic_plan,
         "persist-preparation-snapshot": snapshots.persist,
+        "finalize-preparation": tools.finalize_preparation,
         "restore-preparation-snapshot": snapshots.restore,
     }
 

@@ -89,7 +89,9 @@ def test_preparation_implementation_bundle_binds_all_file_tool_ids(
         "parse-artifacts",
         "normalize-evidence",
         "evaluate-coverage",
+        "load-special-topic-plan",
         "persist-preparation-snapshot",
+        "finalize-preparation",
         "restore-preparation-snapshot",
     }
 

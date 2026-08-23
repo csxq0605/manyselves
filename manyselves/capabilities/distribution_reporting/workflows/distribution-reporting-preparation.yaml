@@ -42,9 +42,19 @@ actions:
   tool: evaluate-coverage
   input_variable: preparation-context
   output_variable: preparation-context
+- id: load-special-topic-plan
+  kind: invoke_tool
+  tool: load-special-topic-plan
+  input_variable: preparation-context
+  output_variable: preparation-context
 - id: persist-preparation-snapshot
   kind: invoke_tool
   tool: persist-preparation-snapshot
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: finalize-preparation
+  kind: invoke_tool
+  tool: finalize-preparation
   input_variable: preparation-context
   output_variable: preparation-context
 - id: skip-restore-after-new-preparation
@@ -53,6 +63,11 @@ actions:
 - id: restore-preparation-snapshot
   kind: invoke_tool
   tool: restore-preparation-snapshot
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: finalize-preparation-after-restore
+  kind: invoke_tool
+  tool: finalize-preparation
   input_variable: preparation-context
   output_variable: preparation-context
 - id: finish-preparation

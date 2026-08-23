@@ -43,7 +43,9 @@ PREPARATION_TOOL_IDS = (
     "parse-artifacts",
     "normalize-evidence",
     "evaluate-coverage",
+    "load-special-topic-plan",
     "persist-preparation-snapshot",
+    "finalize-preparation",
     "restore-preparation-snapshot",
 )
 NORMAL_PREPARATION_TOOL_IDS = PREPARATION_TOOL_IDS[:-1]
