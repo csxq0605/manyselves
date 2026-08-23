@@ -59,11 +59,13 @@ class FinalChapterAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        terminal_task_attempt_id: str = "",
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -221,7 +223,7 @@ class FinalChapterAgentBridge:
             session_id=session.session_id,
             sender=envelope.agent_id,
             terminal_task_id=envelope.task_id,
-            terminal_task_attempt_id="",
+            terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
         outcome = await typed_turn.dispatch(
             session,
