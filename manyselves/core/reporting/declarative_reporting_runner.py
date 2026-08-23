@@ -15,6 +15,21 @@ from manyselves.capabilities.distribution_reporting import (
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleAuthoringAgentResult,
+    DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleLaneAttempt,
+    DeclarativeModuleRecheckAgentResult,
+    DeclarativeModuleRecheckPreparation,
+    DeclarativeModuleReviewAgentResult,
+    DeclarativeModuleReviewPreparation,
+    DeclarativeModuleRevisionAgentResult,
+    DeclarativeModuleRevisionPreparation,
+    DeclarativeModuleRuntimeLaneContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_lane_definitions import (
+    register_module_runtime_lane_specializations,
+)
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRecord, ConversationRegistry
 from manyselves.kernel.definitions import (
@@ -85,19 +100,6 @@ from .declarative_final_review_cycle import (
 from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
-)
-from .declarative_module_runtime_lane import (
-    DeclarativeModuleAuthoringAgentResult,
-    DeclarativeModuleAuthoringPreparation,
-    DeclarativeModuleLaneAttempt,
-    DeclarativeModuleRecheckAgentResult,
-    DeclarativeModuleRecheckPreparation,
-    DeclarativeModuleReviewAgentResult,
-    DeclarativeModuleReviewPreparation,
-    DeclarativeModuleRevisionAgentResult,
-    DeclarativeModuleRevisionPreparation,
-    DeclarativeModuleRuntimeLaneContext,
-    register_module_runtime_lane_specializations,
 )
 from .declarative_reporting_tail import _ReportingTailAdapters
 from .declarative_task_binding import bind_declared_task

@@ -20,7 +20,7 @@
 - Current FA work package: `FA-02 — 抽取通用 Agent/Conversation/Recovery Runtime`
 - Current slice: `建立真正拥有 AgentLoop/session/continuation 的 AgentExecutionService；禁止以 callback 包装 ReportingAgentRunner 冒充抽取`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `390f873 Architecture: define final capability runtime boundary`
+- HEAD at slice start: `0785155 Runtime: extract generic agent recovery state`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
@@ -63,7 +63,7 @@
 | --- | --- | --- | --- |
 | Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
 | Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
-| Reporting Python 归 Capability 所有 | 大量领域模型、Agent runner、review/render/delivery 仍在 `manyselves/core/reporting` | 物理和语义归属混合 | FA-03/FA-05 分类迁移 |
+| Reporting Python 归 Capability 所有 | Module Lane 的 5 个 Contract 类型已真正迁入 Capability；其余领域模型、Agent runner、review/render/delivery 仍在 `manyselves/core/reporting` | 物理和语义归属仍部分混合 | FA-03/FA-05 继续分类迁移 |
 | Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 已在 Runtime 并由 Reporting 生产路径使用；AgentLoop/session/continuation/reuse 主调度仍集中在 Reporting runner/loops | 通用恢复机制已开始抽取，但完整 AgentExecutionService 尚不存在 | FA-02 继续提取，Reporting 仅提供领域 Prompt/Tools/结果绑定 |
 | 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
 | 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
@@ -104,6 +104,8 @@
 - FA-02 `AgentRecoveryDriver` Characterization 先因模块不存在而失败；实现后 `ReportingAgentRunner` 生产路径通过中立 Driver 执行 Recovery event、progress observation、Provider decision 和 attempt snapshot/restore。Runtime/Kernel/Agent Adapter focused 选择 `23 passed`，Reporting recovery 受影响选择 `11 passed, 91 deselected`。
 - Generic `InvokeAgentExecutor` 现在从 `AgentInvocationOutcome.session_id` 回写并持久化 `ConversationRecord.external_session_id`，不再要求 Capability Invoker 私下修改 Conversation；新的 outcome-only Invoker Characterization 先失败后转绿。
 - 上述 FA-02 切片的定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过；新增代码扫描未发现 Gate、Hash、CAS 或锁逻辑。
+- FA-03/FA-05 的首个物理所有权切片将 5 个 Module Lane Contract 类型真正迁到 `capabilities/distribution_reporting/runtime/models/module_lane.py`，删除旧 `core.reporting` 模块且不留 re-export；Capability definition/cohort/direct restore 选择 `30 passed`，旧 Python 路径零引用。41 个旧 Contract model 路径因此减少为 36 个。
+- Module Lane 所有权切片的定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过；新增代码扫描未发现 Gate、Hash、CAS 或锁逻辑。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions

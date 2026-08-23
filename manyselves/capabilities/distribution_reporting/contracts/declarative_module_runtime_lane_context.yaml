@@ -2,4 +2,4 @@ id: declarative_module_runtime_lane_context
 version: 1.0.0
 description: Typed state threaded through one production module runtime Lane
 adapter: pydantic
-model: manyselves.core.reporting.declarative_module_runtime_lane:DeclarativeModuleRuntimeLaneContext
+model: manyselves.capabilities.distribution_reporting.runtime.models.module_lane:DeclarativeModuleRuntimeLaneContext

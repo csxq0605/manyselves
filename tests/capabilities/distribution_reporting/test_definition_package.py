@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,7 @@ from manyselves.core.reporting.declarative_reporting_runner import (
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
-from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import EndWorkflowAction, WorkflowCompiler
 
@@ -181,6 +182,37 @@ def test_distribution_reporting_task_tools_are_model_visible_definitions() -> No
                     {},
                     {"type": "object"},
                 ), f"model-visible tool {tool_id} requires a concrete input contract"
+
+
+def test_module_runtime_contract_models_are_owned_by_the_capability() -> None:
+    _, registry = load_distribution_reporting_capability()
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.runtime.models.module_lane"
+    )
+    contract_models = {
+        "declarative_module_authoring_agent_result": (
+            "DeclarativeModuleAuthoringAgentResult"
+        ),
+        "declarative_module_recheck_agent_result": (
+            "DeclarativeModuleRecheckAgentResult"
+        ),
+        "declarative_module_review_agent_result": (
+            "DeclarativeModuleReviewAgentResult"
+        ),
+        "declarative_module_revision_agent_result": (
+            "DeclarativeModuleRevisionAgentResult"
+        ),
+        "declarative_module_runtime_lane_context": (
+            "DeclarativeModuleRuntimeLaneContext"
+        ),
+    }
+
+    for contract_id, model_name in contract_models.items():
+        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
+        assert isinstance(definition, ContractDefinition)
+        assert definition.model == f"{module_name}:{model_name}"
+        model = getattr(import_module(module_name), model_name)
+        assert model.__module__ == module_name
 
 
 def test_pure_read_agent_tools_match_their_python_execution_metadata() -> None:

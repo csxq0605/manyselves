@@ -12,6 +12,10 @@ from pydantic import BaseModel, ConfigDict
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleReviewAgentResult,
+    DeclarativeModuleRevisionAgentResult,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -44,10 +48,6 @@ from .agentic_models import (
     ModuleSubmission,
     TaskEnvelope,
     WorkflowDecisionSubmission,
-)
-from .declarative_module_runtime_lane import (
-    DeclarativeModuleReviewAgentResult,
-    DeclarativeModuleRevisionAgentResult,
 )
 from .declarative_task_binding import bind_declared_task
 from .models import REPORT_MODULE_IDS

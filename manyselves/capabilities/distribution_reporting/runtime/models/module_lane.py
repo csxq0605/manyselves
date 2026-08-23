@@ -6,23 +6,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from manyselves.kernel.definitions import (
-    DefinitionKind,
-    DefinitionRegistry,
-    WorkflowDefinition,
-    specialize_workflow,
-)
-
-from .agentic_models import (
+from manyselves.core.reporting.agentic_models import (
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
 )
-from .models import REPORT_MODULE_IDS
-from .parallel_runtime import LaneCompletion, LaneTaskSpec
-from .review_lifecycle import (
+from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
+from manyselves.core.reporting.review_lifecycle import (
     MainExceptionDecisionAcceptance,
     MainExceptionDecisionPreparation,
     ModuleInitialReviewAcceptance,
@@ -34,7 +26,7 @@ from .review_lifecycle import (
 
 
 class DeclarativeModuleLaneAttempt(BaseModel):
-    """Serializable identity of the current legacy-compatible Lane attempt."""
+    """Serializable identity of the current module Lane attempt."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -178,38 +170,6 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     error: str | None = None
 
 
-def register_module_runtime_lane_specializations(
-    definitions: DefinitionRegistry,
-) -> dict[str, WorkflowDefinition]:
-    """Register one compiled specialization of the packaged Lane per module."""
-
-    template = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-module-runtime-lane",
-    )
-    if not isinstance(template, WorkflowDefinition):
-        raise TypeError("distribution-module-runtime-lane is not a workflow")
-    workflows: dict[str, WorkflowDefinition] = {}
-    for module_id in REPORT_MODULE_IDS:
-        workflow_id = f"distribution-module-{module_id}-runtime-lane"
-        workflow = specialize_workflow(
-            template,
-            {
-                "module_id": module_id,
-                "author_id": f"module-{module_id}-specialist",
-                "author_task_id": f"module-{module_id}-authoring",
-                "author_conversation_key": f"specialist-{module_id}",
-                "auditor_conversation_key": f"module-auditor-{module_id}",
-                "revision_task_id": f"module-{module_id}-runtime-revision",
-                "revision_conversation_key": f"module-{module_id}",
-            },
-            workflow_id=workflow_id,
-        )
-        definitions.register(workflow)
-        workflows[workflow_id] = workflow
-    return workflows
-
-
 __all__ = [
     "DeclarativeModuleAuthoringAgentResult",
     "DeclarativeModuleAuthoringPreparation",
@@ -221,5 +181,4 @@ __all__ = [
     "DeclarativeModuleRevisionAgentResult",
     "DeclarativeModuleRevisionPreparation",
     "DeclarativeModuleRuntimeLaneContext",
-    "register_module_runtime_lane_specializations",
 ]

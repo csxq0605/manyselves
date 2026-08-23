@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRuntimeLaneContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_lane_definitions import (
+    register_module_runtime_lane_specializations,
+)
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
     DefinitionKind,
@@ -37,10 +43,6 @@ from .agentic_models import ModuleSubmission
 from .declarative_module_lane import (
     ModuleSubjectValidator,
     execute_declarative_module_lane,
-)
-from .declarative_module_runtime_lane import (
-    DeclarativeModuleRuntimeLaneContext,
-    register_module_runtime_lane_specializations,
 )
 from .taxonomy import REPORT_TAXONOMY
 
