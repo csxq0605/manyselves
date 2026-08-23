@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from manyselves.capabilities.distribution_reporting.runtime import preparation_tools
+from manyselves.capabilities.distribution_reporting.runtime import (
+    module_cohort_tools,
+    preparation_tools,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
@@ -28,6 +31,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     ModuleInitialReviewPreparation,
     ModuleReviewPreflightProgress,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_cohort_tools import (
+    complete_current_module_lane,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
     accept_current_module_authoring,
@@ -100,6 +106,58 @@ def test_author_accept_projects_typed_submission_to_lane_and_reporting_state(
     persisted = tmp_path / "Work/runs/run-2-4/modules/2.4-r0.json"
     assert persisted.is_file()
     assert json.loads(persisted.read_text()) == accepted.module.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("status", ("reviewed", "completed"))
+def test_complete_current_module_lane_requires_completion_ref(status: str) -> None:
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={
+            "run_id": "run-2-4",
+            "module_review_completion_refs": {
+                "2.4": "Work/runs/run-2-4/reviews/module/initial/2.4/completion-r0.json"
+            },
+        },
+        status=status,
+        module=_module_submission(),
+    )
+
+    completed = complete_current_module_lane(context)
+
+    assert completed.status == "completed"
+    assert completed.module is not None
+    assert completed.completion_ref is not None
+
+    without_ref = context.model_copy(
+        update={"reporting_state": {"run_id": "run-2-4"}},
+    )
+    incomplete = complete_current_module_lane(without_ref)
+
+    assert incomplete.status == "failed"
+    assert incomplete.module is None
+    assert incomplete.completion_ref is None
+
+
+def test_complete_current_module_lane_does_not_complete_pending_lane() -> None:
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={
+            "run_id": "run-2-4",
+            "module_review_completion_refs": {
+                "2.4": "Work/runs/run-2-4/reviews/module/initial/2.4/completion-r0.json"
+            },
+        },
+        status="review_ready",
+        module=_module_submission(),
+    )
+
+    incomplete = complete_current_module_lane(context)
+
+    assert incomplete.status == "failed"
+    assert incomplete.module is None
+    assert incomplete.completion_ref is None
 
 
 def _module_submission(module_id: str = "2.4") -> ModuleSubmission:
@@ -322,6 +380,19 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     module_runtime = _BoundaryModuleRuntime(execution, session_factory)
     store = InMemoryWorkflowStateStore()
     events = InMemoryWorkflowEventSink()
+    captured_lane_contexts: list[DeclarativeModuleRuntimeLaneContext] = []
+    original_complete_lane = module_cohort_tools.complete_current_module_lane
+
+    def capture_complete_lane(value: Any) -> Any:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        captured_lane_contexts.append(context)
+        return original_complete_lane(context)
+
+    monkeypatch.setattr(
+        module_cohort_tools,
+        "complete_current_module_lane",
+        capture_complete_lane,
+    )
     runtime = PublicReportingWorkflowRuntime(
         tmp_path,
         input_snapshot=lambda _run_id: snapshot,
@@ -353,18 +424,15 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
 
     run_id = "public-module-boundary"
     try:
-        with pytest.raises(
-            RuntimeError,
-            match="missing tool adapter: complete-current-module-lane",
-        ):
-            await runtime.execute(request, run_id)
+        completed = await runtime.execute(request, run_id)
     finally:
         await execution.close_workflow("public-reporting")
         bus.shutdown()
         await bus_task
 
     state = store.load(run_id)
-    assert state.status is WorkflowStatus.FAILED
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert state.status is WorkflowStatus.COMPLETED
     assert state.actions["run-reporting-preparation"].status.value == "completed"
     assert state.actions["run-evidence-readiness"].status.value == "completed"
     assert state.actions["build-reporting-state"].status.value == "completed"
@@ -386,45 +454,45 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         for event in events.events
     )
     assert any(
-        event.kind == "action.failed"
+        event.kind == "action.completed"
         and event.action_id == "complete-current-module-lane"
         for event in events.events
     )
-    lane_state = state.model_dump(mode="json")["subworkflow_states"][
-        "run-module-cohort"
-    ]["subworkflow_states"]["execute-module-2.4"]
-    assert lane_state["variables"]["module-author-result"]["module"]["module_id"] == "2.4"
-    assert (
-        lane_state["variables"]["module-review-agent-result"]["submission"]["kind"]
-        == "module_review_finding_submission"
+    assert any(
+        event.kind == "action.completed"
+        and event.action_id == "accept-current-module-review"
+        for event in events.events
     )
-    assert lane_state["variables"]["module-review-agent-result"]["submission"][
-        "coverage"
-    ]["submodule_ids"] == sorted(_module_submission().submodule_narratives)
-    assert lane_state["actions"]["accept-current-module-review"]["status"] == "completed"
-    lane_context = lane_state["variables"]["lane-context"]
-    assert lane_context["status"] == "reviewed"
+    assert len(captured_lane_contexts) == 1
+    lane_context = captured_lane_contexts[0]
+    assert lane_context.status == "reviewed"
     assert module_review_preflight_needs_revision(lane_context) is False
     assert module_review_requires_agent(lane_context) is False
     assert module_review_needs_recheck(lane_context) is False
     assert module_review_needs_revision(lane_context) is False
-    assert lane_context["module"]["module_id"] == "2.4"
-    assert (
-        lane_context["reporting_state"]["specialist_submissions"]["2.4"]["module_id"]
-        == "2.4"
+    assert lane_context.module is not None
+    assert lane_context.module.module_id == "2.4"
+    assert ModuleSubmission.model_validate(
+        lane_context.reporting_state["specialist_submissions"]["2.4"]
+    ) == lane_context.module
+    assert lane_context.reporting_state["module_review_completion_refs"]["2.4"].endswith(
+        "reviews/module/initial/2.4/completion-r0.json"
     )
-    review = lane_context["review"]
-    assert review["reviewer_session_key"] == "module-auditor-2.4"
-    assert review["prepared"]["mode"] == "invoke_agent"
-    assert review["prepared"]["review_input"]["phase"] == "initial"
-    assert review["prepared"]["review_input"]["module_id"] == "2.4"
-    assert review["prepared"]["envelope"]["task_id"] == "module-2.4-initial-review-r0"
-    assert review["prepared"]["envelope"]["agent_id"] == "evidence-auditor"
-    assert review["prepared"]["envelope"]["input_contract_kind"] == "module_review_input"
-    assert review["prepared"]["envelope"]["input_contract_ref"].endswith(
+    assert lane_context.review is not None
+    review = lane_context.review
+    assert review.reviewer_session_key == "module-auditor-2.4"
+    assert review.prepared.mode == "invoke_agent"
+    assert review.prepared.review_input is not None
+    assert review.prepared.review_input.phase == "initial"
+    assert review.prepared.review_input.module_id == "2.4"
+    assert review.envelope is not None
+    assert review.envelope.task_id == "module-2.4-initial-review-r0"
+    assert review.envelope.agent_id == "evidence-auditor"
+    assert review.envelope.input_contract_kind == "module_review_input"
+    assert review.envelope.input_contract_ref is not None
+    assert review.envelope.input_contract_ref.endswith(
         "reviews/module/initial/2.4/input-r0.json"
     )
-    review_constraints = review["prepared"]["envelope"]["constraints"]
     assert {
         "coverage 记录实际检查范围，不是批准状态",
         "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
@@ -433,10 +501,20 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
         "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
         "首轮必须覆盖 input 中全部 required_submodule_ids",
-    }.issubset(review_constraints)
-    assert "auditor-skill: preserve the review envelope" in review["prepared"][
-        "envelope"
-    ]["inline_context"]
+    }.issubset(review.envelope.constraints)
+    assert "auditor-skill: preserve the review envelope" in (
+        review.envelope.inline_context or ""
+    )
+    finding_submission = json.loads(reviewer_result_path.read_text(encoding="utf-8"))
+    assert finding_submission["kind"] == "module_review_finding_submission"
+    assert finding_submission["findings"] == []
+    assert finding_submission["coverage"]["submodule_ids"] == sorted(
+        _module_submission().submodule_narratives
+    )
+    cohort_state = state.subworkflow_states["run-module-cohort"]
+    cohort_output = cohort_state["outputs"]["result"]
+    assert set(cohort_output) == {"2.4"}
+    assert cohort_output["2.4"]["module"]["module_id"] == "2.4"
     assert (
         tmp_path / "Work/runs/public-module-boundary/modules/2.4-r0.json"
     ).is_file()
@@ -464,6 +542,18 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         / "Work/runs/public-module-boundary/reviews/module/initial/2.4/progress.json"
     ).is_file()
     assert (tmp_path / "Outputs/Modules/2.4.md").read_text() == _module_submission().markdown
+    assert state.actions["run-module-cohort"].status.value == "completed"
+    assert state.actions["attach-module-results"].status.value == "completed"
+    assert state.actions["publish-module-report"].status.value == "completed"
+    assert state.actions["finish-module-report"].status.value == "completed"
+    output = state.outputs["result"]
+    assert set(output["module_submissions"]) == {"2.4"}
+    assert output["module_submissions"]["2.4"].module_id == "2.4"
+    assert set(output["specialist_submissions"]) == {"2.4"}
+    assert set(output["module_review_completion_refs"]) == {"2.4"}
+    assert output["module_review_completion_refs"]["2.4"].endswith(
+        "reviews/module/initial/2.4/completion-r0.json"
+    )
 
 
 def test_module_review_preflight_failure_routes_to_author_correction_gap() -> None:

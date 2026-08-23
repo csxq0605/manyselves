@@ -43,6 +43,7 @@ from .evidence_readiness import build_evidence_readiness_tool_implementations
 from .models.module_cohort import DeclarativeModuleLaneOutcome
 from .models.reporting import ReportRequest
 from .module_agent_bridge import ModuleAuthoringAgentBridge
+from .module_cohort_tools import build_module_cohort_tool_implementations
 from .module_lane_definitions import register_module_runtime_lane_specializations
 from .module_lane_tools import build_module_lane_tool_implementations
 from .module_reviewer_bridge import ModuleReviewerAgentBridge
@@ -244,6 +245,7 @@ class PublicReportingWorkflowRuntime:
             **build_evidence_readiness_tool_implementations(),
             **self._module_tool_implementations(),
             **build_module_lane_tool_implementations(store=reporting_store),
+            **build_module_cohort_tool_implementations(),
             **self.additional_tool_implementations,
         }
         factory = CapabilityToolAdapterFactory(

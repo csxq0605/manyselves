@@ -69,13 +69,22 @@ def attach_module_results(value: Any) -> dict[str, Any]:
         raise TypeError("module result attachment requires module_results")
 
     submissions: dict[str, ModuleSubmission] = {}
+    lane_states: list[Mapping[str, Any]] = []
     for result in module_results.values():
         if isinstance(result, Mapping) and "module" in result:
+            lane_state = result.get("lane_state")
+            if isinstance(lane_state, Mapping):
+                lane_states.append(lane_state)
             result = result["module"]
         module = ModuleSubmission.model_validate(result)
         submissions[module.module_id] = module
 
     attached = deepcopy(dict(reporting_state))
+    for lane_state in lane_states:
+        for state_key in ("specialist_submissions", "module_review_completion_refs"):
+            state_value = lane_state.get(state_key)
+            if isinstance(state_value, Mapping):
+                attached.setdefault(state_key, {}).update(deepcopy(dict(state_value)))
     attached["module_submissions"] = submissions
     return attached
 
