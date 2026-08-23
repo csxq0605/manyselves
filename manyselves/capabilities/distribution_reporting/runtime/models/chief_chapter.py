@@ -10,7 +10,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ChiefChapterLaneSubmission,
     TaskEnvelope,
 )
-from manyselves.core.reporting.input_contracts import ChiefChapterLaneInput
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+)
 
 
 class DeclarativeChiefChapterAgentResult(BaseModel):

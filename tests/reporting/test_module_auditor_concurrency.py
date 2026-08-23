@@ -8,7 +8,9 @@ import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
-from manyselves.core.reporting.input_contracts import ReviewCompletionRecord
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ReviewCompletionRecord,
+)
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
 

@@ -6,6 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
+    KIND_EXAMPLES,
+    submission_model,
+    submission_schema,
+    undescribed_property_paths,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
     CrossReviewFinding,
@@ -21,17 +27,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     INPUT_CONTRACT_EXAMPLES,
     INPUT_CONTRACT_TYPES,
     ValidationReport,
     input_contract_schema,
-)
-from manyselves.core.reporting.submission_contracts import (
-    KIND_EXAMPLES,
-    submission_model,
-    submission_schema,
-    undescribed_property_paths,
 )
 
 

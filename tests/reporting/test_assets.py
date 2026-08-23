@@ -12,6 +12,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TableSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import ValidationReport
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
@@ -24,7 +25,6 @@ from manyselves.core.reporting.assets import (
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
-from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
 
 

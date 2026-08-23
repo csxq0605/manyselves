@@ -1,4 +1,4 @@
-"""Single source of truth for model-visible reporting submission contracts.
+"""Capability-owned source of model-visible reporting submission contracts.
 
 Pydantic supplies structural types.  This module adds the field semantics and
 valid examples that a model needs to use those types without guessing.  The
@@ -28,13 +28,11 @@ FIELD_GUIDANCE: dict[str, str] = {
     "allowed_outputs": "Submission kinds this task is permitted to return.",
     "allowed_tools": "Tool names available to the assigned Agent for this task.",
     "artifact_ids": "Persisted artifact identifiers produced or affected by the action.",
-    "artifact_refs": "Current-task durable text-part refs to materialize in listed order.",
     "assigned_findings": (
         "Immutable Final findings assigned only to this Chief chapter lane; every target "
         "must stay inside the lane section_ids."
     ),
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
-    "base_subject_ref": "Exact current edited-report artifact that the compact chief patch applies to.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
     "causal_chain": "Evidence-bounded causal, dependency, or propagation chain connecting reviewed modules.",

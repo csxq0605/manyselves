@@ -9,17 +9,17 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     FINAL_AUDIT_SECTION_IDS,
     FinalReviewFinding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
-)
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     AggregateFinalReviewInput,
     CrossDecisionPackView,
     FinalAuditMetadataView,
     FinalReviewInput,
     RevisionResponse,
     ValidationReport,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
 )
 from manyselves.core.reporting.review_lifecycle import (
     _final_audit_markdown,

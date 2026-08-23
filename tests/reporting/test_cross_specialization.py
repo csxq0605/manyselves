@@ -6,13 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    INPUT_CONTRACT_EXAMPLES,
+    CrossReviewInput,
+)
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.cross_specialization import (
     CROSS_LANE_SPECIALIZATIONS,
-)
-from manyselves.core.reporting.input_contracts import (
-    INPUT_CONTRACT_EXAMPLES,
-    CrossReviewInput,
 )
 
 

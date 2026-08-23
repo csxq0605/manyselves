@@ -8,13 +8,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ChiefChapterLaneSubmission,
     FinalChapterLaneFindingSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+    FinalChapterLaneInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     SpecialTopicPlan,
     SpecialTopicSectionRequirement,
-)
-from manyselves.core.reporting.input_contracts import (
-    ChiefChapterLaneInput,
-    FinalChapterLaneInput,
 )
 
 RUN = "run-lane-contract"

@@ -58,6 +58,21 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    AggregateEditorInput,
+    ChiefChapterLaneInput,
+    ChiefEditorInput,
+    CrossDecisionPackView,
+    FinalAuditSnapshot,
+    FinalChapterLaneInput,
+    ModuleAuthoringInput,
+    RequestedModuleChange,
+    ReviewCompletionRecord,
+    TemplateDistillationInput,
+    ValidationFailure,
+    ValidationReport,
+    module_content_view,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -95,21 +110,6 @@ from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .final_specialization import final_lane_specialization
-from .input_contracts import (
-    AggregateEditorInput,
-    ChiefChapterLaneInput,
-    ChiefEditorInput,
-    CrossDecisionPackView,
-    FinalAuditSnapshot,
-    FinalChapterLaneInput,
-    ModuleAuthoringInput,
-    RequestedModuleChange,
-    ReviewCompletionRecord,
-    TemplateDistillationInput,
-    ValidationFailure,
-    ValidationReport,
-    module_content_view,
-)
 from .input_snapshot import RunInputSnapshotStore
 from .intake.wps_images import extract_wps_images
 from .parallel_runtime import (

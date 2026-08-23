@@ -12,14 +12,14 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FINAL_AUDIT_SECTION_IDS,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
-from manyselves.core.reporting.assets import validate_final_report_markdown
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     CrossDecisionPackView,
     FinalAuditMetadataView,
     FinalReviewInput,
     ValidationReport,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
+from manyselves.core.reporting.assets import validate_final_report_markdown
 from manyselves.core.reporting.report_markdown import (
     CanonicalReportContent,
     compose_canonical_markdown,

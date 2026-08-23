@@ -24,6 +24,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+    FinalAuditSnapshot,
+    FinalChapterLaneInput,
+    ReviewCompletionRecord,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -52,12 +58,6 @@ from .declarative_final_chapter_cohort import (
 )
 from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
-from .input_contracts import (
-    ChiefChapterLaneInput,
-    FinalAuditSnapshot,
-    FinalChapterLaneInput,
-    ReviewCompletionRecord,
-)
 
 
 class _FinalChiefRevisionInvoker:

@@ -7,7 +7,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CrossDecisionPack,
     FinalReviewFinding,
 )
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     INPUT_CONTRACT_EXAMPLES,
     INPUT_CONTRACT_TYPES,
     CrossDecisionPackView,

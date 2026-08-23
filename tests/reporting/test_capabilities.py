@@ -3,6 +3,10 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    TEMPLATE_ROLE_SKILL_IDS,
+    TemplateDistillationInput,
+)
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant
 from manyselves.core.reporting.capabilities import (
     collect_photo_ids,
@@ -10,10 +14,6 @@ from manyselves.core.reporting.capabilities import (
     compile_agent_access,
 )
 from manyselves.core.reporting.config import ConfigurationError, load_packaged_agents
-from manyselves.core.reporting.input_contracts import (
-    TEMPLATE_ROLE_SKILL_IDS,
-    TemplateDistillationInput,
-)
 
 
 def test_chief_has_executable_artifact_readers(tmp_path: Path) -> None:

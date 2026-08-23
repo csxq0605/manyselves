@@ -1,4 +1,4 @@
-"""Typed, model-visible stage inputs for the reporting review lifecycle."""
+"""Capability-owned, model-visible inputs for the reporting review lifecycle."""
 
 from __future__ import annotations
 
@@ -9,17 +9,13 @@ from typing import Any, Literal
 
 from pydantic import Field, TypeAdapter, model_validator
 
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
-    REPORT_TAXONOMY,
-    resolve_submodule,
-)
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FINAL_AUDIT_SECTION_IDS,
     TEMPLATE_ROLE_SKILL_IDS,
     TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
     TEMPLATE_SKILL_TRANSFER_CATEGORIES,
     ChapterScopedFinalReviewFinding,
-    ChiefChapterLaneRevisionSubmission,
     ClaimRecord,
     CrossDecisionPack,
     CrossReviewFinding,
@@ -43,7 +39,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     chapter_section_ids,
 )
 
-from .submission_contracts import FIELD_GUIDANCE
+from ..contracts.submissions import FIELD_GUIDANCE
 
 
 class ModuleContentView(StrictModel):

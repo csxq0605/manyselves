@@ -7,14 +7,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleReviewFindingSubmission,
     ModuleSubmission,
 )
-from manyselves.core.reporting.config import load_packaged_agents
-from manyselves.core.reporting.declarative_module_lane import (
-    execute_declarative_module_lane,
-)
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ModuleReviewInput,
     ModuleRevisionInput,
     ValidationReport,
+)
+from manyselves.core.reporting.config import load_packaged_agents
+from manyselves.core.reporting.declarative_module_lane import (
+    execute_declarative_module_lane,
 )
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (

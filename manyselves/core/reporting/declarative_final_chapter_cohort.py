@@ -19,6 +19,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TaskEnvelope,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    FinalChapterLaneInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -49,7 +52,6 @@ from manyselves.kernel.workflow import (
 
 from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
-from .input_contracts import FinalChapterLaneInput
 
 FINAL_CHAPTER_IDS = ("1", "3", "4")
 

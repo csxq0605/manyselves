@@ -13,8 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ValidationFailure,
+    ValidationReport,
+)
 
-from .input_contracts import ValidationFailure, ValidationReport
 from .source_ledger import SourceLedger
 
 _CHECK_IDS = (

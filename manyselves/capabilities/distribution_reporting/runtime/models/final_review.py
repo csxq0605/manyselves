@@ -14,7 +14,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     RevisionResponse,
     TaskEnvelope,
 )
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ChiefChapterLaneInput,
     FinalChapterLaneInput,
 )

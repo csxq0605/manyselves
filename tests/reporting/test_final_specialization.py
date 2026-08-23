@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TEMPLATE_ROLE_SKILL_IDS,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    FinalChapterLaneInput,
+)
 from manyselves.core.reporting.final_specialization import (
     FINAL_LANE_SPECIALIZATIONS,
 )
-from manyselves.core.reporting.input_contracts import FinalChapterLaneInput
 
 
 def test_chief_template_skills_are_chapter_specific_without_shared_compat_id() -> None:

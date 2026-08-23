@@ -17,11 +17,29 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
+    submission_schema,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
     TaskEnvelope,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    INPUT_CONTRACT_TYPES,
+    AggregateEditorInput,
+    ChiefChapterLaneInput,
+    ChiefEditorInput,
+    ChiefRevisionInput,
+    CrossOwnerInput,
+    CrossReviewInput,
+    FinalChapterLaneInput,
+    FinalReviewInput,
+    ModuleAuthoringInput,
+    ModuleReviewInput,
+    ModuleRevisionInput,
+    TemplateDistillationInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHIEF_RESULT_PART_IDS,
@@ -117,21 +135,6 @@ from .context_state import (
     ToolResultMemoStore,
 )
 from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
-from .input_contracts import (
-    INPUT_CONTRACT_TYPES,
-    AggregateEditorInput,
-    ChiefChapterLaneInput,
-    ChiefEditorInput,
-    ChiefRevisionInput,
-    CrossOwnerInput,
-    CrossReviewInput,
-    FinalChapterLaneInput,
-    FinalReviewInput,
-    ModuleAuthoringInput,
-    ModuleReviewInput,
-    ModuleRevisionInput,
-    TemplateDistillationInput,
-)
 from .input_snapshot import RunInputSnapshotStore
 from .message_router import WorkflowMessageRouter, artifact_path_refs
 from .module_skills import ModuleSkillLibrary
@@ -151,7 +154,6 @@ from .session_summary import SessionSummaryBuilder, SessionSummaryStore
 from .skills.resolver import RuntimeSkillResolver
 from .source_ledger import SourceLedger
 from .store import ReportingStore
-from .submission_contracts import submission_schema
 from .versions import SkillProvenance
 
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0

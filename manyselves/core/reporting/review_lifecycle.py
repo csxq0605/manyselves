@@ -40,19 +40,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
-)
-
-from .assets import (
-    validate_aggregate_retention,
-    validate_editor_protection,
-    validate_editor_quality,
-)
-from .chapter_parallel import CHAPTER_SECTION_IDS
-from .cross_specialization import cross_lane_specialization
-from .input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     AggregateFinalReviewInput,
     ChiefRevisionInput,
     CrossDecisionPackView,
@@ -73,6 +61,18 @@ from .input_contracts import (
     module_content_view,
     strip_runtime_claim_markers,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
+
+from .assets import (
+    validate_aggregate_retention,
+    validate_editor_protection,
+    validate_editor_quality,
+)
+from .chapter_parallel import CHAPTER_SECTION_IDS
+from .cross_specialization import cross_lane_specialization
 from .parallel_runtime import (
     AggregateState,
     ArtifactRef,

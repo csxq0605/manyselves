@@ -37,6 +37,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefEditorInput,
+    CrossReviewInput,
+    FinalReviewInput,
+    RequestedModuleChange,
+    ReviewCompletionRecord,
+    ValidationReport,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CoverageMatrix,
     ProjectManifest,
@@ -48,14 +56,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.assets import validate_final_report_markdown
-from manyselves.core.reporting.input_contracts import (
-    ChiefEditorInput,
-    CrossReviewInput,
-    FinalReviewInput,
-    RequestedModuleChange,
-    ReviewCompletionRecord,
-    ValidationReport,
-)
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,

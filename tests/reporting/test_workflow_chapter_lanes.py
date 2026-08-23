@@ -19,16 +19,16 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ResolutionVerdict,
     RevisionResponse,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+    FinalChapterLaneInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHIEF_SECTION_RESULT_PART_IDS,
     REPORT_MODULE_IDS,
     SpecialTopicPlan,
 )
 from manyselves.core.reporting.final_specialization import final_lane_specialization
-from manyselves.core.reporting.input_contracts import (
-    ChiefChapterLaneInput,
-    FinalChapterLaneInput,
-)
 from manyselves.core.reporting.parallel_runtime import AggregateState, RecoveryStateStore
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner

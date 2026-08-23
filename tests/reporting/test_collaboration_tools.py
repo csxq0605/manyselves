@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
+    KIND_EXAMPLES,
+    render_submission_contract,
+    submission_schema,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -17,10 +22,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TemplateSkillSubmission,
 )
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.claim_ledger import ClaimLedger
-from manyselves.core.reporting.input_contracts import (
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     INPUT_CONTRACT_EXAMPLES,
     ChiefEditorInput,
     ChiefRevisionInput,
@@ -31,13 +33,11 @@ from manyselves.core.reporting.input_contracts import (
     ValidationReport,
     module_content_view,
 )
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.submission_contracts import (
-    KIND_EXAMPLES,
-    render_submission_contract,
-    submission_schema,
-)
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
     SubmissionValidationError,

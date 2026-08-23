@@ -25,6 +25,17 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TaskEnvelope,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    INPUT_CONTRACT_EXAMPLES,
+    INPUT_CONTRACT_TYPES,
+    ChiefEditorInput,
+    CrossOwnerInput,
+    ModuleAuthoringInput,
+    ModuleContentView,
+    ModuleReviewInput,
+    TemplateDistillationInput,
+    ValidationReport,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.artifacts import ToolContractError
 from manyselves.core.artifacts.content_store import ContentAddressedStore
@@ -45,17 +56,6 @@ from manyselves.core.reporting.agent_runner import (
     load_conversation_trace,
 )
 from manyselves.core.reporting.config import load_packaged_agents
-from manyselves.core.reporting.input_contracts import (
-    INPUT_CONTRACT_EXAMPLES,
-    INPUT_CONTRACT_TYPES,
-    ChiefEditorInput,
-    CrossOwnerInput,
-    ModuleAuthoringInput,
-    ModuleContentView,
-    ModuleReviewInput,
-    TemplateDistillationInput,
-    ValidationReport,
-)
 from manyselves.core.reporting.workflow import ReportingRunBudget
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (

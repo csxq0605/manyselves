@@ -26,6 +26,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerPipelineOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    CrossOwnerInput,
+    ModuleRevisionInput,
+    ReviewCompletionRecord,
+    ValidationReport,
+    WorkflowExceptionInput,
+)
 from manyselves.core.reporting import review_lifecycle as lifecycle
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
@@ -34,13 +41,6 @@ from manyselves.core.reporting.declarative_cross_owner_cohort import (
 )
 from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
-)
-from manyselves.core.reporting.input_contracts import (
-    CrossOwnerInput,
-    ModuleRevisionInput,
-    ReviewCompletionRecord,
-    ValidationReport,
-    WorkflowExceptionInput,
 )
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,

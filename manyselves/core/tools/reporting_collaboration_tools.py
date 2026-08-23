@@ -18,6 +18,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
+    submission_schema,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -51,6 +54,23 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    INPUT_CONTRACT_TYPES,
+    AggregateEditorInput,
+    AggregateFinalReviewInput,
+    ChiefChapterLaneInput,
+    ChiefEditorInput,
+    ChiefRevisionInput,
+    CrossOwnerInput,
+    CrossReviewInput,
+    FinalChapterLaneInput,
+    FinalReviewInput,
+    ModuleAuthoringInput,
+    ModuleReviewInput,
+    ModuleRevisionInput,
+    TemplateDistillationInput,
+    WorkflowExceptionInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHIEF_RESULT_PART_IDS,
     CHIEF_SECTION_RESULT_PART_IDS,
@@ -68,28 +88,10 @@ from ...interfaces.types import (
 )
 from ..loops.bus import MessageBus
 from ..reporting.claim_ledger import ClaimLedger
-from ..reporting.input_contracts import (
-    INPUT_CONTRACT_TYPES,
-    AggregateEditorInput,
-    AggregateFinalReviewInput,
-    ChiefChapterLaneInput,
-    ChiefEditorInput,
-    ChiefRevisionInput,
-    CrossOwnerInput,
-    CrossReviewInput,
-    FinalChapterLaneInput,
-    FinalReviewInput,
-    ModuleAuthoringInput,
-    ModuleReviewInput,
-    ModuleRevisionInput,
-    TemplateDistillationInput,
-    WorkflowExceptionInput,
-)
 from ..reporting.message_router import artifact_path_refs, source_record_ids
 from ..reporting.parallel_runtime import TaskAttemptStore, TaskCorrelation
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
-from ..reporting.submission_contracts import submission_schema
 from .document_tool import InspectDocumentTool
 from .registry import Tool
 

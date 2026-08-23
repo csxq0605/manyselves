@@ -10,7 +10,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     FinalChapterLaneFindingSubmission,
     TaskEnvelope,
 )
-from manyselves.core.reporting.input_contracts import FinalChapterLaneInput
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    FinalChapterLaneInput,
+)
 
 
 class DeclarativeFinalChapterAgentResult(BaseModel):

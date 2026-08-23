@@ -30,6 +30,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_review 
     DeclarativeFinalChiefRevisionOutcome,
     DeclarativeFinalReviewContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import ValidationReport
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHIEF_SECTION_RESULT_PART_IDS,
     REPORT_MODULE_IDS,
@@ -46,7 +47,6 @@ from manyselves.core.reporting.declarative_final_review_cycle import (
     compile_final_review_workflows,
     compose_final_review_agent_invokers,
 )
-from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition

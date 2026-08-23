@@ -20,6 +20,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TaskEnvelope,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -48,7 +51,6 @@ from manyselves.kernel.workflow import (
 
 from .assets import ReportAssetAssembler
 from .declarative_task_binding import bind_declared_task
-from .input_contracts import ChiefChapterLaneInput
 
 CHIEF_CHAPTER_IDS = ("1", "3", "4")
 

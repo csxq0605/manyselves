@@ -4,11 +4,14 @@ from typing import Any, Mapping
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape, quoteattr
 
+from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
+    KIND_SEMANTIC_RULES,
+    KIND_SUMMARIES,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 
 from .config import AgentDefinition
 from .module_skills import ModuleSkill
-from .submission_contracts import KIND_SEMANTIC_RULES, KIND_SUMMARIES
 
 SUBMISSION_CONTRACT_VERSION = 1
 

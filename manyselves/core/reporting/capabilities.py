@@ -305,7 +305,9 @@ def _typed_input_payload(
         raise ConfigurationError("input contract is not readable JSON") from exc
     if envelope.input_contract_kind:
         try:
-            from .input_contracts import INPUT_CONTRACT_TYPES
+            from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+                INPUT_CONTRACT_TYPES,
+            )
 
             model = INPUT_CONTRACT_TYPES.get(envelope.input_contract_kind)
             if model is None:

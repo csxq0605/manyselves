@@ -10,6 +10,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ChiefChapterLaneSubmission,
     FinalChapterLaneFindingSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+    FinalChapterLaneInput,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER3_SECTION_IDS,
     SpecialTopicPlan,
@@ -19,10 +23,6 @@ from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.config import load_packaged_agents
-from manyselves.core.reporting.input_contracts import (
-    ChiefChapterLaneInput,
-    FinalChapterLaneInput,
-)
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,

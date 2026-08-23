@@ -22,6 +22,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ModuleRevisionInput,
+    ValidationFailure,
+    ValidationReport,
+    module_content_view,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleRuntimeLaneContext,
@@ -50,12 +56,6 @@ from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
 from manyselves.core.reporting.declarative_task_binding import bind_declared_task
-from manyselves.core.reporting.input_contracts import (
-    ModuleRevisionInput,
-    ValidationFailure,
-    ValidationReport,
-    module_content_view,
-)
 from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewAcceptance,

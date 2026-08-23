@@ -18,6 +18,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleRevisionSubmission,
     ModuleSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ModuleReviewInput,
+    ModuleRevisionDiff,
+    ModuleRevisionInput,
+    ValidationReport,
+    module_content_view,
+)
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -37,13 +44,6 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .input_contracts import (
-    ModuleReviewInput,
-    ModuleRevisionDiff,
-    ModuleRevisionInput,
-    ValidationReport,
-    module_content_view,
-)
 from .review_lifecycle import (
     ReviewLifecycleError,
     _apply_module_patch,
