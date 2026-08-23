@@ -78,14 +78,16 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
     store = ReportingStore(tmp_path)
     edited = _edited_report()
 
+    def _private_template_resolver(_run_id: str) -> tuple[Path, str]:
+        raise AssertionError(
+            "production prepare must not call ReportingService.resolve_report_template"
+        )
+
     class _Runner:
         service = SimpleNamespace(
             workspace=tmp_path,
             store=store,
-            resolve_report_template=lambda _run_id: (
-                Path("manyselves/templates/reporting/report_template.docx").resolve(),
-                "packaged",
-            ),
+            resolve_report_template=_private_template_resolver,
         )
 
         def _prepare_and_render_delivery(self, _state: dict) -> None:
@@ -105,9 +107,8 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
             return edited, f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
 
         def _write_handoff_contracts(self, state: dict) -> Path:
-            return store.write_json(
-                f"Work/runs/{state['run_id']}/handoff-contracts.json",
-                {"run_id": state["run_id"]},
+            raise AssertionError(
+                "production prepare must not call ReportWorkflowRunner._write_handoff_contracts"
             )
 
         def _delivery_projection(
@@ -170,6 +171,7 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
         "edited-submission.json",
         "request-snapshot.json",
         "photo-manifest.json",
+        "handoff-contracts.json",
         "report-state.json",
         "report/配电安全专家咨询报告.md",
         "report/配电安全专家咨询报告.docx",
@@ -184,6 +186,18 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
     assert all(
         (run_root / "approved-modules" / f"{module_id}.json").is_file()
         for module_id in REPORT_MODULE_IDS
+    )
+    handoff_contracts = json.loads(
+        (run_root / "handoff-contracts.json").read_text(encoding="utf-8")
+    )
+    assert len(handoff_contracts) == 7
+    assert handoff_contracts[0]["stage"] == "template-skill-read"
+    template_provenance = json.loads(
+        (run_root / "template-provenance.json").read_text(encoding="utf-8")
+    )
+    assert template_provenance["source"] == "packaged"
+    assert template_provenance["selected_path"] == (
+        "manyselves/templates/reporting/report_template.docx"
     )
     assert prepared["_declarative_delivery_context"]["output"] == (
         str(run_root / "report/配电安全专家咨询报告.docx")

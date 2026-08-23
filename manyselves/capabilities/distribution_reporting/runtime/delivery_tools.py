@@ -13,6 +13,7 @@ from typing import Any, cast
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 
 from .delivery_projection import build_delivery_projection
+from .handoff_contracts import write_handoff_contracts
 from .models.agentic import EditedReportSubmission, ModuleSubmission
 from .models.delivery import DeliveryContext, MaterializedDeliveryReceipt
 from .models.reporting import (
@@ -30,6 +31,7 @@ from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .report_validation import validate_final_report_structure
 from .source_ledger import SourceLedger
 from .storage import ReportingStore
+from .template_resolver import resolve_report_template
 
 _DELIVERY_CONTEXT_KEY = "_declarative_delivery_context"
 
@@ -69,8 +71,6 @@ class _DeliveryPreparationDependencies:
     validated_final_audit_subject: Callable[
         [dict[str, Any]], tuple[EditedReportSubmission, str]
     ]
-    write_handoff_contracts: Callable[[dict[str, Any]], Path]
-    resolve_report_template: Callable[[str], tuple[Path, str]]
 
 
 def delivery_root(workspace: Path, run_id: str) -> Path:
@@ -142,7 +142,7 @@ class DeliveryTools:
         edited, final_audit_snapshot_ref = preparation.validated_final_audit_subject(
             state
         )
-        preparation.write_handoff_contracts(state)
+        write_handoff_contracts(self.store, state)
         state["edited_report"] = edited
         claims = [
             claim
@@ -225,8 +225,9 @@ class DeliveryTools:
             source_index_markdown.rstrip() + "\n",
             source_index_docx_path,
         )
-        selected_template, template_source = preparation.resolve_report_template(
-            state["run_id"]
+        selected_template, template_source = resolve_report_template(
+            self.workspace,
+            state["run_id"],
         )
         template_snapshot = (
             self.workspace

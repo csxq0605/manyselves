@@ -72,6 +72,9 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     validate_bound_project_write_lease,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_resolver import (
+    resolve_report_template as capability_resolve_report_template,
+)
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import AgentType, SystemNotice
@@ -231,30 +234,8 @@ class ReportingService:
     def resolve_report_template(
         self, run_id: str | None = None
     ) -> tuple[Path, str]:
-        """Resolve the current template with project scope taking precedence."""
-        project_template = (
-            self.workspace
-            / "Work"
-            / "runs"
-            / run_id
-            / "frozen-project"
-            / self.PROJECT_TEMPLATE_PATH
-            if run_id is not None
-            else self.workspace / self.PROJECT_TEMPLATE_PATH
-        )
-        if project_template.exists():
-            if not project_template.is_file():
-                raise ValueError(
-                    f"project report template must be a DOCX file: {self.PROJECT_TEMPLATE_PATH}"
-                )
-            if not project_template.resolve().is_relative_to(self.workspace):
-                raise ValueError("project report template must stay inside the project workspace")
-            return project_template, "project"
-        if not self.packaged_report_template_path.is_file():
-            raise FileNotFoundError(
-                f"packaged report template is missing: {self.packaged_report_template_path}"
-            )
-        return self.packaged_report_template_path, "packaged"
+        """Legacy wrapper around the Capability-owned template resolver."""
+        return capability_resolve_report_template(self.workspace, run_id)
 
     def resolve_skill_distillation_template(
         self, run_id: str | None = None

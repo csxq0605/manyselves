@@ -64,8 +64,6 @@ class DeclarativeDeliveryRuntime:
         if prepare_tool is None and workspace is not None:
             preparation = _DeliveryPreparationDependencies(
                 validated_final_audit_subject=self._runner._validated_final_audit_subject,
-                write_handoff_contracts=self._runner._write_handoff_contracts,
-                resolve_report_template=service.resolve_report_template,
             )
             prepare_tool = build_delivery_tool_implementations(
                 workspace=Path(workspace),
