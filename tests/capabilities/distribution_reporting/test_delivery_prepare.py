@@ -4,21 +4,19 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ClaimRecord,
     EditedReportSubmission,
     ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     EvidenceItem,
-    PhotoAsset,
     ReportRequest,
-)
-from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
-    ApprovedReport,
-    PdsDocxRenderer,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.declarative_delivery import DeclarativeDeliveryRuntime
@@ -31,8 +29,14 @@ def _edited_report() -> EditedReportSubmission:
         findings_overview="overview",
         regional_executive_summary="summary",
         module_narratives={
-            module_id: f"module {module_id}"
-            for module_id in REPORT_MODULE_IDS
+            module_id: compose_module_markdown(
+                module_id,
+                {
+                    submodule_id: f"module {module_id} {submodule_id}"
+                    for submodule_id in definition.submodules
+                },
+            )
+            for module_id, definition in REPORT_TAXONOMY.items()
         },
         risk_panorama="panorama",
         dimension_risk_analysis="risk analysis",
@@ -49,7 +53,16 @@ def _module_submissions() -> dict[str, ModuleSubmission]:
                 submodule_id: f"内容 {submodule_id}"
                 for submodule_id in REPORT_TAXONOMY[module_id].submodules
             },
-            claims=[],
+            claims=[
+                ClaimRecord(
+                    id=f"C-{module_id.replace('.', '')}",
+                    module_id=module_id,
+                    submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
+                    text=f"claim {module_id}",
+                    claim_type="recommendation",
+                    unresolved=True,
+                )
+            ],
             source_ids=[],
             unresolved_questions=[],
             revision=0,
@@ -89,7 +102,6 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
                 for value in _state["module_submissions"].values()
             )
             assert all(isinstance(value, EvidenceItem) for value in _state["evidence_items"])
-            assert all(isinstance(value, PhotoAsset) for value in _state["photo_assets"])
             return edited, f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
 
         def _write_handoff_contracts(self, state: dict) -> Path:
@@ -103,24 +115,10 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
             _state: dict,
             subject: EditedReportSubmission,
             _claims: list,
-        ) -> tuple[ApprovedReport, str]:
-            report = ApprovedReport.model_construct(
-                title=subject.title,
-                assessment_background=subject.assessment_background,
-                findings_overview=subject.findings_overview,
-                regional_executive_summary=subject.regional_executive_summary,
-                module_narratives=subject.module_narratives,
-                risk_panorama=subject.risk_panorama,
-                dimension_risk_analysis=subject.dimension_risk_analysis,
-                data_gap_analysis=subject.data_gap_analysis,
-                improvement_action_plan=subject.improvement_action_plan,
-                special_topic_plan=None,
-                special_topic_analysis=None,
-                ledger=ClaimLedger(claims=[], sources=[]),
-                tables=[],
-                photos=[],
+        ) -> None:
+            raise AssertionError(
+                "production prepare must not call Runner private delivery projection"
             )
-            return report, PdsDocxRenderer._compose_markdown(report)
 
         def _validate_final_report_structure(
             self,
@@ -128,7 +126,9 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
             _markdown: str,
             _phase: str,
         ) -> None:
-            return None
+            raise AssertionError(
+                "production prepare must not call Runner private report validation"
+            )
 
     state = {
         "run_id": run_id,
@@ -155,15 +155,7 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
                         source={"file_id": "source-delivery-prepare", "path": "Inputs/source.md"},
                     ).model_dump(mode="json")
                 ],
-                "photo_assets": [
-                    PhotoAsset(
-                        id="photo-delivery-prepare",
-                        path="Inputs/photo.png",
-                        sha256="fixture-photo-sha256",
-                        media_type="image/png",
-                        source_member="Inputs/photo.png",
-                    ).model_dump(mode="json")
-                ],
+                    "photo_assets": [],
                 "edited_report": edited.model_dump(mode="json"),
             }
         )

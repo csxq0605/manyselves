@@ -65,10 +65,6 @@ class DeclarativeDeliveryRuntime:
             preparation = _DeliveryPreparationDependencies(
                 validated_final_audit_subject=self._runner._validated_final_audit_subject,
                 write_handoff_contracts=self._runner._write_handoff_contracts,
-                delivery_projection=self._runner._delivery_projection,
-                validate_final_report_structure=(
-                    self._runner._validate_final_report_structure
-                ),
                 resolve_report_template=service.resolve_report_template,
             )
             prepare_tool = build_delivery_tool_implementations(

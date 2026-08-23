@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 
+from .delivery_projection import build_delivery_projection
 from .models.agentic import EditedReportSubmission, ModuleSubmission
 from .models.delivery import DeliveryContext, MaterializedDeliveryReceipt
 from .models.reporting import (
@@ -24,8 +25,9 @@ from .models.reporting import (
 )
 from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
-from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
+from .rendering.pds_docx_renderer import PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
+from .report_validation import validate_final_report_structure
 from .source_ledger import SourceLedger
 from .storage import ReportingStore
 
@@ -68,10 +70,6 @@ class _DeliveryPreparationDependencies:
         [dict[str, Any]], tuple[EditedReportSubmission, str]
     ]
     write_handoff_contracts: Callable[[dict[str, Any]], Path]
-    delivery_projection: Callable[
-        [dict[str, Any], EditedReportSubmission, list[Any]], tuple[ApprovedReport, str]
-    ]
-    validate_final_report_structure: Callable[[dict[str, Any], str, str], None]
     resolve_report_template: Callable[[str], tuple[Path, str]]
 
 
@@ -191,7 +189,8 @@ class DeliveryTools:
                 ]
             },
         )
-        report, delivery_markdown = preparation.delivery_projection(
+        report, delivery_markdown = build_delivery_projection(
+            self.workspace,
             state,
             edited,
             claims,
@@ -200,10 +199,11 @@ class DeliveryTools:
             f"Work/runs/{state['run_id']}/report-state.json",
             report.model_dump(mode="json"),
         )
-        preparation.validate_final_report_structure(
-            state,
-            delivery_markdown,
-            "delivery-final",
+        validate_final_report_structure(
+            store=self.store,
+            state=state,
+            markdown=delivery_markdown,
+            phase="delivery-final",
         )
         markdown_path = self.store.write_text(
             f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.md",

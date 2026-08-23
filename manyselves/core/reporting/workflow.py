@@ -47,7 +47,6 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     resolve_submodule,
 )
 from manyselves.capabilities.distribution_reporting.runtime.assets import (
-    ReportAssetAssembler,
     expand_approved_module_markers,
     validate_aggregate_retention,
     validate_editor_protection,
@@ -55,6 +54,9 @@ from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_existing_markdown_modules,
     validate_final_report_markdown,
     validate_module_markdown_consistency,
+)
+from manyselves.capabilities.distribution_reporting.runtime.delivery_projection import (
+    build_delivery_projection,
 )
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     DeliveryTools,
@@ -141,10 +143,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
 )
 from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
     ApprovedReport,
-    PdsDocxRenderer,
 )
 from manyselves.capabilities.distribution_reporting.runtime.rendering.source_index_docx_renderer import (
     SourceIndexDocxRenderer,
+)
+from manyselves.capabilities.distribution_reporting.runtime.report_validation import (
+    validate_final_report_structure as capability_validate_final_report_structure,
 )
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
@@ -8132,58 +8136,15 @@ class ReportWorkflowRunner:
         phase: str,
     ) -> None:
         """Audit every fixed chapter after aggregation and before rendering."""
-
-        validation_ref = f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json"
-        subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
-        self.service.store.write_text(subject_ref, markdown)
-        revision_text = phase.removeprefix("chief-candidate-r")
-        subject_revision = (
-            int(revision_text)
-            if phase.startswith("chief-candidate-r") and revision_text.isdigit()
-            else None
-        )
-        check_ids = ["final_report.fixed_sections_and_markdown"]
         try:
-            edited = state.get("edited_report")
-            plan = (
-                edited.special_topic_plan
-                if isinstance(edited, EditedReportSubmission)
-                else state.get("special_topic_plan")
+            capability_validate_final_report_structure(
+                store=self.service.store,
+                state=state,
+                markdown=markdown,
+                phase=phase,
             )
-            validate_final_report_markdown(markdown, plan)
         except ValueError as exc:
-            self.service.store.write_json(
-                validation_ref,
-                ValidationReport(
-                    validation_protocol_version=2,
-                    run_id=state["run_id"],
-                    subject_ref=subject_ref,
-                    subject_revision=subject_revision,
-                    validator="final-report-structure/v2",
-                    check_ids=check_ids,
-                    failures=[
-                        ValidationFailure(
-                            check_id=check_ids[0],
-                            target_path="markdown",
-                            message=str(exc),
-                        )
-                    ],
-                    passed=False,
-                ).model_dump(mode="json"),
-            )
-            raise AgentWorkflowError(f"总报告完整性校验未通过：{exc}") from exc
-        self.service.store.write_json(
-            validation_ref,
-            ValidationReport(
-                validation_protocol_version=2,
-                run_id=state["run_id"],
-                subject_ref=subject_ref,
-                subject_revision=subject_revision,
-                validator="final-report-structure/v2",
-                check_ids=check_ids,
-                passed=True,
-            ).model_dump(mode="json"),
-        )
+            raise AgentWorkflowError(str(exc)) from exc
 
     def _validated_final_audit_subject(
         self,
@@ -8310,40 +8271,12 @@ class ReportWorkflowRunner:
         claims: list | None = None,
     ) -> tuple[ApprovedReport, str]:
         """Build the exact citation-bound Markdown later passed to the DOCX renderer."""
-
-        if claims is None:
-            claims = [
-                claim
-                for module in state.get("module_submissions", {}).values()
-                for claim in module.claims
-            ]
-        ledger = ClaimLedger(
-            claims=claims,
-            sources=SourceLedger(self.service.workspace, state["run_id"]).records,
-        )
-        tables, photos = ReportAssetAssembler(self.service.workspace).build(
-            state.get("evidence_items", []),
-            state.get("photo_assets", []),
-            claims,
+        return build_delivery_projection(
+            self.service.workspace,
+            state,
             edited,
+            claims,
         )
-        report = ApprovedReport(
-            title=edited.title,
-            assessment_background=edited.assessment_background,
-            findings_overview=edited.findings_overview,
-            regional_executive_summary=edited.regional_executive_summary,
-            module_narratives=dict(edited.module_narratives),
-            risk_panorama=edited.risk_panorama,
-            dimension_risk_analysis=edited.dimension_risk_analysis,
-            data_gap_analysis=edited.data_gap_analysis,
-            improvement_action_plan=edited.improvement_action_plan,
-            special_topic_plan=edited.special_topic_plan,
-            special_topic_analysis=edited.special_topic_analysis,
-            ledger=ledger,
-            tables=tables,
-            photos=photos,
-        )
-        return report, ledger.bind_citations(PdsDocxRenderer._compose_markdown(report))
 
     def _deliver(self, state: dict) -> None:
         context = self._prepare_and_render_delivery(state)
@@ -8354,8 +8287,6 @@ class ReportWorkflowRunner:
         preparation = _DeliveryPreparationDependencies(
             validated_final_audit_subject=self._validated_final_audit_subject,
             write_handoff_contracts=self._write_handoff_contracts,
-            delivery_projection=self._delivery_projection,
-            validate_final_report_structure=self._validate_final_report_structure,
             resolve_report_template=self.service.resolve_report_template,
         )
         state = DeliveryTools(
