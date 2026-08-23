@@ -889,7 +889,7 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
     assert tail.actions == packaged_tail.actions
 
 
-def test_top_level_reporting_workflow_is_an_executable_capability_definition() -> None:
+def test_legacy_midstage_compiler_does_not_replay_file_preparation() -> None:
     plan = _compile_reporting_runtime(
         {"run_id": "report-characterized"},
         full_report=True,
@@ -897,15 +897,12 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
     plan = plan.plan
 
     assert [action.kind for action in plan.actions] == [
-        "if",
-        "subworkflow",
         "subworkflow",
         "if",
         "subworkflow",
         "end_workflow",
     ]
     assert plan.workflow_ids == [
-        "distribution-reporting-preparation",
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]

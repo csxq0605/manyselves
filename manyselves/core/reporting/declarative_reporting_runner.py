@@ -460,6 +460,15 @@ def _compile_reporting_runtime(
     """Compile the top-level plan and every file-defined nested workflow."""
 
     definitions, workflow = build_reporting_module_stage_definition()
+    # This compatibility runner enters after ReportWorkflowRunner._prepare.
+    # The final generic Run service compiles the packaged workflow unchanged;
+    # this old mid-stage host omits the already-completed preparation actions.
+    workflow.actions = [
+        action
+        for action in workflow.actions
+        if action.get("id")
+        not in {"choose-preparation-entry", "run-reporting-preparation"}
+    ]
     register_module_runtime_lane_specializations(definitions)
     cohort_template = definitions.require(
         DefinitionKind.WORKFLOW,
@@ -482,8 +491,6 @@ def _compile_reporting_runtime(
     definitions = specialized_definitions
     workflow.state = {
         "reporting-state": deepcopy(dict(reporting_state)),
-        "preparation-context": deepcopy(dict(reporting_state)),
-        "preparation-complete": True,
         "full-report": full_report,
     }
     executors = build_builtin_executor_registry()
@@ -921,18 +928,6 @@ async def execute_declarative_module_stage(
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
     runtime_tools = {
-        **{
-            tool_id: (lambda context: context)
-            for tool_id in (
-                "build-manifest",
-                "prepare-report-taxonomy",
-                "parse-artifacts",
-                "normalize-evidence",
-                "evaluate-coverage",
-                "persist-preparation-snapshot",
-                "restore-preparation-snapshot",
-            )
-        },
         **module_tools,
         "prepare-cross-owner-cohort": prepare_cross_with_boundary,
         "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
