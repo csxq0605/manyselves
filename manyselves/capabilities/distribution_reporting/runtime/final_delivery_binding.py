@@ -1,9 +1,9 @@
 """Capability-owned bindings for the first declared Final chapter boundary.
 
-This module contains only the deterministic preparation needed to enter the
-file-defined Final chapter lanes.  Agent invocation, Final review rounds, and
-Delivery remain separate declared boundaries until their Capability-owned
-adapters are available.
+This module contains the deterministic preparation and Tool bindings needed to
+enter the file-defined Final chapter lanes and the opening Final review round.
+Chief revision acceptance/reduction, recheck, and Delivery remain separate
+declared boundaries until their Capability-owned adapters are available.
 """
 
 from __future__ import annotations
@@ -303,7 +303,12 @@ def build_final_chapter_tool_implementations(
         "complete-current-final-chapter": tools.complete_lane,
         "reduce-final-chapter-cohort": tools.reduce_cohort,
     }
-    implementations.update(build_final_review_tool_implementations())
+    implementations.update(
+        build_final_review_tool_implementations(
+            workspace=workspace,
+            store=tools.store,
+        )
+    )
     return implementations
 
 

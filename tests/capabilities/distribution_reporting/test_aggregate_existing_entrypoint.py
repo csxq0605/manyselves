@@ -578,10 +578,16 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     from manyselves.capabilities.distribution_reporting.runtime.final_agent_bridge import (
         FinalChapterAgentBridge,
     )
+    from manyselves.capabilities.distribution_reporting.runtime.final_chief_agent_bridge import (
+        FinalChiefAgentBridge,
+    )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        CHIEF_SECTION_RESULT_PART_IDS,
         ChapterScopedFinalReviewFinding,
         ChapterScopedFinalReviewTargetChange,
+        ChiefChapterLaneRevisionSubmission,
         FinalChapterLaneFindingSubmission,
+        RevisionResponse,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
         DeclarativeFinalReviewContext,
@@ -632,6 +638,15 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         tmp_path,
         run_id,
         suffixes={module_id: ".md" for module_id in REPORT_MODULE_IDS},
+    )
+    chief_skill_path = (
+        tmp_path
+        / "Work/report-template-role-skills/chief-editor-chapter-1/SKILL.md"
+    )
+    chief_skill_path.parent.mkdir(parents=True, exist_ok=True)
+    chief_skill_path.write_text(
+        "# Chapter 1 Chief revision skill\n\nUse the assigned finding and preserve the typed lane contract.",
+        encoding="utf-8",
     )
     _capability, registry = load_distribution_reporting_capability()
     workflow = registry.require(
@@ -705,6 +720,42 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         )
         result_refs[chapter_id] = result_ref
 
+    chief_result_ref = (
+        f"Work/runs/{run_id}/reviews/chief-chapter-1-agent-result.json"
+    )
+    chief_result_path = tmp_path / chief_result_ref
+    chief_result_path.parent.mkdir(parents=True, exist_ok=True)
+    chief_result_path.write_text(
+        json.dumps(
+            ChiefChapterLaneRevisionSubmission(
+                run_id=run_id,
+                base_subject_ref=(
+                    f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+                ),
+                chapter_id="1",
+                revision=1,
+                section_ids=["1.1", "1.2", "1.3"],
+                part_refs={
+                    CHIEF_SECTION_RESULT_PART_IDS[section_id]: (
+                        f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/"
+                        f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"
+                    )
+                    for section_id in ("1.1", "1.2", "1.3")
+                },
+                revision_responses=[
+                    RevisionResponse(
+                        finding_id="F-final-1",
+                        action="implemented",
+                        summary="The requested chapter-local change was implemented.",
+                        changed_target_ids=["1.1"],
+                    )
+                ],
+            ).model_dump(mode="json"),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     loops = {}
@@ -729,14 +780,18 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
                 if message.agent_type != self.runtime_id:
                     return
                 self.received.append(message)
-                chapter_id = message.session_id.removeprefix("final-chapter-")
+                result_path = (
+                    chief_result_ref
+                    if message.session_id.startswith("chief-chapter-")
+                    else result_refs[message.session_id.removeprefix("final-chapter-")]
+                )
                 await bus.publish(
                     AgentResultMessage(
                         sender=self.runtime_id,
                         workflow_id=message.workflow_id,
                         task_id=message.task_id,
                         run_id=message.run_id,
-                        result_path=result_refs[chapter_id],
+                        result_path=result_path,
                         task_attempt_id=message.task_attempt_id,
                         session_id=message.session_id,
                     )
@@ -763,11 +818,16 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         execution=agent_service,
         session_factory=session_factory,
     )
+    chief_bridge = FinalChiefAgentBridge(
+        tmp_path,
+        execution=agent_service,
+        session_factory=session_factory,
+    )
 
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: prepare-current-final-chief-revision",
+            match="missing tool adapter: accept-current-final-chief-revision",
         ):
             await host.execute(
                 plan,
@@ -778,6 +838,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
                     definitions=registry,
                     agents={
                         "aggregate-editor": RecordingAggregateInvoker(),
+                        "chief-editor": chief_bridge,
                         "chief-editor-auditor": final_bridge,
                     },
                 ),
@@ -807,6 +868,16 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         )
         assert review.revision_number == 1
         assert set(review.pending_by_chapter) == {"1"}
+        chief_input_ref = (
+            tmp_path
+            / f"Work/runs/{run_id}/context/chief-chapter-1-input-r1.json"
+        )
+        chief_input = json.loads(chief_input_ref.read_text(encoding="utf-8"))
+        assert chief_input["phase"] == "revision"
+        assert chief_input["chapter_id"] == "1"
+        assert [finding["id"] for finding in chief_input["assigned_findings"]] == [
+            "F-final-1"
+        ]
         assert final_state.variables["prepared-final-state"]["run_id"] == run_id
         aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
         assert aggregate_ref.is_file()
@@ -815,17 +886,37 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             "3",
             "4",
         ]
-        assert len(loops) == 3
+        assert len(loops) == 4
         assert {loop.received[0].session_id for loop in loops.values()} == {
             "final-chapter-1",
             "final-chapter-3",
             "final-chapter-4",
+            "chief-chapter-1",
         }
         assert all(
             "final_chapter_lane_input" in loop.received[0].content
-            for loop in loops.values()
+            for runtime_id, loop in loops.items()
+            if ":chief-editor-auditor:" in runtime_id
         )
-        assert len(agent_service.sessions) == 3
+        chief_loop = next(
+            loop
+            for runtime_id, loop in loops.items()
+            if ":chief-editor:" in runtime_id
+        )
+        assert "chief_chapter_lane_input" in chief_loop.received[0].content
+        assert (
+            '<template_role_skill id="chief-editor-chapter-1"'
+            in chief_loop.received[0].content
+        )
+        assert "Use the assigned finding and preserve the typed lane contract." in (
+            chief_loop.received[0].content
+        )
+        assert all(
+            '<final_lane_specialization chapter_id="' in loop.received[0].content
+            for runtime_id, loop in loops.items()
+            if ":chief-editor-auditor:" in runtime_id
+        )
+        assert len(agent_service.sessions) == 4
         assert persisted.outputs == {}
         assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
         assert any(

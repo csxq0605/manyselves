@@ -2,24 +2,101 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Literal, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalChiefRevisionContext,
     DeclarativeFinalReviewContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ChiefChapterLaneInput,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    chapter_section_ids,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+
+_TEMPLATE_SKILL_ROOT = "Work/report-template-role-skills"
+
+_STATIC_SECTION_BODIES = {
+    "1.1": "assessment_background",
+    "1.2": "findings_overview",
+    "1.3": "regional_executive_summary",
+    "3.1.1": "risk_panorama",
+    "3.1.2": "dimension_risk_analysis",
+    "3.1.3": "data_gap_analysis",
+    "3.2": "improvement_action_plan",
+}
+
+
+def _template_skill_context(
+    state: Mapping[str, Any],
+    workspace: Any,
+    skill_id: str,
+) -> str:
+    """Embed one materialized template Skill in the Agent task envelope."""
+
+    texts = state.get("template_skill_text", {})
+    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
+    if not content:
+        path = workspace / _TEMPLATE_SKILL_ROOT / skill_id / "SKILL.md"
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+    if not content:
+        return ""
+    return (
+        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
+        f"{content}\n"
+        "</template_role_skill>"
+    )
+
+
+def _chief_template_skill_context(
+    state: Mapping[str, Any],
+    workspace: Any,
+    chapter_ids: tuple[str, ...] | list[str] | set[str],
+) -> str:
+    """Embed complete Chief Skills for exactly the requested chapters."""
+
+    requested = set(chapter_ids)
+    return "\n\n".join(
+        context
+        for chapter_id in ("1", "3", "4")
+        if chapter_id in requested
+        for context in (
+            _template_skill_context(
+                state,
+                workspace,
+                f"chief-editor-chapter-{chapter_id}",
+            ),
+        )
+        if context
+    )
 
 
 def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
     state = deepcopy(dict(value))
+    modules = state.get("module_submissions")
+    if isinstance(modules, Mapping):
+        state["module_submissions"] = {
+            module_id: ModuleSubmission.model_validate(module)
+            for module_id, module in modules.items()
+        }
     if state.get("edited_report") is not None:
         state["edited_report"] = EditedReportSubmission.model_validate(
             state["edited_report"]
@@ -27,8 +104,132 @@ def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
     return state
 
 
+def _split_special_topic_analysis(markdown: str, plan: Any) -> dict[str, str]:
+    plan.validate_analysis(markdown, allow_chapter_heading=True)
+    expected = [section.section_id for section in plan.sections]
+    lines = markdown.strip().splitlines()
+    heading_re = re.compile(r"^\s*#{1,6}\s+(4\.\d+)\s+.+?\s*$")
+    matches = [
+        (index, match.group(1))
+        for index, line in enumerate(lines)
+        if (match := heading_re.match(line))
+    ]
+    if not matches:
+        if len(expected) == 1:
+            return {expected[0]: markdown.strip()}
+        raise ValueError("Chapter 4 result must contain one heading per planned subsection")
+    sections: dict[str, str] = {}
+    for position, (start, section_id) in enumerate(matches):
+        end = matches[position + 1][0] if position + 1 < len(matches) else len(lines)
+        sections[section_id] = "\n".join(lines[start + 1 : end]).strip()
+    if set(sections) != set(expected):
+        raise ValueError("Chapter 4 result headings must match the active special-topic plan")
+    return sections
+
+
+def _section_ids(
+    edited: EditedReportSubmission,
+    chapter_id: Literal["1", "3", "4"],
+) -> tuple[str, ...]:
+    return chapter_section_ids(chapter_id, edited.special_topic_plan)
+
+
+def _section_bodies(
+    edited: EditedReportSubmission,
+    chapter_id: Literal["1", "3", "4"],
+) -> dict[str, str]:
+    if chapter_id == "4":
+        if edited.special_topic_plan is None or edited.special_topic_analysis is None:
+            return {}
+        return _split_special_topic_analysis(
+            edited.special_topic_analysis,
+            edited.special_topic_plan,
+        )
+    return {
+        section_id: getattr(edited, _STATIC_SECTION_BODIES[section_id])
+        for section_id in _section_ids(edited, chapter_id)
+    }
+
+
+def _source_projection(
+    state: Mapping[str, Any],
+    chapter_id: Literal["1", "3", "4"],
+    plan: Any,
+) -> tuple[dict[str, str], list[str]]:
+    source_refs = [
+        str(state["cross_review_completion_ref"])
+    ] if state.get("cross_review_completion_ref") else []
+    modules = state.get("module_submissions", {})
+    if chapter_id == "1":
+        source_context = {
+            f"module-{module_id}": json.dumps(
+                {
+                    "module_id": module_id,
+                    "revision": getattr(module, "revision", 0),
+                    "submodule_ids": sorted(getattr(module, "submodule_narratives", {})),
+                    "unresolved_questions": list(
+                        getattr(module, "unresolved_questions", [])
+                    ),
+                    "claim_ids": [
+                        claim.id for claim in getattr(module, "claims", [])
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )[:2400]
+            for module_id, module in sorted(
+                modules.items(), key=lambda item: float(item[0])
+            )
+        }
+        source_context["approved_markers"] = ",".join(
+            f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_MODULE_IDS
+        )
+    elif chapter_id == "3":
+        source_context = {
+            "cross_synthesis": json.dumps(
+                [
+                    item.model_dump(mode="json")
+                    if hasattr(item, "model_dump")
+                    else item
+                    for item in state.get("cross_synthesis_inputs", [])
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+            )[:6000],
+            "module_boundaries": ",".join(
+                f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
+                for module_id, module in sorted(
+                    modules.items(), key=lambda item: float(item[0])
+                )
+            ),
+        }
+    else:
+        source_context = {
+            "special_topic_plan": json.dumps(
+                plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
+                ensure_ascii=False,
+                sort_keys=True,
+            )[:12_000]
+        }
+        if state.get("special_topic_knowledge_ref"):
+            source_refs.append(str(state["special_topic_knowledge_ref"]))
+    evidence_ref = state.get("preparation_refs", {}).get("evidence")
+    if evidence_ref:
+        source_refs.append(str(evidence_ref))
+    return source_context, list(dict.fromkeys(ref for ref in source_refs if ref))
+
+
 class FinalReviewTools:
     """Initialize and advance the typed Final review cycle without a Runner."""
+
+    def __init__(
+        self,
+        *,
+        workspace: Any = ".",
+        store: ReportingStore | None = None,
+    ) -> None:
+        self.workspace = Path(workspace)
+        self.store = store or ReportingStore(workspace)
 
     def start_cycle(
         self,
@@ -111,13 +312,98 @@ class FinalReviewTools:
             }
         )
 
+    def prepare_chief_revision(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalChiefRevisionContext:
+        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+        chapter_id = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
+        findings = review.pending_by_chapter.get(chapter_id, [])
+        if not findings:
+            return DeclarativeFinalChiefRevisionContext(
+                chapter_id=chapter_id,
+                status="skipped",
+            )
+        state = _restore_state(review.state)
+        edited = review.current
+        section_ids = _section_ids(edited, chapter_id)
+        source_context, source_refs = _source_projection(
+            state,
+            chapter_id,
+            edited.special_topic_plan,
+        )
+        revision = review.revision_number
+        run_id = str(state["run_id"])
+        contract = ChiefChapterLaneInput(
+            phase="revision",
+            run_id=run_id,
+            subject_ref=review.subject_ref,
+            chapter_id=chapter_id,
+            section_ids=list(section_ids),
+            section_bodies=_section_bodies(edited, chapter_id),
+            source_context=source_context,
+            source_refs=source_refs,
+            assigned_findings=list(findings),
+            special_topic_plan=edited.special_topic_plan,
+            revision=revision,
+        )
+        input_ref = f"Work/runs/{run_id}/context/chief-chapter-{chapter_id}-input-r{revision}.json"
+        self.store.write_json(input_ref, contract.model_dump(mode="json"))
+        envelope = TaskEnvelope(
+            task_id=f"chief-chapter-{chapter_id}-r{revision}",
+            run_id=run_id,
+            agent_id="chief-editor",
+            objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
+            input_refs=[input_ref],
+            constraints=[
+                "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
+                "part_refs 只能覆盖本章；revision_responses 必须对应本章 findings",
+                (
+                    "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                    if chapter_id != "4"
+                    else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
+                ),
+            ],
+            allowed_outputs=["chief_chapter_lane_revision_submission"],
+            allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+            revision=revision,
+            prior_result_ref=review.subject_ref,
+            input_contract_kind="chief_chapter_lane_input",
+            input_contract_ref=input_ref,
+            artifact_delivery_modes={input_ref: "inline"},
+            inline_context=_chief_template_skill_context(
+                state,
+                self.workspace,
+                (chapter_id,),
+            ),
+        )
+        return DeclarativeFinalChiefRevisionContext(
+            chapter_id=chapter_id,
+            status="ready",
+            contract=contract,
+            input_ref=input_ref,
+            envelope=envelope,
+        )
 
-def build_final_review_tool_implementations() -> dict[str, Any]:
-    tools = FinalReviewTools()
+    @staticmethod
+    def chief_revision_requires_agent(value: Any) -> bool:
+        return (
+            DeclarativeFinalChiefRevisionContext.model_validate(value).status == "ready"
+        )
+
+
+def build_final_review_tool_implementations(
+    *,
+    workspace: Any = ".",
+    store: ReportingStore | None = None,
+) -> dict[str, Any]:
+    tools = FinalReviewTools(workspace=workspace, store=store)
     return {
         "start-final-review-cycle": tools.start_cycle,
         "final-review-needs-round": tools.needs_round,
         "advance-final-review-round": tools.advance_round,
+        "prepare-current-final-chief-revision": tools.prepare_chief_revision,
+        "final-chief-revision-requires-agent": tools.chief_revision_requires_agent,
     }
 
 

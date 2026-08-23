@@ -136,7 +136,16 @@ class FinalChapterAgentBridge:
             )
 
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, contract),
+            content=self._prompt(
+                agent,
+                task,
+                contract,
+                inline_context=(
+                    context.envelope.inline_context
+                    if context.envelope is not None
+                    else None
+                ),
+            ),
             message_id=(
                 f"{task_id}:{contract.run_id}:chapter-{context.chapter_id}:initial"
             ),
@@ -217,19 +226,24 @@ class FinalChapterAgentBridge:
         agent: AgentDefinition,
         task: TaskDefinition,
         value: FinalChapterLaneInput,
+        *,
+        inline_context: str | None,
     ) -> str:
+        sections = [
+            agent.instructions,
+            f"Task: {task.objective}",
+            json.dumps(
+                value.model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
+            f"Output contract: {task.output_contract}",
+        ]
+        if inline_context:
+            sections.append(f"Inline context:\n{inline_context}")
         return "\n\n".join(
-            (
-                agent.instructions,
-                f"Task: {task.objective}",
-                json.dumps(
-                    value.model_dump(mode="json"),
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
-                f"Output contract: {task.output_contract}",
-            )
+            sections
         )
 
     def _read_submission(self, result_ref: str) -> FinalChapterLaneFindingSubmission:
