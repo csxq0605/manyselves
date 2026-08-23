@@ -24,6 +24,9 @@ from manyselves.capabilities.distribution_reporting.domain.cross_specialization 
     cross_lane_specialization,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     CrossDecisionPack,
@@ -241,11 +244,13 @@ class CrossOwnerAgentInvoker:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
+        terminal_task_attempt_id: str = "",
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -338,6 +343,9 @@ class CrossOwnerAgentInvoker:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=preparation.envelope.agent_id,
+            terminal_task_id=preparation.envelope.task_id,
+            terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
         outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
         return TypedAgentTurn.map_outcome(
@@ -372,13 +380,12 @@ class CrossOwnerAgentInvoker:
         return "\n\n".join(sections)
 
     def _decode_result(self, result_ref: str, *, output_contract: str) -> dict[str, Any]:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
-        payload = json.loads(path.read_text(encoding="utf-8"))
         if output_contract == "declarative_cross_owner_recheck_agent_result":
             raise ValueError(
                 "Cross owner recheck bridge is not part of the initial composition slice"
             )
+        loaded = load_agent_result_payload(self.workspace, result_ref)
+        payload = loaded.payload
         submission = CrossOwnerFindingSubmission.model_validate(payload)
         return DeclarativeCrossOwnerInitialAgentResult(
             status="completed",

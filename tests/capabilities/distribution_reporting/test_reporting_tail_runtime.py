@@ -1,7 +1,6 @@
 """Characterization for the Capability-owned full-report tail composition."""
 
 import asyncio
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +12,8 @@ from pydantic import ValidationError
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
+    AgentRunStatus,
     CrossOwnerFindingSubmission,
     CrossReviewCoverageEntry,
     ModuleSubmission,
@@ -414,8 +415,13 @@ async def test_cross_owner_agent_invoker_uses_specialized_owner_session(
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
-        json.dumps(
-            CrossOwnerFindingSubmission(
+        AgentResult(
+            task_id="cross-owner-2.1-r0-initial",
+            run_id="cross-agent-run",
+            agent_id="cross-module-reviewer",
+            session_id="public-reporting:cross-owner-2.1",
+            status=AgentRunStatus.COMPLETED,
+            payload=CrossOwnerFindingSubmission(
                 owner_module_id="2.1",
                 coverage=CrossReviewCoverageEntry(
                     module_id="2.1",
@@ -428,8 +434,8 @@ async def test_cross_owner_agent_invoker_uses_specialized_owner_session(
                         "joint_verification",
                     ],
                 ),
-            ).model_dump(mode="json")
-        ),
+            ),
+        ).model_dump_json(),
         encoding="utf-8",
     )
     bus = MessageBus()
@@ -451,12 +457,12 @@ async def test_cross_owner_agent_invoker_uses_specialized_owner_session(
                 received.append(message)
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender="cross-module-reviewer",
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
+                        task_id="cross-owner-2.1-r0-initial",
                         run_id=message.run_id,
                         result_path=result_ref,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
@@ -574,8 +580,13 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
         result_path = tmp_path / result_ref
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(
-            json.dumps(
-                CrossOwnerFindingSubmission(
+            AgentResult(
+                task_id=f"cross-owner-{module_id}-r0-initial",
+                run_id=run_id,
+                agent_id="cross-module-reviewer",
+                session_id=f"public-reporting:cross-owner-{module_id}",
+                status=AgentRunStatus.COMPLETED,
+                payload=CrossOwnerFindingSubmission(
                     owner_module_id=module_id,
                     coverage=CrossReviewCoverageEntry(
                         module_id=module_id,
@@ -590,8 +601,8 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
                     ),
                     findings=[],
                     synthesis_inputs=[],
-                ).model_dump(mode="json")
-            ),
+                ),
+            ).model_dump_json(),
             encoding="utf-8",
         )
 
@@ -620,13 +631,13 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
                     return
                 owner_module_id = self.runtime_id.rsplit("cross-owner-", 1)[-1]
                 await bus.publish(
-                    AgentResultMessage(
-                        sender=self.runtime_id,
-                        workflow_id=message.workflow_id,
-                        task_id=message.task_id,
-                        run_id=message.run_id,
-                        result_path=result_refs[owner_module_id],
-                        task_attempt_id=message.task_attempt_id,
+                        AgentResultMessage(
+                            sender="cross-module-reviewer",
+                            workflow_id=message.workflow_id,
+                            task_id=f"cross-owner-{owner_module_id}-r0-initial",
+                            run_id=message.run_id,
+                            result_path=result_refs[owner_module_id],
+                            task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
