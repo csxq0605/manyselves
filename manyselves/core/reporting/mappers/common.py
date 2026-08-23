@@ -7,25 +7,10 @@ from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
-    ReportingModel,
     SourceLocation,
 )
 
 _DISPIMG_PATTERN = re.compile(r'DISPIMG\("([^"]+)"', re.IGNORECASE)
-
-
-class MappingGap(ReportingModel):
-    code: str
-    message: str
-    sheet: str | None = None
-    cell: str | None = None
-    module_id: str | None = None
-    submodule_id: str | None = None
-
-
-class MappingResult(ReportingModel):
-    evidence_items: list[EvidenceItem]
-    gaps: list[MappingGap]
 
 
 def dispimg_refs(*values: Any) -> list[str]:

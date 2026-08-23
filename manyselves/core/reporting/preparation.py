@@ -7,39 +7,17 @@ E-* or P-* identifiers.  The coordinator reduces results in manifest order.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
-from pydantic import Field
-
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    preparation as preparation_models,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    EvidenceItem,
-    ManifestFile,
-    ParsedArtifact,
     PhotoAsset,
-    ReportingModel,
 )
 
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.wps_images import extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
-
-
-class FilePreparationResult(ReportingModel):
-    """Complete provisional result for one manifest file."""
-
-    schema_version: Literal["1"] = "1"
-    manifest_order: int = Field(ge=0)
-    file_id: str = Field(min_length=1)
-    source_path: Path
-    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    purpose: str | None = None
-    status: Literal["parsed", "failed"]
-    parsed_artifacts: list[ParsedArtifact] = Field(default_factory=list)
-    provisional_evidence: list[EvidenceItem] = Field(default_factory=list)
-    raw_photo_assets: dict[str, PhotoAsset] = Field(default_factory=dict)
-    mapping_gaps: list[dict] = Field(default_factory=list)
-    error: str | None = None
-
 
 _MAPPERS = {
     "s2-1": map_s2_1,
@@ -51,9 +29,9 @@ _MAPPERS = {
 def prepare_manifest_file(
     workspace: Path,
     run_id: str,
-    manifest_file: ManifestFile,
+    manifest_file: preparation_models.ManifestFile,
     manifest_order: int,
-) -> FilePreparationResult:
+) -> preparation_models.FilePreparationResult:
     """Parse one file without mutating shared run registries or final assets."""
 
     workspace = Path(workspace).resolve()
@@ -62,7 +40,7 @@ def prepare_manifest_file(
     try:
         if mapper is None:
             parsed = IntakeAdapterRegistry().parse(input_path, manifest_file)
-            return FilePreparationResult(
+            return preparation_models.FilePreparationResult(
                 manifest_order=manifest_order,
                 file_id=manifest_file.id,
                 source_path=manifest_file.path,
@@ -103,7 +81,7 @@ def prepare_manifest_file(
             )
             for item in mapped.evidence_items
         ]
-        return FilePreparationResult(
+        return preparation_models.FilePreparationResult(
             manifest_order=manifest_order,
             file_id=manifest_file.id,
             source_path=manifest_file.path,
@@ -115,7 +93,7 @@ def prepare_manifest_file(
             mapping_gaps=[gap.model_dump(mode="json") for gap in mapped.gaps],
         )
     except Exception as exc:
-        return FilePreparationResult(
+        return preparation_models.FilePreparationResult(
             manifest_order=manifest_order,
             file_id=manifest_file.id,
             source_path=manifest_file.path,

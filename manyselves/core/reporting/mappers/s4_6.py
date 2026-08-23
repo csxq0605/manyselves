@@ -9,8 +9,12 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    MappingGap,
+    MappingResult,
+)
 
-from .common import MappingGap, MappingResult, dispimg_refs, make_evidence
+from .common import dispimg_refs, make_evidence
 
 _PATH_ALIASES = (
     ("配电系统负荷分配与过载风险", "2.1.1"),

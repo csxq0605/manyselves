@@ -9,9 +9,11 @@ from docx import Document
 from openpyxl import load_workbook
 from PIL import Image
 
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     ManifestFile,
     ParsedArtifact,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     SourceLocation,
 )
 

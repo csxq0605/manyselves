@@ -539,31 +539,6 @@ class ScopeExpansionRequest(ReportingModel):
     status: Literal["pending"] = "pending"
 
 
-class ManifestFile(ReportingModel):
-    id: str = Field(min_length=1)
-    path: Path
-    sha256: str = Field(min_length=1)
-    media_type: str = Field(min_length=1)
-    purpose: str | None = None
-    snapshot_ref: Path | None = Field(
-        default=None,
-        description="Run-frozen source bytes used for parsing; path remains logical provenance.",
-    )
-    parse_status: Literal["pending", "parsed", "failed"] = "pending"
-    error: str | None = None
-
-
-class ProjectManifest(ReportingModel):
-    files: list[ManifestFile] = Field(default_factory=list)
-
-
-class ParsedArtifact(ReportingModel):
-    id: str = Field(min_length=1)
-    kind: str = Field(min_length=1)
-    source: SourceLocation
-    payload: dict[str, Any]
-
-
 class PhotoAsset(ReportingModel):
     id: str = Field(min_length=1)
     path: Path
@@ -609,6 +584,9 @@ class EvidenceItem(ReportingModel):
                 f"submodule {self.submodule_id} does not belong to module {self.module_id}"
             )
         return self
+
+
+EvidenceItems = list[EvidenceItem]
 
 
 class CoverageStatus(StrEnum):
@@ -669,3 +647,6 @@ class OutputArtifact(ReportingModel):
     kind: Literal["module", "review", "report", "run", "skill"]
     path: Path
     module_id: str | None = None
+
+
+OutputArtifacts = list[OutputArtifact]

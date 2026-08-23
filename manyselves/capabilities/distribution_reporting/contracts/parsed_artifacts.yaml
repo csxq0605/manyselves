@@ -1,6 +1,5 @@
 id: parsed_artifacts
 version: 1.0.0
-description: Reporting adapter boundary for parsed_artifacts
-adapter: json_schema
-schema: {}
-
+description: Typed parsed artifact collection produced by Distribution Reporting preparation
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.preparation:ParsedArtifacts

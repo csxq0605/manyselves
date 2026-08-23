@@ -3,7 +3,7 @@
 import hashlib
 from pathlib import Path
 
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     ManifestFile,
     ProjectManifest,
 )

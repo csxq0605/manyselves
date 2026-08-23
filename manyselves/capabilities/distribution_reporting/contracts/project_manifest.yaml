@@ -1,6 +1,5 @@
 id: project_manifest
 version: 1.0.0
-description: Reporting adapter boundary for project_manifest
-adapter: json_schema
-schema: {}
-
+description: Typed project input manifest for Distribution Reporting preparation
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.preparation:ProjectManifest

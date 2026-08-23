@@ -45,9 +45,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ReviewCompletionRecord,
     ValidationReport,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    ProjectManifest,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CoverageMatrix,
-    ProjectManifest,
     ReportRequest,
     RevisionRequest,
     SpecialTopicPlan,

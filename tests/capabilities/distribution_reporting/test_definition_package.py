@@ -17,6 +17,7 @@ from manyselves.capabilities.distribution_reporting.adapters import (
     build_reporting_tail_definition,
     load_reporting_agents,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models import preparation
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
@@ -71,9 +72,6 @@ def test_reporting_models_are_physically_owned_by_the_capability() -> None:
         "EvidenceDecisionRequest",
         "RevisionRequest",
         "ScopeExpansionRequest",
-        "ManifestFile",
-        "ProjectManifest",
-        "ParsedArtifact",
         "PhotoAsset",
         "EvidenceItem",
         "CoverageStatus",
@@ -84,6 +82,16 @@ def test_reporting_models_are_physically_owned_by_the_capability() -> None:
     )
     for model_name in model_names:
         assert getattr(reporting, model_name).__module__ == module_name
+    preparation_module = preparation.__name__
+    for model_name in (
+        "ManifestFile",
+        "ProjectManifest",
+        "ParsedArtifact",
+        "FilePreparationResult",
+        "MappingGap",
+        "MappingResult",
+    ):
+        assert getattr(preparation, model_name).__module__ == preparation_module
     assert reporting.chapter_section_ids.__module__ == module_name
     assert "CrossDecisionPack" not in vars(reporting)
     assert "CrossDecisionPackView" not in vars(reporting)

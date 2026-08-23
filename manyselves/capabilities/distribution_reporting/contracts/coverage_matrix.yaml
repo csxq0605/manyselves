@@ -1,6 +1,5 @@
 id: coverage_matrix
 version: 1.0.0
-description: Reporting adapter boundary for coverage_matrix
-adapter: json_schema
-schema: {}
-
+description: Typed coverage matrix used by Distribution Reporting
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.reporting:CoverageMatrix

@@ -1,6 +1,5 @@
 id: evidence_items
 version: 1.0.0
-description: Reporting adapter boundary for evidence_items
-adapter: json_schema
-schema: {}
-
+description: Typed evidence item collection used by Distribution Reporting
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.reporting:EvidenceItems

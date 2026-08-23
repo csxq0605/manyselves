@@ -5,8 +5,12 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    MappingGap,
+    MappingResult,
+)
 
-from .common import MappingGap, MappingResult, make_evidence
+from .common import make_evidence
 
 _DOCUMENT_EXACT_ROUTES = {
     "中低压电气系统图": "2.5.2",

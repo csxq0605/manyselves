@@ -13,7 +13,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     ManifestFile,
     ProjectManifest,
 )

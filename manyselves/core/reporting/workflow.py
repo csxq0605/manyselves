@@ -85,6 +85,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ValidationReport,
     module_content_view,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    ProjectManifest,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -94,7 +97,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceItem,
     OutputArtifact,
     PhotoAsset,
-    ProjectManifest,
     RevisionRequest,
     ScopeExpansionRequest,
     SpecialTopicPlan,

@@ -6,7 +6,12 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-from .common import MappingGap, MappingResult, dispimg_refs, make_evidence
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    MappingGap,
+    MappingResult,
+)
+
+from .common import dispimg_refs, make_evidence
 
 
 def _text(value: Any) -> str:
