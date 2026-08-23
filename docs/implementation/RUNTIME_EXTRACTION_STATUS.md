@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — 建立 Distribution Reporting Domain Runtime`
-- Current slice: `按 taxonomy→models→agentic→submission→input 的无环 DAG 迁移 Capability 领域基础类型；FA-02 已完成`
+- Current slice: `taxonomy 根组件已迁入 Capability；下一步整文件迁移 models/ReportRequest，再继续 agentic→submission→input`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `3b4bec9 Runtime: own agent progress recovery`
+- HEAD at slice start: `e023be9 Runtime: own completed agent result reuse`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `先完整迁移零 Core 依赖的 taxonomy 根组件，再迁 models/ReportRequest，禁止继续只移动仍反向依赖 Core 的外层 wrapper`
+- Next automatic action: `整文件迁移 models.py 到 Capability reporting models，删除无生产引用的 Cross lazy alias，并更新 ReportRequest YAML/所有消费者；不保留 Core shim/re-export`
 
 ## Why the prior completion claim is reopened
 
@@ -112,6 +112,7 @@
 - Chief Chapter 所有权切片将 `DeclarativeChiefChapterAgentResult`、`DeclarativeChiefChapterContext`、`DeclarativeChiefChapterOutcome` 真正迁入 `capabilities/distribution_reporting/runtime/models/chief_chapter.py`，旧 Core 不保留定义、alias 或 re-export。所有权/旧 Core 暴露的 3 项 Characterization 实现前 RED、实现后转绿；Definition package、Chief cohort 与 Runner affected 合计 `36 passed`，Ruff、compileall、旧路径扫描和 `git diff --check` 通过。直接指向 Core Reporting 的 Contract model 路径从 33 个减少为 30 个；新模型仍依赖待后续迁移的 `ChiefChapterLaneInput`、`ChiefChapterLaneSubmission` 和 `TaskEnvelope`，因此不把本切片误报为 Capability 边界完成。
 - Final Chapter 所有权切片将 `DeclarativeFinalChapterAgentResult`、`DeclarativeFinalChapterContext`、`DeclarativeFinalChapterOutcome` 真正迁入 `capabilities/distribution_reporting/runtime/models/final_chapter.py`，旧 Core 不保留定义、alias 或 re-export；Final review cycle 也直接消费 Capability Outcome。3 项 Characterization 实现前 RED、实现后转绿；Definition package、Final cohort/nested recovery 与 Runner affected 合计 `45 passed`，主工作区复核选择 `5 passed`，Ruff、compileall、旧路径扫描、5 项架构 strict xfail 和 `git diff --check` 通过。直接 Core Contract 路径从 30 个降至 27 个；`FinalChapterLaneFindingSubmission`、`TaskEnvelope` 和 `FinalChapterLaneInput` 的传递依赖仍待后续领域基础模型迁移。
 - Final Review 所有权切片按最小无环连通组件迁移 7 个 YAML 直引模型和其嵌套的 `DeclarativeFinalVerdictRecord`，共 8 个类型进入 `capabilities/distribution_reporting/runtime/models/final_review.py`；只迁 7 个会形成 Capability→Core→Capability 循环，因此没有采用。旧 Core 不保留定义、alias 或 re-export，流程函数仍原地且语义未变。3 项 Characterization 实现前 RED、实现后转绿；Definition package、Final cycle/nested recovery 与 Runner affected `48 passed`，主工作区复核选择 `5 passed`，Ruff、compileall、旧路径扫描、5 项架构 strict xfail 和 `git diff --check` 通过。直接 Core Contract 路径从 27 个降至 20 个；8 个模型仍引用待迁移的 agentic/input 基础类型，因此不声称完整边界完成。
+- FA-03/M0 将完整的 run-scoped Reporting taxonomy 从 `core/reporting/taxonomy.py` 真实迁到 `capabilities/distribution_reporting/domain/taxonomy.py`，删除旧文件且不留 alias、re-export 或 shim；48 个生产/测试消费者统一改用 Capability 路径。独立子进程 import Characterization 实现前因新模块缺失取得 `ModuleNotFoundError` RED，迁移后证明不会加载 `manyselves.core.reporting`；旧路径引用为 0。Agent focused `37 passed`，主工作区 taxonomy/models/ownership 选择 `18 passed`，新模块/ownership Ruff、全部消费者 import-order Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。`hashlib` 仅是旧 workbook snapshot 行为原样搬迁，没有新增或扩展 Hash/CAS 逻辑。
 - FA-02 新增 `runtime/agent_execution.py`：服务直接管理 `(workflow_id, conversation_key)` session registry、AgentLoop 创建/恢复/启动/复用、单轮消息发布与 terminal 等待、turn completion 和 workflow close；该模块只依赖中立 `AgentSessionLoop`/`AgentMessageBus` 结构协议，不导入历史 `core` 具体类。Reporting 生产路径已改用 `start_or_restore`、`dispatch_turn`、`wait_until_turn_complete` 和 `close_workflow`，不再直接 `loop.start/stop`、`bus.wait_for` 或构造 `UserMessage`。
 - AgentExecutionService Characterization 先因模块不存在取得 RED；Runtime execution/adapter/recovery `13 passed`，Reporting stable-session/persisted-recovery/auditor-isolation/max-token/tool-slice/no-progress/correction `8 passed`，声明式 recovery policy 选择 `5 passed`。定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。新服务未新增 Gate、Hash、CAS、锁或生产依赖；Reporting 原有 correlation/hash 仍原地保留且未复制。
 - FA-02 恢复循环继续收敛：Runtime 用 `AgentRecoveryCompleted/Required/Stopped` 分型观察直接分派 RecoveryController 的动作，Capability 端口统一为 async 的 terminal 解释、领域消息构造、stop 持久化与 result reuse；移除了可冲突 boolean/optional 组合、sync/async 双态、`None` 拒绝语义和 action compatibility 判断门禁。Reporting 的真实 natural-language-without-submission 现在通过 `execute_with_recovery` 在原 session 执行 CORRECT/STOP/FAIL，Reporting 仅构造 correction Prompt、解码 typed result 和保留既有结果持久化。

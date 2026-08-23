@@ -6,17 +6,18 @@ import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import (
-    ChiefChapterLaneSubmission,
-    ChiefChapterLaneRevisionSubmission,
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
+    ChiefChapterLaneRevisionSubmission,
+    ChiefChapterLaneSubmission,
+    EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
-    EditedReportSubmission,
 )
 from manyselves.core.reporting.final_specialization import final_lane_specialization
 from manyselves.core.reporting.input_contracts import (
@@ -28,10 +29,9 @@ from manyselves.core.reporting.models import (
     REPORT_MODULE_IDS,
     SpecialTopicPlan,
 )
-from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.reporting.parallel_runtime import AggregateState, RecoveryStateStore
+from manyselves.core.reporting.store import ReportingStore
+from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 
 def _read_json(service: SimpleNamespace, ref: str) -> dict:

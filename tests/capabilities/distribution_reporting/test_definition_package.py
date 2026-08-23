@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,19 @@ from manyselves.kernel.contracts import ContractValidationError, build_contract_
 from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import EndWorkflowAction, WorkflowCompiler
+
+
+def test_reporting_taxonomy_is_physically_owned_by_the_capability() -> None:
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.domain.taxonomy"
+    )
+    taxonomy = import_module(module_name)
+
+    assert taxonomy.SubmoduleDefinition.__module__ == module_name
+    assert taxonomy.ModuleDefinition.__module__ == module_name
+    assert taxonomy.REPORT_TAXONOMY["2.4"].id == "2.4"
+    assert taxonomy.resolve_submodule.__module__ == module_name
+    assert find_spec("manyselves.core.reporting" + ".taxonomy") is None
 
 
 def test_importing_capability_package_loads_only_the_definition_entrypoint() -> None:

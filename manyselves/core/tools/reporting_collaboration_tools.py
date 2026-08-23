@@ -14,6 +14,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    resolve_submodule,
+)
+
 from ...interfaces.types import (
     AgentResultMessage,
     BlockedNoticeMessage,
@@ -85,7 +90,6 @@ from ..reporting.parallel_runtime import TaskAttemptStore, TaskCorrelation
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
 from ..reporting.submission_contracts import submission_schema
-from ..reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .document_tool import InspectDocumentTool
 from .registry import Tool
 

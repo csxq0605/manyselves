@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import (
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
 )
 from manyselves.core.reporting.review_lifecycle import run_module_review
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
 from tests.reporting.test_agent_workflow import _module, _ScriptedRunner
 

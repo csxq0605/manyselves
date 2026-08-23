@@ -9,6 +9,7 @@ from typing import Any
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     module_cohort as module_cohort_models,
 )
@@ -45,7 +46,6 @@ from .declarative_module_lane import (
     ModuleSubjectValidator,
     execute_declarative_module_lane,
 )
-from .taxonomy import REPORT_TAXONOMY
 
 
 class DeclarativeModuleCohortError(RuntimeError):

@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import EditedReportSubmission, ModuleSubmission
 from manyselves.core.reporting.declarative_reporting_tail import (
     execute_declarative_reporting_tail,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import _DeliveryContext
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder

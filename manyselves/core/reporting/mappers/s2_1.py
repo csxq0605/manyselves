@@ -4,7 +4,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from ..taxonomy import resolve_submodule
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
+
 from .common import MappingGap, MappingResult, make_evidence
 
 _DOCUMENT_EXACT_ROUTES = {

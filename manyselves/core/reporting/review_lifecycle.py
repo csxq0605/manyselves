@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from pydantic import Field
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     ChiefRevisionSubmission,
@@ -83,7 +85,6 @@ from .parallel_runtime import (
 from .review_preflight import evaluate_module_review_preflight
 from .revision_diff import build_revision_diff
 from .source_ledger import SourceLedger
-from .taxonomy import REPORT_TAXONOMY
 
 if TYPE_CHECKING:
     from .workflow import ReportWorkflowRunner

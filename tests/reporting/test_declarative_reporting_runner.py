@@ -8,6 +8,7 @@ import pytest
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleRuntimeLaneContext,
@@ -63,7 +64,6 @@ from manyselves.core.reporting.review_lifecycle import (
     ModuleRevisionPreparation,
 )
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import (
     ReportingNeedsDecisionError,
     ReportingRunBudget,

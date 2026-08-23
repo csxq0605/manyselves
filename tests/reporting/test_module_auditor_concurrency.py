@@ -6,12 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import ModuleSubmission
 from manyselves.core.reporting.input_contracts import ReviewCompletionRecord
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
 from manyselves.core.reporting.store import ReportingStore
-
+from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
 
 MODULES = ("2.1", "2.2", "2.3", "2.4", "2.5")
 

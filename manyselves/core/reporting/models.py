@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .taxonomy import resolve_submodule
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
 
 REPORT_MODULE_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5")
 REPORT_FINAL_SECTION_IDS = (

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -18,12 +20,11 @@ from manyselves.core.reporting.agentic_models import (
     TemplateSkillSubmission,
 )
 from manyselves.core.reporting.claim_ledger import ClaimLedger
-from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.input_contracts import (
+    INPUT_CONTRACT_EXAMPLES,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossOwnerInput,
-    INPUT_CONTRACT_EXAMPLES,
     ModuleContentView,
     ModuleReviewInput,
     TemplateDistillationInput,
@@ -37,13 +38,12 @@ from manyselves.core.reporting.submission_contracts import (
     render_submission_contract,
     submission_schema,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
     SubmissionValidationError,
     SubmitResultTool,
-    WriteResultPartTool,
     WriteResultPartsTool,
+    WriteResultPartTool,
 )
 
 

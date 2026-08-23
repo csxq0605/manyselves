@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
     CrossReviewFinding,
@@ -32,7 +33,6 @@ from manyselves.core.reporting.submission_contracts import (
     submission_schema,
     undescribed_property_paths,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _module(module_id: str = "2.1", revision: int = 0) -> ModuleSubmission:

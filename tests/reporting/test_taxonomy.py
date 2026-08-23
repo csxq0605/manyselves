@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,13 +8,47 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 
-from manyselves.core.reporting.models import ManifestFile, ProjectManifest
-from manyselves.core.reporting.taxonomy import (
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     reset_report_taxonomy,
     resolve_submodule,
 )
+from manyselves.core.reporting.models import ManifestFile, ProjectManifest
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
+
+
+def test_capability_taxonomy_import_is_independent_of_core_reporting() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    "from manyselves.capabilities.distribution_reporting.domain "
+                    "import taxonomy",
+                    "print(json.dumps({",
+                    "    'module': taxonomy.__name__,",
+                    "    'reporting_modules': sorted(",
+                    "        name for name in sys.modules",
+                    "        if name.startswith('manyselves.core.reporting')",
+                    "    ),",
+                    "}))",
+                )
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "module": (
+            "manyselves.capabilities.distribution_reporting.domain.taxonomy"
+        ),
+        "reporting_modules": [],
+    }
 
 
 def test_taxonomy_contains_fixed_module_24_submodules() -> None:

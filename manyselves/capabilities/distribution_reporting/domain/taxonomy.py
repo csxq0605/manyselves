@@ -1,16 +1,16 @@
-"""Run-scoped report taxonomy shared by coverage, drafting, and review stages.
+"""Capability-owned run-scoped taxonomy for distribution reporting.
 
 The built-in tree is the process default for non-authoring inspection.
 Every new authoring run replaces it with the immutable tree parsed from that
 run's frozen S4-6 workbook.
 """
 
+import hashlib
+import re
 from collections.abc import Iterator, Mapping
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
-import re
 from typing import Any
 
 from openpyxl import load_workbook

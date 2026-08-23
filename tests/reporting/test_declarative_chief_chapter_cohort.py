@@ -6,6 +6,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.chief_chapter import (
     DeclarativeChiefChapterOutcome,
 )
@@ -24,7 +25,6 @@ from manyselves.core.reporting.declarative_reporting_tail import (
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry

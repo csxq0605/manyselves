@@ -13,8 +13,9 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+
 from .agentic_models import SUBMISSION_INPUT_TYPES, TEMPLATE_ROLE_SKILL_IDS
-from .taxonomy import REPORT_TAXONOMY
 
 FIELD_GUIDANCE: dict[str, str] = {
     "action": "Stage-specific action selected from the declared enum; use exactly one allowed value.",

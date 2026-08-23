@@ -7,6 +7,10 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
@@ -44,7 +48,6 @@ from manyselves.core.reporting.models import (
     SpecialTopicPlan,
 )
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry

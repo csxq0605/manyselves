@@ -15,6 +15,7 @@ from manyselves.capabilities.distribution_reporting import (
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeMainExceptionUserInput,
 )
@@ -117,7 +118,6 @@ from .review_lifecycle import (
     accept_main_exception_decision,
     prepare_main_exception_decision,
 )
-from .taxonomy import REPORT_TAXONOMY
 from .workflow import (
     AgentWorkflowError,
     ReportingNeedsDecisionError,

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerPipelineOutcome,
 )
@@ -48,7 +49,6 @@ from manyselves.core.reporting.parallel_runtime import (
     TaskTerminal,
 )
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus, resume_waiting_input

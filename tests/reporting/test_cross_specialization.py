@@ -5,15 +5,15 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.cross_specialization import (
     CROSS_LANE_SPECIALIZATIONS,
 )
 from manyselves.core.reporting.input_contracts import (
-    CrossReviewInput,
     INPUT_CONTRACT_EXAMPLES,
+    CrossReviewInput,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def test_every_cross_lane_has_a_distinct_contract_review_focus() -> None:

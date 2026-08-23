@@ -5,10 +5,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+)
+
 from .agentic_models import ClaimRecord, EditedReportSubmission, ModuleSubmission
 from .models import EvidenceItem, PhotoAsset, SpecialTopicPlan
 from .rendering.pds_docx_renderer import ReportPhoto, ReportTable
-from .taxonomy import REPORT_TAXONOMY, compose_module_markdown
 
 
 def approved_module_marker(module_id: str) -> str:

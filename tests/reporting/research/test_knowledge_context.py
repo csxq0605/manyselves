@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.models import SpecialTopicPlan
 from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _write(path: Path, content: str) -> None:

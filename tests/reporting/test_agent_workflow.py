@@ -9,6 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    report_taxonomy_snapshot,
+    reset_report_taxonomy,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.agentic_models import (
@@ -83,11 +88,6 @@ from manyselves.core.reporting.review_lifecycle import (
 )
 from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import (
-    REPORT_TAXONOMY,
-    report_taxonomy_snapshot,
-    reset_report_taxonomy,
-)
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.reporting.workflow import (
     AgentWorkflowError,

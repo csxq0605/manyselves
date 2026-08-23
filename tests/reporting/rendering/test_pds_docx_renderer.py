@@ -10,6 +10,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
 from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.rendering.handoff_docx import PackagedV2DocxCore
@@ -23,7 +24,6 @@ from manyselves.core.reporting.rendering.pds_docx_renderer import (
     ReportPhoto,
     ReportTable,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _set_style_east_asia_font(style, font_name: str) -> None:

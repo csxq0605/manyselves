@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.agentic_models import (
     ModuleReviewFindingSubmission,
     ModuleSubmission,
@@ -11,7 +12,6 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.declarative_module_cohort import (
     execute_declarative_module_cohort,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,

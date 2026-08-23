@@ -11,6 +11,11 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    activate_report_taxonomy,
+    reset_report_taxonomy,
+)
+
 from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
     EditedReportSubmission,
@@ -18,6 +23,7 @@ from .agentic_models import (
     ModuleSubmission,
     TaskEnvelope,
 )
+from .locks import exclusive_reporting_writer_lock
 from .models import (
     REPORT_MODULE_IDS,
     EvidenceItem,
@@ -26,20 +32,19 @@ from .models import (
     ReportRequest,
     RevisionRequest,
 )
+from .parallel_runtime import (
+    ProjectWriteLeaseManager,
+    bind_project_write_lease,
+    reset_project_write_lease,
+)
 from .session_summary import AgentSessionSummary
 from .skills.service import ProjectSkillEvolutionService
-from .taxonomy import (
-    activate_report_taxonomy,
-    reset_report_taxonomy,
-)
 from .versions import ReportVersion, ReportVersionStore
 from .workflow import (
     ReportingNeedsDecisionError,
     ReportWorkflowRunner,
     ScopeExpansionNeededError,
 )
-from .locks import exclusive_reporting_writer_lock
-from .parallel_runtime import bind_project_write_lease, reset_project_write_lease, ProjectWriteLeaseManager
 
 if TYPE_CHECKING:
     from .service import ReportingRunResult, ReportingService

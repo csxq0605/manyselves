@@ -6,6 +6,12 @@ from uuid import uuid4
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+    resolve_submodule,
+)
+
 from .models import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -20,7 +26,6 @@ from .models import (
     SpecialTopicPlan,
     chapter_section_ids,
 )
-from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
 
 class StrictModel(BaseModel):

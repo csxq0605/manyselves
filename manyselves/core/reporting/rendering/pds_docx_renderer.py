@@ -18,6 +18,11 @@ from docx.shared import Cm, Pt
 from PIL import Image, ImageOps
 from pydantic import Field, field_validator, model_validator
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    resolve_submodule,
+)
+
 from ..agentic_models import StrictModel
 from ..claim_ledger import ClaimLedger
 from ..models import REPORT_MODULE_IDS, SpecialTopicPlan
@@ -28,7 +33,6 @@ from ..report_markdown import (
     markdown_table,
     strip_leading_module_heading,
 )
-from ..taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .handoff_docx import HandoffDocxCore
 from .packaged_docx import _expected_markdown_fragments
 

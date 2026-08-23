@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+
 from .models import REPORT_MODULE_IDS, SpecialTopicPlan
-from .taxonomy import REPORT_TAXONOMY
 
 
 @dataclass(frozen=True, slots=True)

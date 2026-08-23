@@ -3,6 +3,8 @@
 from collections.abc import Mapping
 from typing import Any
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+
 from .models import (
     REPORT_MODULE_IDS,
     CoverageEntry,
@@ -12,7 +14,6 @@ from .models import (
     ReportRequest,
     SubmoduleCoverageEntry,
 )
-from .taxonomy import REPORT_TAXONOMY
 
 
 def _missing_status(request: ReportRequest) -> CoverageStatus:

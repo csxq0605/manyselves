@@ -13,6 +13,10 @@ import manyselves.core.reporting.agent_runner as agent_runner_module
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.artifacts import ToolContractError
 from manyselves.core.artifacts.content_store import ContentAddressedStore
@@ -52,7 +56,6 @@ from manyselves.core.reporting.input_contracts import (
     TemplateDistillationInput,
     ValidationReport,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
 from manyselves.core.reporting.workflow import ReportingRunBudget
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (

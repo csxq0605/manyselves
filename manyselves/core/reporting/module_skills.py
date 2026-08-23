@@ -10,8 +10,12 @@ from typing import Literal
 
 import yaml
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    resolve_submodule,
+)
+
 from .config import ConfigurationError
-from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 @dataclass(frozen=True, slots=True)

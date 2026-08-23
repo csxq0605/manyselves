@@ -20,6 +20,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    compose_module_markdown,
+    parse_report_taxonomy_workbook,
+    reset_report_taxonomy,
+    resolve_submodule,
+)
+
 from ...kernel.definitions import RecoveryPolicyDefinition
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
@@ -165,14 +174,6 @@ from .scheduling import (
 from .session_summary import SessionSummaryStore
 from .source_ledger import SourceLedger
 from .special_topics import load_special_topic_plan
-from .taxonomy import (
-    REPORT_TAXONOMY,
-    activate_report_taxonomy,
-    compose_module_markdown,
-    parse_report_taxonomy_workbook,
-    reset_report_taxonomy,
-    resolve_submodule,
-)
 from .versions import ReportVersion
 
 if TYPE_CHECKING:

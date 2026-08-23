@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from .taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 
 
 @dataclass(frozen=True, slots=True)

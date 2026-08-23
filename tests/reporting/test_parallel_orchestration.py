@@ -1,4 +1,4 @@
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 
 
 def test_taxonomy_subsections_remain_document_parts_not_runtime_tasks() -> None:

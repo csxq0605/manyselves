@@ -9,12 +9,20 @@ from typing import Any, Literal
 
 from pydantic import Field, TypeAdapter, model_validator
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    resolve_submodule,
+)
+
 from .agentic_models import (
-    ClaimRecord,
-    ChapterScopedFinalReviewFinding,
-    CrossDecisionPack,
-    ChiefChapterLaneRevisionSubmission,
     FINAL_AUDIT_SECTION_IDS,
+    TEMPLATE_ROLE_SKILL_IDS,
+    TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
+    TEMPLATE_SKILL_TRANSFER_CATEGORIES,
+    ChapterScopedFinalReviewFinding,
+    ChiefChapterLaneRevisionSubmission,
+    ClaimRecord,
+    CrossDecisionPack,
     CrossReviewFinding,
     CrossSynthesisInput,
     EditedReportSubmission,
@@ -25,11 +33,8 @@ from .agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     StrictModel,
-    TEMPLATE_ROLE_SKILL_IDS,
-    TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
-    TEMPLATE_SKILL_TRANSFER_CATEGORIES,
-    TemplateRoleSkillId,
     TableSubmissionInput,
+    TemplateRoleSkillId,
 )
 from .models import (
     CHAPTER1_SECTION_IDS,
@@ -39,7 +44,6 @@ from .models import (
     chapter_section_ids,
 )
 from .submission_contracts import FIELD_GUIDANCE
-from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 class ModuleContentView(StrictModel):

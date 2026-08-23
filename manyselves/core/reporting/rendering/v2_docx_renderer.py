@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
-import hashlib
 import re
 import tempfile
 from contextvars import ContextVar
@@ -17,7 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 
 try:
     from PIL import Image, ImageOps

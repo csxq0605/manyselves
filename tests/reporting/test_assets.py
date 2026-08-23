@@ -2,6 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    compose_module_markdown,
+)
 from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     EditedReportSubmission,
@@ -18,7 +22,6 @@ from manyselves.core.reporting.assets import (
 from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
 
 
 def _deep_text(submodule_id: str, title: str) -> str:

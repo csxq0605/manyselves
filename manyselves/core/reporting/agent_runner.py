@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
     AgentResponse,
@@ -147,7 +149,6 @@ from .skills.resolver import RuntimeSkillResolver
 from .source_ledger import SourceLedger
 from .store import ReportingStore
 from .submission_contracts import submission_schema
-from .taxonomy import REPORT_TAXONOMY
 from .versions import SkillProvenance
 
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
