@@ -1,3 +1,4 @@
+import ast
 import json
 import subprocess
 import sys
@@ -16,6 +17,9 @@ from manyselves.capabilities.distribution_reporting.adapters import (
     build_reporting_tail_definition,
     load_reporting_agents,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.core.reporting.config import (
     AgentDefinition as ReportingAgentDefinition,
 )
@@ -26,7 +30,6 @@ from manyselves.core.reporting.config import (
 from manyselves.core.reporting.declarative_reporting_runner import (
     _compile_reporting_runtime,
 )
-from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
 from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
@@ -44,6 +47,86 @@ def test_reporting_taxonomy_is_physically_owned_by_the_capability() -> None:
     assert taxonomy.REPORT_TAXONOMY["2.4"].id == "2.4"
     assert taxonomy.resolve_submodule.__module__ == module_name
     assert find_spec("manyselves.core.reporting" + ".taxonomy") is None
+
+
+def test_reporting_models_are_physically_owned_by_the_capability() -> None:
+    _, registry = load_distribution_reporting_capability()
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.runtime.models.reporting"
+    )
+    definition = registry.require(
+        DefinitionKind.CONTRACT,
+        "distribution_reporting_input",
+    )
+    assert isinstance(definition, ContractDefinition)
+    assert definition.model == f"{module_name}:ReportRequest"
+    reporting = import_module(module_name)
+    model_names = (
+        "ReportingModel",
+        "SpecialTopicSectionRequirement",
+        "SpecialTopicPlan",
+        "SourceLocation",
+        "UserSupplement",
+        "ReportRequest",
+        "EvidenceDecisionRequest",
+        "RevisionRequest",
+        "ScopeExpansionRequest",
+        "ManifestFile",
+        "ProjectManifest",
+        "ParsedArtifact",
+        "PhotoAsset",
+        "EvidenceItem",
+        "CoverageStatus",
+        "SubmoduleCoverageEntry",
+        "CoverageEntry",
+        "CoverageMatrix",
+        "OutputArtifact",
+    )
+    for model_name in model_names:
+        assert getattr(reporting, model_name).__module__ == module_name
+    assert reporting.chapter_section_ids.__module__ == module_name
+    assert "CrossDecisionPack" not in vars(reporting)
+    assert "CrossDecisionPackView" not in vars(reporting)
+
+    source = Path(reporting.__file__).read_text(encoding="utf-8")
+    imports = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert all(
+        not any(
+            name.name.startswith("manyselves.core.reporting")
+            for name in node.names
+        )
+        if isinstance(node, ast.Import)
+        else not (node.module or "").startswith("manyselves.core.reporting")
+        for node in imports
+    )
+
+    contracts = build_contract_catalog(registry)
+    assert contracts["distribution_reporting_input"].json_schema() == (
+        reporting.ReportRequest.model_json_schema()
+    )
+
+
+def test_core_reporting_does_not_reexport_capability_models_or_keep_a_shim() -> None:
+    core_reporting = import_module("manyselves.core.reporting")
+
+    assert find_spec("manyselves.core.reporting.models") is None
+    for model_name in (
+        "CoverageEntry",
+        "CoverageMatrix",
+        "CoverageStatus",
+        "EvidenceItem",
+        "OutputArtifact",
+        "ParsedArtifact",
+        "ProjectManifest",
+        "ReportRequest",
+        "UserSupplement",
+        "SourceLocation",
+    ):
+        assert model_name not in vars(core_reporting)
 
 
 def test_importing_capability_package_loads_only_the_definition_entrypoint() -> None:

@@ -20,15 +20,16 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .agentic_models import StrictModel
-from .distributed_runtime import LocalEventStore
-from .headless_runtime import HeadlessReportingRuntime
-from .models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     ReportRequest,
     RevisionRequest,
     UserSupplement,
 )
+
+from .agentic_models import StrictModel
+from .distributed_runtime import LocalEventStore
+from .headless_runtime import HeadlessReportingRuntime
 from .parallel_runtime import atomic_write_json, exclusive_file_lock
 from .production_runtime import ProductionPolicy, SecurityAuditLog
 

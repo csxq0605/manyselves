@@ -18,6 +18,12 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_RESULT_PART_IDS,
+    CHIEF_SECTION_RESULT_PART_IDS,
+    EvidenceItem,
+    SpecialTopicPlan,
+)
 
 from ...interfaces.types import (
     AgentResultMessage,
@@ -80,12 +86,6 @@ from ..reporting.input_contracts import (
     WorkflowExceptionInput,
 )
 from ..reporting.message_router import artifact_path_refs, source_record_ids
-from ..reporting.models import (
-    CHIEF_RESULT_PART_IDS,
-    CHIEF_SECTION_RESULT_PART_IDS,
-    EvidenceItem,
-    SpecialTopicPlan,
-)
 from ..reporting.parallel_runtime import TaskAttemptStore, TaskCorrelation
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore

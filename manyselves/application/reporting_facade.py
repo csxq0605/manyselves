@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
 
-from ..core.reporting.models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceDecisionAction,
     ReportRequest,
     RevisionRequest,
     UserSupplement,
 )
+
 from .errors import CommandIdConflictError
 
 

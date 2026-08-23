@@ -3,7 +3,10 @@
 import hashlib
 from pathlib import Path
 
-from ..models import ManifestFile, ProjectManifest
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ManifestFile,
+    ProjectManifest,
+)
 
 _INPUT_MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

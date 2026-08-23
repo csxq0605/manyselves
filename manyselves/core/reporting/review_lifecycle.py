@@ -14,6 +14,10 @@ from uuid import uuid4
 from pydantic import Field
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
 
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
@@ -68,10 +72,6 @@ from .input_contracts import (
     final_audit_metadata_view,
     module_content_view,
     strip_runtime_claim_markers,
-)
-from .models import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
 )
 from .parallel_runtime import (
     AggregateState,

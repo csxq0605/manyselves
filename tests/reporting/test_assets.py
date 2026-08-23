@@ -6,6 +6,11 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+    SourceLocation,
+)
 from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     EditedReportSubmission,
@@ -20,7 +25,6 @@ from manyselves.core.reporting.assets import (
     validate_module_markdown_consistency,
 )
 from manyselves.core.reporting.input_contracts import ValidationReport
-from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
 
 

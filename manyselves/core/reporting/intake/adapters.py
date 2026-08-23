@@ -9,7 +9,11 @@ from docx import Document
 from openpyxl import load_workbook
 from PIL import Image
 
-from ..models import ManifestFile, ParsedArtifact, SourceLocation
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ManifestFile,
+    ParsedArtifact,
+    SourceLocation,
+)
 
 Parser = Callable[[Path, ManifestFile], list[ParsedArtifact]]
 

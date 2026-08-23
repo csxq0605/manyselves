@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from ..models import ReportingModel
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
 
 
 class RenderRequest(ReportingModel):

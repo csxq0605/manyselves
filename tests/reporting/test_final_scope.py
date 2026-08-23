@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
 from manyselves.core.reporting.agentic_models import FINAL_AUDIT_SECTION_IDS, FinalReviewFinding
 from manyselves.core.reporting.input_contracts import (
     AggregateFinalReviewInput,
@@ -17,11 +22,6 @@ from manyselves.core.reporting.review_lifecycle import (
     _final_audit_markdown,
     _final_audit_section_bodies,
 )
-from manyselves.core.reporting.models import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
-)
-
 
 RUN = "run-final-scope"
 COMPLETION = f"Work/runs/{RUN}/reviews/cross-completion.json"

@@ -18,6 +18,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_review 
     DeclarativeFinalChiefRevisionOutcome,
     DeclarativeFinalReviewContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    REPORT_MODULE_IDS,
+    EvidenceItem,
+    SpecialTopicPlan,
+)
 from manyselves.core.reporting.agentic_models import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
@@ -41,12 +47,6 @@ from manyselves.core.reporting.declarative_final_review_cycle import (
     compose_final_review_agent_invokers,
 )
 from manyselves.core.reporting.input_contracts import ValidationReport
-from manyselves.core.reporting.models import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    REPORT_MODULE_IDS,
-    EvidenceItem,
-    SpecialTopicPlan,
-)
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition

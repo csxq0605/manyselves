@@ -17,6 +17,20 @@ from typing import Literal
 from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    CostControlMode,
+    EvidenceDecisionAction,
+    EvidenceDecisionRequest,
+    EvidenceItem,
+    OutputArtifact,
+    PhotoAsset,
+    ProjectManifest,
+    ReportRequest,
+    RevisionRequest,
+    UserSupplement,
+)
+
 from ...config.schema import AgentDefaults
 from ...interfaces.types import AgentType, SystemNotice
 from ..artifacts.content_store import ContentAddressedStore
@@ -36,19 +50,6 @@ from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .locks import exclusive_reporting_writer_lock
 from .mappers import map_s2_1, map_s4_4, map_s4_6
-from .models import (
-    REPORT_MODULE_IDS,
-    CostControlMode,
-    EvidenceDecisionAction,
-    EvidenceDecisionRequest,
-    EvidenceItem,
-    OutputArtifact,
-    PhotoAsset,
-    ProjectManifest,
-    ReportRequest,
-    RevisionRequest,
-    UserSupplement,
-)
 from .parallel_runtime import (
     ProjectWriteLease,
     ProjectWriteLeaseManager,

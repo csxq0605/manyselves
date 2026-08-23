@@ -13,6 +13,11 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     final_chapter as final_chapter_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    chapter_section_ids,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -45,11 +50,6 @@ from .agentic_models import (
 from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
 from .input_contracts import FinalChapterLaneInput
-from .models import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    chapter_section_ids,
-)
 
 FINAL_CHAPTER_IDS = ("1", "3", "4")
 

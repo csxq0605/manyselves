@@ -4,9 +4,12 @@ from pathlib import Path
 import pytest
 from docx import Document
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    OutputArtifact,
+    ReportRequest,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.models import OutputArtifact, ReportRequest
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.tools.task_board import TaskBoard

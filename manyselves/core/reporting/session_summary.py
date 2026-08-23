@@ -8,8 +8,9 @@ from uuid import uuid4
 
 from pydantic import Field
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
+
 from .agentic_models import AgentResult, TaskEnvelope
-from .models import ReportingModel
 from .store import ReportingStore
 
 

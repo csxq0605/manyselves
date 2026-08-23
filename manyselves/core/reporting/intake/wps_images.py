@@ -6,7 +6,10 @@ from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
-from ..models import EvidenceItem, PhotoAsset
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+)
 
 _CELL_IMAGES = "xl/cellimages.xml"
 _CELL_IMAGE_RELS = "xl/_rels/cellimages.xml.rels"

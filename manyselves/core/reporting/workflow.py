@@ -28,6 +28,21 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    REPORT_MODULE_IDS,
+    CostControlMode,
+    CoverageMatrix,
+    EvidenceItem,
+    OutputArtifact,
+    PhotoAsset,
+    ProjectManifest,
+    RevisionRequest,
+    ScopeExpansionRequest,
+    SpecialTopicPlan,
+    chapter_section_ids,
+)
 
 from ...kernel.definitions import RecoveryPolicyDefinition
 from ..usage_ledger import UsageLedger
@@ -97,21 +112,6 @@ from .input_contracts import (
 )
 from .input_snapshot import RunInputSnapshotStore
 from .intake.wps_images import extract_wps_images
-from .models import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    REPORT_MODULE_IDS,
-    CostControlMode,
-    CoverageMatrix,
-    EvidenceItem,
-    OutputArtifact,
-    PhotoAsset,
-    ProjectManifest,
-    RevisionRequest,
-    ScopeExpansionRequest,
-    SpecialTopicPlan,
-    chapter_section_ids,
-)
 from .parallel_runtime import (
     AggregateState,
     ArtifactRef,

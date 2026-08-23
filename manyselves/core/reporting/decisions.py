@@ -3,7 +3,11 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import EvidenceDecisionAction, EvidenceDecisionRequest
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceDecisionAction,
+    EvidenceDecisionRequest,
+)
+
 from .store import ReportingStore
 
 

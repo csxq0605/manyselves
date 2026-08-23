@@ -9,6 +9,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
 from manyselves.core.reporting.agentic_models import (
     FINAL_AUDIT_SECTION_IDS,
 )
@@ -19,7 +20,6 @@ from manyselves.core.reporting.input_contracts import (
     FinalReviewInput,
     ValidationReport,
 )
-from manyselves.core.reporting.models import SpecialTopicPlan
 from manyselves.core.reporting.report_markdown import (
     CanonicalReportContent,
     compose_canonical_markdown,

@@ -13,6 +13,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    ReportRequest,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
@@ -52,7 +56,6 @@ from manyselves.core.reporting.input_contracts import (
     ValidationReport,
     module_content_view,
 )
-from manyselves.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
 from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewAcceptance,

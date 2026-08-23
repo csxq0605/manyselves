@@ -6,9 +6,9 @@ import json
 import threading
 from pathlib import Path
 
-from ..models import EvidenceItem
-from ..store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import EvidenceItem
 
+from ..store import ReportingStore
 
 _LOCKS_GUARD = threading.Lock()
 _LOCKS: dict[Path, threading.RLock] = {}

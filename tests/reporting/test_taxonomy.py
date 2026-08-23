@@ -13,7 +13,10 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
-from manyselves.core.reporting.models import ManifestFile, ProjectManifest
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ManifestFile,
+    ProjectManifest,
+)
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 

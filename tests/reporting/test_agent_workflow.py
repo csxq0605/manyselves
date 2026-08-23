@@ -14,6 +14,14 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     report_taxonomy_snapshot,
     reset_report_taxonomy,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CoverageMatrix,
+    ProjectManifest,
+    ReportRequest,
+    RevisionRequest,
+    SpecialTopicPlan,
+    UserSupplement,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.agentic_models import (
@@ -47,14 +55,6 @@ from manyselves.core.reporting.input_contracts import (
     RequestedModuleChange,
     ReviewCompletionRecord,
     ValidationReport,
-)
-from manyselves.core.reporting.models import (
-    CoverageMatrix,
-    ProjectManifest,
-    ReportRequest,
-    RevisionRequest,
-    SpecialTopicPlan,
-    UserSupplement,
 )
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,

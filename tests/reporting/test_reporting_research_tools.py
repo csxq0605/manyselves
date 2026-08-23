@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import EvidenceItem
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.models import EvidenceItem
 from manyselves.core.reporting.research.evidence_memory import EvidenceResearchMemory
 from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 from manyselves.core.reporting.source_ledger import SourceLedger

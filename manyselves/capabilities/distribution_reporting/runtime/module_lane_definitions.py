@@ -1,6 +1,8 @@
 """Definition specializations for the distribution-reporting module Lane."""
 
-from manyselves.core.reporting.models import REPORT_MODULE_IDS
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionRegistry,

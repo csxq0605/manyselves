@@ -8,6 +8,7 @@ import pytest
 from docx import Document
 
 from manyselves import headless_service
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportRequest
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.execution_runtime import (
     ProviderRouter,
@@ -17,7 +18,6 @@ from manyselves.core.reporting.headless_runtime import (
     HeadlessReportingRuntime,
     RuntimePaths,
 )
-from manyselves.core.reporting.models import ReportRequest
 from manyselves.core.reporting.service import ReportingRunResult
 
 

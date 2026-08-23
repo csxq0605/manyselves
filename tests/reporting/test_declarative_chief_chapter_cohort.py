@@ -10,6 +10,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.models.chief_chapter import (
     DeclarativeChiefChapterOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.core.reporting.agentic_models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     ChiefChapterLaneSubmission,
@@ -23,7 +26,6 @@ from manyselves.core.reporting.declarative_chief_chapter_cohort import (
 from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
-from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition

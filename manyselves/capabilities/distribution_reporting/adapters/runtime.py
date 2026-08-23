@@ -10,7 +10,10 @@ from manyselves.application.reporting_facade import (
     ReportingNotFoundError,
     ReportingStateInvalidError,
 )
-from manyselves.core.reporting.models import ReportRequest, UserSupplement
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ReportRequest,
+    UserSupplement,
+)
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
 from manyselves.runtime.capability_binding import (

@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER3_SECTION_IDS,
+    SpecialTopicPlan,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
@@ -19,14 +23,12 @@ from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,
     FinalChapterLaneInput,
 )
-from manyselves.core.reporting.models import CHAPTER3_SECTION_IDS, SpecialTopicPlan
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
     SubmitResultTool,
     WriteResultPartTool,
 )
-
 
 RUN = "run-chapter-tools"
 CHIEF_SUBJECT = f"Work/runs/{RUN}/edited-revisions/chief-r0.json"
@@ -472,8 +474,8 @@ def test_runner_chief_lane_exposes_exact_parts_and_one_output_schema(tmp_path: P
     # Chapter 1 has static sections and therefore the three corresponding
     # CHIEF_SECTION_RESULT_PART_IDS are the only writable parts.
     contract_ref = _write_contract(tmp_path, contract)
-    from manyselves.core.reporting.agentic_models import TaskEnvelope
     from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+    from manyselves.core.reporting.agentic_models import TaskEnvelope
     from manyselves.core.reporting.config import load_packaged_agents
 
     envelope = TaskEnvelope(

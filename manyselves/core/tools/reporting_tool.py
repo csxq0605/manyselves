@@ -6,11 +6,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
-from ...config.schema import AgentDefaults
-from ...interfaces.types import AgentStatus, ReportMessage, StatusChange, TaskStatus
-from ..loops.bus import MessageBus
-from ..providers.base import LLMProvider
-from ..reporting.models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CostControlMode,
     EvidenceDecisionAction,
     ReportOperation,
@@ -18,6 +14,11 @@ from ..reporting.models import (
     RevisionRequest,
     UserSupplement,
 )
+
+from ...config.schema import AgentDefaults
+from ...interfaces.types import AgentStatus, ReportMessage, StatusChange, TaskStatus
+from ..loops.bus import MessageBus
+from ..providers.base import LLMProvider
 from ..reporting.service import ReportingService
 from .outcomes import ToolOutcome, normalize_tool_outcome
 from .registry import Tool

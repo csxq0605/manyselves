@@ -6,7 +6,10 @@ import hashlib
 import re
 from pathlib import Path
 
-from .models import SpecialTopicPlan, SpecialTopicSectionRequirement
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    SpecialTopicPlan,
+    SpecialTopicSectionRequirement,
+)
 
 SPECIAL_TOPIC_FILENAME_MARKER = "专项问题分析"
 MAX_SPECIAL_TOPIC_SOURCE_CHARS = 100_000

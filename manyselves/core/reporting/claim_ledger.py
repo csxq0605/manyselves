@@ -14,6 +14,11 @@ from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+)
+
 from .agentic_models import (
     CitationEntry,
     CitationPlan,
@@ -22,7 +27,6 @@ from .agentic_models import (
     SourceRecord,
     StrictModel,
 )
-from .models import EvidenceItem, PhotoAsset
 
 
 class CitationBindingError(ValueError):

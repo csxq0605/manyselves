@@ -3,6 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    SpecialTopicPlan,
+    SpecialTopicSectionRequirement,
+)
 from manyselves.core.reporting.agentic_models import (
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
@@ -12,8 +16,6 @@ from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,
     FinalChapterLaneInput,
 )
-from manyselves.core.reporting.models import SpecialTopicPlan, SpecialTopicSectionRequirement
-
 
 RUN = "run-lane-contract"
 SUBJECT = f"Work/runs/{RUN}/edited-revisions/chief-r0.json"

@@ -5,7 +5,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..models import EvidenceItem, ReportingModel, SourceLocation
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    ReportingModel,
+    SourceLocation,
+)
 
 _DISPIMG_PATTERN = re.compile(r'DISPIMG\("([^"]+)"', re.IGNORECASE)
 

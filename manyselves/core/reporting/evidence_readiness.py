@@ -1,6 +1,11 @@
 """Deterministic missing-evidence policy before professional work starts."""
 
-from .models import CoverageMatrix, CoverageStatus, ReportingModel, ReportRequest
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CoverageMatrix,
+    CoverageStatus,
+    ReportingModel,
+    ReportRequest,
+)
 
 
 class EvidenceReadinessDecision(ReportingModel):

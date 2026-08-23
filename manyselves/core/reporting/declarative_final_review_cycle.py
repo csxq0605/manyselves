@@ -16,6 +16,15 @@ from manyselves.capabilities.distribution_reporting.runtime.models import (
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
+    SpecialTopicPlan,
+    chapter_section_ids,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -48,15 +57,6 @@ from .input_contracts import (
     FinalAuditSnapshot,
     FinalChapterLaneInput,
     ReviewCompletionRecord,
-)
-from .models import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    REPORT_MODULE_IDS,
-    EvidenceItem,
-    PhotoAsset,
-    SpecialTopicPlan,
-    chapter_section_ids,
 )
 
 

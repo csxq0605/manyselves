@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from manyselves.core.reporting.declarative_delivery import (
-    DeclarativeDeliveryRuntime,
-)
-from manyselves.core.reporting.models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     OutputArtifact,
     PhotoAsset,
     ReportRequest,
+)
+from manyselves.core.reporting.declarative_delivery import (
+    DeclarativeDeliveryRuntime,
 )
 from manyselves.core.reporting.workflow import _DeliveryContext
 

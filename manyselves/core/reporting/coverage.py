@@ -4,8 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-
-from .models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     CoverageEntry,
     CoverageMatrix,

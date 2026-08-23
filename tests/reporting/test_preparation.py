@@ -7,11 +7,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting import preparation as preparation_module
-from manyselves.core.reporting.mappers.common import MappingResult
-from manyselves.core.reporting.models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     ManifestFile,
     PhotoAsset,
@@ -19,6 +15,10 @@ from manyselves.core.reporting.models import (
     ReportRequest,
     SourceLocation,
 )
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider
+from manyselves.core.reporting import preparation as preparation_module
+from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.preparation import (
     FilePreparationResult,
     prepare_manifest_file,

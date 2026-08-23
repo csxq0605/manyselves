@@ -34,6 +34,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRevisionPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_definitions import (
     register_module_runtime_lane_specializations,
 )
@@ -109,7 +112,6 @@ from .declarative_module_cohort import (
 from .declarative_reporting_tail import _ReportingTailAdapters
 from .declarative_task_binding import bind_declared_task
 from .distributed_runtime import LocalEventStore
-from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion
 from .review_lifecycle import (
     DeferredMainDecision,

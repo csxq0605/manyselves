@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
 
 from ..input_snapshot import RunInputSnapshotStore
-from ..models import SpecialTopicPlan
 from ..source_ledger import SourceLedger
 from ..store import ReportingStore
 from .reference_library import ReferenceDocument, ReferenceLibrary

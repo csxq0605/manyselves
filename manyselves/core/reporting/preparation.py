@@ -11,16 +11,17 @@ from typing import Literal
 
 from pydantic import Field
 
-from .intake.adapters import IntakeAdapterRegistry
-from .intake.wps_images import extract_wps_images
-from .mappers import map_s2_1, map_s4_4, map_s4_6
-from .models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     ManifestFile,
     ParsedArtifact,
     PhotoAsset,
     ReportingModel,
 )
+
+from .intake.adapters import IntakeAdapterRegistry
+from .intake.wps_images import extract_wps_images
+from .mappers import map_s2_1, map_s4_4, map_s4_6
 
 
 class FilePreparationResult(ReportingModel):

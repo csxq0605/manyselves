@@ -4,7 +4,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from ..models import ReportingModel
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
 
 
 class WorkbookSheetArtifact(ReportingModel):

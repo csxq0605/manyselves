@@ -1,4 +1,4 @@
-"""Typed carriers shared by the power-distribution reporting workflow."""
+"""Typed carriers owned by the distribution-reporting capability runtime."""
 
 import re
 from datetime import datetime, timezone
@@ -105,20 +105,6 @@ class ReportingModel(BaseModel):
     """Strict base model for persisted workflow state."""
 
     model_config = ConfigDict(extra="forbid")
-
-
-def __getattr__(name: str):
-    """Lazily expose the Cross decision carrier without an import cycle."""
-
-    if name == "CrossDecisionPack":
-        from . import agentic_models
-
-        return getattr(agentic_models, name)
-    if name == "CrossDecisionPackView":
-        from . import input_contracts
-
-        return input_contracts.CrossDecisionPackView
-    raise AttributeError(name)
 
 
 class SpecialTopicSectionRequirement(ReportingModel):

@@ -13,9 +13,10 @@ from typing import Literal, Self
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
+
 from ..artifacts.content_store import ContentAddressedStore
 from .delivery import DeliveryReceipt
-from .models import ReportingModel
 from .parallel_runtime import validate_bound_project_write_lease
 from .store import ReportingStore
 from .versions import ReportVersionStore

@@ -17,6 +17,10 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_RESULT_PART_IDS,
+    CHIEF_SECTION_RESULT_PART_IDS,
+)
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
@@ -130,7 +134,6 @@ from .input_contracts import (
 )
 from .input_snapshot import RunInputSnapshotStore
 from .message_router import WorkflowMessageRouter, artifact_path_refs
-from .models import CHIEF_RESULT_PART_IDS, CHIEF_SECTION_RESULT_PART_IDS
 from .module_skills import ModuleSkillLibrary
 from .parallel_runtime import (
     IdentityLease,

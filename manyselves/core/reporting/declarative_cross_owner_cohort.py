@@ -19,6 +19,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -53,7 +56,6 @@ from .agentic_models import (
     WorkflowDecisionSubmission,
 )
 from .declarative_task_binding import bind_declared_task
-from .models import REPORT_MODULE_IDS
 from .review_lifecycle import (
     CrossOwnerInitialReviewAcceptance,
     CrossOwnerInitialReviewPreparation,

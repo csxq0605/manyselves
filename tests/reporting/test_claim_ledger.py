@@ -3,13 +3,17 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+    SourceLocation,
+)
 from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     SourceKind,
     SourceRecord,
 )
 from manyselves.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
-from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 
 
 def _first_submodule(module_id: str) -> str:

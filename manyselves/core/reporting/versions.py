@@ -7,17 +7,21 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from pydantic import ConfigDict, Field, field_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    ReportingModel,
+)
+
 from ..artifacts.content_store import ContentAddressedStore
 from ..artifacts.storage_policy import CasPolicy, StorageMode
 from .delivery import DeliveryReceipt
-from .models import REPORT_MODULE_IDS, ReportingModel
 from .parallel_runtime import (
     current_bound_project_write_lease,
     validate_bound_project_write_lease,

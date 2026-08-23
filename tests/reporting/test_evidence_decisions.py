@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceDecisionRequest,
+)
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
-from manyselves.core.reporting.models import EvidenceDecisionRequest
 
 
 def _decision() -> EvidenceDecisionRequest:

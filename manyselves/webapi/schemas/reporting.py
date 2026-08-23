@@ -6,7 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...core.reporting.models import ReportRequest, RevisionRequest, UserSupplement
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ReportRequest,
+    RevisionRequest,
+    UserSupplement,
+)
 
 
 class _Strict(BaseModel):

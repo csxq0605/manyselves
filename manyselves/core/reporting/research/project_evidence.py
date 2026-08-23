@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from ..models import EvidenceItem
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import EvidenceItem
 
 
 def project_evidence_locator(item: EvidenceItem) -> str:

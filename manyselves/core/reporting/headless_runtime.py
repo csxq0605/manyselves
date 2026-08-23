@@ -8,13 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    ReportRequest,
+    RevisionRequest,
+)
+
 from ...config.schema import AgentDefaults
 from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from .execution_runtime import ExecutionProfileCatalog, ProviderRouter
 from .job_runtime import LocalReportingJobStore, ReportingJob, ReportingJobWorker
-from .models import ReportRequest, RevisionRequest
 from .service import ReportingRunResult, ReportingService
 
 

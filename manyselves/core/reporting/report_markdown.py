@@ -6,8 +6,10 @@ import re
 from dataclasses import dataclass, field
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-
-from .models import REPORT_MODULE_IDS, SpecialTopicPlan
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    SpecialTopicPlan,
+)
 
 
 @dataclass(frozen=True, slots=True)

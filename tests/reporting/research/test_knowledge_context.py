@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.models import SpecialTopicPlan
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
 from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
 
 

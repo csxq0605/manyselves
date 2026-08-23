@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from manyselves.core.reporting.coverage import evaluate_coverage
-from manyselves.core.reporting.models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CoverageStatus,
     EvidenceItem,
     ReportRequest,
     SourceLocation,
 )
+from manyselves.core.reporting.coverage import evaluate_coverage
 
 
 def _evidence(

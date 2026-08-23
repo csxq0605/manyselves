@@ -16,8 +16,11 @@ from typing import Any
 
 from docx import Document
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
+
 from .delivery import DeliveryReceipt
-from .models import REPORT_MODULE_IDS
 
 
 class OutputVerificationError(ValueError):

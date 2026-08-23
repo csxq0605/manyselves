@@ -3,11 +3,15 @@ from zipfile import ZipFile
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+    SourceLocation,
+)
 from manyselves.core.reporting.intake.wps_images import (
     canonicalize_photo_bindings,
     extract_wps_images,
 )
-from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 
 
 def test_extract_wps_images_follows_cell_image_relationships(tmp_path: Path) -> None:

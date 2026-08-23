@@ -7,6 +7,11 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    REPORT_MODULE_IDS,
+    SpecialTopicPlan,
+)
 from manyselves.core.reporting.agentic_models import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
@@ -23,11 +28,6 @@ from manyselves.core.reporting.final_specialization import final_lane_specializa
 from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,
     FinalChapterLaneInput,
-)
-from manyselves.core.reporting.models import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    REPORT_MODULE_IDS,
-    SpecialTopicPlan,
 )
 from manyselves.core.reporting.parallel_runtime import AggregateState, RecoveryStateStore
 from manyselves.core.reporting.store import ReportingStore

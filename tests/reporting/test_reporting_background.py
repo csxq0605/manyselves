@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportRequest
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.models import ReportRequest
 from manyselves.core.reporting.service import ReportingRunResult
 from manyselves.core.tools.reporting_tool import ReportingRunController
 from manyselves.core.tools.task_board import TaskBoard

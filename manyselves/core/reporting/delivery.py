@@ -12,10 +12,13 @@ from typing import Literal
 from docx import Document
 from pydantic import Field, field_validator, model_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
+
 from ..artifacts.content_store import ContentAddressedStore, ContentBlob
 from ..artifacts.storage_policy import CasPolicy, StorageMode, StoredArtifact
 from .agentic_models import StrictModel
-from .models import REPORT_MODULE_IDS
 from .parallel_runtime import (
     current_bound_project_write_lease,
     validate_bound_project_write_lease,

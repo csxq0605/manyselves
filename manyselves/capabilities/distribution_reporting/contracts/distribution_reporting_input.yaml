@@ -2,4 +2,4 @@ id: distribution_reporting_input
 version: 1.0.0
 description: Current Reporting run request contract
 adapter: pydantic
-model: manyselves.core.reporting.models:ReportRequest
+model: manyselves.capabilities.distribution_reporting.runtime.models.reporting:ReportRequest

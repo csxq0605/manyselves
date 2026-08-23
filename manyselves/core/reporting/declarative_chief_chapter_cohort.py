@@ -14,6 +14,12 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     chief_chapter as chief_chapter_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    REPORT_MODULE_IDS,
+    chapter_section_ids,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -43,12 +49,6 @@ from .agentic_models import (
 from .assets import ReportAssetAssembler
 from .declarative_task_binding import bind_declared_task
 from .input_contracts import ChiefChapterLaneInput
-from .models import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    REPORT_MODULE_IDS,
-    chapter_section_ids,
-)
 
 CHIEF_CHAPTER_IDS = ("1", "3", "4")
 
