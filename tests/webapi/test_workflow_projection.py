@@ -15,6 +15,7 @@ from manyselves.kernel.workflow import (
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
     CapabilityRunStateError,
+    RuntimeBindingCatalog,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeEvent
@@ -28,6 +29,8 @@ from manyselves.webapi.settings import WebSettings
 
 
 class _ReportingAdapter:
+    capability_id = "distribution-reporting"
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
@@ -51,13 +54,131 @@ class _ReportingAdapter:
             ],
         }
 
-    def start(self, command_id: UUID, request: object) -> dict:
-        self.calls.append(("start", request))
-        return {"run_id": "report-new", "task_id": "task-new"}
-
-    def start_declarative(self, command_id: UUID, request: object) -> dict:
-        self.calls.append(("start_declarative", request))
+    async def start(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: object,
+    ) -> dict:
+        del command_id, workflow_id
+        self.calls.append(("start_declarative", values))
         return {"run_id": "report-declarative-new", "task_id": "task-new"}
+
+    async def provide_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        *,
+        input_id: str | None,
+        values: object,
+    ) -> dict:
+        del command_id
+        runtime_state = None
+        try:
+            runtime_state = FileWorkflowStateStore(self.workspace).load(run_id)
+        except (AttributeError, FileNotFoundError):
+            pass
+        if runtime_state is not None and runtime_state.status is WorkflowStatus.WAITING:
+            self.calls.append(
+                (
+                    "workflow_input",
+                    {"run_id": run_id, "input_id": input_id, "values": values},
+                )
+            )
+            return {"run_id": run_id, "task_id": "task-workflow-input"}
+        if input_id is not None:
+            self.calls.append(("decision", {"decision_id": input_id, "values": values}))
+            return {"run_id": run_id, "task_id": "task-decision"}
+        self.calls.append(("resume", {"run_id": run_id, "values": values}))
+        return {"run_id": run_id, "task_id": "task-resume"}
+
+    def get_run(self, run_id: str) -> dict:
+        snapshot = self.snapshot(run_id)
+        try:
+            runtime_state = FileWorkflowStateStore(self.workspace).load(run_id)
+        except FileNotFoundError:
+            runtime_state = None
+        state = (
+            runtime_state.model_dump(mode="json")
+            if runtime_state is not None
+            else snapshot["state"]
+        )
+        return {
+            "run": {
+                "run_id": run_id,
+                "capability_id": self.capability_id,
+                "workflow_id": state.get("workflow_id", "distribution-reporting"),
+                "status": state.get("status", "completed"),
+                "active": snapshot["run"]["active"],
+                "task_id": snapshot["run"]["task_id"],
+            },
+            "state": state,
+            "waiting_input": (
+                [runtime_state.waiting_input]
+                if runtime_state is not None
+                and runtime_state.waiting_input is not None
+                else snapshot["waitingInput"]
+            ),
+        }
+
+    def get_outputs(self, run_id: str) -> dict:
+        snapshot = self.snapshot(run_id)
+        outputs: list[dict] = []
+        try:
+            runtime_state = FileWorkflowStateStore(self.workspace).load(run_id)
+        except FileNotFoundError:
+            runtime_state = None
+        if runtime_state is not None and "result" in runtime_state.outputs:
+            result = runtime_state.outputs["result"]
+            public_result = result
+            artifacts = []
+            if isinstance(result, dict) and isinstance(result.get("output_artifacts"), list):
+                artifacts = result["output_artifacts"]
+                public_result = {
+                    key: result[key]
+                    for key in (
+                        "run_id",
+                        "delivery_completion_ref",
+                        "delivery_status",
+                        "output_artifacts",
+                    )
+                    if key in result
+                }
+            outputs.append({"id": "result", "kind": "value", "value": public_result})
+            for artifact in artifacts:
+                path = artifact["path"]
+                target = self.workspace / path
+                outputs.append(
+                    {
+                        "id": path,
+                        "kind": "artifact",
+                        "path": path,
+                        "exists": target.is_file(),
+                        "size": target.stat().st_size if target.is_file() else 0,
+                    }
+                )
+        known_ids = {item["id"] for item in outputs}
+        outputs.extend(
+            {
+                "id": item["path"],
+                "kind": "artifact",
+                "path": item["path"],
+                "exists": item["exists"],
+                "size": item["size"],
+            }
+            for item in snapshot["outputs"]
+            if item["path"] not in known_ids
+        )
+        return {
+            "run_id": run_id,
+            "outputs": outputs,
+        }
+
+    def get_cost(self, run_id: str) -> dict:
+        return {
+            "run_id": run_id,
+            "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
+        }
 
     def resume_run(self, command_id: UUID, run_id: str, **values: object) -> dict:
         self.calls.append(("resume", {"run_id": run_id, **values}))
@@ -102,10 +223,21 @@ class _ReportingAdapter:
         return {"run_id": "report-1", "task_id": "task-decision"}
 
 
+def _facade(workspace: Path, binding: _ReportingAdapter) -> WorkflowProjectionFacade:
+    binding.workspace = workspace
+    bindings = RuntimeBindingCatalog()
+    bindings.register(binding)
+    return WorkflowProjectionFacade(
+        workspace,
+        reporting_adapter=None,
+        runtime_bindings=bindings,
+    )
+
+
 def test_capability_workflow_and_input_schema_are_generic_projections(
     tmp_path: Path,
 ) -> None:
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    facade = _facade(tmp_path, _ReportingAdapter())
 
     capabilities = facade.list_capabilities()
     workflows = facade.list_workflows()
@@ -167,7 +299,7 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
         total_tokens=15,
         stage="module",
     )
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    facade = _facade(tmp_path, _ReportingAdapter())
 
     run = facade.get_run("report-1")
     outputs = facade.get_outputs("report-1")
@@ -240,7 +372,7 @@ def test_reporting_outputs_project_declared_artifacts_without_internal_state(
         }
     }
     FileWorkflowStateStore(tmp_path).save(runtime_state)
-    facade = WorkflowProjectionFacade(tmp_path, _CompletedReportingAdapter())
+    facade = _facade(tmp_path, _CompletedReportingAdapter())
 
     outputs = facade.get_outputs("report-complete")
 
@@ -313,7 +445,7 @@ def test_waiting_declarative_kernel_state_is_projected_as_run_input(
         "report-declarative-waiting",
         waiting_input,
     )
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    facade = _facade(tmp_path, _ReportingAdapter())
 
     projection = facade.get_run("report-declarative-waiting")
 
@@ -346,7 +478,7 @@ def test_run_projection_bounds_large_kernel_state_and_preserves_runtime_fields(
     )
     FileWorkflowStateStore(tmp_path).save(state)
 
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    facade = _facade(tmp_path, _ReportingAdapter())
     projection = facade.get_run("large-runtime-state")
 
     assert projection["run"]["status"] == "waiting"
@@ -372,7 +504,7 @@ async def test_waiting_declarative_input_uses_workflow_resume_contract_for_gener
     }
     _save_waiting_kernel_state(tmp_path, run_id, waiting_input)
     adapter = _ReportingAdapter()
-    facade = WorkflowProjectionFacade(tmp_path, adapter)
+    facade = _facade(tmp_path, adapter)
     values: dict[str, object] = {
         "answer": "Ada",
         "arbitrary": [1, True, {"nested": "value"}],
@@ -419,7 +551,7 @@ async def test_existing_decision_input_without_kernel_waiting_state_uses_resume_
     tmp_path: Path,
 ) -> None:
     adapter = _ReportingAdapter()
-    facade = WorkflowProjectionFacade(tmp_path, adapter)
+    facade = _facade(tmp_path, adapter)
 
     accepted = await facade.provide_input(
         UUID("30000000-0000-4000-8000-000000000003"),
@@ -450,7 +582,7 @@ def test_run_events_project_file_sink_for_current_run_only(tmp_path: Path) -> No
         )
     )
 
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    facade = _facade(tmp_path, _ReportingAdapter())
 
     assert facade.get_events("report-1") == {
         "run_id": "report-1",
@@ -472,7 +604,7 @@ async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
     tmp_path: Path,
 ) -> None:
     adapter = _ReportingAdapter()
-    facade = WorkflowProjectionFacade(tmp_path, adapter)
+    facade = _facade(tmp_path, adapter)
     command_id = UUID("30000000-0000-4000-8000-000000000001")
 
     started = await facade.start(

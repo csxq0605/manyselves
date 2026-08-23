@@ -253,11 +253,11 @@ class ParameterAdjustmentRuntimeBinding:
 def build_runtime_binding(
     *,
     workspace: Path,
-    host: Any,
+    services: Any,
 ) -> ParameterAdjustmentRuntimeBinding:
     """Build the Capability binding without depending on the application host."""
 
-    del host
+    del services
     return ParameterAdjustmentRuntimeBinding(workspace)
 
 

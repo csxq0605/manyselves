@@ -19,6 +19,8 @@ from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
 from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
+from ..application.runtime_services import build_runtime_services_view
+from ..application.workflow_projection import WorkflowProjectionFacade
 from ..core.loops.bus import MessageBus
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
 from .accounts import AccountCatalog
@@ -40,6 +42,7 @@ class LifespanCleanupOwnership:
     python_runs: PythonRunService | None
     conversations: ConversationService | None
     broker: EventBroker | None
+    workflow_projection: WorkflowProjectionFacade | None
     completed: set[str] = field(default_factory=set)
 
 
@@ -91,6 +94,11 @@ async def _cleanup_owned_runtime(
                 return failures, caller_cancelled
 
     service_stages = (
+        (
+            "workflow_projection",
+            "Capability runtime cleanup",
+            ownership.workflow_projection,
+        ),
         ("reporting", "reporting cleanup", ownership.reporting),
         ("python", "Python cleanup", ownership.python_runs),
         ("conversations", "conversation cleanup", ownership.conversations),
@@ -123,6 +131,7 @@ def _lifecycle_ownership(
     python_runs: PythonRunService | None,
     conversations: ConversationService | None,
     broker: EventBroker | None,
+    workflow_projection: WorkflowProjectionFacade | None,
 ) -> LifespanCleanupOwnership:
     return LifespanCleanupOwnership(
         host=host,
@@ -131,6 +140,7 @@ def _lifecycle_ownership(
         python_runs=python_runs,
         conversations=conversations,
         broker=broker,
+        workflow_projection=workflow_projection,
     )
 
 
@@ -142,6 +152,9 @@ def _expose_lifecycle_ownership(app: FastAPI, ownership: LifespanCleanupOwnershi
     app.state.reporting_facade = None if ownership is None else ownership.reporting
     app.state.python_run_service = None if ownership is None else ownership.python_runs
     app.state.event_broker = None if ownership is None else ownership.broker
+    app.state.workflow_projection = (
+        None if ownership is None else ownership.workflow_projection
+    )
     if ownership is None:
         app.state.maintenance_service = None
         app.state.global_knowledge_service = None
@@ -174,6 +187,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     reporting = None
     python_runs = None
     broker = None
+    workflow_projection = None
     ownership: LifespanCleanupOwnership | None = None
     try:
         pending_ownership = app.state._lifecycle_cleanup_pending
@@ -259,6 +273,10 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             bus=bus,
         )
         reporting = ReportingFacade.from_runtime(host, workspace=active_workspace)
+        workflow_projection = WorkflowProjectionFacade(
+            active_workspace,
+            build_runtime_services_view(host),
+        )
         python_runs = PythonRunService(
             active_workspace,
             bus=bus,
@@ -274,6 +292,18 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.conversation_service = conversations
         app.state.reporting_facade = reporting
+        app.state.workflow_projection = workflow_projection
+
+        async def rebind_workflow_projection(workspace) -> None:
+            previous = app.state.workflow_projection
+            replacement = WorkflowProjectionFacade(
+                workspace,
+                build_runtime_services_view(app.state.runtime_host),
+            )
+            await previous.close()
+            app.state.workflow_projection = replacement
+
+        app.state.rebind_workflow_projection = rebind_workflow_projection
         app.state.python_run_service = python_runs
         app.state.maintenance_service = maintenance
 
@@ -340,6 +370,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             python_runs=python_runs,
             conversations=conversations,
             broker=broker,
+            workflow_projection=workflow_projection,
         )
     except BaseException as startup_error:
         cleanup_failures: list[tuple[str, BaseException]] = []
@@ -353,6 +384,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                     python_runs=python_runs,
                     conversations=conversations,
                     broker=broker,
+                    workflow_projection=workflow_projection,
                 )
             app.state._lifecycle_cleanup_pending = ownership
             _expose_lifecycle_ownership(app, ownership)

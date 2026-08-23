@@ -1,6 +1,7 @@
 """Runtime bindings selected by file-defined Capability ownership."""
 
 from importlib import import_module
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -88,12 +89,23 @@ class RuntimeBindingCatalog:
                 continue
         raise CapabilityRunNotFoundError(run_id)
 
+    async def close(self) -> None:
+        """Close sessions owned by each account-scoped Capability binding."""
+
+        for binding in reversed(tuple(self._bindings.values())):
+            close = getattr(binding, "close", None)
+            if not callable(close):
+                continue
+            result = close()
+            if isawaitable(result):
+                await result
+
 
 def load_runtime_bindings(
     capabilities: CapabilityCatalog,
     *,
     workspace: Path,
-    host: Any,
+    services: Any,
 ) -> RuntimeBindingCatalog:
     """Construct runtime adapters from trusted installed Capability references."""
 
@@ -103,7 +115,7 @@ def load_runtime_bindings(
         if reference is None:
             continue
         factory = _resolve_factory(reference)
-        binding = factory(workspace=Path(workspace), host=host)
+        binding = factory(workspace=Path(workspace), services=services)
         if binding.capability_id != loaded.definition.id:
             raise CapabilityBindingError(
                 f"runtime binding {binding.capability_id} does not match "

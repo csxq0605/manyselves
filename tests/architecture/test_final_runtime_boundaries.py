@@ -110,7 +110,6 @@ def test_generic_runtime_application_and_webapi_do_not_import_reporting_domain()
     assert violations == {}
 
 
-@FINAL_ARCHITECTURE_GAP
 def test_distribution_runtime_binding_does_not_depend_on_legacy_reporting_host() -> None:
     """The Capability binding must own its domain runtime, not borrow the old facade."""
 

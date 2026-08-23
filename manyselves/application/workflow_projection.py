@@ -100,7 +100,7 @@ class WorkflowProjectionFacade:
         self._runtime_bindings = runtime_bindings or load_runtime_bindings(
             self._catalog,
             workspace=self.workspace,
-            host=reporting_adapter,
+            services=reporting_adapter,
         )
 
     def list_capabilities(self) -> list[dict[str, Any]]:
@@ -117,6 +117,11 @@ class WorkflowProjectionFacade:
             for loaded in self._catalog.all()
             for capability, registry in [(loaded.definition, loaded.registry)]
         ]
+
+    async def close(self) -> None:
+        """Close the account-scoped Capability runtimes behind this projection."""
+
+        await self._runtime_bindings.close()
 
     def list_workflows(self) -> list[dict[str, Any]]:
         return [

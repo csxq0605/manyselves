@@ -1,41 +1,201 @@
-"""Application runtime binding owned by distribution reporting."""
+"""Application runtime binding owned by Distribution Reporting."""
 
-from collections.abc import Mapping
+from __future__ import annotations
+
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.application.reporting_facade import (
-    ReportingInvalidTransitionError,
-    ReportingNotFoundError,
-    ReportingStateInvalidError,
+from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
+    runtime_photo_ids,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    ReportRequest,
-    UserSupplement,
+from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
+    PublicAggregateExistingWorkflowRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.aggregate_provider import (
+    build_aggregate_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.chief_provider import (
+    build_chief_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
+    ChiefChapterRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.content_snapshot import (
+    snapshot_content,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
+    CrossOwnerRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_provider import (
+    build_cross_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.final_chief_provider import (
+    build_final_chief_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.final_provider import (
+    build_final_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+    build_module_provider_composition,
+)
+from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
+    PublicReportingWorkflowRuntime,
 )
 from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
     RenderExistingWorkflowRuntime,
 )
-from manyselves.core.usage_ledger import UsageLedger
-from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
-from manyselves.runtime.capability_binding import (
-    CapabilityRunInputError,
-    CapabilityRunNotFoundError,
-    CapabilityRunStateError,
+from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime import (
+    ReportingTailComposition,
 )
+from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
+    TemplateDistillationWorkflowRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
+    TemplateDistillationProviderRuntime,
+)
+from manyselves.core.artifacts.content_store import ContentAddressedStore
+from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
+class _TaskContractAgentRouter:
+    """Select a Capability Agent implementation by its declared Task contract."""
+
+    def __init__(self, default: Any, routes: dict[str, Any]) -> None:
+        self.default = default
+        self.routes = routes
+
+    def _invoker(self, task: Any) -> Any:
+        return self.routes.get(task.output_contract, self.default)
+
+    async def invoke(self, agent: Any, task: Any, value: Any, conversation: Any, **kwargs: Any):
+        return await self._invoker(task).invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            **kwargs,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: Any,
+        task: Any,
+        value: Any,
+        conversation: Any,
+        **kwargs: Any,
+    ):
+        return await self._invoker(task).invoke_with_recovery(
+            agent,
+            task,
+            value,
+            conversation,
+            **kwargs,
+        )
+
+
 class DistributionReportingRuntimeBinding:
-    """Translate generic Run operations at the Reporting capability boundary."""
+    """Route public Reporting roots to their Capability-owned Generic Hosts."""
 
     capability_id = "distribution-reporting"
 
-    def __init__(self, workspace: Path, reporting_adapter: Any) -> None:
-        self.workspace = Path(workspace)
-        self.reporting_adapter = reporting_adapter
-        self._render_runtime = RenderExistingWorkflowRuntime(self.workspace)
+    def __init__(self, workspace: Path, services: RuntimeServicesView) -> None:
+        self.workspace = Path(workspace).resolve()
+        self.services = services
+        snapshot_store = RunInputSnapshotStore(self.workspace)
+        content_store = ContentAddressedStore(self.workspace)
+        module = build_module_provider_composition(services)
+        aggregate = build_aggregate_provider_composition(services)
+        final = build_final_provider_composition(services)
+        final_chief = build_final_chief_provider_composition(services)
+        template = TemplateDistillationProviderRuntime(services)
+        cross_lifecycle = CrossOwnerRuntime(self.workspace)
+        cross = build_cross_provider_composition(
+            services,
+            cross_runtime=cross_lifecycle,
+        )
+        chief_lifecycle = ChiefChapterRuntime(self.workspace)
+        chief = build_chief_provider_composition(
+            services,
+            chief_runtime=chief_lifecycle,
+        )
+        full_final = build_final_provider_composition(
+            services,
+            workflow_id="public-reporting",
+        )
+        full_final_chief = build_final_chief_provider_composition(
+            services,
+            workflow_id="public-reporting",
+        )
+        tail = ReportingTailComposition(
+            self.workspace,
+            cross_runtime=cross_lifecycle,
+            chief_runtime=chief,
+        )
+        chief_router = _TaskContractAgentRouter(
+            chief.provider,
+            {
+                "declarative_final_chief_revision_agent_result": (
+                    full_final_chief.provider
+                )
+            },
+        )
+        full_agents = {
+            **cross.agent_invokers,
+            **full_final.agent_invokers,
+            "chief-editor": chief_router,
+        }
+        self._providers = (
+            module.provider,
+            aggregate,
+            final,
+            final_chief,
+            template,
+            cross,
+            chief,
+            full_final,
+            full_final_chief,
+        )
+
+        public = PublicReportingWorkflowRuntime(
+            self.workspace,
+            input_snapshot=snapshot_store.load,
+            snapshot_content=partial(
+                snapshot_content,
+                self.workspace,
+                content_store,
+            ),
+            runtime_photo_ids=runtime_photo_ids,
+            module_runtime=module.module_runtime,
+            workflow_specializers=(tail.workflow_specializer,),
+            additional_tool_implementations=tail.tool_implementations(),
+            additional_agent_invokers=full_agents,
+        )
+        aggregate_invokers = {
+            **aggregate.agent_invokers,
+            **final.agent_invokers,
+            **final_chief.agent_invokers,
+        }
+        self._runtimes = {
+            "full-report": public,
+            "module-report": public,
+            "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
+                self.workspace,
+                input_snapshot=snapshot_store,
+                agent_invokers=aggregate_invokers,
+            ),
+            "render-existing": RenderExistingWorkflowRuntime(self.workspace),
+            "distill-template-skill": TemplateDistillationWorkflowRuntime(
+                self.workspace,
+                agent_invoker=template,
+            ),
+        }
 
     async def start(
         self,
@@ -43,15 +203,11 @@ class DistributionReportingRuntimeBinding:
         workflow_id: str,
         values: Any,
     ) -> dict[str, Any]:
-        if workflow_id == "render-existing":
-            return await self._render_runtime.start(command_id, workflow_id, values)
-        request = ReportRequest.model_validate(values)
         try:
-            return self.reporting_adapter.start_declarative(command_id, request)
-        except ReportingInvalidTransitionError as exc:
-            raise CapabilityRunInputError(str(exc)) from exc
-        except ReportingStateInvalidError as exc:
-            raise CapabilityRunStateError(str(exc)) from exc
+            runtime = self._runtimes[workflow_id]
+        except KeyError as exc:
+            raise ValueError(f"workflow is not runnable: {workflow_id}") from exc
+        return await runtime.start(command_id, workflow_id, values)
 
     async def provide_input(
         self,
@@ -61,184 +217,43 @@ class DistributionReportingRuntimeBinding:
         input_id: str | None,
         values: Any,
     ) -> dict[str, Any]:
-        if run_id.startswith("render-existing-"):
-            return await self._render_runtime.provide_input(
-                command_id,
-                run_id,
-                input_id=input_id,
-                values=values,
-            )
-        try:
-            runtime_state = self._runtime_state(run_id)
-            if input_id is not None and runtime_state is not None:
-                if runtime_state.status is WorkflowStatus.WAITING:
-                    return self.reporting_adapter.resume_workflow_input(
-                        command_id,
-                        run_id,
-                        input_id,
-                        values,
-                    )
-            if not isinstance(values, Mapping):
-                raise CapabilityRunInputError(
-                    "legacy reporting input requires a JSON object"
-                )
-            supplements = [
-                UserSupplement.model_validate(item)
-                for item in values.get("supplements", [])
-            ]
-            if input_id is not None:
-                action = values.get("action")
-                if not isinstance(action, str) or not action:
-                    raise ValueError("decision input requires action")
-                return self.reporting_adapter.resume_decision(
-                    command_id,
-                    input_id,
-                    action,
-                    supplements,
-                )
-            return self.reporting_adapter.resume_run(
-                command_id,
-                run_id,
-                max_provider_attempts=values.get("max_provider_attempts"),
-                max_total_tokens=values.get("max_total_tokens"),
-                supplements=supplements,
-            )
-        except ReportingNotFoundError as exc:
-            raise CapabilityRunNotFoundError(run_id) from exc
-        except ReportingInvalidTransitionError as exc:
-            raise CapabilityRunInputError(str(exc)) from exc
-        except ReportingStateInvalidError as exc:
-            raise CapabilityRunStateError(str(exc)) from exc
+        runtime = self._runtime_for_run(run_id)
+        return await runtime.provide_input(
+            command_id,
+            run_id,
+            input_id=input_id,
+            values=values,
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        if run_id.startswith("render-existing-"):
-            return self._render_runtime.get_run(run_id)
-        snapshot = self._snapshot(run_id)
-        current = snapshot.get("run", {})
-        runtime_state = self._runtime_state(run_id)
-        state = (
-            runtime_state.model_dump(mode="json")
-            if runtime_state is not None
-            else snapshot.get("state", {})
-        )
-        waiting_input = (
-            [runtime_state.waiting_input]
-            if runtime_state is not None and runtime_state.waiting_input is not None
-            else snapshot.get("waitingInput", [])
-        )
-        return {
-            "run": {
-                "run_id": run_id,
-                "capability_id": self.capability_id,
-                "workflow_id": (
-                    runtime_state.workflow_id
-                    if runtime_state is not None
-                    else "distribution-reporting"
-                ),
-                "status": state.get("status") or current.get("status") or "unknown",
-                "active": bool(current.get("active", False)),
-                "task_id": current.get("task_id"),
-            },
-            "state": state,
-            "waiting_input": waiting_input,
-        }
+        return self._runtime_for_run(run_id).get_run(run_id)
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
-        if run_id.startswith("render-existing-"):
-            return self._render_runtime.get_outputs(run_id)
-        snapshot = self._snapshot(run_id)
-        runtime_state = self._runtime_state(run_id)
-        outputs: list[dict[str, Any]] = []
-        if runtime_state is not None and "result" in runtime_state.outputs:
-            result = runtime_state.outputs["result"]
-            public_result = result
-            declared_artifacts: list[Any] = []
-            if isinstance(result, Mapping) and isinstance(
-                result.get("output_artifacts"), list
-            ):
-                public_result = {
-                    key: result[key]
-                    for key in (
-                        "run_id",
-                        "delivery_completion_ref",
-                        "delivery_status",
-                        "output_artifacts",
-                    )
-                    if key in result
-                }
-                declared_artifacts = result["output_artifacts"]
-            outputs.append(
-                {
-                    "id": "result",
-                    "kind": "value",
-                    "value": public_result,
-                }
-            )
-            for artifact in declared_artifacts:
-                if not isinstance(artifact, Mapping):
-                    continue
-                path = str(artifact.get("path", ""))
-                if not path:
-                    continue
-                target = Path(path)
-                target = target if target.is_absolute() else self.workspace / target
-                exists = target.is_file()
-                outputs.append(
-                    {
-                        "id": path,
-                        "kind": "artifact",
-                        "path": path,
-                        "exists": exists,
-                        "size": target.stat().st_size if exists else 0,
-                    }
-                )
-        known_ids = {str(output["id"]) for output in outputs}
-        for output in snapshot.get("outputs", []):
-            path = str(output.get("path", ""))
-            if path in known_ids:
-                continue
-            outputs.append({
-                "id": output.get("path", ""),
-                "kind": "artifact",
-                "path": output.get("path", ""),
-                "exists": bool(output.get("exists", False)),
-                "size": int(output.get("size", 0) or 0),
-            })
-        return {
-            "run_id": run_id,
-            "outputs": outputs,
-        }
+        return self._runtime_for_run(run_id).get_outputs(run_id)
 
     def get_cost(self, run_id: str) -> dict[str, Any]:
-        if run_id.startswith("render-existing-"):
-            return self._render_runtime.get_cost(run_id)
-        self._snapshot(run_id)
-        return {
-            "run_id": run_id,
-            "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
-        }
+        return self._runtime_for_run(run_id).get_cost(run_id)
 
-    def _snapshot(self, run_id: str) -> dict[str, Any]:
+    async def close(self) -> None:
+        """Close the Agent sessions owned by this account binding."""
+
+        for provider in reversed(self._providers):
+            await provider.close()
+
+    def _runtime_for_run(self, run_id: str) -> Any:
         try:
-            return self.reporting_adapter.snapshot(run_id)
-        except ReportingNotFoundError as exc:
+            state = FileWorkflowStateStore(self.workspace).load(run_id)
+            return self._runtimes[state.workflow_id]
+        except (FileNotFoundError, KeyError) as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
-        except ReportingStateInvalidError as exc:
-            raise CapabilityRunStateError(str(exc)) from exc
-
-    def _runtime_state(self, run_id: str) -> WorkflowState | None:
-        try:
-            return FileWorkflowStateStore(self.workspace).load(run_id)
-        except FileNotFoundError:
-            return None
 
 
 def build_runtime_binding(
     *,
     workspace: Path,
-    host: Any,
+    services: RuntimeServicesView,
 ) -> DistributionReportingRuntimeBinding:
-    return DistributionReportingRuntimeBinding(workspace, host)
+    return DistributionReportingRuntimeBinding(workspace, services)
 
 
 __all__ = ["DistributionReportingRuntimeBinding", "build_runtime_binding"]

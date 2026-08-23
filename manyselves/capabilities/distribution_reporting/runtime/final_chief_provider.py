@@ -75,6 +75,7 @@ class FinalChiefProviderRuntime:
         execution: AgentExecutionService | None = None,
         loop_builder: LoopBuilder = AgentLoop,
         dependencies: ModuleProviderDependencies | None = None,
+        workflow_id: str = "distribution-aggregate-existing-tail",
     ) -> None:
         if services.workspace is None:
             raise ValueError("Final Chief Provider composition requires a workspace")
@@ -84,6 +85,7 @@ class FinalChiefProviderRuntime:
         self.execution = execution or AgentExecutionService(services.bus)
         self.loop_builder = loop_builder
         self.dependencies = dependencies or ModuleProviderDependencies()
+        self.workflow_id = workflow_id
         self._artifact_root = ArtifactGateway(
             self.workspace,
             ArtifactGrant("root", "root", "workflow", "root"),
@@ -258,6 +260,7 @@ def build_final_chief_provider_composition(
     loop_builder: LoopBuilder = AgentLoop,
     store: ReportingStore | None = None,
     dependencies: ModuleProviderDependencies | None = None,
+    workflow_id: str = "distribution-aggregate-existing-tail",
 ) -> FinalChiefProviderComposition:
     """Build one Capability-owned Final Chief revision Provider composition."""
 
@@ -268,6 +271,7 @@ def build_final_chief_provider_composition(
             execution=execution,
             loop_builder=loop_builder,
             dependencies=dependencies,
+            workflow_id=workflow_id,
         )
     )
 

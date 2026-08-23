@@ -81,6 +81,7 @@ class PublicReportingWorkflowRuntime:
         module_runtime: Any | None = None,
         workflow_specializers: Iterable[WorkflowSpecializer] = (),
         additional_tool_implementations: Mapping[str, Any] | None = None,
+        additional_agent_invokers: Mapping[str, AgentInvoker] | None = None,
         state_store: WorkflowStateStore | None = None,
         events: WorkflowEventSink | None = None,
     ) -> None:
@@ -93,6 +94,7 @@ class PublicReportingWorkflowRuntime:
         self.additional_tool_implementations = dict(
             additional_tool_implementations or {}
         )
+        self.additional_agent_invokers = dict(additional_agent_invokers or {})
         self.state_store = state_store or FileWorkflowStateStore(self.workspace)
         self.events = events or FileWorkflowEventSink(self.workspace)
         self.executors = build_builtin_executor_registry()
@@ -470,9 +472,10 @@ class PublicReportingWorkflowRuntime:
         return implementations
 
     def _agent_invokers(self) -> Mapping[str, AgentInvoker]:
+        invokers = dict(self.additional_agent_invokers)
         if self.module_runtime is None:
-            return {}
-        invokers = dict(getattr(self.module_runtime, "agent_invokers", {}))
+            return invokers
+        invokers.update(dict(getattr(self.module_runtime, "agent_invokers", {})))
         execution = getattr(self.module_runtime, "agent_execution", None)
         session_factory = getattr(self.module_runtime, "agent_session_factory", None)
         if execution is None or not callable(session_factory):

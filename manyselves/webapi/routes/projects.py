@@ -190,7 +190,7 @@ async def activate_project(
             target_workspace = workspace
             return workspace
 
-        def commit_activation() -> ProjectResponse:
+        async def commit_activation() -> ProjectResponse:
             assert target_workspace is not None
             record = registry.activate(project_id)
             settings.initial_project_id = record.id
@@ -199,9 +199,10 @@ async def activate_project(
                 state.runtime_host, target_workspace
             )
             state.python_run_service.rebind(target_workspace)
+            await state.rebind_workflow_projection(target_workspace)
             return _response(record)
 
-        def rollback_activation() -> None:
+        async def rollback_activation() -> None:
             assert previous_state is not None
             registry.restore_active(previous_state[0])
             settings.initial_project_id = previous_state[1]
@@ -211,8 +212,9 @@ async def activate_project(
                 state.runtime_host, previous_workspace
             )
             state.python_run_service.rebind(previous_workspace)
+            await state.rebind_workflow_projection(previous_workspace)
 
-        def reconcile_activation(workspace) -> None:
+        async def reconcile_activation(workspace) -> None:
             actual_project_id = workspace.name
             if registry.project_root(actual_project_id) != workspace.resolve():
                 raise InvalidProjectId()
@@ -223,6 +225,7 @@ async def activate_project(
                 state.runtime_host, workspace
             )
             state.python_run_service.rebind(workspace)
+            await state.rebind_workflow_projection(workspace)
 
         return await facade.activate_workspace(
             lease_token=lease_token,

@@ -12,6 +12,8 @@ import pytest
 
 from manyselves.application.preview_service import PreviewService
 from manyselves.application.workspace_files import WorkspaceFiles
+from manyselves.config.schema import AgentDefaults
+from manyselves.core.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import files as file_routes
@@ -25,11 +27,20 @@ class SwitchableRuntimeHost:
     def __init__(self) -> None:
         self.is_ready = False
         self.workspace: Path | None = None
+        self.bus = MessageBus()
+        self.global_knowledge_root = None
+        self.config_manager = SimpleNamespace(
+            config=SimpleNamespace(
+                agents=SimpleNamespace(defaults=AgentDefaults()),
+            )
+        )
         self.statuses = {"main": "idle"}
         self.failed_calls = 0
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: dict(self.statuses),
             get_agent_session_id=lambda agent_id: None,
+            get_loop=lambda _agent_id: None,
+            _provider_manager=None,
         )
 
     async def start(self, workspace: Path) -> None:

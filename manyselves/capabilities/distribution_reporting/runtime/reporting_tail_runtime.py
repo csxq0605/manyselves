@@ -20,14 +20,14 @@ from manyselves.capabilities.distribution_reporting.runtime.cross_owner_composit
     build_cross_owner_tool_implementations,
     cross_owner_agent_invokers,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_owner_definitions import (
+    register_cross_owner_pipeline_specializations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     build_delivery_tool_implementations,
 )
 from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
     build_final_chapter_tool_implementations,
-)
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    REPORT_MODULE_IDS,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.kernel.definitions import (
@@ -99,33 +99,10 @@ def register_reporting_tail_workflow_specializations(
     """Register all static child workflow definitions required by full-report."""
 
     workflows: dict[str, WorkflowDefinition] = {}
-    workflows.update(_register_cross_owner_pipelines(definitions))
+    workflows.update(register_cross_owner_pipeline_specializations(definitions))
     workflows.update(_register_chief_chapter_lanes(definitions))
     workflows.update(_register_final_chapter_lanes(definitions))
     workflows.update(_register_final_review_lanes(definitions))
-    return workflows
-
-
-def _register_cross_owner_pipelines(
-    definitions: DefinitionRegistry,
-) -> dict[str, WorkflowDefinition]:
-    template = _workflow_template(definitions, "distribution-cross-owner-pipeline")
-    workflows: dict[str, WorkflowDefinition] = {}
-    for module_id in REPORT_MODULE_IDS:
-        workflow_id = f"distribution-cross-owner-{module_id}-pipeline"
-        workflows[workflow_id] = _existing_or_specialized(
-            definitions,
-            workflow_id,
-            template,
-            {
-                "owner_module_id": module_id,
-                "conversation_key": f"cross-owner-{module_id}",
-                "revision_agent_id": f"module-{module_id}-specialist",
-                "revision_task_id": f"cross-owner-module-{module_id}-revision-r1",
-                "revision_conversation_key": f"module-{module_id}",
-                "local_review_conversation_key": f"module-auditor-{module_id}",
-            },
-        )
     return workflows
 
 

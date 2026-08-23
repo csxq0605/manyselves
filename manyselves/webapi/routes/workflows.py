@@ -42,9 +42,7 @@ router = APIRouter(dependencies=[Depends(require_authenticated_session)])
 
 
 def _projection(request: Request) -> WorkflowProjectionFacade:
-    state = request_runtime_state(request)
-    reporting = state.reporting_facade
-    return WorkflowProjectionFacade(reporting.workspace, reporting)
+    return request_runtime_state(request).workflow_projection
 
 
 def _error(error: Exception) -> ApiError:
