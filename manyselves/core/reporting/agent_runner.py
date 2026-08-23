@@ -17,6 +17,9 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    same_recoverable_task,
+)
 from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
     submission_schema,
 )
@@ -2306,10 +2309,7 @@ class ReportingAgentRunner:
         previous: TaskCorrelation,
         current: TaskCorrelation,
     ) -> bool:
-        excluded = {"task_attempt_id", "lease_owner_id", "lease_epoch"}
-        return previous.model_dump(exclude=excluded) == current.model_dump(
-            exclude=excluded
-        )
+        return same_recoverable_task(previous, current)
 
     def _tools(
         self,
