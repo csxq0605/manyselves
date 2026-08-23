@@ -3,14 +3,14 @@ from zipfile import ZipFile
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
+    canonicalize_photo_bindings,
+    extract_wps_images,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
     SourceLocation,
-)
-from manyselves.core.reporting.intake.wps_images import (
-    canonicalize_photo_bindings,
-    extract_wps_images,
 )
 
 

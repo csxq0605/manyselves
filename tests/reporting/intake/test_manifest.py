@@ -1,9 +1,12 @@
+import hashlib
 from pathlib import Path
 
 from docx import Document
 from openpyxl import Workbook
 
-from manyselves.core.reporting.intake.manifest import build_manifest
+from manyselves.capabilities.distribution_reporting.runtime.intake.manifest import (
+    build_manifest,
+)
 
 
 def _write_workbook(path: Path) -> None:
@@ -29,6 +32,9 @@ def test_manifest_classifies_three_core_workbooks_and_only_scans_inputs(
 
     assert len(manifest.files) == 3
     assert {item.purpose for item in manifest.files} == {"s2-1", "s4-4", "s4-6"}
+    assert [item.path.name for item in manifest.files] == sorted(
+        item.path.name for item in manifest.files
+    )
     assert all(item.path.parts[0] == "Inputs" for item in manifest.files)
 
 
@@ -40,7 +46,7 @@ def test_manifest_ids_and_hashes_are_stable(tmp_path: Path) -> None:
     second = build_manifest(tmp_path).files[0]
 
     assert first.id == second.id
-    assert len(first.sha256) == 64
+    assert first.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
     assert first.parse_status == "pending"
     assert first.media_type.endswith("spreadsheetml.sheet")
 

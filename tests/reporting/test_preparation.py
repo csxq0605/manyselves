@@ -7,6 +7,9 @@ from zipfile import ZipFile
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime import (
+    preparation as preparation_module,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     FilePreparationResult,
     ManifestFile,
@@ -19,12 +22,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     SourceLocation,
 )
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting import preparation as preparation_module
-from manyselves.core.reporting.preparation import (
+from manyselves.capabilities.distribution_reporting.runtime.preparation import (
     prepare_manifest_file,
 )
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.tools.task_board import TaskBoard
@@ -97,7 +99,7 @@ def test_s4_6_worker_extracts_images_referenced_by_mapped_subtables(
         }
 
     monkeypatch.setattr(
-        "manyselves.core.reporting.preparation.extract_wps_images",
+        "manyselves.capabilities.distribution_reporting.runtime.preparation.extract_wps_images",
         fake_extract,
     )
 

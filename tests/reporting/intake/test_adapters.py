@@ -6,10 +6,12 @@ from docx import Document
 from openpyxl import Workbook
 from PIL import Image
 
+from manyselves.capabilities.distribution_reporting.runtime.intake.adapters import (
+    IntakeAdapterRegistry,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     ManifestFile,
 )
-from manyselves.core.reporting.intake.adapters import IntakeAdapterRegistry
 
 
 def _manifest(path: Path) -> ManifestFile:

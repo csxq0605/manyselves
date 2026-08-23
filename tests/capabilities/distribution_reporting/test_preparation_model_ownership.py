@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -94,13 +95,17 @@ def test_preparation_models_are_physically_capability_owned() -> None:
         for node in imports
     )
 
-    old_preparation = import_module("manyselves.core.reporting.preparation")
-    old_common = import_module("manyselves.core.reporting.mappers.common")
     for model_name in ("ManifestFile", "ProjectManifest", "ParsedArtifact"):
         assert model_name not in vars(reporting)
-    assert "FilePreparationResult" not in vars(old_preparation)
-    for model_name in ("MappingGap", "MappingResult"):
-        assert model_name not in vars(old_common)
+
+    def has_spec(name: str) -> bool:
+        try:
+            return find_spec(name) is not None
+        except ModuleNotFoundError:
+            return False
+
+    assert not has_spec("manyselves.core.reporting.preparation")
+    assert not has_spec("manyselves.core.reporting.mappers.common")
 
 
 def test_preparation_models_preserve_nested_round_trip_and_extra_forbid() -> None:

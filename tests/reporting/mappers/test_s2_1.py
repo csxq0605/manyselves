@@ -2,7 +2,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from manyselves.core.reporting.mappers.s2_1 import map_s2_1
+from manyselves.capabilities.distribution_reporting.runtime.mappers.s2_1 import (
+    map_s2_1,
+)
 
 
 def test_s2_1_maps_availability_and_effectiveness_with_exact_cells(tmp_path: Path) -> None:

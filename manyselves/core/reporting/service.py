@@ -18,6 +18,18 @@ from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.capabilities.distribution_reporting.domain.coverage import evaluate_coverage
+from manyselves.capabilities.distribution_reporting.runtime.intake.manifest import (
+    build_manifest,
+)
+from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
+    canonicalize_photo_bindings,
+    extract_wps_images,
+)
+from manyselves.capabilities.distribution_reporting.runtime.mappers import (
+    map_s2_1,
+    map_s4_4,
+    map_s4_6,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     FilePreparationResult,
     ProjectManifest,
@@ -33,6 +45,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     RevisionRequest,
     UserSupplement,
+)
+from manyselves.capabilities.distribution_reporting.runtime.preparation import (
+    prepare_manifest_file,
 )
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ProjectWriteLease,
@@ -57,11 +72,7 @@ from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
 from .execution_runtime import ProviderRouter
 from .input_snapshot import RunInputSnapshotStore
-from .intake.manifest import build_manifest
-from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .locks import exclusive_reporting_writer_lock
-from .mappers import map_s2_1, map_s4_4, map_s4_6
-from .preparation import prepare_manifest_file
 from .provider_admission import ProviderAdmissionController
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown

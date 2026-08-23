@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.intake.wps_images import (
+from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
     canonicalize_photo_bindings,
     extract_wps_images,
 )
-from manyselves.core.reporting.mappers.s2_1 import map_s2_1
-from manyselves.core.reporting.mappers.s4_4 import map_s4_4
-from manyselves.core.reporting.mappers.s4_6 import map_s4_6
+from manyselves.capabilities.distribution_reporting.runtime.mappers.s2_1 import map_s2_1
+from manyselves.capabilities.distribution_reporting.runtime.mappers.s4_4 import map_s4_4
+from manyselves.capabilities.distribution_reporting.runtime.mappers.s4_6 import map_s4_6
 
 REAL_INPUT_DIR = Path("/Users/zzymima0000/Documents/Codex/work/写作上传材料")
 requires_v2_handoff_workbooks = pytest.mark.skipif(

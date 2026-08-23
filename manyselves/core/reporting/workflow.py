@@ -40,6 +40,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
+    extract_wps_images,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
@@ -149,7 +152,6 @@ from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_snapshot import RunInputSnapshotStore
-from .intake.wps_images import extract_wps_images
 from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
