@@ -20,7 +20,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
-from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -31,9 +30,9 @@ from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.runtime.agent_execution import (
     AgentExecutionService,
     AgentSessionLoop,
-    AgentTerminalSubscription,
     AgentTurnRequest,
 )
+from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 
@@ -108,14 +107,16 @@ class ModuleAuthoringAgentBridge:
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
         )
+        typed_turn = TypedAgentTurn(
+            execution=self.execution,
+            workflow_id=workflow_id,
+            conversation_key=conversation.key.value,
+            runtime_id=runtime_id,
+            session_id=session_id,
+            session_factory=lambda: self.session_factory(runtime_id),
+        )
         try:
-            session = await self.execution.start_or_restore(
-                workflow_id=workflow_id,
-                conversation_key=conversation.key.value,
-                runtime_id=runtime_id,
-                session_id=session_id,
-                session_factory=lambda: self.session_factory(runtime_id),
-            )
+            session = await typed_turn.start_or_restore()
         except Exception as exc:
             return AgentInvocationOutcome(
                 status="failed",
@@ -144,71 +145,21 @@ class ModuleAuthoringAgentBridge:
             task_attempt_id=task_id,
             turn_kind="task_initial",
         )
-        terminal = AgentTerminalSubscription(
-            kind="typed_result",
-            message_type=AgentResultMessage,
-            predicate=lambda item: self._matches_result(
-                item,
-                workflow_id=workflow_id,
-                runtime_id=runtime_id,
-                run_id=run_id,
-                task_id=task_id,
-                session_id=session.session_id,
-            ),
+        terminal = typed_turn.result_terminal(
+            run_id=run_id,
+            task_id=task_id,
+            task_attempt_id=task_id,
+            session_id=session.session_id,
         )
-        outcome = await self.execution.dispatch_turn(
+        outcome = await typed_turn.dispatch(
             session,
             request,
             terminals=(terminal,),
         )
-        if outcome.kind == "typed_result":
-            message = outcome.message
-            if not isinstance(message, AgentResultMessage):
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session.session_id,
-                    error="typed terminal was not an AgentResultMessage",
-                )
-            if message.status != "completed":
-                status = "blocked" if message.status == "blocked" else "incomplete"
-                return AgentInvocationOutcome(
-                    status=status,  # type: ignore[arg-type]
-                    session_id=session.session_id,
-                    error=message.status,
-                )
-            try:
-                submission = self._read_submission(message.result_path)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=session.session_id,
-                    error=str(exc),
-                )
-            result = DeclarativeModuleAuthoringAgentResult(
-                status="completed",
-                module=submission,
-            )
-            return AgentInvocationOutcome(
-                status="ok",
-                result=result.model_dump(mode="json"),
-                session_id=session.session_id,
-            )
-        if outcome.kind == "error":
-            return AgentInvocationOutcome(
-                status="failed",
-                session_id=session.session_id,
-                error=str(outcome.message),
-            )
-        if isinstance(outcome.message, AgentResponse):
-            return AgentInvocationOutcome(
-                status="incomplete",
-                session_id=session.session_id,
-                error="Agent turn ended without a typed result",
-            )
-        return AgentInvocationOutcome(
-            status="failed",
+        return TypedAgentTurn.map_outcome(
+            outcome,
             session_id=session.session_id,
-            error="Agent turn returned an unknown terminal",
+            decode_result=self._decode_result,
         )
 
     def _prompt(
@@ -240,6 +191,13 @@ class ModuleAuthoringAgentBridge:
             json.loads(path.read_text(encoding="utf-8"))
         )
 
+    def _decode_result(self, result_ref: str) -> dict[str, Any]:
+        submission = self._read_submission(result_ref)
+        return DeclarativeModuleAuthoringAgentResult(
+            status="completed",
+            module=submission,
+        ).model_dump(mode="json")
+
     def _runtime_id(
         self,
         agent: AgentDefinition,
@@ -247,25 +205,6 @@ class ModuleAuthoringAgentBridge:
         workflow_id: str,
     ) -> str:
         return f"{workflow_id}:{agent.id}:{conversation.key.value}"
-
-    @staticmethod
-    def _matches_result(
-        item: AgentResultMessage,
-        *,
-        workflow_id: str,
-        runtime_id: str,
-        run_id: str,
-        task_id: str,
-        session_id: str,
-    ) -> bool:
-        return (
-            item.sender == runtime_id
-            and item.workflow_id == workflow_id
-            and item.run_id == run_id
-            and item.task_id == task_id
-            and item.task_attempt_id == task_id
-            and item.session_id == session_id
-        )
 
 
 __all__ = ["ModuleAuthoringAgentBridge"]
