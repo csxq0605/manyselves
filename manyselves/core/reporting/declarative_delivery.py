@@ -54,6 +54,7 @@ class DeclarativeDeliveryRuntime:
         store: ReportingStore | None = None,
         prepare_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         publish_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        complete_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self._runner = getattr(runner, "_runner", runner)
         self.current_state: dict[str, Any] = {}
@@ -80,8 +81,14 @@ class DeclarativeDeliveryRuntime:
                 workspace=Path(workspace),
                 store=store or ReportingStore(Path(workspace)),
             )["publish-materialize-delivery"]
+        if complete_tool is None and workspace is not None:
+            complete_tool = build_delivery_tool_implementations(
+                workspace=Path(workspace),
+                store=store or ReportingStore(Path(workspace)),
+            )["complete-delivery"]
         self._prepare_tool = prepare_tool
         self._publish_tool = publish_tool
+        self._complete_tool = complete_tool
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         self._restore_state(state)
@@ -115,8 +122,12 @@ class DeclarativeDeliveryRuntime:
         if "delivery_completion_ref" in state:
             self._serialize_output_artifacts(state)
             return state
-        self._runner._complete_delivery(self._load_context(state))
-        state.pop(_DELIVERY_CONTEXT_KEY)
+        if self._complete_tool is None:
+            raise RuntimeError("Delivery complete Tool requires a workspace binding")
+        result = self._complete_tool(state)
+        if result is not state:
+            state.clear()
+            state.update(result)
         self._serialize_output_artifacts(state)
         return state
 

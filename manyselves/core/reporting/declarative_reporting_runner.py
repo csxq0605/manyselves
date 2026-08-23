@@ -594,6 +594,7 @@ async def execute_declarative_module_stage(
     workspace: Path | None = None,
     prepare_tool: Callable[[dict[str, Any]], Any] | None = None,
     publish_tool: Callable[[dict[str, Any]], Any] | None = None,
+    complete_tool: Callable[[dict[str, Any]], Any] | None = None,
     stage_boundary: (
         Callable[[dict[str, Any], str, str], Awaitable[None]] | None
     ) = None,
@@ -834,6 +835,7 @@ async def execute_declarative_module_stage(
         workspace=workspace,
         prepare_tool=prepare_tool,
         publish_tool=publish_tool,
+        complete_tool=complete_tool,
     )
 
     async def prepare_cross_with_boundary(

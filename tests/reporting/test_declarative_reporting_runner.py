@@ -2721,6 +2721,14 @@ class _TopLevelTailRunner:
         self._fail("complete")
         context.state["delivery_completion_ref"] = "delivery.json"
 
+    def _complete_state(self, state: dict) -> dict:
+        self.calls.append("complete")
+        self._trace("delivery-complete")
+        self._fail("complete")
+        state.pop("_declarative_delivery_context", None)
+        state["delivery_completion_ref"] = "delivery.json"
+        return state
+
 
 def _top_level_delivery_context(state: dict) -> DeliveryContext:
     root = Path("Work") / "runs" / str(state["run_id"])
@@ -2781,6 +2789,7 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         event_sink=FileWorkflowEventSink(tmp_path),
         prepare_tool=tail._prepare_state,
         publish_tool=tail._publish_state,
+        complete_tool=tail._complete_state,
     )
 
     assert tail.calls == ["cross", "chief", "prepare", "publish", "complete"]
@@ -2876,6 +2885,7 @@ async def test_declarative_stage_boundaries_precede_next_stage_effects(
         stage_boundary=stage_boundary,
         prepare_tool=tail._prepare_state,
         publish_tool=tail._publish_state,
+        complete_tool=tail._complete_state,
     )
 
     assert completed.status is WorkflowStatus.COMPLETED
@@ -2937,6 +2947,7 @@ async def test_declarative_stage_failure_does_not_emit_future_boundaries(
             stage_boundary=stage_boundary,
             prepare_tool=tail._prepare_state,
             publish_tool=tail._publish_state,
+            complete_tool=tail._complete_state,
         )
 
     assert trace == [
@@ -3068,6 +3079,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
             tail_runner=failing_tail,
             prepare_tool=failing_tail._prepare_state,
             publish_tool=failing_tail._publish_state,
+            complete_tool=failing_tail._complete_state,
         )
 
     failed = store.load(run_id)
@@ -3096,6 +3108,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
         tail_runner=resumed_tail,
         prepare_tool=resumed_tail._prepare_state,
         publish_tool=resumed_tail._publish_state,
+        complete_tool=resumed_tail._complete_state,
     )
 
     assert module_calls == 1

@@ -72,6 +72,14 @@ class _TailRunner:
         context.state["delivery_completion_ref"] = "delivery.json"
         context.state["delivery_status"] = "delivered"
 
+    def _complete_state(self, state: dict) -> dict:
+        self.calls.append("complete")
+        self._fail("complete")
+        state.pop("_declarative_delivery_context", None)
+        state["delivery_completion_ref"] = "delivery.json"
+        state["delivery_status"] = "delivered"
+        return state
+
 
 def _delivery_context(state: dict) -> DeliveryContext:
     root = Path("Work") / "runs" / str(state["run_id"])
@@ -239,6 +247,7 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
         state_store=store,
         prepare_tool=runner._prepare_state,
         publish_tool=runner._publish_state,
+        complete_tool=runner._complete_state,
     )
 
     assert runner.calls == ["cross", "chief", "prepare", "publish", "complete"]
@@ -263,6 +272,7 @@ async def test_declarative_reporting_tail_matches_current_stage_trace(
         trace=trace,
         prepare_tool=declarative_runner._prepare_state,
         publish_tool=declarative_runner._publish_state,
+        complete_tool=declarative_runner._complete_state,
     )
     current = await _capture_current_tail_trace(
         _TailRunner(),
@@ -295,6 +305,7 @@ async def test_declarative_reporting_tail_skips_current_completion_markers(
         state_store=FileWorkflowStateStore(tmp_path),
         prepare_tool=runner._prepare_state,
         publish_tool=runner._publish_state,
+        complete_tool=runner._complete_state,
     )
 
     assert runner.calls == ["prepare", "publish", "complete"]
@@ -319,6 +330,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
             state_store=store,
             prepare_tool=failing._prepare_state,
             publish_tool=failing._publish_state,
+            complete_tool=failing._complete_state,
         )
 
     assert failing.calls == ["cross", "chief"]
@@ -334,6 +346,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
         state_store=store,
         prepare_tool=resumed._prepare_state,
         publish_tool=resumed._publish_state,
+        complete_tool=resumed._complete_state,
     )
 
     assert resumed.calls == ["chief", "prepare", "publish", "complete"]
@@ -360,6 +373,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
             state_store=store,
             prepare_tool=failing._prepare_state,
             publish_tool=failing._publish_state,
+            complete_tool=failing._complete_state,
         )
 
     assert failing.calls == ["cross", "chief", "prepare", "publish"]
@@ -376,6 +390,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
         state_store=store,
         prepare_tool=resumed._prepare_state,
         publish_tool=resumed._publish_state,
+        complete_tool=resumed._complete_state,
     )
 
     assert resumed.calls == ["publish", "complete"]

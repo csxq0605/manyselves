@@ -17,6 +17,7 @@ from .models.delivery import DeliveryContext, MaterializedDeliveryReceipt
 from .models.reporting import (
     REPORT_MODULE_IDS,
     EvidenceItem,
+    OutputArtifact,
     PhotoAsset,
     ReportRequest,
     SpecialTopicPlan,
@@ -384,6 +385,95 @@ class DeliveryTools:
             }
         )
 
+    def complete(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Complete a published current-run Delivery through ordinary files."""
+
+        _restore_delivery_state(state)
+        context = DeliveryContext.model_validate(
+            {
+                "state": state,
+                **state[_DELIVERY_CONTEXT_KEY],
+            }
+        )
+        self.complete_context(context)
+        state.pop(_DELIVERY_CONTEXT_KEY, None)
+        return state
+
+    def complete_context(self, context: DeliveryContext) -> DeliveryContext:
+        """Write the current-run completion projection without version storage."""
+
+        state = context.state
+        receipt = cast(MaterializedDeliveryReceipt, context.receipt)
+        receipt_path = cast(Path, context.receipt_path)
+        public_markdown = cast(Path, context.public_markdown)
+        public_docx = cast(Path, context.public_docx)
+        public_source_index = cast(Path, context.public_source_index)
+        public_source_index_docx = cast(Path, context.public_source_index_docx)
+        final_review_ref = str(state["final_review_completion_ref"])
+        delivery_manifest_ref = receipt.manifest_path.relative_to(self.workspace)
+        state["output_artifacts"] = self._delivery_output_artifacts(
+            final_review_ref=final_review_ref,
+            delivery_manifest_ref=delivery_manifest_ref,
+            final_markdown_ref=public_markdown.relative_to(self.workspace),
+            final_docx_ref=public_docx.relative_to(self.workspace),
+            source_index_ref=public_source_index.relative_to(self.workspace),
+            source_index_docx_ref=public_source_index_docx.relative_to(
+                self.workspace
+            ),
+        )
+        completion_ref = Path(
+            f"Work/runs/{state['run_id']}/delivery-completion.json"
+        )
+        state["delivery_status"] = "delivered"
+        self.store.write_json(
+            completion_ref.as_posix(),
+            {
+                "run_id": state["run_id"],
+                "status": "delivered",
+                "delivery_status": "delivered",
+                "delivery_receipt_ref": receipt_path.relative_to(
+                    self.workspace
+                ).as_posix(),
+                "final_audit_snapshot_ref": context.final_audit_snapshot_ref,
+                "final_review_completion_ref": final_review_ref,
+                "output_artifacts": [
+                    artifact.model_dump(mode="json")
+                    for artifact in state["output_artifacts"]
+                ],
+            },
+        )
+        state["delivery_completion_ref"] = completion_ref.as_posix()
+        return context
+
+    @staticmethod
+    def _delivery_output_artifacts(
+        *,
+        final_review_ref: str,
+        delivery_manifest_ref: Path,
+        final_markdown_ref: Path,
+        final_docx_ref: Path,
+        source_index_ref: Path,
+        source_index_docx_ref: Path,
+    ) -> list[OutputArtifact]:
+        """Declare only artifacts created by the ordinary-file Delivery."""
+
+        return [
+            *(
+                OutputArtifact(
+                    kind="module",
+                    path=Path(f"Outputs/Modules/{module_id}.md"),
+                    module_id=module_id,
+                )
+                for module_id in REPORT_MODULE_IDS
+            ),
+            OutputArtifact(kind="review", path=Path(final_review_ref)),
+            OutputArtifact(kind="report", path=final_markdown_ref),
+            OutputArtifact(kind="report", path=final_docx_ref),
+            OutputArtifact(kind="report", path=source_index_ref),
+            OutputArtifact(kind="report", path=source_index_docx_ref),
+            OutputArtifact(kind="run", path=delivery_manifest_ref),
+        ]
+
     def materialize_delivery_package(
         self,
         state: dict[str, Any],
@@ -481,6 +571,7 @@ def build_delivery_tool_implementations(
     }
     if preparation is not None:
         implementations["prepare-render-delivery"] = tools.prepare
+    implementations["complete-delivery"] = tools.complete
     return implementations
 
 

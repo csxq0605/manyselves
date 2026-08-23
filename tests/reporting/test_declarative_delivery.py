@@ -81,6 +81,18 @@ class _DeliveryRunner:
             )
         ]
 
+    def _complete_state(self, state: dict) -> dict:
+        self.calls.append("complete")
+        state.pop("_declarative_delivery_context", None)
+        state["delivery_completion_ref"] = "delivery-completion.json"
+        state["output_artifacts"] = [
+            OutputArtifact(
+                kind="report",
+                path=Path("Outputs/Reports/report.docx"),
+            ).model_dump(mode="json")
+        ]
+        return state
+
 
 def test_delivery_runtime_persists_context_between_declared_actions() -> None:
     runner = _DeliveryRunner()
@@ -96,7 +108,10 @@ def test_delivery_runtime_persists_context_between_declared_actions() -> None:
         publish_tool=runner._publish_state,
     ).publish(restored)
     restored = json.loads(json.dumps(published))
-    completed = DeclarativeDeliveryRuntime(runner).complete(restored)
+    completed = DeclarativeDeliveryRuntime(
+        runner,
+        complete_tool=runner._complete_state,
+    ).complete(restored)
 
     assert runner.calls == ["prepare", "publish", "complete"]
     assert completed == {
