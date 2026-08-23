@@ -1,0 +1,10 @@
+id: build-reporting-state
+version: 1.0.0
+description: Project typed preparation output to the existing Reporting stage state
+implementation: capability:distribution-reporting:build-reporting-state
+input_contract: reporting_run_context
+output_contract: reporting_tail_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

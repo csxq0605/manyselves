@@ -1,0 +1,10 @@
+id: attach-reporting-preparation
+version: 1.0.0
+description: Attach deterministic preparation output to its parent Reporting context
+implementation: capability:distribution-reporting:attach-reporting-preparation
+input_contract: reporting_preparation_attachment
+output_contract: reporting_run_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false
