@@ -19,10 +19,13 @@ from manyselves.capabilities.distribution_reporting.domain.final_specialization 
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     EditedReportSubmission,
+    FinalChapterLaneFindingSubmission,
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
+    DeclarativeFinalChapterAgentResult,
     DeclarativeFinalChapterContext,
+    DeclarativeFinalChapterOutcome,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     FinalChapterLaneInput,
@@ -178,6 +181,106 @@ class FinalChapterTools:
     def requires_agent(value: Any) -> bool:
         return DeclarativeFinalChapterContext.model_validate(value).status == "ready"
 
+    def accept_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalChapterContext:
+        """Persist one completed Auditor lane and accept its typed result."""
+
+        context = DeclarativeFinalChapterContext.model_validate(values["context"])
+        result = DeclarativeFinalChapterAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            return context.model_copy(update={"status": "failed", "error": result.error})
+        submission = cast(FinalChapterLaneFindingSubmission, result.submission)
+        contract = cast(FinalChapterLaneInput, context.contract)
+        try:
+            if (
+                submission.run_id != contract.run_id
+                or submission.chapter_id != context.chapter_id
+                or set(submission.checked_section_ids) != set(contract.section_ids)
+            ):
+                raise ValueError(
+                    f"final chapter {context.chapter_id} returned an out-of-scope finding lane"
+                )
+            output_ref = (
+                f"Work/runs/{contract.run_id}/reviews/"
+                f"final-chapter-lane-{context.chapter_id}-r0.json"
+            )
+            self.store.write_json(
+                output_ref,
+                submission.model_dump(mode="json"),
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(
+            update={
+                "status": "accepted",
+                "submission": submission,
+                "output_ref": output_ref,
+            }
+        )
+
+    @staticmethod
+    def complete_lane(value: Any) -> DeclarativeFinalChapterOutcome:
+        """Project an accepted lane context into its terminal cohort outcome."""
+
+        context = DeclarativeFinalChapterContext.model_validate(value)
+        if context.status == "failed":
+            return DeclarativeFinalChapterOutcome(
+                chapter_id=context.chapter_id,
+                status="failed",
+                error=context.error,
+            )
+        if context.status == "skipped":
+            return DeclarativeFinalChapterOutcome(
+                chapter_id=context.chapter_id,
+                status="skipped",
+            )
+        return DeclarativeFinalChapterOutcome(
+            chapter_id=context.chapter_id,
+            status="completed",
+            submission=context.submission,
+            output_ref=context.output_ref,
+        )
+
+    def reduce_cohort(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist the completed initial Final lane projection for the next workflow."""
+
+        state = _restore_state(values["state"])
+        outcomes = {
+            chapter_id: DeclarativeFinalChapterOutcome.model_validate(outcome)
+            for chapter_id, outcome in dict(values["outcomes"]).items()
+        }
+        failures = {
+            chapter_id: outcome.error or "Final chapter lane failed"
+            for chapter_id, outcome in outcomes.items()
+            if outcome.status == "failed"
+        }
+        if failures:
+            first = min(failures, key=int)
+            raise RuntimeError(failures[first])
+        active_chapters = tuple(
+            chapter_id
+            for chapter_id in ("1", "3", "4")
+            if chapter_id in outcomes and outcomes[chapter_id].status != "skipped"
+        )
+        run_id = str(state["run_id"])
+        initial_projection_ref = f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
+        self.store.write_json(
+            initial_projection_ref,
+            {
+                "run_id": run_id,
+                "stage": "final-initial",
+                "status": "completed",
+                "lane_ids": list(active_chapters),
+                "result_refs": {
+                    chapter_id: outcomes[chapter_id].output_ref
+                    for chapter_id in active_chapters
+                },
+            },
+        )
+        return state
+
 
 def build_final_chapter_tool_implementations(
     *,
@@ -194,6 +297,9 @@ def build_final_chapter_tool_implementations(
         "prepare-final-chapter-cohort": tools.prepare_cohort,
         "prepare-current-final-chapter": tools.prepare_lane,
         "final-chapter-initial-requires-agent": tools.requires_agent,
+        "accept-current-final-chapter-initial": tools.accept_lane,
+        "complete-current-final-chapter": tools.complete_lane,
+        "reduce-final-chapter-cohort": tools.reduce_cohort,
     }
 
 

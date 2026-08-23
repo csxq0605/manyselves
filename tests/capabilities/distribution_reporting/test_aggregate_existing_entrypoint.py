@@ -734,7 +734,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: accept-current-final-chapter-initial",
+            match="missing tool adapter: start-final-review-cycle",
         ):
             await host.execute(
                 plan,
@@ -759,8 +759,16 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             persisted.subworkflow_states["run-final-review"]
         )
         assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
-        assert final_state.actions["final-chapter-cohort"].status.value == "failed"
+        assert final_state.actions["final-chapter-cohort"].status.value == "completed"
+        assert final_state.actions["reduce-final-chapter-cohort"].status.value == "completed"
         assert final_state.variables["prepared-final-state"]["run_id"] == run_id
+        aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
+        assert aggregate_ref.is_file()
+        assert json.loads(aggregate_ref.read_text(encoding="utf-8"))["lane_ids"] == [
+            "1",
+            "3",
+            "4",
+        ]
         assert len(loops) == 3
         assert {loop.received[0].session_id for loop in loops.values()} == {
             "final-chapter-1",
