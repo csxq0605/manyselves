@@ -13,15 +13,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
     AgentResponse,
     AgentResultMessage,
-    Error,
-    UserMessage,
 )
 from ...kernel.contracts import (
     ContractAdapter,
@@ -36,6 +34,13 @@ from ...kernel.definitions import (
 )
 from ...kernel.recovery import RecoveryActionKind, RecoveryEventKind
 from ...kernel.workflow import ResolvedPlan, restore_plan_definition_registry
+from ...runtime.agent_execution import (
+    AgentExecutionService,
+    AgentExecutionSession,
+    AgentSessionRestore,
+    AgentTerminalSubscription,
+    AgentTurnRequest,
+)
 from ...runtime.agent_recovery import AgentRecoveryDriver
 from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
@@ -704,7 +709,11 @@ class ReportingAgentRunner:
             product_root=self.product_skill_root,
             project_root=self.workspace / "Capabilities/skills",
         )
-        self._sessions: dict[tuple[str, str], tuple[AgentLoop, str, str]] = {}
+        self._agent_execution = AgentExecutionService(bus, timeout=timeout)
+        # Temporary inspection alias while Reporting-specific continuation and
+        # result decoding are extracted in later FA-02 slices. The registry is
+        # owned and mutated by AgentExecutionService.
+        self._sessions = self._agent_execution.sessions
         self._session_route_bindings: dict[tuple[str, str], tuple[str, str]] = {}
         # Last typed boundary delivered to each durable identity.  The loop
         # keeps the lossless transcript; this small index only decides whether
@@ -3285,25 +3294,48 @@ class ReportingAgentRunner:
         Malformed or unrelated state starts the identity with empty history.
         """
 
+        restore = self._session_restore_state(
+            envelope=envelope,
+            runtime_id=runtime_id,
+            recovery_driver=recovery_driver,
+        )
+        if restore is None:
+            return False
+        loop.restore_conversation(
+            restore.messages,
+            task_boundaries=restore.task_boundaries,
+            handoff_summary=restore.handoff_summary,
+        )
+        return True
+
+    def _session_restore_state(
+        self,
+        *,
+        envelope: TaskEnvelope,
+        runtime_id: str,
+        recovery_driver: AgentRecoveryDriver | None = None,
+    ) -> AgentSessionRestore | None:
+        """Load Capability persistence into the generic session restore shape."""
+
         payload = self._load_persisted_identity_state(
             envelope=envelope,
             runtime_id=runtime_id,
         )
         if payload is None:
-            return False
+            return None
         messages = payload.get("messages")
         if not isinstance(messages, list):
-            return False
+            return None
         if recovery_driver is not None and not recovery_driver.restore_attempts(
             payload.get("recovery_attempts", {})
         ):
-            return False
-        loop.restore_conversation(
-            messages,
-            task_boundaries=[{"current": payload["identity_state"], "sequence": 1}],
-            handoff_summary=None,
+            return None
+        return AgentSessionRestore(
+            messages=messages,
+            task_boundaries=[
+                {"current": payload["identity_state"], "sequence": 1}
+            ],
         )
-        return True
 
     def _load_persisted_identity_state(
         self,
@@ -3676,46 +3708,38 @@ class ReportingAgentRunner:
                         ),
                     }
                 )
-            try:
+            def create_session_loop() -> AgentLoop:
                 loop = AgentLoop(**loop_kwargs)
-            except TypeError as exc:
-                # Older AgentLoop versions predate the optional hook.  Keep
-                # their construction path usable; the reporting task still
-                # has a persisted typed capsule for callers that can install
-                # one later.
-                if not any(
-                    optional_hook in str(exc)
-                    for optional_hook in (
-                        "context_rebuilder",
-                        "pre_send_context_guard",
-                        "provider_recovery_decider",
-                    )
-                ):
-                    raise
-                loop_kwargs.pop("context_rebuilder", None)
-                loop_kwargs.pop("pre_send_context_guard", None)
-                loop_kwargs.pop("provider_recovery_decider", None)
-                loop = AgentLoop(**loop_kwargs)
-            # Reporting persists identity and canonical refs in its v4 state.
-            # In-memory compaction is still allowed, but its process summary is
-            # not another durable conversation artifact.
-            loop.persist_handoff_summary = False
-            # A process restart loses the in-memory session map, not the
-            # durable identity. Restore only identity/reference state before
-            # the loop starts accepting task messages.
-            self._restore_persisted_session(
-                loop,
-                envelope=envelope,
+                # Reporting persists identity and canonical refs in its v4
+                # state. In-memory compaction remains available, but its
+                # process summary is not another durable artifact.
+                loop.persist_handoff_summary = False
+                return loop
+
+            execution_session = await self._agent_execution.start_or_restore(
+                workflow_id=workflow_id,
+                conversation_key=identity_key,
                 runtime_id=runtime_id,
-                recovery_driver=recovery_driver,
+                session_id=session_id,
+                session_factory=create_session_loop,
+                restore=self._session_restore_state(
+                    envelope=envelope,
+                    runtime_id=runtime_id,
+                    recovery_driver=recovery_driver,
+                ),
             )
-            self._sessions[cache_key] = (loop, session_id, runtime_id)
+            loop = execution_session.loop
+            session_id = execution_session.session_id
+            runtime_id = execution_session.runtime_id
             self._session_route_bindings[cache_key] = route_binding
             loop.usage_stage = task_kind
             router.register_session(definition.id, session_id, runtime_id)
-            await loop.start()
         else:
             loop, session_id, runtime_id = cached
+            execution_session = cast(
+                AgentExecutionSession,
+                self._agent_execution.session(workflow_id, identity_key),
+            )
             persisted_identity = self._load_persisted_identity_state(
                 envelope=envelope,
                 runtime_id=runtime_id,
@@ -3922,22 +3946,7 @@ class ReportingAgentRunner:
             resolved_execution_profile=resolved_profile,
         )
 
-        async def wait_result() -> AgentResult:
-            message = await self.bus.wait_for(
-                AgentResultMessage,
-                lambda item: (
-                    item.workflow_id == workflow_id
-                    and item.run_id == envelope.run_id
-                    and item.task_id == envelope.task_id
-                    and item.task_attempt_id == envelope.task_attempt_id
-                    and item.sender == definition.id
-                    and item.session_id == session_id
-                    and item.identity_key == identity_key
-                    and item.lease_owner_id == identity_lease.owner_id
-                    and item.lease_epoch == identity_lease.lease_epoch
-                ),
-                timeout=self.timeout,
-            )
+        def load_typed_result(message: AgentResultMessage) -> AgentResult:
             expected_ref = (
                 f"Work/runs/{envelope.run_id}/results/attempts/"
                 f"{envelope.task_id}/{envelope.task_attempt_id}.json"
@@ -4015,76 +4024,52 @@ class ReportingAgentRunner:
             provider_stream_idle_timeout_seconds: float | None = None,
             turn_kind: str = "task_initial",
         ) -> AgentResult | AgentResponse:
-            result_waiter = asyncio.create_task(wait_result())
-            final_waiter = asyncio.create_task(
-                self.bus.wait_for(
-                    AgentResponse,
-                    lambda item: (
-                        item.agent_type == runtime_id
-                        and item.message_id == envelope.task_id
-                        and item.workflow_id == workflow_id
-                        and item.run_id == envelope.run_id
-                        and item.task_id == envelope.task_id
-                        and item.task_attempt_id == envelope.task_attempt_id
-                        and item.session_id == session_id
-                        and not item.streaming
+            outcome = await self._agent_execution.dispatch_turn(
+                execution_session,
+                AgentTurnRequest(
+                    content=content,
+                    message_id=envelope.task_id,
+                    workflow_id=workflow_id,
+                    run_id=envelope.run_id,
+                    task_id=envelope.task_id,
+                    task_attempt_id=envelope.task_attempt_id,
+                    internal=internal,
+                    provider_stream_idle_timeout_seconds=(
+                        provider_stream_idle_timeout_seconds
                     ),
-                    timeout=self.timeout,
-                )
-            )
-            error_waiter = asyncio.create_task(
-                self.bus.wait_for(
-                    Error,
-                    lambda item: (
-                        item.source == runtime_id
-                        and item.workflow_id == workflow_id
-                        and item.run_id == envelope.run_id
-                        and item.task_id == envelope.task_id
-                        and item.task_attempt_id == envelope.task_attempt_id
-                        and item.session_id == session_id
+                    turn_kind=turn_kind,
+                ),
+                terminals=(
+                    AgentTerminalSubscription(
+                        kind="typed_result",
+                        message_type=AgentResultMessage,
+                        predicate=lambda item: (
+                            item.workflow_id == workflow_id
+                            and item.run_id == envelope.run_id
+                            and item.task_id == envelope.task_id
+                            and item.task_attempt_id == envelope.task_attempt_id
+                            and item.sender == definition.id
+                            and item.session_id == session_id
+                            and item.identity_key == identity_key
+                            and item.lease_owner_id == identity_lease.owner_id
+                            and item.lease_epoch == identity_lease.lease_epoch
+                        ),
                     ),
-                    timeout=self.timeout,
-                )
+                ),
             )
-            waiters = {result_waiter, final_waiter, error_waiter}
-            try:
-                await asyncio.sleep(0)
-                await self.bus.publish(
-                    UserMessage(
-                        agent_type=runtime_id,
-                        source="workflow",
-                        message_id=envelope.task_id,
-                        content=content,
-                        internal=internal,
-                        provider_stream_idle_timeout_seconds=(provider_stream_idle_timeout_seconds),
-                        workflow_id=workflow_id,
-                        run_id=envelope.run_id,
-                        task_id=envelope.task_id,
-                        task_attempt_id=envelope.task_attempt_id,
-                        session_id=session_id,
-                        turn_kind=turn_kind,
-                    )
-                )
-                done, _pending = await asyncio.wait(
-                    waiters,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if result_waiter in done:
-                    return result_waiter.result()
-                if error_waiter in done:
-                    error = error_waiter.result()
-                    marker = "REPORTING_RUN_BUDGET_EXHAUSTED:"
-                    if marker in error.message:
-                        from .workflow import ReportingNeedsDecisionError
+            if outcome.kind == "typed_result":
+                return load_typed_result(cast(AgentResultMessage, outcome.message))
+            if outcome.kind == "error":
+                error = cast(Any, outcome.message)
+                marker = "REPORTING_RUN_BUDGET_EXHAUSTED:"
+                if marker in error.message:
+                    from .workflow import ReportingNeedsDecisionError
 
-                        raise ReportingNeedsDecisionError(error.message.split(marker, 1)[1].strip())
-                    raise RuntimeError(error.message)
-                return await final_waiter
-            finally:
-                for waiter in waiters:
-                    if not waiter.done():
-                        waiter.cancel()
-                await asyncio.gather(*waiters, return_exceptions=True)
+                    raise ReportingNeedsDecisionError(
+                        error.message.split(marker, 1)[1].strip()
+                    )
+                raise RuntimeError(error.message)
+            return cast(AgentResponse, outcome.message)
 
         try:
 
@@ -4531,7 +4516,7 @@ class ReportingAgentRunner:
                 recovery_driver=recovery_driver,
             )
             raise
-        await loop.wait_until_turn_complete()
+        await self._agent_execution.wait_until_turn_complete(execution_session)
         self._context_terminal(
             context_rebuilder,
             status=result.status.value,
@@ -4704,10 +4689,9 @@ class ReportingAgentRunner:
         """Stop all isolated sessions retained for peer questions and local revision."""
         keys = [key for key in self._sessions if key[0] == workflow_id]
         for key in keys:
-            loop, _session_id, runtime_id = self._sessions.pop(key)
             self._session_route_bindings.pop(key, None)
             self._session_task_state.pop(key, None)
-            await loop.stop()
+        await self._agent_execution.close_workflow(workflow_id)
         router = self._routers.pop(workflow_id, None)
         if router is not None:
             router.close()
