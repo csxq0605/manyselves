@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.special_topics import load_special_topic_plan
+from manyselves.capabilities.distribution_reporting.runtime.intake.special_topics import (
+    load_special_topic_plan,
+)
 
 
 def test_special_topic_plan_is_parsed_from_one_standalone_inputs_markdown(

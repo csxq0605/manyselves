@@ -11,6 +11,9 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
+    runtime_photo_ids,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     chief_chapter as chief_chapter_models,
 )
@@ -49,7 +52,6 @@ from manyselves.kernel.workflow import (
     retry_parallel_branches,
 )
 
-from .assets import ReportAssetAssembler
 from .declarative_task_binding import bind_declared_task
 
 CHIEF_CHAPTER_IDS = ("1", "3", "4")
@@ -563,7 +565,7 @@ class DeclarativeChiefChapterRuntime:
             special_topic_analysis=special_topic_body,
             protected_claim_ids=sorted(claim.id for claim in claims),
             tables=[],
-            photo_ids=ReportAssetAssembler.runtime_photo_ids(
+            photo_ids=runtime_photo_ids(
                 state.get("evidence_items", []),
                 state.get("photo_assets", []),
             ),

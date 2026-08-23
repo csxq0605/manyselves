@@ -18,6 +18,9 @@ from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.capabilities.distribution_reporting.domain.coverage import evaluate_coverage
+from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
+    runtime_photo_ids,
+)
 from manyselves.capabilities.distribution_reporting.runtime.intake.manifest import (
     build_manifest,
 )
@@ -66,7 +69,6 @@ from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
-from .assets import ReportAssetAssembler
 from .config import load_packaged_agents
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
@@ -1915,7 +1917,7 @@ class ReportingService:
                 )
             )
         photo_assets = normalized_photo_assets
-        ReportAssetAssembler.runtime_photo_ids(evidence, photo_assets)
+        runtime_photo_ids(evidence, photo_assets)
         photo_to_evidence: dict[str, list[str]] = {
             asset.id: [] for asset in photo_assets
         }

@@ -1,6 +1,8 @@
 import json
 
-from manyselves.core.reporting.research.project_evidence import ProjectEvidenceIndex
+from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
+    ProjectEvidenceIndex,
+)
 
 
 def test_evidence_snapshot_indexes_exact_complete_jsonl(tmp_path) -> None:

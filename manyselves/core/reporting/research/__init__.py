@@ -1,6 +1,5 @@
 """Opt-in project reference and web research primitives."""
 
-from .project_evidence import ProjectEvidenceIndex
 from .reference_library import (
     KnowledgeNamespace,
     ReferenceDocument,
@@ -20,7 +19,6 @@ __all__ = [
     "DisabledWebResearchBackend",
     "KnowledgeNamespace",
     "OpenedWebSource",
-    "ProjectEvidenceIndex",
     "ReferenceDocument",
     "ReferenceHit",
     "ReferenceLibrary",

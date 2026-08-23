@@ -24,6 +24,9 @@ from manyselves.capabilities.distribution_reporting.domain.claim_ledger import C
 from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
     final_lane_specialization,
 )
+from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
+    runtime_photo_ids,
+)
 from manyselves.capabilities.distribution_reporting.domain.report_markdown import (
     CanonicalMarkdownTable,
     CanonicalReportContent,
@@ -39,6 +42,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     parse_report_taxonomy_workbook,
     reset_report_taxonomy,
     resolve_submodule,
+)
+from manyselves.capabilities.distribution_reporting.runtime.intake.special_topics import (
+    load_special_topic_plan,
 )
 from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
     extract_wps_images,
@@ -114,6 +120,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleReviewPreflightProgress,
     ModuleRevisionPreparation,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
+    ProjectEvidenceIndex,
+    project_evidence_locator,
+)
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     AggregateState,
@@ -157,7 +167,6 @@ from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .research.knowledge_context import KnowledgeContextBuilder
-from .research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from .review_lifecycle import (
     DeferredMainDecision,
     accept_module_initial_review,
@@ -183,7 +192,6 @@ from .scheduling import (
     TaskTimingHistory,
 )
 from .session_summary import SessionSummaryStore
-from .special_topics import load_special_topic_plan
 from .versions import ReportVersion
 
 if TYPE_CHECKING:
@@ -4293,7 +4301,7 @@ class ReportWorkflowRunner:
         }
         missing = referenced - {photo.id for photo in photos}
         if not missing:
-            ReportAssetAssembler.runtime_photo_ids(evidence, photos)
+            runtime_photo_ids(evidence, photos)
             return
 
         manifest: ProjectManifest = state["project_manifest"]
@@ -4366,7 +4374,7 @@ class ReportWorkflowRunner:
 
         state["photo_assets"] = [*photos, *recovered]
         try:
-            ReportAssetAssembler.runtime_photo_ids(
+            runtime_photo_ids(
                 evidence,
                 state["photo_assets"],
             )
@@ -4434,7 +4442,7 @@ class ReportWorkflowRunner:
     def _persist_preparation_snapshot(self, state: dict) -> None:
         if "report_taxonomy" not in state:
             raise AgentWorkflowError("cannot persist preparation without report taxonomy")
-        ReportAssetAssembler.runtime_photo_ids(
+        runtime_photo_ids(
             state.get("evidence_items", []),
             state.get("photo_assets", []),
         )
@@ -6855,7 +6863,7 @@ class ReportWorkflowRunner:
             special_topic_analysis=special_topic_body,
             protected_claim_ids=sorted(claim.id for claim in claims),
             tables=[],
-            photo_ids=ReportAssetAssembler.runtime_photo_ids(
+            photo_ids=runtime_photo_ids(
                 state.get("evidence_items", []), state.get("photo_assets", [])
             ),
             unresolved_editorial_issues=[],

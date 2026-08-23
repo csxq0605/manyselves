@@ -2,6 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
+    runtime_photo_ids,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
@@ -658,7 +661,7 @@ def test_asset_assembler_rejects_source_table_photo_without_runtime_asset(
     )
 
     with pytest.raises(ValueError, match="missing from the runtime manifest"):
-        ReportAssetAssembler.runtime_photo_ids([evidence], [])
+        runtime_photo_ids([evidence], [])
 
 
 def test_asset_assembler_rejects_non_e_photo_evidence_binding() -> None:
@@ -684,7 +687,7 @@ def test_asset_assembler_rejects_non_e_photo_evidence_binding() -> None:
     )
 
     with pytest.raises(ValueError, match=r"canonical E-\* ids"):
-        ReportAssetAssembler.runtime_photo_ids([evidence], [asset])
+        runtime_photo_ids([evidence], [asset])
 
 
 def test_asset_assembler_rejects_unknown_explicit_primary_photo_evidence(
@@ -720,7 +723,7 @@ def test_asset_assembler_rejects_unknown_explicit_primary_photo_evidence(
     )
 
     with pytest.raises(ValueError, match="primary evidence binding"):
-        ReportAssetAssembler.runtime_photo_ids(evidence, [asset])
+        runtime_photo_ids(evidence, [asset])
 
 
 def test_asset_assembler_uses_explicit_primary_binding_for_reused_photo(
