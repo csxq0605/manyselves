@@ -7,12 +7,19 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
+from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
+from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
 from manyselves.runtime.agent_execution import (
     AgentExecutionService,
+    AgentRecoveryCompleted,
+    AgentRecoveryDirective,
+    AgentRecoveryExecutionError,
+    AgentRecoveryRequired,
     AgentSessionRestore,
     AgentTerminalSubscription,
     AgentTurnRequest,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 
 
 @dataclass
@@ -24,6 +31,7 @@ class ScriptedAgentLoop:
     started: int = 0
     stopped: int = 0
     completed_turns: int = 0
+    received: list[UserMessage] = field(default_factory=list)
     _callback: Callable[[UserMessage], Any] | None = None
 
     def restore_conversation(
@@ -42,6 +50,7 @@ class ScriptedAgentLoop:
         async def respond(message: UserMessage) -> None:
             if message.agent_type != self.runtime_id:
                 return
+            self.received.append(message)
             if not self.responses:
                 return
             self.completed_turns += 1
@@ -144,6 +153,188 @@ async def test_service_owns_session_restore_reuse_turn_and_close() -> None:
     await service.close_workflow("workflow-1")
     assert created[0].stopped == 1
     assert service.sessions == {}
+    bus.shutdown()
+    await bus_task
+
+
+@pytest.mark.asyncio
+async def test_recovery_loop_corrects_in_same_session_until_typed_terminal() -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loop = ScriptedAgentLoop(bus, "runtime-agent", ["natural answer"])
+    service = AgentExecutionService(bus, timeout=1)
+    session = await service.start_or_restore(
+        workflow_id="workflow-1",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-9",
+        session_factory=lambda: loop,
+    )
+
+    async def publish_typed(message: UserMessage) -> None:
+        if message.turn_kind != "submission_correction":
+            return
+        await bus.publish(
+            AgentResultMessage(
+                sender="runtime-agent",
+                task_id=message.task_id,
+                run_id=message.run_id,
+                result_path="Work/results/corrected.json",
+                workflow_id=message.workflow_id,
+                task_attempt_id=message.task_attempt_id,
+                session_id=message.session_id,
+            )
+        )
+
+    bus.subscribe(UserMessage, publish_typed)
+    initial = AgentTurnRequest(
+        content="initial task",
+        message_id="task-1",
+        workflow_id="workflow-1",
+        run_id="run-1",
+        task_id="task-1",
+        task_attempt_id="attempt-1",
+    )
+
+    async def interpret(outcome, request):
+        if outcome.kind == "typed_result":
+            return AgentRecoveryCompleted(result="accepted")
+        assert request.turn_kind == "task_initial"
+        return AgentRecoveryRequired(
+            event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+            fallback_action=RecoveryActionKind.CORRECT,
+            detail={"terminal": "natural"},
+        )
+
+    async def build_turn(
+        directive: AgentRecoveryDirective,
+        observation: AgentRecoveryRequired,
+    ) -> AgentTurnRequest:
+        del observation
+        assert directive.action is RecoveryActionKind.CORRECT
+        assert directive.prompt == "Use the declared submission tool."
+        return AgentTurnRequest(
+            **{
+                **initial.__dict__,
+                "content": directive.prompt,
+                "internal": True,
+                "turn_kind": "submission_correction",
+            }
+        )
+
+    async def stop(_outcome, _directive):
+        return "stopped"
+
+    async def reuse_result(_outcome, _directive):
+        return "reused"
+
+    result = await service.execute_with_recovery(
+        session,
+        initial,
+        recovery=AgentRecoveryDriver(
+            RecoveryPolicyDefinition(
+                id="correct-natural",
+                version="1.0.0",
+                description="Correct natural completion",
+                rules={
+                    "natural_language_without_submission": RecoveryRule(
+                        action="correct",
+                        prompt="Use the declared submission tool.",
+                    )
+                },
+            )
+        ),
+        interpret=interpret,
+        build_turn=build_turn,
+        stop=stop,
+        reuse_result=reuse_result,
+        terminals=(
+            AgentTerminalSubscription(
+                kind="typed_result",
+                message_type=AgentResultMessage,
+                predicate=lambda item: item.result_path.endswith("corrected.json"),
+            ),
+        ),
+    )
+
+    assert result == "accepted"
+    assert [item.turn_kind for item in loop.received] == [
+        "task_initial",
+        "submission_correction",
+    ]
+    assert {item.session_id for item in loop.received} == {"provider-session-9"}
+
+    await service.close_workflow("workflow-1")
+    bus.shutdown()
+    await bus_task
+
+
+@pytest.mark.asyncio
+async def test_recovery_loop_fails_on_declared_fail_action() -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loop = ScriptedAgentLoop(bus, "runtime-agent", ["natural"])
+    service = AgentExecutionService(bus, timeout=1)
+    session = await service.start_or_restore(
+        workflow_id="workflow-1",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-12",
+        session_factory=lambda: loop,
+    )
+
+    async def interpret(_outcome, _request):
+        return AgentRecoveryRequired(
+            event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+            fallback_action=RecoveryActionKind.CORRECT,
+        )
+
+    async def build_turn(_directive, _observation):
+        return AgentTurnRequest(
+            content="unused",
+            message_id="task-1",
+            workflow_id="workflow-1",
+            run_id="run-1",
+            task_id="task-1",
+            task_attempt_id="attempt-1",
+        )
+
+    async def stop(_outcome, _directive):
+        return "stopped"
+
+    async def reuse_result(_outcome, _directive):
+        return "reused"
+
+    with pytest.raises(AgentRecoveryExecutionError, match="declared fail"):
+        await service.execute_with_recovery(
+            session,
+            AgentTurnRequest(
+                content="initial task",
+                message_id="task-1",
+                workflow_id="workflow-1",
+                run_id="run-1",
+                task_id="task-1",
+                task_attempt_id="attempt-1",
+            ),
+            recovery=AgentRecoveryDriver(
+                RecoveryPolicyDefinition(
+                    id="fail-natural",
+                    version="1.0.0",
+                    description="Fail natural completion",
+                    rules={
+                        "natural_language_without_submission": RecoveryRule(
+                            action="fail"
+                        )
+                    },
+                )
+            ),
+            interpret=interpret,
+            build_turn=build_turn,
+            stop=stop,
+            reuse_result=reuse_result,
+        )
+
+    await service.close_workflow("workflow-1")
     bus.shutdown()
     await bus_task
 

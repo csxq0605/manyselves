@@ -37,8 +37,14 @@ from ...kernel.workflow import ResolvedPlan, restore_plan_definition_registry
 from ...runtime.agent_execution import (
     AgentExecutionService,
     AgentExecutionSession,
+    AgentRecoveryCompleted,
+    AgentRecoveryDirective,
+    AgentRecoveryObservation,
+    AgentRecoveryRequired,
+    AgentRecoveryStopped,
     AgentSessionRestore,
     AgentTerminalSubscription,
+    AgentTurnOutcome,
     AgentTurnRequest,
 )
 from ...runtime.agent_recovery import AgentRecoveryDriver
@@ -4353,24 +4359,8 @@ class ReportingAgentRunner:
             ):
                 result = await persist_untyped_completion(turn)
             elif isinstance(turn, AgentResponse) and envelope.allowed_outputs:
-                recovery_decision = apply_recovery_policy(
-                    RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
-                    RecoveryActionKind.CORRECT,
-                    {"task_id": envelope.task_id},
-                )
                 expected = ", ".join(envelope.allowed_outputs)
-                if (
-                    recovery_decision is not None
-                    and recovery_decision.action is RecoveryActionKind.STOP
-                ):
-                    correction = None
-                elif recovery_decision is not None and recovery_decision.prompt:
-                    correction = (
-                        "<submission_correction>\n"
-                        f"{recovery_decision.prompt}\n"
-                        "</submission_correction>"
-                    )
-                elif envelope.task_id == "template-skill-distillation":
+                if envelope.task_id == "template-skill-distillation":
                     correction = (
                         "<submission_correction>\n"
                         "你刚才错误地用普通文字结束。现在不得解释或重读模板。立即调用 "
@@ -4458,33 +4448,145 @@ class ReportingAgentRunner:
                         "不得压缩或省略已完成内容，不得重新读取文件或重新检索。\n"
                         "</submission_correction>"
                     )
-                if correction is None:
-                    result = await persist_untyped_completion(turn)
-                else:
+                initial_recovery_request = AgentTurnRequest(
+                    content=task_message,
+                    message_id=envelope.task_id,
+                    workflow_id=workflow_id,
+                    run_id=envelope.run_id,
+                    task_id=envelope.task_id,
+                    task_attempt_id=envelope.task_attempt_id,
+                    provider_stream_idle_timeout_seconds=stream_idle_timeout,
+                )
+
+                async def interpret_submission_terminal(
+                    outcome: AgentTurnOutcome,
+                    request: AgentTurnRequest,
+                ) -> AgentRecoveryObservation:
+                    if outcome.kind == "typed_result":
+                        return AgentRecoveryCompleted(
+                            result=load_typed_result(
+                                cast(AgentResultMessage, outcome.message)
+                            ),
+                        )
+                    if outcome.kind == "error":
+                        error = cast(Any, outcome.message)
+                        marker = "REPORTING_RUN_BUDGET_EXHAUSTED:"
+                        if marker in error.message:
+                            from .workflow import ReportingNeedsDecisionError
+
+                            raise ReportingNeedsDecisionError(
+                                error.message.split(marker, 1)[1].strip()
+                            )
+                        raise RuntimeError(error.message)
+                    response = cast(AgentResponse, outcome.message)
+                    if response.content in {
+                        AGENT_TURN_CONTINUATION_REQUIRED,
+                        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+                    }:
+                        return AgentRecoveryCompleted(result=response)
+                    if request.turn_kind == "submission_correction":
+                        return AgentRecoveryStopped()
+                    return AgentRecoveryRequired(
+                        event_kind=(
+                            RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION
+                        ),
+                        fallback_action=RecoveryActionKind.CORRECT,
+                        detail={"task_id": envelope.task_id},
+                    )
+
+                async def build_submission_turn(
+                    directive: AgentRecoveryDirective,
+                    _observation: AgentRecoveryRequired,
+                ) -> AgentTurnRequest:
+                    recovery_message = (
+                        (
+                            "<submission_correction>\n"
+                            f"{directive.prompt}\n"
+                            "</submission_correction>"
+                        )
+                        if directive.prompt
+                        else correction
+                    )
                     self._context_reason_turn(
                         context_rebuilder,
-                        content=correction,
+                        content=recovery_message,
                         turn_kind="submission_correction",
-                        prior_output=(
-                            turn.content if isinstance(turn, AgentResponse) else None
+                        prior_output=turn.content,
+                    )
+                    return AgentTurnRequest(
+                        content=recovery_message,
+                        message_id=envelope.task_id,
+                        workflow_id=workflow_id,
+                        run_id=envelope.run_id,
+                        task_id=envelope.task_id,
+                        task_attempt_id=envelope.task_attempt_id,
+                        internal=True,
+                        turn_kind="submission_correction",
+                        provider_stream_idle_timeout_seconds=(
+                            REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
                         ),
                     )
-                    corrected = await finish_tool_slices(
-                        await one_turn(
-                            correction,
-                            internal=True,
-                            turn_kind="submission_correction",
-                            provider_stream_idle_timeout_seconds=(
-                                REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
+
+                async def stop_submission_recovery(
+                    outcome: AgentTurnOutcome,
+                    _directive: AgentRecoveryDirective,
+                ) -> AgentResult:
+                    response = cast(AgentResponse, outcome.message)
+                    return await persist_untyped_completion(response)
+
+                async def reuse_submission_result(
+                    outcome: AgentTurnOutcome,
+                    _directive: AgentRecoveryDirective,
+                ) -> AgentResult:
+                    return load_typed_result(
+                        cast(AgentResultMessage, outcome.message)
+                    )
+
+                corrected = await self._agent_execution.execute_with_recovery(
+                    execution_session,
+                    initial_recovery_request,
+                    recovery=recovery_driver,
+                    interpret=interpret_submission_terminal,
+                    build_turn=build_submission_turn,
+                    stop=stop_submission_recovery,
+                    reuse_result=reuse_submission_result,
+                    terminals=(
+                        AgentTerminalSubscription(
+                            kind="typed_result",
+                            message_type=AgentResultMessage,
+                            predicate=lambda item: (
+                                item.workflow_id == workflow_id
+                                and item.run_id == envelope.run_id
+                                and item.task_id == envelope.task_id
+                                and item.task_attempt_id
+                                == envelope.task_attempt_id
+                                and item.sender == definition.id
+                                and item.session_id == session_id
+                                and item.identity_key == identity_key
+                                and item.lease_owner_id
+                                == identity_lease.owner_id
+                                and item.lease_epoch
+                                == identity_lease.lease_epoch
                             ),
                         ),
+                    ),
+                    observed_outcome=AgentTurnOutcome(
+                        kind="response",
+                        message=turn,
+                        session_id=session_id,
+                        runtime_id=runtime_id,
+                    ),
+                )
+                if isinstance(corrected, AgentResponse):
+                    corrected = await finish_tool_slices(
+                        corrected,
                         origin_turn_kind="submission_correction",
                     )
-                    result = (
-                        corrected
-                        if isinstance(corrected, AgentResult)
-                        else await persist_untyped_completion(corrected)
-                    )
+                result = (
+                    corrected
+                    if isinstance(corrected, AgentResult)
+                    else await persist_untyped_completion(corrected)
+                )
             elif isinstance(turn, AgentResponse):
                 result = await persist_untyped_completion(turn)
             else:

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from manyselves.interfaces.types import AgentResponse, Error, Message, UserMessage
+from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
+
+from .agent_recovery import AgentRecoveryDriver
 
 
 class AgentSessionLoop(Protocol):
@@ -102,6 +105,49 @@ class AgentTurnOutcome:
     message: Message
     session_id: str
     runtime_id: str
+
+
+@dataclass(frozen=True)
+class AgentRecoveryCompleted:
+    """A Capability decoded one terminal into its completed result."""
+
+    result: Any
+
+
+@dataclass(frozen=True)
+class AgentRecoveryRequired:
+    """A Capability classified one terminal as a recoverable event."""
+
+    event_kind: RecoveryEventKind
+    fallback_action: RecoveryActionKind
+    detail: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class AgentRecoveryStopped:
+    """A Capability classified one terminal as final without recovery."""
+
+    reason: str = "terminal_stop"
+
+
+AgentRecoveryObservation = (
+    AgentRecoveryCompleted | AgentRecoveryRequired | AgentRecoveryStopped
+)
+
+
+@dataclass(frozen=True)
+class AgentRecoveryDirective:
+    """Runtime decision passed to a Capability message or terminal adapter."""
+
+    event_kind: RecoveryEventKind
+    action: RecoveryActionKind
+    prompt: str | None = None
+    reason: str | None = None
+    detail: Mapping[str, Any] | None = None
+
+
+class AgentRecoveryExecutionError(RuntimeError):
+    """A declared recovery action cannot be executed for the observed event."""
 
 
 class AgentExecutionService:
@@ -272,15 +318,13 @@ class AgentExecutionService:
                 [waiter for _kind, waiter in waiters],
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            for kind, waiter in waiters:
-                if waiter in done:
-                    return AgentTurnOutcome(
-                        kind=kind,
-                        message=waiter.result(),
-                        session_id=session.session_id,
-                        runtime_id=session.runtime_id,
-                    )
-            raise RuntimeError("Agent turn ended without a terminal message")
+            kind, waiter = next(item for item in waiters if item[1] in done)
+            return AgentTurnOutcome(
+                kind=kind,
+                message=waiter.result(),
+                session_id=session.session_id,
+                runtime_id=session.runtime_id,
+            )
         finally:
             for _kind, waiter in waiters:
                 if not waiter.done():
@@ -289,6 +333,85 @@ class AgentExecutionService:
                 *(waiter for _kind, waiter in waiters),
                 return_exceptions=True,
             )
+
+    async def execute_with_recovery(
+        self,
+        session: AgentExecutionSession,
+        initial: AgentTurnRequest,
+        *,
+        recovery: AgentRecoveryDriver,
+        interpret: Callable[
+            [AgentTurnOutcome, AgentTurnRequest],
+            Coroutine[Any, Any, AgentRecoveryObservation],
+        ],
+        build_turn: Callable[
+            [AgentRecoveryDirective, AgentRecoveryRequired],
+            Coroutine[Any, Any, AgentTurnRequest],
+        ],
+        stop: Callable[
+            [AgentTurnOutcome, AgentRecoveryDirective],
+            Coroutine[Any, Any, Any],
+        ],
+        reuse_result: Callable[
+            [AgentTurnOutcome, AgentRecoveryDirective],
+            Coroutine[Any, Any, Any],
+        ],
+        terminals: Sequence[AgentTerminalSubscription] = (),
+        observed_outcome: AgentTurnOutcome | None = None,
+    ) -> Any:
+        """Drive interpreted terminal events through recovery on one session.
+
+        All Capability ports are async and narrow: classify/decode a terminal,
+        build the next domain message, persist a stop, or load a reusable result.
+        """
+
+        request = initial
+        while True:
+            if observed_outcome is None:
+                outcome = await self.dispatch_turn(
+                    session,
+                    request,
+                    terminals=terminals,
+                )
+            else:
+                outcome = observed_outcome
+                observed_outcome = None
+            observation = await interpret(outcome, request)
+            if isinstance(observation, AgentRecoveryCompleted):
+                return observation.result
+            if isinstance(observation, AgentRecoveryStopped):
+                directive = AgentRecoveryDirective(
+                    event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                    action=RecoveryActionKind.STOP,
+                    reason=observation.reason,
+                )
+                return await stop(outcome, directive)
+
+            decision = recovery.decide(
+                observation.event_kind,
+                observation.detail,
+            )
+            directive = AgentRecoveryDirective(
+                event_kind=observation.event_kind,
+                action=(
+                    observation.fallback_action
+                    if decision is None
+                    else decision.action
+                ),
+                prompt=None if decision is None else decision.prompt,
+                reason=None if decision is None else decision.reason,
+                detail=observation.detail,
+            )
+            if directive.action is RecoveryActionKind.STOP:
+                return await stop(outcome, directive)
+            if directive.action is RecoveryActionKind.FAIL:
+                raise AgentRecoveryExecutionError(
+                    f"recovery policy declared fail for "
+                    f"{directive.event_kind.value}"
+                )
+            if directive.action is RecoveryActionKind.REUSE_RESULT:
+                return await reuse_result(outcome, directive)
+            request = await build_turn(directive, observation)
 
     async def wait_until_turn_complete(
         self,

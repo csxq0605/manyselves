@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-02 — 抽取通用 Agent/Conversation/Recovery Runtime`
-- Current slice: `让 AgentExecutionService 继续直接拥有 continuation/correction/no-progress/result-reuse 调度；Capability 只提供窄领域策略`
+- Current slice: `把 max-token/tool-slice/no-progress/completed-result 从 Reporting runner 的私有分支继续迁入 AgentExecutionService；natural submission correction 已迁入`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `bceba87 Capability: own module lane runtime models`
+- HEAD at slice start: `19276d1 Runtime: own agent session and turn lifecycle`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `先固定 Runtime-owned recovery loop Characterization，再把 Reporting runner 内的 continuation/correction/no-progress/completed-result 分支收敛为 Capability strategy + Generic Runtime 调度`
+- Next automatic action: `以同一 Agent session 的 max-token/tool-slice 续接为下一个 production vertical slice，随后迁移 typed progress/no-progress 和 Provider 前 completed-result reuse`
 
 ## Why the prior completion claim is reopened
 
@@ -64,7 +64,7 @@
 | Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
 | Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
 | Reporting Python 归 Capability 所有 | Module Lane/Cohort 的 6 个 Contract 类型已真正迁入 Capability；其余领域模型、Agent runner、review/render/delivery 仍在 `manyselves/core/reporting` | 物理和语义归属仍部分混合 | FA-03/FA-05 继续分类迁移 |
-| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 已在 Runtime；`AgentExecutionService` 已直接拥有 AgentLoop 创建/恢复/启停、Conversation session 复用、单轮 publish/wait 和真实 session ID | continuation/correction/no-progress/completed-result 策略与 typed-result 解码仍由 Reporting runner 主调 | FA-02 继续提取，Reporting 仅提供领域 Prompt/Tools/结果绑定 |
+| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 已在 Runtime；`AgentExecutionService` 已直接拥有 AgentLoop 生命周期、Conversation session、单轮 publish/wait，并已在生产路径驱动 natural-language submission correction 的 CORRECT/STOP/FAIL | max-token/tool-slice/no-progress/completed-result reuse 仍由 Reporting runner 旧分支主调；typed-result 解码仍属 Reporting | FA-02 继续提取，Reporting 仅提供领域 Prompt/Tools/结果绑定 |
 | 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
 | 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
 | 旧兼容代码不在发布图 | Sequential/ControlFlow old executor、legacy adapter、Reporting facade/runner 债务仍存在 | 无生产用途和旧产品入口尚未系统删除 | FA-05 按引用与行为测试删除 |
@@ -109,6 +109,8 @@
 - 紧随的 Module Cohort 所有权切片将 `DeclarativeModuleLaneOutcome` 真正迁入 `capabilities/distribution_reporting/runtime/models/module_cohort.py`，旧 Core 模块不再定义、别名或重导出该类；Contract 动态解析、Join/恢复字段 round-trip 和 extra-forbid Characterization 已覆盖。Definition package `27 passed`、Cohort `3 passed`、Runner affected `6 passed`；Ruff、compileall、旧路径/类扫描和 `git diff --check` 通过。旧 Contract model 路径进一步减少为 35 个。
 - FA-02 新增 `runtime/agent_execution.py`：服务直接管理 `(workflow_id, conversation_key)` session registry、AgentLoop 创建/恢复/启动/复用、单轮消息发布与 terminal 等待、turn completion 和 workflow close；该模块只依赖中立 `AgentSessionLoop`/`AgentMessageBus` 结构协议，不导入历史 `core` 具体类。Reporting 生产路径已改用 `start_or_restore`、`dispatch_turn`、`wait_until_turn_complete` 和 `close_workflow`，不再直接 `loop.start/stop`、`bus.wait_for` 或构造 `UserMessage`。
 - AgentExecutionService Characterization 先因模块不存在取得 RED；Runtime execution/adapter/recovery `13 passed`，Reporting stable-session/persisted-recovery/auditor-isolation/max-token/tool-slice/no-progress/correction `8 passed`，声明式 recovery policy 选择 `5 passed`。定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。新服务未新增 Gate、Hash、CAS、锁或生产依赖；Reporting 原有 correlation/hash 仍原地保留且未复制。
+- FA-02 恢复循环继续收敛：Runtime 用 `AgentRecoveryCompleted/Required/Stopped` 分型观察直接分派 RecoveryController 的动作，Capability 端口统一为 async 的 terminal 解释、领域消息构造、stop 持久化与 result reuse；移除了可冲突 boolean/optional 组合、sync/async 双态、`None` 拒绝语义和 action compatibility 判断门禁。Reporting 的真实 natural-language-without-submission 现在通过 `execute_with_recovery` 在原 session 执行 CORRECT/STOP/FAIL，Reporting 仅构造 correction Prompt、解码 typed result 和保留既有结果持久化。
+- 上述恢复循环切片的 Runtime/Recovery/Reporting focused 选择 `22 passed`，定向 Ruff、compileall 和 `git diff --check` 通过。未新增 Hash、CAS、锁、Gate、attempt limit 或依赖；唯一异常分支是执行已声明 `FAIL` action 的必要语义。max-token/tool-slice/no-progress/completed-result reuse 仍明确标记为待迁移，不以仅 Runtime 单测声称生产完成。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
@@ -154,7 +156,7 @@ git diff --check
 | Stateless Kernel business-neutral | `foundation present; final audit pending` |
 | File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
 | One Generic Runtime Host | `foundation present; legacy host removal pending` |
-| Generic Agent/Tool/Conversation/Recovery | `partial; session/turn lifecycle extracted, recovery-loop strategy pending` |
+| Generic Agent/Tool/Conversation/Recovery | `partial; session/turn and natural correction extracted, continuation/progress/reuse pending` |
 | Capability-owned Reporting Domain Runtime | `not achieved` |
 | No Declarative→Legacy Runner inheritance/delegation | `not achieved` |
 | Generic Capability Binding/Application | `partial; Reporting host removal pending` |
