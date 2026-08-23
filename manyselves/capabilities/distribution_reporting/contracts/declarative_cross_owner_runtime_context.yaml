@@ -2,4 +2,4 @@ id: declarative_cross_owner_runtime_context
 version: 1.0.0
 description: Typed state threaded through one file-defined Cross owner pipeline
 adapter: pydantic
-model: manyselves.core.reporting.declarative_cross_owner_cohort:DeclarativeCrossOwnerRuntimeContext
+model: manyselves.capabilities.distribution_reporting.runtime.models.cross_owner:DeclarativeCrossOwnerRuntimeContext

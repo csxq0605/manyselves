@@ -141,7 +141,6 @@ def test_distribution_runtime_binding_does_not_depend_on_legacy_reporting_host()
     assert legacy_constructor_arguments == []
 
 
-@FINAL_ARCHITECTURE_GAP
 def test_distribution_contract_models_are_owned_by_the_capability() -> None:
     """File contracts must resolve into the Capability package, never core.reporting."""
 

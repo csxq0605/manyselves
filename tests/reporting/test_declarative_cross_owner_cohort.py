@@ -10,12 +10,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CrossReviewCoverageEntry,
     TaskEnvelope,
 )
-from manyselves.core.reporting.declarative_cross_owner_cohort import (
+from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerRuntimeContext,
-    _CrossOwnerReviewerInvoker,
 )
-from manyselves.core.reporting.review_lifecycle import (
+from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     CrossOwnerInitialReviewPreparation,
+)
+from manyselves.core.reporting.declarative_cross_owner_cohort import (
+    _CrossOwnerReviewerInvoker,
 )
 from manyselves.kernel.conversations import (
     ConversationKey,

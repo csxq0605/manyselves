@@ -36,6 +36,15 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     ReportRequest,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+    ModuleInitialReviewAcceptance,
+    ModuleInitialReviewPreparation,
+    ModuleRecheckAcceptance,
+    ModuleRecheckPreparation,
+    ModuleReviewPreflightProgress,
+    ModuleReviewProgress,
+    ModuleRevisionPreparation,
+)
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     LaneCompletion,
     LaneTaskSpec,
@@ -60,15 +69,6 @@ from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
 from manyselves.core.reporting.declarative_task_binding import bind_declared_task
-from manyselves.core.reporting.review_lifecycle import (
-    ModuleInitialReviewAcceptance,
-    ModuleInitialReviewPreparation,
-    ModuleRecheckAcceptance,
-    ModuleRecheckPreparation,
-    ModuleReviewPreflightProgress,
-    ModuleReviewProgress,
-    ModuleRevisionPreparation,
-)
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.workflow import (
     ReportingNeedsDecisionError,

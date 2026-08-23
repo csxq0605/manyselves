@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, Literal, cast
-
-from pydantic import BaseModel, ConfigDict
+from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
@@ -16,7 +14,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models import (
     cross_owner as cross_owner_models,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
     ModuleReviewFindingSubmission,
     ModuleRevisionSubmission,
@@ -30,6 +27,19 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+    CrossOwnerInitialReviewAcceptance,
+    CrossOwnerInitialReviewPreparation,
+    CrossOwnerLocalReviewAcceptance,
+    CrossOwnerLocalReviewPreparation,
+    CrossOwnerRecheckAcceptance,
+    CrossOwnerRecheckPreparation,
+    CrossOwnerRevisionAcceptance,
+    CrossOwnerRevisionPreparation,
+    MainExceptionDecisionPreparation,
+    ModuleInitialReviewPreparation,
+    ModuleRevisionPreparation,
 )
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -56,97 +66,7 @@ from manyselves.kernel.workflow import (
 )
 
 from .declarative_task_binding import bind_declared_task
-from .review_lifecycle import (
-    CrossOwnerInitialReviewAcceptance,
-    CrossOwnerInitialReviewPreparation,
-    CrossOwnerLocalReviewAcceptance,
-    CrossOwnerLocalReviewPreparation,
-    CrossOwnerRecheckAcceptance,
-    CrossOwnerRecheckPreparation,
-    CrossOwnerRevisionAcceptance,
-    CrossOwnerRevisionPreparation,
-    CrossOwnerRoundProgress,
-    CrossReviewCoordinator,
-    MainExceptionDecisionAcceptance,
-    MainExceptionDecisionPreparation,
-    ModuleInitialReviewPreparation,
-    ModuleRevisionPreparation,
-)
-
-
-class DeclarativeCrossOwnerInitialAgentResult(BaseModel):
-    """Typed result returned by the declared initial Cross reviewer."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: CrossOwnerFindingSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeCrossOwnerRecheckAgentResult(BaseModel):
-    """Typed result returned by the original Cross owner reviewer."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: CrossOwnerVerdictSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeMainExceptionAgentResult(BaseModel):
-    """Typed result returned by the declared Main exception Agent."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: WorkflowDecisionSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeCrossOwnerRuntimeContext(BaseModel):
-    """Capability-owned state threaded through one Cross owner workflow."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    owner_module_id: str
-    status: Literal[
-        "initial_ready",
-        "initial_resumed",
-        "initial_accepted",
-        "revision_ready",
-        "revision_resumed",
-        "revision_accepted",
-        "local_review_ready",
-        "local_review_resumed",
-        "local_review_accepted",
-        "recheck_ready",
-        "recheck_resumed",
-        "recheck_accepted",
-        "author_exception_ready",
-        "author_exception_resumed",
-        "author_exception_accepted",
-        "author_exception_not_required",
-        "reviewer_exception_ready",
-        "reviewer_exception_resumed",
-        "reviewer_exception_accepted",
-        "reviewer_exception_not_required",
-        "round_revision_pending",
-        "round_completed",
-        "failed",
-    ]
-    preparation: CrossOwnerInitialReviewPreparation | None = None
-    acceptance: CrossOwnerInitialReviewAcceptance | None = None
-    revision_preparation: CrossOwnerRevisionPreparation | None = None
-    revision_acceptance: CrossOwnerRevisionAcceptance | None = None
-    local_review_preparation: CrossOwnerLocalReviewPreparation | None = None
-    local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None
-    recheck_preparation: CrossOwnerRecheckPreparation | None = None
-    recheck_acceptance: CrossOwnerRecheckAcceptance | None = None
-    main_preparation: MainExceptionDecisionPreparation | None = None
-    main_acceptance: MainExceptionDecisionAcceptance | None = None
-    round_progress: CrossOwnerRoundProgress | None = None
-    error: str | None = None
+from .review_lifecycle import CrossReviewCoordinator
 
 
 class _CrossOwnerInitialInvoker:
@@ -203,7 +123,7 @@ class _CrossOwnerInitialInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(CrossOwnerInitialReviewPreparation, context.preparation)
         envelope = bind_declared_task(
             cast(TaskEnvelope, preparation.envelope),
@@ -223,14 +143,14 @@ class _CrossOwnerInitialInvoker:
                 preparation.workflow_id,
                 **runner_kwargs,
             )
-            result = DeclarativeCrossOwnerInitialAgentResult(
+            result = cross_owner_models.DeclarativeCrossOwnerInitialAgentResult(
                 status="completed",
                 submission=payload,
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeCrossOwnerInitialAgentResult(
+            result = cross_owner_models.DeclarativeCrossOwnerInitialAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -291,7 +211,7 @@ class _CrossOwnerRevisionInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(
             CrossOwnerRevisionPreparation,
             context.revision_preparation,
@@ -380,7 +300,7 @@ class _CrossOwnerLocalReviewInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         boundary = cast(
             CrossOwnerLocalReviewPreparation,
             context.local_review_preparation,
@@ -472,7 +392,7 @@ class _CrossOwnerRecheckInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(
             CrossOwnerRecheckPreparation,
             context.recheck_preparation,
@@ -495,14 +415,14 @@ class _CrossOwnerRecheckInvoker:
                 preparation.workflow_id,
                 **runner_kwargs,
             )
-            result = DeclarativeCrossOwnerRecheckAgentResult(
+            result = cross_owner_models.DeclarativeCrossOwnerRecheckAgentResult(
                 status="completed",
                 submission=payload,
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeCrossOwnerRecheckAgentResult(
+            result = cross_owner_models.DeclarativeCrossOwnerRecheckAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -563,7 +483,7 @@ class _CrossOwnerMainExceptionInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
         envelope = bind_declared_task(preparation.envelope, task)
 
@@ -589,14 +509,14 @@ class _CrossOwnerMainExceptionInvoker:
             else:
                 async with lock:
                     payload = await invoke_once()
-            result = DeclarativeMainExceptionAgentResult(
+            result = cross_owner_models.DeclarativeMainExceptionAgentResult(
                 status="completed",
                 submission=payload,
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeMainExceptionAgentResult(
+            result = cross_owner_models.DeclarativeMainExceptionAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -772,31 +692,31 @@ class DeclarativeCrossOwnerRuntime:
     def prepare_initial(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare or recover one declared Cross owner initial Agent turn."""
 
         owner_module_id = str(values["owner_module_id"])
         if self._aggregate_recovered or self._coordinator is None:
-            return DeclarativeCrossOwnerRuntimeContext(
+            return cross_owner_models.DeclarativeCrossOwnerRuntimeContext(
                 owner_module_id=owner_module_id,
                 status="initial_resumed",
             )
         try:
             preparation = self._coordinator.prepare_owner_initial(owner_module_id)
         except BaseException as exc:
-            return DeclarativeCrossOwnerRuntimeContext(
+            return cross_owner_models.DeclarativeCrossOwnerRuntimeContext(
                 owner_module_id=owner_module_id,
                 status="failed",
                 error=str(exc),
             )
         if preparation.mode == "invoke_agent":
-            return DeclarativeCrossOwnerRuntimeContext(
+            return cross_owner_models.DeclarativeCrossOwnerRuntimeContext(
                 owner_module_id=owner_module_id,
                 status="initial_ready",
                 preparation=preparation,
             )
         acceptance = self._coordinator.accept_owner_initial(preparation)
-        return DeclarativeCrossOwnerRuntimeContext(
+        return cross_owner_models.DeclarativeCrossOwnerRuntimeContext(
             owner_module_id=owner_module_id,
             status="initial_resumed",
             preparation=preparation,
@@ -804,13 +724,13 @@ class DeclarativeCrossOwnerRuntime:
         )
 
     @staticmethod
-    def initial_requires_agent(context: DeclarativeCrossOwnerRuntimeContext) -> bool:
+    def initial_requires_agent(context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext) -> bool:
         """Return the explicit file-workflow branch decision."""
 
         return context.status == "initial_ready"
 
     @staticmethod
-    def initial_has_findings(context: DeclarativeCrossOwnerRuntimeContext) -> bool:
+    def initial_has_findings(context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext) -> bool:
         """Route typed initial findings to the original owner Author."""
 
         return bool(context.acceptance and context.acceptance.result.findings)
@@ -818,11 +738,11 @@ class DeclarativeCrossOwnerRuntime:
     def accept_initial(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed initial Agent result for the compatibility continuation."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
-        result = DeclarativeCrossOwnerInitialAgentResult.model_validate(values["result"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = cross_owner_models.DeclarativeCrossOwnerInitialAgentResult.model_validate(values["result"])
         if result.status == "failed":
             return context.model_copy(update={"status": "failed", "error": result.error})
         try:
@@ -836,11 +756,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def prepare_revision(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare or recover the current finding-triggered owner revision."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         try:
             preparation = await cast(
                 CrossReviewCoordinator,
@@ -883,11 +803,11 @@ class DeclarativeCrossOwnerRuntime:
 
     def prepare_author_exception(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare or recover Main only for explicit Author exceptions."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         revision = context.revision_acceptance
         if context.status == "failed" or revision is None:
             return context
@@ -945,7 +865,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def main_exception_requires_agent(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Return whether the prepared Main exception needs an Agent turn."""
 
@@ -957,11 +877,11 @@ class DeclarativeCrossOwnerRuntime:
     def accept_main_exception(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed Main exception result."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
-        result = DeclarativeMainExceptionAgentResult.model_validate(values["result"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = cross_owner_models.DeclarativeMainExceptionAgentResult.model_validate(values["result"])
         if result.status == "failed":
             return context.model_copy(update={"status": "failed", "error": result.error})
         preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
@@ -997,7 +917,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def main_exception_requests_user(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Route Main's explicit user request to a generic Interaction."""
 
@@ -1010,10 +930,10 @@ class DeclarativeCrossOwnerRuntime:
     def apply_main_exception_user_input(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Apply validated Interaction input to the prepared exception."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         supplied = cross_owner_models.DeclarativeMainExceptionUserInput.model_validate(
             values["input"]
         )
@@ -1054,7 +974,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def author_exception_returns_to_author(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Route Main's existing return-to-Author decision back into the loop."""
 
@@ -1067,7 +987,7 @@ class DeclarativeCrossOwnerRuntime:
         )
 
     @staticmethod
-    def revision_requires_agent(context: DeclarativeCrossOwnerRuntimeContext) -> bool:
+    def revision_requires_agent(context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext) -> bool:
         """Return the explicit revision Agent branch decision."""
 
         return context.status == "revision_ready"
@@ -1075,10 +995,10 @@ class DeclarativeCrossOwnerRuntime:
     def accept_revision(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed original-Author revision result."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         result = DeclarativeModuleRevisionAgentResult.model_validate(values["result"])
         if result.status == "failed":
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -1101,11 +1021,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def prepare_local_review(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare the original module Auditor local-regression turn."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status == "failed":
             return context
         try:
@@ -1148,7 +1068,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def local_review_requires_agent(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Return the explicit original-Auditor branch decision."""
 
@@ -1157,10 +1077,10 @@ class DeclarativeCrossOwnerRuntime:
     def accept_local_review(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed original-Auditor local-regression result."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         result = DeclarativeModuleReviewAgentResult.model_validate(values["result"])
         if result.status == "failed":
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -1186,11 +1106,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def prepare_recheck(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare or recover the first original Cross owner recheck."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status == "failed":
             return context
         if context.local_review_acceptance is None:
@@ -1230,7 +1150,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def recheck_requires_agent(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Return the explicit original Cross reviewer branch decision."""
 
@@ -1239,11 +1159,11 @@ class DeclarativeCrossOwnerRuntime:
     def accept_recheck(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed original Cross owner verdict."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
-        result = DeclarativeCrossOwnerRecheckAgentResult.model_validate(values["result"])
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = cross_owner_models.DeclarativeCrossOwnerRecheckAgentResult.model_validate(values["result"])
         if result.status == "failed":
             return context.model_copy(update={"status": "failed", "error": result.error})
         try:
@@ -1265,11 +1185,11 @@ class DeclarativeCrossOwnerRuntime:
 
     def prepare_reviewer_exception(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Prepare or recover Main only for explicit reviewer escalations."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         recheck = context.recheck_acceptance
         if context.status == "failed" or recheck is None:
             return context
@@ -1327,11 +1247,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def advance_round(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerRuntimeContext:
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
+    ) -> cross_owner_models.DeclarativeCrossOwnerRuntimeContext:
         """Advance the existing pending/resolved owner state after recheck."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status == "failed" or context.recheck_acceptance is None:
             return context
         try:
@@ -1364,7 +1284,7 @@ class DeclarativeCrossOwnerRuntime:
 
     @staticmethod
     def round_needs_revision(
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> bool:
         """Return the existing typed pending-finding loop decision."""
 
@@ -1372,11 +1292,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def complete_owner_round(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> cross_owner_models.DeclarativeCrossOwnerPipelineOutcome:
         """Promote one closed typed round."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status != "round_completed" or context.round_progress is None:
             return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,
@@ -1402,11 +1322,11 @@ class DeclarativeCrossOwnerRuntime:
 
     async def complete_owner_without_findings(
         self,
-        context: DeclarativeCrossOwnerRuntimeContext,
+        context: cross_owner_models.DeclarativeCrossOwnerRuntimeContext,
     ) -> cross_owner_models.DeclarativeCrossOwnerPipelineOutcome:
         """Complete the ordinary accepted initial result with no findings."""
 
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        context = cross_owner_models.DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         if context.status == "failed":
             return cross_owner_models.DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=context.owner_module_id,

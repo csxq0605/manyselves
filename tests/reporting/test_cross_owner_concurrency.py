@@ -9,6 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    review as review_models,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     CrossOwnerFindingSubmission,
@@ -426,7 +429,7 @@ def _fake_noop(
     module: ModuleSubmission,
     owner_input_ref: str,
     review_round: int,
-) -> lifecycle._CrossOwnerLaneResult:
+) -> review_models._CrossOwnerLaneResult:
     run_id = state["run_id"]
     subject_ref = f"Work/runs/{run_id}/modules/{owner_module_id}-r{module.revision}.json"
     local_ref = (
@@ -464,7 +467,7 @@ def _fake_noop(
         f"module-{owner_module_id}/completion-r{module.revision}.json"
     )
     runner.service.store.write_json(completion_ref, completion.model_dump(mode="json"))
-    return lifecycle._CrossOwnerLaneResult(
+    return review_models._CrossOwnerLaneResult(
         module=module,
         responses=[],
         local_review_ref=local_ref,
@@ -532,7 +535,7 @@ async def _fake_revision_lane(
     review_round: int,
     owner_input_ref: str,
     **_kwargs,
-) -> lifecycle._CrossOwnerLaneResult:
+) -> review_models._CrossOwnerLaneResult:
     run_id = state["run_id"]
     responses = [
         RevisionResponse(
@@ -586,7 +589,7 @@ async def _fake_revision_lane(
         f"module-{module_id}/completion-r{revised.revision}.json"
     )
     runner.service.store.write_json(completion_ref, completion.model_dump(mode="json"))
-    return lifecycle._CrossOwnerLaneResult(
+    return review_models._CrossOwnerLaneResult(
         module=revised,
         responses=responses,
         local_review_ref=local_ref,
