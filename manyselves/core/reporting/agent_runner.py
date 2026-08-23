@@ -94,6 +94,7 @@ from ...runtime.agent_execution import (
     AgentTurnRequest,
 )
 from ...runtime.agent_recovery import AgentRecoveryDriver
+from ...runtime.provider_agent_session import ProviderAgentSessionFactory
 from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
@@ -3723,20 +3724,21 @@ class ReportingAgentRunner:
                         ),
                     }
                 )
-            def create_session_loop() -> AgentLoop:
-                loop = AgentLoop(**loop_kwargs)
+            session_factory = ProviderAgentSessionFactory(
+                loop_builder=AgentLoop,
+                loop_kwargs=loop_kwargs,
                 # Reporting persists identity and canonical refs in its v4
                 # state. In-memory compaction remains available, but its
                 # process summary is not another durable artifact.
-                loop.persist_handoff_summary = False
-                return loop
+                persist_handoff_summary=False,
+            )
 
             execution_session = await self._agent_execution.start_or_restore(
                 workflow_id=workflow_id,
                 conversation_key=identity_key,
                 runtime_id=runtime_id,
                 session_id=session_id,
-                session_factory=create_session_loop,
+                session_factory=session_factory,
                 restore=self._session_restore_state(
                     envelope=envelope,
                     runtime_id=runtime_id,

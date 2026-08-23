@@ -2229,6 +2229,65 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
 
 
 @pytest.mark.asyncio
+async def test_reporting_runner_builds_loop_through_runtime_session_factory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = DirectSubmissionProvider()
+    factory_calls: list[dict[str, object]] = []
+    real_factory = agent_runner_module.ProviderAgentSessionFactory
+
+    def observe_factory(**kwargs):
+        factory_calls.append(kwargs)
+        return real_factory(**kwargs)
+
+    monkeypatch.setattr(
+        agent_runner_module,
+        "ProviderAgentSessionFactory",
+        observe_factory,
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    envelope = TaskEnvelope(
+        task_id="module-2.1-factory",
+        run_id="run-provider-session-factory",
+        agent_id=definition.id,
+        objective="验证 Runtime session factory 接管 loop 构造",
+        allowed_outputs=["module_submission"],
+    )
+
+    try:
+        result = await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="workflow-provider-session-factory",
+        )
+    finally:
+        await runner.close_workflow("workflow-provider-session-factory")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert len(factory_calls) == 1
+    loop_kwargs = factory_calls[0]["loop_kwargs"]
+    assert isinstance(loop_kwargs, dict)
+    assert loop_kwargs["bus"] is bus
+    assert loop_kwargs["llm_provider"] is provider
+    assert loop_kwargs["system_prompt"]
+    assert "tools" in loop_kwargs
+    assert factory_calls[0]["persist_handoff_summary"] is False
+
+
+@pytest.mark.asyncio
 async def test_new_process_style_runner_recovers_persisted_attempt_without_provider_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
