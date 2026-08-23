@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -1810,3 +1811,70 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         await agent_service.close_workflow("distribution-aggregate-existing-tail")
         bus.shutdown()
         await bus_task
+
+
+@pytest.mark.asyncio
+async def test_public_aggregate_existing_runtime_projects_root_and_freezes_modules(
+    tmp_path: Path,
+) -> None:
+    """Characterize the application-facing root before adding its runtime."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
+        PublicAggregateExistingWorkflowRuntime,
+    )
+
+    for module_id in REPORT_MODULE_IDS:
+        target = tmp_path / "Outputs" / "Modules" / f"{module_id}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_markdown(module_id), encoding="utf-8")
+
+    runtime = PublicAggregateExistingWorkflowRuntime(tmp_path)
+    command_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    with pytest.raises(RuntimeError, match="missing agent adapter"):
+        await runtime.start(
+            command_id,
+            "aggregate-existing",
+            {
+                "instruction": "汇总五个已完成模块。",
+                "target_modules": list(REPORT_MODULE_IDS),
+            },
+        )
+
+    run_id = f"aggregate-existing-{command_id.hex}"
+    from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+        RunInputSnapshotStore,
+    )
+    from manyselves.runtime.capability_binding import CapabilityRunInputError
+
+    snapshot = RunInputSnapshotStore(tmp_path).load(run_id)
+    assert {
+        item.logical_ref.as_posix()
+        for item in snapshot.files
+    } >= {
+        f"Outputs/Modules/{module_id}.md"
+        for module_id in REPORT_MODULE_IDS
+    }
+    projected = runtime.get_run(run_id)
+    assert projected["run"] == {
+        "run_id": run_id,
+        "capability_id": "distribution-reporting",
+        "workflow_id": "aggregate-existing",
+        "status": "failed",
+        "active": False,
+        "task_id": None,
+    }
+    assert projected["state"]["variables"]["run-id"] == run_id
+    assert projected["state"]["variables"]["request"]["instruction"] == (
+        "汇总五个已完成模块。"
+    )
+    assert projected["waiting_input"] == []
+    assert runtime.get_outputs(run_id) == {"run_id": run_id, "outputs": []}
+    with pytest.raises(CapabilityRunInputError, match="no waiting input"):
+        await runtime.provide_input(
+            command_id,
+            run_id,
+            input_id=None,
+            values={},
+        )
+    assert runtime.get_cost(run_id)["run_id"] == run_id

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID
 
 from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_existing_markdown_modules,
@@ -53,7 +54,11 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvoker, ToolInvocationOutcome
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
+from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.runtime.capability_binding import (
+    CapabilityRunInputError,
+    CapabilityRunNotFoundError,
+)
 from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import (
@@ -63,6 +68,7 @@ from manyselves.runtime.workflow_host import (
 )
 
 from .. import load_distribution_reporting_capability
+from .input_snapshot import RunInputSnapshotStore
 
 
 class InputSnapshotLoader(Protocol):
@@ -526,10 +532,204 @@ class AggregateExistingWorkflowRuntime:
         )
 
 
+class PublicAggregateExistingWorkflowRuntime(AggregateExistingWorkflowRuntime):
+    """Application-facing runtime for the ``aggregate-existing`` file root.
+
+    The public root owns only the user Schema projection, Run identity and
+    generic Run projections.  Its declared subworkflow still supplies the
+    aggregate, Final and Delivery composition, while Agent invokers remain
+    Capability-owned inputs to this runtime.
+    """
+
+    workflow_id = "aggregate-existing"
+
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        input_snapshot: InputSnapshotLoader | Any | None = None,
+        agent_invoker: AgentInvoker | None = None,
+        agent_invokers: Mapping[str, AgentInvoker] | None = None,
+        events: WorkflowEventSink | None = None,
+        state_store: FileWorkflowStateStore | None = None,
+    ) -> None:
+        snapshot_store = RunInputSnapshotStore(workspace)
+        super().__init__(
+            workspace,
+            input_snapshot=input_snapshot or snapshot_store,
+            agent_invoker=agent_invoker,
+            agent_invokers=agent_invokers,
+            workflow_id=self.workflow_id,
+            events=events,
+        )
+        if state_store is not None:
+            self._state_store = state_store
+        self._input_snapshot_store = snapshot_store
+
+    async def start(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: Any,
+    ) -> dict[str, Any]:
+        if workflow_id != self.workflow_id:
+            raise ValueError(f"workflow is not runnable: {workflow_id}")
+        registry, contracts, plan = self._compiled()
+        if plan.input_contract is None or plan.input_variable is None:
+            raise TypeError("aggregate-existing has no declared input binding")
+        request = contracts[plan.input_contract].validate(values)
+        run_id = f"aggregate-existing-{command_id.hex}"
+        source_refs = getattr(request, "source_module_refs", None)
+        extra_refs = tuple(
+            source_refs.values()
+            if source_refs
+            else (
+                Path("Outputs") / "Modules" / f"{module_id}.md"
+                for module_id in REPORT_MODULE_IDS
+            )
+        )
+        self._input_snapshot_store.freeze(run_id, extra_refs=extra_refs)
+        try:
+            state = self._state_store.load(run_id)
+            plan = self._state_store.load_plan(run_id)
+        except FileNotFoundError:
+            self._state_store.save_plan(run_id, plan)
+            state = WorkflowState.for_plan(
+                run_id,
+                plan,
+                initial_variables={
+                    plan.input_variable: request,
+                    "run-id": run_id,
+                },
+            )
+        await self._execute_public(plan, state, registry, contracts)
+        return {"run_id": run_id, "task_id": None}
+
+    async def provide_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        *,
+        input_id: str | None,
+        values: Any,
+    ) -> dict[str, Any]:
+        del command_id, input_id, values
+        self._load_state(run_id)
+        raise CapabilityRunInputError("aggregate-existing has no waiting input")
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        state = self._load_state(run_id)
+        waiting_input = [state.waiting_input] if state.waiting_input is not None else []
+        return {
+            "run": {
+                "run_id": run_id,
+                "capability_id": "distribution-reporting",
+                "workflow_id": state.workflow_id,
+                "status": state.status.value,
+                "active": state.status in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                "task_id": None,
+            },
+            "state": state.model_dump(mode="json"),
+            "waiting_input": waiting_input,
+        }
+
+    def get_outputs(self, run_id: str) -> dict[str, Any]:
+        state = self._load_state(run_id)
+        outputs: list[dict[str, Any]] = []
+        for output_id, stored_value in state.outputs.items():
+            value = (
+                stored_value.model_dump(mode="json")
+                if hasattr(stored_value, "model_dump")
+                else stored_value
+            )
+            declared_artifacts: list[Any] = []
+            if isinstance(value, Mapping) and isinstance(
+                value.get("output_artifacts"), list
+            ):
+                declared_artifacts = value["output_artifacts"]
+                value = {
+                    key: value[key]
+                    for key in (
+                        "run_id",
+                        "delivery_completion_ref",
+                        "delivery_status",
+                        "output_artifacts",
+                    )
+                    if key in value
+                }
+            outputs.append({"id": output_id, "kind": "value", "value": value})
+            for artifact in declared_artifacts:
+                if not isinstance(artifact, Mapping):
+                    continue
+                path = str(artifact.get("path", ""))
+                if not path:
+                    continue
+                target = Path(path)
+                target = target if target.is_absolute() else self.workspace / target
+                exists = target.is_file()
+                outputs.append(
+                    {
+                        "id": path,
+                        "kind": "artifact",
+                        "path": path,
+                        "exists": exists,
+                        "size": target.stat().st_size if exists else 0,
+                    }
+                )
+        return {"run_id": run_id, "outputs": outputs}
+
+    def get_cost(self, run_id: str) -> dict[str, Any]:
+        self._load_state(run_id)
+        from manyselves.core.usage_ledger import UsageLedger
+
+        return {
+            "run_id": run_id,
+            "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
+        }
+
+    async def _execute_public(
+        self,
+        plan: Any,
+        state: WorkflowState,
+        registry: DefinitionRegistry,
+        contracts: Mapping[str, ContractAdapter],
+    ) -> WorkflowState:
+        tools = self._tools(registry, contracts, plan.tool_ids)
+        return await WorkflowRuntimeHost(
+            self._executors,
+            self._state_store,
+            self._events,
+        ).execute(
+            plan,
+            state,
+            RuntimeContext(
+                tools=tools,
+                agents=self.agent_invokers,
+                contracts=contracts,
+                definitions=registry,
+                conversations=ConversationRegistry(
+                    FileConversationStore(self.workspace)
+                ),
+                plan_tool_factory=self._bind_plan_tool,
+                subworkflows=plan.subworkflow_plans,
+            ),
+        )
+
+    def _load_state(self, run_id: str) -> WorkflowState:
+        try:
+            state = self._state_store.load(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        if state.workflow_id != self.workflow_id:
+            raise CapabilityRunNotFoundError(run_id)
+        return state
+
+
 __all__ = [
     "AggregateExistingTools",
     "AggregateExistingWorkflowRuntime",
     "InputSnapshotLoader",
+    "PublicAggregateExistingWorkflowRuntime",
     "build_aggregate_existing_tool_implementations",
     "build_aggregate_existing_tools",
 ]
