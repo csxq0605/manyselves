@@ -35,6 +35,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRevisionPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    UserSupplement,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     ModuleInitialReviewAcceptance,
     ModuleRecheckAcceptance,
@@ -42,6 +45,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleRevisionPreparation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
+    user_supplement_constraints,
+)
 
 
 class ModuleRevisionPreparationError(ValueError):
@@ -79,16 +85,13 @@ async def prepare_module_revision(
     validation_ref: str | None = None,
     validation_target_submodule_ids: set[str] | None = None,
     validate_validation_binding: Callable[[ValidationReport, str, int], None] | None = None,
-    user_supplement_constraints: Callable[[dict[str, Any], str, set[str]], Iterable[str]]
-    | None = None,
+    user_supplements: Iterable[UserSupplement | Mapping[str, Any]] | None = None,
 ) -> ModuleRevisionPreparation:
     """Prepare the existing generic module revision contract.
 
-    The Core compatibility layer supplies the two callbacks that are still
-    owned by its surrounding Reporting composition: validation identity
-    binding and user-supplement projection.  All typed task, input, and
-    artifact semantics live here so Cross and ordinary module revisions use
-    one implementation.
+    The Core compatibility layer supplies only the existing validation
+    identity callback.  Typed user supplements are projected here so Cross
+    and ordinary module revisions use one implementation.
     """
 
     module_findings = module_findings or []
@@ -167,18 +170,17 @@ async def prepare_module_revision(
             else []
         ),
     ]
-    if user_supplement_constraints is not None:
-        constraints.extend(
-            user_supplement_constraints(
-                state,
-                "module_authoring",
-                {
-                    subject.module_id,
-                    *targets,
-                    *(claim.id for claim in subject.claims if claim.submodule_id in targets),
-                },
-            )
+    constraints.extend(
+        user_supplement_constraints(
+            user_supplements or (),
+            stage="module_authoring",
+            target_ids={
+                subject.module_id,
+                *targets,
+                *(claim.id for claim in subject.claims if claim.submodule_id in targets),
+            },
         )
+    )
     envelope = TaskEnvelope(
         task_id=f"module-revision-r{revision}-{subject.module_id}",
         run_id=state["run_id"],

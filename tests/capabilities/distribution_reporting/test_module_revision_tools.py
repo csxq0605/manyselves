@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ValidationFailure,
     ValidationReport,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    UserSupplement,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     ModuleRevisionPreparation,
 )
@@ -29,6 +33,9 @@ from manyselves.capabilities.distribution_reporting.runtime.module_revision_tool
     prepare_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.core.reporting.review_lifecycle import (
+    prepare_module_revision as prepare_core_module_revision,
+)
 
 
 def _module() -> ModuleSubmission:
@@ -43,6 +50,52 @@ def _module() -> ModuleSubmission:
         source_ids=[],
         unresolved_questions=[],
         revision=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_core_revision_projection_keeps_mapping_request_supplement(
+    tmp_path: Path,
+) -> None:
+    """Serialized request state still reaches the Provider-visible envelope."""
+
+    run_id = "serialized-module-revision"
+    store = ReportingStore(tmp_path)
+    runner = SimpleNamespace(
+        service=SimpleNamespace(workspace=tmp_path, store=store),
+    )
+    state = {
+        "run_id": run_id,
+        "request": {
+            "user_supplements": [
+                {
+                    "id": "US-serialized",
+                    "content": "序列化请求补充仍需进入作者任务。",
+                    "scope": "module",
+                    "target_ids": ["2.1"],
+                    "stages": ["module_authoring"],
+                }
+            ]
+        },
+    }
+    preparation = await prepare_core_module_revision(
+        runner,
+        state=state,
+        workflow_id="distribution-reporting",
+        subject=_module(),
+        requested_changes=[
+            RequestedModuleChange(
+                id="USER-2.1-R1",
+                instruction="补充目标小节的责任、动作和验收闭环。",
+                target_submodule_ids=["2.1.1"],
+            )
+        ],
+    )
+
+    assert (
+        "用户补充 US-serialized（scope=module; targets=2.1）是当前 run 的显式输入："
+        "序列化请求补充仍需进入作者任务。"
+        in preparation.envelope.constraints
     )
 
 
@@ -117,8 +170,14 @@ async def test_generic_revision_preserves_all_trigger_contracts_and_barrier(
         validation_ref=validation_ref,
         validation_target_submodule_ids={"2.1.4"},
         validate_validation_binding=validate_binding,
-        user_supplement_constraints=lambda _state, _module_id, _targets: [
-            "用户补充约束保持在原任务边界内。"
+        user_supplements=[
+            UserSupplement(
+                id="US-module-revision",
+                content="用户补充约束保持在原任务边界内。",
+                scope="module",
+                target_ids=["2.1"],
+                stages=["module_authoring"],
+            )
         ],
     )
 
@@ -131,7 +190,11 @@ async def test_generic_revision_preserves_all_trigger_contracts_and_barrier(
     assert preparation.revision_input.cross_findings == [cross_finding]
     assert preparation.revision_input.requested_changes == [requested_change]
     assert preparation.revision_input.validation_report == validation_report
-    assert "用户补充约束保持在原任务边界内。" in preparation.envelope.constraints
+    assert (
+        "用户补充 US-module-revision（scope=module; targets=2.1）是当前 run 的显式输入："
+        "用户补充约束保持在原任务边界内。"
+        in preparation.envelope.constraints
+    )
     assert validation_calls == [(f"Work/runs/{run_id}/modules/2.1-r0.json", 0)]
 
     revised, subject_ref = accept_module_revision(

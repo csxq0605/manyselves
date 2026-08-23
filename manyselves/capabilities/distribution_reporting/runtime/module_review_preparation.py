@@ -45,6 +45,10 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
     SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
+    request_user_supplements,
+    user_supplement_constraints,
+)
 
 
 def _structure_report(
@@ -160,36 +164,6 @@ def _claim_statements(
         )
         for claim in claims
         if claim.submodule_id in scope
-    ]
-
-
-def _supplement_constraints(
-    state: Mapping[str, Any],
-    *,
-    module_id: str,
-    scope: set[str],
-) -> list[str]:
-    request = state.get("request")
-    supplements = getattr(request, "user_supplements", [])
-    superseded = {
-        item_id
-        for supplement in supplements
-        for item_id in supplement.supersedes
-    }
-    target_ids = {module_id, *scope}
-    return [
-        (
-            f"用户补充 {item.id}（scope={item.scope}; "
-            f"targets={','.join(item.target_ids) or 'run'}）是当前 run 的显式输入："
-            f"{item.content}"
-        )
-        for item in supplements
-        if item.id not in superseded
-        and "module_review" in item.stages
-        and (
-            item.scope == "run"
-            or bool(set(item.target_ids).intersection(target_ids))
-        )
     ]
 
 
@@ -336,10 +310,10 @@ def prepare_current_module_review(
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
                 "首轮必须覆盖 input 中全部 required_submodule_ids",
-                *_supplement_constraints(
-                    state,
-                    module_id=module_id,
-                    scope=scope,
+                *user_supplement_constraints(
+                    request_user_supplements(state.get("request")),
+                    stage="module_review",
+                    target_ids={module_id, *scope},
                 ),
             ],
             allowed_outputs=["module_review_finding_submission"],

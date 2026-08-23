@@ -43,6 +43,10 @@ from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_c
     KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
+    request_user_supplements,
+    user_supplement_constraints,
+)
 
 TEMPLATE_SKILL_ROOT = Path("Work/report-template-role-skills")
 TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
@@ -235,41 +239,6 @@ def module_author_inline_context(
     )
 
 
-def _user_supplement_constraints(
-    state: Mapping[str, Any],
-    *,
-    stage: str,
-    target_ids: set[str] | None = None,
-) -> list[str]:
-    """Render the existing active stage/target supplement projection."""
-
-    request = state.get("request")
-    supplements = getattr(request, "user_supplements", [])
-    superseded = {
-        superseded_id
-        for supplement in supplements
-        for superseded_id in supplement.supersedes
-    }
-    target_ids = target_ids or set()
-    applicable = []
-    for supplement in supplements:
-        if supplement.id in superseded or stage not in supplement.stages:
-            continue
-        if supplement.scope != "run" and not set(supplement.target_ids).intersection(
-            target_ids
-        ):
-            continue
-        applicable.append(supplement)
-    return [
-        (
-            f"用户补充 {item.id}（scope={item.scope}; "
-            f"targets={','.join(item.target_ids) or 'run'}）是当前 run 的显式输入："
-            f"{item.content}"
-        )
-        for item in applicable
-    ]
-
-
 def _evidence_policy_constraints(policy: str) -> list[str]:
     if policy == "draft":
         return [
@@ -358,8 +327,8 @@ def build_module_dispatch(
                 f"缺失证据策略={request.missing_evidence_policy}",
                 *_evidence_policy_constraints(request.missing_evidence_policy),
                 *request.execution_requirements,
-                *_user_supplement_constraints(
-                    state,
+                *user_supplement_constraints(
+                    request.user_supplements,
                     stage="module_authoring",
                     target_ids={
                         module_id,
@@ -423,13 +392,11 @@ def module_authoring_context_sha256(
             None,
         )
     supplement_constraints = (
-        _user_supplement_constraints(
-            state,
+        user_supplement_constraints(
+            request_user_supplements(request),
             stage="module_authoring",
             target_ids={module_id, *REPORT_TAXONOMY[module_id].submodules},
         )
-        if request is not None and hasattr(request, "user_supplements")
-        else []
     )
     preparation_refs = state.get("preparation_refs", {})
     payload = {
@@ -590,8 +557,8 @@ def prepare_module_authoring(
                 *request.execution_requirements,
                 f"缺失证据策略={request.missing_evidence_policy}",
                 *_evidence_policy_constraints(request.missing_evidence_policy),
-                *_user_supplement_constraints(
-                    state,
+                *user_supplement_constraints(
+                    request.user_supplements,
                     stage="module_authoring",
                     target_ids={module_id, *REPORT_TAXONOMY[module_id].submodules},
                 ),

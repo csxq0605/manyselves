@@ -105,6 +105,9 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskAttemptStore,
     WorkflowReducer,
 )
+from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
+    request_user_supplements,
+)
 
 from .chapter_parallel import CHAPTER_SECTION_IDS
 
@@ -1432,6 +1435,7 @@ async def prepare_module_revision(
 ) -> review_models.ModuleRevisionPreparation:
     """Delegate the shared module revision preparation contract to Capability."""
 
+    request = state.get("request")
     try:
         return await capability_prepare_module_revision(
             workspace=runner.service.workspace,
@@ -1444,19 +1448,13 @@ async def prepare_module_revision(
             requested_changes=requested_changes,
             validation_ref=validation_ref,
             validation_target_submodule_ids=validation_target_submodule_ids,
+            user_supplements=request_user_supplements(request),
             validate_validation_binding=(
                 lambda report, subject_ref, subject_revision: _require_validation_binding(
                     runner,
                     report,
                     subject_ref=subject_ref,
                     subject_revision=subject_revision,
-                )
-            ),
-            user_supplement_constraints=(
-                lambda current_state, stage, target_ids: runner._user_supplement_constraints(
-                    current_state,
-                    stage=stage,
-                    target_ids=target_ids,
                 )
             ),
         )
