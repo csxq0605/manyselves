@@ -109,7 +109,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
 
     capabilities = facade.list_capabilities()
     workflows = facade.list_workflows()
-    schema = facade.input_schema("distribution-reporting")
+    schema = facade.input_schema("full-report")
 
     assert [item["id"] for item in capabilities] == [
         "distribution-reporting",
@@ -131,17 +131,17 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "description": "Neutral declarative parameter adjustment capability",
         "workflow_ids": ["parameter-adjustment"],
     }
-    assert next(item for item in workflows if item["id"] == "distribution-reporting") == {
-        "id": "distribution-reporting",
+    assert next(item for item in workflows if item["id"] == "full-report") == {
+        "id": "full-report",
         "capability_id": "distribution-reporting",
         "version": "1.0.0",
-        "description": "Declarative top-level Reporting stage orchestration",
-        "input_contract": "distribution_reporting_input",
+        "description": "Public full Distribution Reporting workflow from preparation through delivery",
+        "input_contract": "public_full_report_input",
         "output_contract": "distribution_reporting_output",
         "runnable": True,
     }
-    assert schema["workflow_id"] == "distribution-reporting"
-    assert schema["contract_id"] == "distribution_reporting_input"
+    assert schema["workflow_id"] == "full-report"
+    assert schema["contract_id"] == "public_full_report_input"
     assert "instruction" in schema["schema"]["properties"]
 
 
@@ -357,7 +357,8 @@ def test_run_projection_bounds_large_kernel_state_and_preserves_runtime_fields(
     assert len(json.dumps(projection)) < 100_000
 
 
-def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_values(
+@pytest.mark.asyncio
+async def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_values(
     tmp_path: Path,
 ) -> None:
     run_id = "report-declarative-input"
@@ -377,7 +378,7 @@ def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_val
         "arbitrary": [1, True, {"nested": "value"}],
     }
 
-    accepted = facade.provide_input(
+    accepted = await facade.provide_input(
         UUID("30000000-0000-4000-8000-000000000002"),
         run_id,
         input_id="ask-clarification",
@@ -413,13 +414,14 @@ def test_generic_start_request_accepts_any_json_contract_value() -> None:
     assert request.input == [1, 2, 3]
 
 
-def test_existing_decision_input_without_kernel_waiting_state_uses_resume_decision(
+@pytest.mark.asyncio
+async def test_existing_decision_input_without_kernel_waiting_state_uses_resume_decision(
     tmp_path: Path,
 ) -> None:
     adapter = _ReportingAdapter()
     facade = WorkflowProjectionFacade(tmp_path, adapter)
 
-    accepted = facade.provide_input(
+    accepted = await facade.provide_input(
         UUID("30000000-0000-4000-8000-000000000003"),
         "report-1",
         input_id="decision-1",
@@ -475,16 +477,16 @@ async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
 
     started = await facade.start(
         command_id,
-        "distribution-reporting",
+        "full-report",
         {"instruction": "Generate the current report."},
     )
-    resumed = facade.provide_input(
+    resumed = await facade.provide_input(
         command_id,
         "report-1",
         input_id=None,
         values={"supplements": []},
     )
-    decided = facade.provide_input(
+    decided = await facade.provide_input(
         command_id,
         "report-1",
         input_id="decision-1",
@@ -496,7 +498,7 @@ async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
         "run_id": "report-declarative-new",
         "task_id": "task-new",
         "capability_id": "distribution-reporting",
-        "workflow_id": "distribution-reporting",
+        "workflow_id": "full-report",
     }
     assert resumed["run_id"] == "report-1"
     assert decided["run_id"] == "report-1"

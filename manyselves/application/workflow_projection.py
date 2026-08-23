@@ -179,7 +179,7 @@ class WorkflowProjectionFacade:
         )
         return self._accepted(accepted, capability.id, workflow_id)
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,
@@ -188,7 +188,7 @@ class WorkflowProjectionFacade:
         values: Any,
     ) -> dict[str, Any]:
         binding, projection = self._locate_run(run_id)
-        accepted = binding.provide_input(
+        accepted = await binding.provide_input(
             command_id,
             run_id,
             input_id=input_id,

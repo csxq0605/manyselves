@@ -358,7 +358,7 @@ class TemplateDistillationWorkflowRuntime:
         await self._execute(plan, state, registry, contracts)
         return {"run_id": run_id, "task_id": None}
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,

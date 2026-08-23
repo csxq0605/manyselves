@@ -53,7 +53,7 @@ class DistributionReportingRuntimeBinding:
         except ReportingStateInvalidError as exc:
             raise CapabilityRunStateError(str(exc)) from exc
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,
@@ -62,7 +62,7 @@ class DistributionReportingRuntimeBinding:
         values: Any,
     ) -> dict[str, Any]:
         if run_id.startswith("render-existing-"):
-            return self._render_runtime.provide_input(
+            return await self._render_runtime.provide_input(
                 command_id,
                 run_id,
                 input_id=input_id,

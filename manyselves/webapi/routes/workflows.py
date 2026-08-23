@@ -193,7 +193,7 @@ async def provide_run_input(
     state = request_runtime_state(request)
     try:
         async with state.runtime_facade.mutation_transaction(lease_token):
-            payload = _projection(request).provide_input(
+            payload = await _projection(request).provide_input(
                 command_id,
                 run_id,
                 input_id=body.input_id,

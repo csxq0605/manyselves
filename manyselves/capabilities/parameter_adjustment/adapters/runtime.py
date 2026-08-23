@@ -1,9 +1,7 @@
 """Generic runtime binding for the parameter-adjustment Capability."""
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
-from threading import Thread
 from typing import Any
 from uuid import UUID
 
@@ -99,7 +97,7 @@ class ParameterAdjustmentRuntimeBinding:
         await self._execute(plan, state, registry, contracts, tools)
         return {"run_id": run_id, "task_id": None}
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,
@@ -125,8 +123,7 @@ class ParameterAdjustmentRuntimeBinding:
             values=values,
             contracts=contracts,
         )
-        self._store.save(resumed)
-        self._run_coroutine(self._execute(plan, resumed, registry, contracts, tools))
+        await self._execute(plan, resumed, registry, contracts, tools)
         return {"run_id": run_id, "task_id": None}
 
     def get_run(self, run_id: str) -> dict[str, Any]:
@@ -252,30 +249,6 @@ class ParameterAdjustmentRuntimeBinding:
         if state.workflow_id != self.capability_id:
             raise CapabilityRunNotFoundError(run_id)
         return state
-
-    @staticmethod
-    def _run_coroutine(coroutine):
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coroutine)
-
-        result: list[Any] = []
-        error: list[BaseException] = []
-
-        def run_in_thread() -> None:
-            try:
-                result.append(asyncio.run(coroutine))
-            except BaseException as exc:
-                error.append(exc)
-
-        thread = Thread(target=run_in_thread)
-        thread.start()
-        thread.join()
-        if error:
-            raise error[0]
-        return result[0]
-
 
 def build_runtime_binding(
     *,

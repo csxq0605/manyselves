@@ -36,7 +36,7 @@ class CapabilityRuntimeBinding(Protocol):
         values: Any,
     ) -> dict[str, Any]: ...
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,

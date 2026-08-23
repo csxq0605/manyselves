@@ -227,7 +227,7 @@ async def test_provide_input_restores_definitions_and_tools_from_the_saved_plan(
         lambda: (_ for _ in ()).throw(AssertionError("read current definitions")),
     )
 
-    resumed = binding.provide_input(
+    resumed = await binding.provide_input(
         UUID("40000000-0000-4000-8000-000000000002"),
         run_id,
         input_id="ask-parameter",

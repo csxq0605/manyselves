@@ -75,7 +75,7 @@ class _FixtureBinding:
         self.inputs.append(values)
         return {"run_id": self.run_id, "task_id": None}
 
-    def provide_input(
+    async def provide_input(
         self,
         command_id: UUID,
         run_id: str,
@@ -157,7 +157,7 @@ async def test_facade_dispatches_through_definition_owned_runtime_binding(
     assert facade.get_outputs(run_id)["outputs"][0]["value"] == {"value": 3}
     assert facade.get_cost(run_id)["usage"]["totals"]["total_tokens"] == 0
 
-    resumed = facade.provide_input(
+    resumed = await facade.provide_input(
         command_id,
         run_id,
         input_id="input-1",
