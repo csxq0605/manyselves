@@ -15,8 +15,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
-from ..artifacts.content_store import ContentAddressedStore
-
 
 class FrozenProjectFile(StrictModel):
     logical_ref: Path
@@ -61,6 +59,11 @@ class RunInputSnapshotStore:
     SCOPES = ("Inputs", "Knowledge", "Templates")
 
     def __init__(self, workspace: Path) -> None:
+        # Import the generic content store only when a snapshot store is
+        # constructed. Importing this Capability model must not initialize the
+        # historical Reporting package through ``manyselves.core`` side effects.
+        from manyselves.core.artifacts.content_store import ContentAddressedStore
+
         self.workspace = Path(workspace).resolve()
         self.content_store = ContentAddressedStore(self.workspace)
         self.store = ReportingStore(self.workspace)

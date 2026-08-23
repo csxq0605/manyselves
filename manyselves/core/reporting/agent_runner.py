@@ -20,6 +20,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
     submission_schema,
 )
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
@@ -144,7 +147,6 @@ from .context_state import (
     ToolResultMemoStore,
 )
 from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
-from .input_snapshot import RunInputSnapshotStore
 from .message_router import WorkflowMessageRouter, artifact_path_refs
 from .module_skills import ModuleSkillLibrary
 from .prompts import PromptAssembler

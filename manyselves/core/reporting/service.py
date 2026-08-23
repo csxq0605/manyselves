@@ -24,6 +24,9 @@ from manyselves.capabilities.distribution_reporting.domain.evidence_readiness im
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.intake.manifest import (
     build_manifest,
 )
@@ -87,7 +90,6 @@ from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .decisions import EvidenceDecisionStore
 from .execution_runtime import ProviderRouter
-from .input_snapshot import RunInputSnapshotStore
 from .locks import exclusive_reporting_writer_lock
 from .provider_admission import ProviderAdmissionController
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner

@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 from docx import Document
 
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportRequest
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.input_snapshot import RunInputSnapshotStore
 from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.tools.task_board import TaskBoard

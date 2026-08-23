@@ -64,6 +64,9 @@ from manyselves.capabilities.distribution_reporting.runtime.delivery_tools impor
 from manyselves.capabilities.distribution_reporting.runtime.handoff_contracts import (
     write_handoff_contracts as capability_write_handoff_contracts,
 )
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.intake.special_topics import (
     load_special_topic_plan,
 )
@@ -195,7 +198,6 @@ from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
 from .distributed_runtime import LocalEventStore
-from .input_snapshot import RunInputSnapshotStore
 from .research.knowledge_context import KnowledgeContextBuilder
 from .review_lifecycle import (
     DeferredMainDecision,
