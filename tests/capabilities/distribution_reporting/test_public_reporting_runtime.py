@@ -14,6 +14,9 @@ from manyselves.capabilities.distribution_reporting.runtime import (
     module_cohort_tools,
     preparation_tools,
 )
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TEMPLATE_ROLE_SKILL_IDS,
     ModuleReviewFinding,
@@ -120,6 +123,79 @@ async def test_public_runtime_start_projects_user_schema_and_host_run_identity(
     assert observed["run_id"] == accepted["run_id"]
     assert observed["workflow_id"] == "module-report"
     assert observed["request"].operation == "module_report"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("workflow_id", "values"),
+    (
+        ("full-report", {"instruction": "生成完整报告"}),
+        (
+            "module-report",
+            {"instruction": "只生成模块 2.4", "target_modules": ["2.4"]},
+        ),
+    ),
+)
+async def test_public_runtime_start_freezes_inputs_before_execute_and_preparation_loads_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_id: str,
+    values: dict[str, Any],
+) -> None:
+    (tmp_path / "Inputs").mkdir()
+    (tmp_path / "Knowledge").mkdir()
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Inputs" / "S4-6.xlsx").write_bytes(b"s4-6")
+    (tmp_path / "Knowledge" / "notes.md").write_text("knowledge", encoding="utf-8")
+    (tmp_path / "Templates" / "report.md").write_text("template", encoding="utf-8")
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=lambda run_id: RunInputSnapshotStore(tmp_path).load(run_id),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+    )
+    executed: dict[str, Any] = {}
+    freeze_calls: list[tuple[Path, ...]] = []
+    original_freeze = RunInputSnapshotStore.freeze
+
+    def freeze(store, run_id: str, *, extra_refs=()):
+        freeze_calls.append(tuple(extra_refs))
+        return original_freeze(store, run_id, extra_refs=extra_refs)
+
+    monkeypatch.setattr(RunInputSnapshotStore, "freeze", freeze)
+
+    async def execute(request, run_id: str, *, workflow_id: str | None = None):
+        executed.update(
+            request=request,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            snapshot_exists=(
+                tmp_path / "Work" / "runs" / run_id / "input-snapshot.json"
+            ).is_file(),
+        )
+
+    monkeypatch.setattr(runtime, "execute", execute)
+
+    command_id = UUID("61000000-0000-4000-8000-000000000011")
+    accepted = await runtime.start(command_id, workflow_id, values)
+
+    assert accepted == {
+        "run_id": f"{workflow_id}-{command_id.hex}",
+        "task_id": None,
+    }
+    assert executed["run_id"] == accepted["run_id"]
+    assert executed["snapshot_exists"] is True
+    assert freeze_calls == [()]
+    snapshot = RunInputSnapshotStore(tmp_path).load(accepted["run_id"])
+    assert {item.logical_ref.as_posix() for item in snapshot.files} == {
+        "Inputs/S4-6.xlsx",
+        "Knowledge/notes.md",
+        "Templates/report.md",
+    }
+    assert {
+        item.logical_ref.as_posix()
+        for item in runtime.input_snapshot(accepted["run_id"]).files
+    } == {item.logical_ref.as_posix() for item in snapshot.files}
 
 
 def test_public_runtime_projects_its_persisted_run_and_outputs(tmp_path: Path) -> None:

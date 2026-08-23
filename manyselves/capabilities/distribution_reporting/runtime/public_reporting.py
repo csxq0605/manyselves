@@ -45,6 +45,7 @@ from .entrypoint_tools import (
     specialize_module_cohort_workflow,
 )
 from .evidence_readiness import build_evidence_readiness_tool_implementations
+from .input_snapshot import RunInputSnapshotStore
 from .models.module_cohort import DeclarativeModuleLaneOutcome
 from .models.reporting import ReportRequest
 from .module_agent_bridge import ModuleAuthoringAgentBridge
@@ -108,6 +109,7 @@ class PublicReportingWorkflowRuntime:
         request = project_public_entrypoint_input(workflow_id, run_id, values)
         if not isinstance(request, ReportRequest):
             raise TypeError(f"public root does not project a ReportRequest: {workflow_id}")
+        RunInputSnapshotStore(self.workspace).freeze(run_id)
         await self.execute(request, run_id, workflow_id=workflow_id)
         return {"run_id": run_id, "task_id": None}
 
