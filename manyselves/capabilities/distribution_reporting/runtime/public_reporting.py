@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRegistry
@@ -24,7 +25,9 @@ from manyselves.kernel.workflow import (
     ResolvedPlan,
     WorkflowCompiler,
     WorkflowState,
+    WorkflowStatus,
 )
+from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
@@ -48,6 +51,7 @@ from .module_lane_definitions import register_module_runtime_lane_specialization
 from .module_lane_tools import build_module_lane_tool_implementations
 from .module_reviewer_bridge import ModuleReviewerAgentBridge
 from .preparation_tools import build_preparation_tool_implementations
+from .public_entrypoints import project_public_entrypoint_input
 from .storage import ReportingStore
 
 WorkflowSpecializer = Callable[[DefinitionRegistry], Any]
@@ -61,6 +65,8 @@ class PublicReportingWorkflowRuntime:
     supplied by the existing Capability implementations and injected module
     runtime; the Kernel remains unaware of Reporting semantics.
     """
+
+    capability_id = "distribution-reporting"
 
     def __init__(
         self,
@@ -87,6 +93,98 @@ class PublicReportingWorkflowRuntime:
         self.state_store = state_store or FileWorkflowStateStore(self.workspace)
         self.events = events or FileWorkflowEventSink(self.workspace)
         self.executors = build_builtin_executor_registry()
+
+    async def start(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: Any,
+    ) -> dict[str, Any]:
+        """Start one public file root after projecting its user-only Schema."""
+
+        run_id = f"{workflow_id}-{command_id.hex}"
+        request = project_public_entrypoint_input(workflow_id, run_id, values)
+        if not isinstance(request, ReportRequest):
+            raise TypeError(f"public root does not project a ReportRequest: {workflow_id}")
+        await self.execute(request, run_id, workflow_id=workflow_id)
+        return {"run_id": run_id, "task_id": None}
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        """Project one persisted Host state through the generic Run boundary."""
+
+        state = self._load_state(run_id)
+        waiting_input = [state.waiting_input] if state.waiting_input is not None else []
+        return {
+            "run": {
+                "run_id": run_id,
+                "capability_id": self.capability_id,
+                "workflow_id": state.workflow_id,
+                "status": state.status.value,
+                "active": state.status
+                in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                "task_id": None,
+            },
+            "state": state.model_dump(mode="json"),
+            "waiting_input": waiting_input,
+        }
+
+    def get_outputs(self, run_id: str) -> dict[str, Any]:
+        """Project declared values and delivery artifacts without internal state."""
+
+        state = self._load_state(run_id)
+        outputs: list[dict[str, Any]] = []
+        for output_id, stored_value in state.outputs.items():
+            value = (
+                stored_value.model_dump(mode="json")
+                if hasattr(stored_value, "model_dump")
+                else stored_value
+            )
+            declared_artifacts: list[Any] = []
+            if isinstance(value, Mapping) and isinstance(
+                value.get("output_artifacts"), list
+            ):
+                declared_artifacts = value["output_artifacts"]
+                value = {
+                    key: value[key]
+                    for key in (
+                        "run_id",
+                        "delivery_completion_ref",
+                        "delivery_status",
+                        "output_artifacts",
+                    )
+                    if key in value
+                }
+            outputs.append({"id": output_id, "kind": "value", "value": value})
+            for artifact in declared_artifacts:
+                if not isinstance(artifact, Mapping):
+                    continue
+                path = str(artifact.get("path", ""))
+                if not path:
+                    continue
+                target = Path(path)
+                target = target if target.is_absolute() else self.workspace / target
+                exists = target.is_file()
+                outputs.append(
+                    {
+                        "id": path,
+                        "kind": "artifact",
+                        "path": path,
+                        "exists": exists,
+                        "size": target.stat().st_size if exists else 0,
+                    }
+                )
+        return {"run_id": run_id, "outputs": outputs}
+
+    def get_cost(self, run_id: str) -> dict[str, Any]:
+        """Project the existing account Run usage ledger."""
+
+        self._load_state(run_id)
+        from manyselves.core.usage_ledger import UsageLedger
+
+        return {
+            "run_id": run_id,
+            "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
+        }
 
     def compile_plan(
         self,
@@ -356,6 +454,15 @@ class PublicReportingWorkflowRuntime:
             ),
         )
         return invokers
+
+    def _load_state(self, run_id: str) -> WorkflowState:
+        try:
+            state = self.state_store.load(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        if state.workflow_id not in {"full-report", "module-report"}:
+            raise CapabilityRunNotFoundError(run_id)
+        return state
 
     @staticmethod
     def _plan_tool_ids(plan: ResolvedPlan) -> tuple[str, ...]:

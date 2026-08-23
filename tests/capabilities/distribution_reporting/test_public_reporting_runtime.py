@@ -6,6 +6,7 @@ import json
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -65,7 +66,7 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
-from manyselves.kernel.workflow import WorkflowStatus
+from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink
@@ -85,6 +86,81 @@ def test_module_authoring_agent_bridge_module_exists() -> None:
     assert find_spec(
         "manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge"
     ) is not None
+
+
+@pytest.mark.asyncio
+async def test_public_runtime_start_projects_user_schema_and_host_run_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=object(),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+    )
+    observed: dict[str, Any] = {}
+
+    async def execute(request, run_id: str, *, workflow_id: str | None = None):
+        observed.update(request=request, run_id=run_id, workflow_id=workflow_id)
+
+    monkeypatch.setattr(runtime, "execute", execute)
+    command_id = UUID("61000000-0000-4000-8000-000000000001")
+
+    accepted = await runtime.start(
+        command_id,
+        "module-report",
+        {"instruction": "只生成模块 2.4", "target_modules": ["2.4"]},
+    )
+
+    assert accepted == {
+        "run_id": f"module-report-{command_id.hex}",
+        "task_id": None,
+    }
+    assert observed["run_id"] == accepted["run_id"]
+    assert observed["workflow_id"] == "module-report"
+    assert observed["request"].operation == "module_report"
+
+
+def test_public_runtime_projects_its_persisted_run_and_outputs(tmp_path: Path) -> None:
+    store = InMemoryWorkflowStateStore()
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=object(),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+        state_store=store,
+    )
+    state = WorkflowState.for_plan(
+        "module-report-query",
+        ResolvedPlan(
+            workflow_id="module-report",
+            workflow_version="1.0.0",
+            actions=[],
+        ),
+    )
+    state.status = WorkflowStatus.COMPLETED
+    state.outputs = {"result": {"run_id": state.run_id, "module": "2.4"}}
+    store.save(state)
+
+    assert runtime.get_run(state.run_id)["run"] == {
+        "run_id": state.run_id,
+        "capability_id": "distribution-reporting",
+        "workflow_id": "module-report",
+        "status": "completed",
+        "active": False,
+        "task_id": None,
+    }
+    assert runtime.get_outputs(state.run_id) == {
+        "run_id": state.run_id,
+        "outputs": [
+            {
+                "id": "result",
+                "kind": "value",
+                "value": {"run_id": state.run_id, "module": "2.4"},
+            }
+        ],
+    }
 
 
 def test_author_accept_projects_typed_submission_to_lane_and_reporting_state(
