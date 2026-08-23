@@ -579,7 +579,12 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         FinalChapterAgentBridge,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ChapterScopedFinalReviewFinding,
+        ChapterScopedFinalReviewTargetChange,
         FinalChapterLaneFindingSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+        DeclarativeFinalReviewContext,
     )
     from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
@@ -659,12 +664,40 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         )
         result_path = tmp_path / result_ref
         result_path.parent.mkdir(parents=True, exist_ok=True)
+        findings = []
+        if chapter_id == "1":
+            findings = [
+                ChapterScopedFinalReviewFinding(
+                    id="F-final-1",
+                    target_section_ids=["1.1"],
+                    target_changes=[
+                        ChapterScopedFinalReviewTargetChange(
+                            target_section_id="1.1",
+                            required_change=(
+                                "Add the missing explanation and verification detail."
+                            ),
+                            reviewer_checks=[
+                                "The revised section states the check and outcome."
+                            ],
+                        )
+                    ],
+                    category="completeness",
+                    impact="blocking",
+                    observation=(
+                        "The section does not explain the required verification detail."
+                    ),
+                    evidence_refs=[
+                        f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
+                    ],
+                )
+            ]
         result_path.write_text(
             json.dumps(
                 FinalChapterLaneFindingSubmission(
                     run_id=run_id,
                     chapter_id=chapter_id,
                     checked_section_ids=list(section_ids),
+                    findings=findings,
                 ).model_dump(mode="json"),
                 ensure_ascii=False,
             ),
@@ -734,7 +767,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: start-final-review-cycle",
+            match="missing tool adapter: prepare-current-final-chief-revision",
         ):
             await host.execute(
                 plan,
@@ -761,6 +794,19 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
         assert final_state.actions["final-chapter-cohort"].status.value == "completed"
         assert final_state.actions["reduce-final-chapter-cohort"].status.value == "completed"
+        assert final_state.actions["run-final-review-cycle"].status.value == "failed"
+        review_state = WorkflowState.model_validate(
+            final_state.subworkflow_states["run-final-review-cycle"]
+        )
+        assert review_state.actions["start-final-review-cycle"].status.value == "completed"
+        assert review_state.actions["final-review-needs-round"].status.value == "completed"
+        assert review_state.actions["advance-final-review-round"].status.value == "completed"
+        assert review_state.actions["run-final-chief-revision-cohort"].status.value == "failed"
+        review = DeclarativeFinalReviewContext.model_validate(
+            review_state.variables["review"]
+        )
+        assert review.revision_number == 1
+        assert set(review.pending_by_chapter) == {"1"}
         assert final_state.variables["prepared-final-state"]["run_id"] == run_id
         aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
         assert aggregate_ref.is_file()

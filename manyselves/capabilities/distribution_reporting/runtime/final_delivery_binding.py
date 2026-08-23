@@ -37,6 +37,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .final_review_tools import build_final_review_tool_implementations
+
 _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
@@ -293,7 +295,7 @@ def build_final_chapter_tool_implementations(
         workspace=workspace,
         store=store or ReportingStore(workspace),
     )
-    return {
+    implementations = {
         "prepare-final-chapter-cohort": tools.prepare_cohort,
         "prepare-current-final-chapter": tools.prepare_lane,
         "final-chapter-initial-requires-agent": tools.requires_agent,
@@ -301,6 +303,8 @@ def build_final_chapter_tool_implementations(
         "complete-current-final-chapter": tools.complete_lane,
         "reduce-final-chapter-cohort": tools.reduce_cohort,
     }
+    implementations.update(build_final_review_tool_implementations())
+    return implementations
 
 
 __all__ = [
