@@ -31,6 +31,9 @@ from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools 
     SubmitResultTool,
     WriteResultPartTool,
 )
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    load_completed_agent_result,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
 )
@@ -41,6 +44,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+    CompletedResultLoader,
     ModuleAuthoringAgentBridge,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
@@ -96,6 +100,7 @@ from .module_provider_tools import (
     _IndexedSearchTextTool,
 )
 from .module_runtime import CapabilityModuleRuntime, SessionFactory
+from .state.parallel import TaskCorrelation
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 RecoveryCallback = Callable[[str, dict[str, Any]], Any]
@@ -509,7 +514,23 @@ class ModuleProviderRuntime:
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
+            completed_result_loader=self._completed_result_loader(),
         )
+
+    def _completed_result_loader(self) -> CompletedResultLoader | None:
+        """Reuse a persisted result only when the caller supplied its identity.
+
+        The Provider composition cannot derive a ``TaskCorrelation`` from a
+        run id or task name.  The existing owner must inject the complete
+        correlation, including its current lease and attempt identity; the
+        Capability helper then performs the existing store lookup and result
+        validation.
+        """
+
+        expected = self.dependencies.task_correlation
+        if not isinstance(expected, TaskCorrelation):
+            return None
+        return lambda: load_completed_agent_result(self.workspace, expected)
 
     def _compose_artifact_dependencies(
         self,

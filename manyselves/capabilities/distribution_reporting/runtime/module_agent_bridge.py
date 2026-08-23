@@ -8,8 +8,9 @@ the generic runtime.
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,6 +21,7 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
     ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
@@ -41,9 +43,13 @@ from manyselves.runtime.agent_execution import (
     AgentSessionLoop,
     AgentTurnRequest,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[
+    [], AgentResult | None | Awaitable[AgentResult | None]
+]
 
 
 class ModuleAuthoringAgentBridge:
@@ -56,11 +62,13 @@ class ModuleAuthoringAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
+        completed_result_loader: CompletedResultLoader | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.completed_result_loader = completed_result_loader
 
     async def invoke(
         self,
@@ -112,6 +120,46 @@ class ModuleAuthoringAgentBridge:
         envelope = cast(TaskEnvelope, self._envelope(context))
         workflow_id = context.workflow_id or self.workflow_id
         run_id = envelope.run_id
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=self._decode_payload(
+                            persisted.payload,
+                            output_contract=task.output_contract,
+                        ),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=AgentRecoveryDriver(recovery_policy),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         runtime_id = self._runtime_id(agent, conversation, workflow_id)
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
@@ -232,15 +280,26 @@ class ModuleAuthoringAgentBridge:
         output_contract: str,
     ) -> dict[str, Any]:
         loaded = load_agent_result_payload(self.workspace, result_ref)
+        return self._decode_payload(
+            loaded.payload,
+            output_contract=output_contract,
+        )
+
+    @staticmethod
+    def _decode_payload(
+        payload: Any,
+        *,
+        output_contract: str,
+    ) -> dict[str, Any]:
         if output_contract == "declarative_module_revision_agent_result":
             submission = ModuleRevisionSubmission.model_validate(
-                loaded.payload
+                payload
             )
             return DeclarativeModuleRevisionAgentResult(
                 status="completed",
                 submission=submission,
             ).model_dump(mode="json")
-        submission = ModuleSubmission.model_validate(loaded.payload)
+        submission = ModuleSubmission.model_validate(payload)
         return DeclarativeModuleAuthoringAgentResult(
             status="completed",
             module=submission,

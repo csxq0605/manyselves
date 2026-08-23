@@ -1791,3 +1791,173 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     assert loops[0].received[1].internal is True
     assert prompt_fragment in loops[0].received[1].content
     assert outcome.session_id == conversation.external_session_id
+
+
+@pytest.mark.asyncio
+async def test_module_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """The real Module Provider reuses a durable typed result before a session."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ModuleSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        ModuleProviderRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        IdentityLeaseManager,
+        TaskAttemptStore,
+        TaskCorrelation,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        DefinitionKind,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+    )
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
+    workflow_id = "public-reporting"
+    run_id = "module-provider-persisted-reuse"
+    session_id = "session-module-persisted"
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    envelope = TaskEnvelope(
+        task_id=task.id,
+        task_attempt_id="attempt-module-persisted",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_submission"],
+        allowed_tools=list(task.tools),
+        target_submodule_ids=part_ids,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id=workflow_id,
+        reporting_state={"run_id": run_id},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+    submission = ModuleSubmission(
+        module_id="2.4",
+        submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+    lease_manager = IdentityLeaseManager(tmp_path, run_id)
+    lease_handle = lease_manager.acquire(workflow_id, agent.id)
+    correlation = TaskCorrelation(
+        workflow_id=workflow_id,
+        run_id=run_id,
+        task_id=envelope.task_id,
+        task_attempt_id=envelope.task_attempt_id,
+        agent_id=agent.id,
+        identity_key=agent.id,
+        session_id=session_id,
+        lease_owner_id=lease_handle.lease.owner_id,
+        lease_epoch=lease_handle.lease.lease_epoch,
+    )
+    try:
+        store = TaskAttemptStore(tmp_path, run_id)
+        store.activate(correlation)
+        store.persist_result(
+            correlation,
+            AgentResult(
+                task_id=envelope.task_id,
+                run_id=run_id,
+                agent_id=agent.id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=submission,
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        lease_handle.release()
+
+    bus = MessageBus()
+    service = AgentExecutionService(bus)
+    provider_calls = 0
+
+    def forbidden_loop_builder(**_kwargs: Any) -> Any:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed result must be reused before Provider session")
+
+    runtime = ModuleProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=forbidden_loop_builder,
+        dependencies=ModuleProviderDependencies(
+            artifact_gateway=object(),
+            artifact_access=object(),
+            result_index=object(),
+            task_correlation=correlation,
+        ),
+        tool_builder=lambda *_args, **_kwargs: ToolRegistry(),
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(agent_id=agent.id, value="module-2.4", mode="run"),
+        run_id=run_id,
+    )
+    try:
+        outcome = await runtime.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id=task.id,
+            recovery_policy=RecoveryPolicyDefinition(
+                id="module-completed-reuse",
+                version="1.0.0",
+                description="reuse persisted completed result",
+                rules={
+                    "completed_tool_result": RecoveryRule(action="reuse_result"),
+                },
+            ),
+        )
+    finally:
+        await runtime.close()
+
+    assert outcome.status == "ok"
+    assert outcome.session_id == session_id
+    assert outcome.result["status"] == "completed"
+    assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
+    assert provider_calls == 0
+    assert service.sessions == {}
