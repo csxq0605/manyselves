@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -587,6 +588,8 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         ChapterScopedFinalReviewTargetChange,
         ChiefChapterLaneRevisionSubmission,
         FinalChapterLaneFindingSubmission,
+        FinalChapterLaneVerdictSubmission,
+        ResolutionVerdict,
         RevisionResponse,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
@@ -646,6 +649,15 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     chief_skill_path.parent.mkdir(parents=True, exist_ok=True)
     chief_skill_path.write_text(
         "# Chapter 1 Chief revision skill\n\nUse the assigned finding and preserve the typed lane contract.",
+        encoding="utf-8",
+    )
+    final_skill_path = (
+        tmp_path
+        / "Work/report-template-role-skills/final-auditor/SKILL.md"
+    )
+    final_skill_path.parent.mkdir(parents=True, exist_ok=True)
+    final_skill_path.write_text(
+        "# Final auditor skill\n\nRecheck only the assigned findings against the current subject.",
         encoding="utf-8",
     )
     _capability, registry = load_distribution_reporting_capability()
@@ -772,6 +784,32 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         ),
         encoding="utf-8",
     )
+    recheck_result_ref = (
+        f"Work/runs/{run_id}/reviews/final-chapter-1-recheck-agent-result.json"
+    )
+    recheck_result_path = tmp_path / recheck_result_ref
+    recheck_result_path.parent.mkdir(parents=True, exist_ok=True)
+    recheck_result_path.write_text(
+        json.dumps(
+            FinalChapterLaneVerdictSubmission(
+                run_id=run_id,
+                chapter_id="1",
+                checked_section_ids=["1.1", "1.2", "1.3"],
+                verdicts=[
+                    ResolutionVerdict(
+                        finding_id="F-final-1",
+                        verdict="resolved",
+                        reason="The revised section now states the requested verification detail.",
+                        evidence_refs=[
+                            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
+                        ],
+                    )
+                ],
+            ).model_dump(mode="json"),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -797,11 +835,14 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
                 if message.agent_type != self.runtime_id:
                     return
                 self.received.append(message)
-                result_path = (
-                    chief_result_ref
-                    if message.session_id.startswith("chief-chapter-")
-                    else result_refs[message.session_id.removeprefix("final-chapter-")]
-                )
+                if message.task_id == "invoke-final-recheck-agent":
+                    result_path = recheck_result_ref
+                else:
+                    result_path = (
+                        chief_result_ref
+                        if message.session_id.startswith("chief-chapter-")
+                        else result_refs[message.session_id.removeprefix("final-chapter-")]
+                    )
                 await bus.publish(
                     AgentResultMessage(
                         sender=self.runtime_id,
@@ -844,7 +885,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: prepare-current-final-recheck",
+            match="missing tool adapter: accept-current-final-recheck",
         ):
             await host.execute(
                 plan,
@@ -895,6 +936,18 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             review_state.subworkflow_states["run-final-recheck-cohort"]
         )
         assert recheck_cohort_state.status.value == "failed"
+        recheck_lane_completed = {
+            event.action_id
+            for event in events.events
+            if event.kind == "action.completed"
+            and event.workflow_id == "distribution-final-recheck-1-lane"
+        }
+        assert {
+            "prepare-current-final-recheck",
+            "final-recheck-requires-agent",
+            "create-final-recheck-conversation",
+            "invoke-final-recheck-agent",
+        }.issubset(recheck_lane_completed)
         chief_cohort_completed = {
             event.action_id
             for event in events.events
@@ -942,6 +995,26 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         assert [finding["id"] for finding in chief_input["assigned_findings"]] == [
             "F-final-1"
         ]
+        recheck_input_ref = (
+            tmp_path / f"Work/runs/{run_id}/context/final-chapter-1-input-r1.json"
+        )
+        recheck_input = json.loads(recheck_input_ref.read_text(encoding="utf-8"))
+        assert recheck_input["phase"] == "recheck"
+        assert recheck_input["chapter_id"] == "1"
+        assert set(recheck_input["section_bodies"]) == {"1.1"}
+        assert set(recheck_input["unchanged_section_sha256"]) == {"1.2", "1.3"}
+        assert recheck_input["unchanged_section_sha256"] == {
+            "1.2": hashlib.sha256(
+                "Existing findings overview retained for the revision lane.".encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+            "1.3": hashlib.sha256(
+                "Existing regional summary retained for the revision lane.".encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+        }
         assert final_state.variables["prepared-final-state"]["run_id"] == run_id
         aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
         assert aggregate_ref.is_file()
@@ -980,6 +1053,26 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             for runtime_id, loop in loops.items()
             if ":chief-editor-auditor:" in runtime_id
         )
+        assert all(
+            '<template_role_skill id="final-auditor"' in loop.received[0].content
+            for runtime_id, loop in loops.items()
+            if ":chief-editor-auditor:" in runtime_id
+        )
+        assert all(
+            "Recheck only the assigned findings against the current subject." in loop.received[0].content
+            for runtime_id, loop in loops.items()
+            if ":chief-editor-auditor:" in runtime_id
+        )
+        recheck_messages = [
+            message
+            for loop in loops.values()
+            for message in loop.received
+            if message.task_id == "invoke-final-recheck-agent"
+        ]
+        assert len(recheck_messages) == 1
+        assert recheck_messages[0].session_id == "final-chapter-1"
+        assert '"phase": "recheck"' in recheck_messages[0].content
+        assert '<final_lane_specialization chapter_id="1"' in recheck_messages[0].content
         assert len(agent_service.sessions) == 4
         assert persisted.outputs == {}
         assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()

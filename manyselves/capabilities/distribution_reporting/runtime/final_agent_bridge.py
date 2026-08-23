@@ -1,24 +1,29 @@
-"""Capability-owned bridge for one typed initial Final Auditor turn.
+"""Capability-owned bridge for one typed Final Auditor turn.
 
 The bridge adapts the declared Final lane contract to the neutral
 ``AgentExecutionService``.  It deliberately stops after decoding one typed
-``FinalChapterLaneFindingSubmission``; recovery, acceptance, reduction, Final
-review rounds, and Delivery belong to later Capability slices.
+initial finding or recheck verdict submission; recovery, acceptance, reduction,
+Final review rounds, and Delivery belong to later Capability slices.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterAgentResult,
     DeclarativeFinalChapterContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalRecheckAgentResult,
+    DeclarativeFinalRecheckContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     FinalChapterLaneInput,
@@ -83,7 +88,7 @@ class FinalChapterAgentBridge:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Keep the declared recovery port while this slice remains initial-only."""
+        """Keep the declared recovery port while this slice remains single-turn."""
 
         del recovery_policy
         return await self._invoke_once(
@@ -103,8 +108,60 @@ class FinalChapterAgentBridge:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
+        raw_contract = (
+            value.get("contract")
+            if isinstance(value, Mapping)
+            else getattr(value, "contract", None)
+        )
+        phase = (
+            raw_contract.get("phase")
+            if isinstance(raw_contract, Mapping)
+            else getattr(raw_contract, "phase", None)
+        )
+        if phase == "recheck":
+            context = DeclarativeFinalRecheckContext.model_validate(value)
+            return await self._invoke_typed(
+                agent,
+                task,
+                FinalChapterLaneInput.model_validate(context.contract),
+                conversation,
+                task_id=task_id,
+                inline_context=(
+                    context.envelope.inline_context
+                    if context.envelope is not None
+                    else None
+                ),
+                decode_result=self._decode_recheck_result,
+                turn_suffix="recheck",
+            )
         context = DeclarativeFinalChapterContext.model_validate(value)
-        contract = FinalChapterLaneInput.model_validate(context.contract)
+        return await self._invoke_typed(
+            agent,
+            task,
+            FinalChapterLaneInput.model_validate(context.contract),
+            conversation,
+            task_id=task_id,
+            inline_context=(
+                context.envelope.inline_context
+                if context.envelope is not None
+                else None
+            ),
+            decode_result=self._decode_result,
+            turn_suffix="initial",
+        )
+
+    async def _invoke_typed(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        contract: FinalChapterLaneInput,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        inline_context: str | None,
+        decode_result: Callable[[str], dict[str, Any]],
+        turn_suffix: str,
+    ) -> AgentInvocationOutcome:
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
         typed_turn = TypedAgentTurn(
@@ -141,15 +198,9 @@ class FinalChapterAgentBridge:
                 agent,
                 task,
                 contract,
-                inline_context=(
-                    context.envelope.inline_context
-                    if context.envelope is not None
-                    else None
-                ),
+                inline_context=inline_context,
             ),
-            message_id=(
-                f"{task_id}:{contract.run_id}:chapter-{context.chapter_id}:initial"
-            ),
+            message_id=f"{task_id}:{contract.run_id}:chapter-{contract.chapter_id}:{turn_suffix}",
             workflow_id=self.workflow_id,
             run_id=contract.run_id,
             task_id=task_id,
@@ -170,7 +221,7 @@ class FinalChapterAgentBridge:
         return TypedAgentTurn.map_outcome(
             outcome,
             session_id=session.session_id,
-            decode_result=self._decode_result,
+            decode_result=decode_result,
         )
 
     def _prompt(
@@ -208,6 +259,20 @@ class FinalChapterAgentBridge:
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
         submission = self._read_submission(result_ref)
         return DeclarativeFinalChapterAgentResult(
+            status="completed",
+            submission=submission,
+        ).model_dump(mode="json")
+
+    def _read_verdict_submission(self, result_ref: str) -> FinalChapterLaneVerdictSubmission:
+        path = Path(result_ref)
+        path = path if path.is_absolute() else self.workspace / path
+        return FinalChapterLaneVerdictSubmission.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+
+    def _decode_recheck_result(self, result_ref: str) -> dict[str, Any]:
+        submission = self._read_verdict_submission(result_ref)
+        return DeclarativeFinalRecheckAgentResult(
             status="completed",
             submission=submission,
         ).model_dump(mode="json")

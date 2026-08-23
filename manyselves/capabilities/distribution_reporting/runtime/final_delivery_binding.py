@@ -8,6 +8,7 @@ Final review tools; recheck and Delivery remain separate declared boundaries.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from copy import deepcopy
@@ -27,12 +28,17 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter
     DeclarativeFinalChapterContext,
     DeclarativeFinalChapterOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalRecheckContext,
+    DeclarativeFinalReviewContext,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     FinalChapterLaneInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
+    SpecialTopicPlan,
     chapter_section_ids,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
@@ -48,6 +54,42 @@ _STATIC_SECTION_BODIES = {
     "3.1.3": "data_gap_analysis",
     "3.2": "improvement_action_plan",
 }
+_TEMPLATE_SKILL_ROOT = "Work/report-template-role-skills"
+
+
+def _template_skill_context(
+    state: Mapping[str, Any],
+    workspace: Path,
+    skill_id: str,
+) -> str:
+    texts = state.get("template_skill_text", {})
+    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
+    if not content:
+        path = workspace / _TEMPLATE_SKILL_ROOT / skill_id / "SKILL.md"
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+    if not content:
+        return ""
+    return (
+        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
+        f"{content}\n"
+        "</template_role_skill>"
+    )
+
+
+def _final_inline_context(
+    state: Mapping[str, Any],
+    workspace: Path,
+    chapter_id: str,
+) -> str:
+    return "\n\n".join(
+        part
+        for part in (
+            _template_skill_context(state, workspace, "final-auditor"),
+            final_lane_specialization(chapter_id).prompt_context(),
+        )
+        if part
+    )
 
 
 def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -55,6 +97,10 @@ def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
     if state.get("edited_report") is not None:
         state["edited_report"] = EditedReportSubmission.model_validate(
             state["edited_report"]
+        )
+    if isinstance(state.get("special_topic_plan"), Mapping):
+        state["special_topic_plan"] = SpecialTopicPlan.model_validate(
+            state["special_topic_plan"]
         )
     return state
 
@@ -169,7 +215,11 @@ class FinalChapterTools:
             input_contract_kind="final_chapter_lane_input",
             input_contract_ref=input_ref,
             artifact_delivery_modes={input_ref: "inline"},
-            inline_context=final_lane_specialization(typed_chapter).prompt_context(),
+            inline_context=_final_inline_context(
+                state,
+                self.workspace,
+                typed_chapter,
+            ),
         )
         return DeclarativeFinalChapterContext(
             chapter_id=typed_chapter,
@@ -283,6 +333,109 @@ class FinalChapterTools:
         )
         return state
 
+    def prepare_recheck(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalRecheckContext:
+        """Prepare one affected Final Auditor recheck lane.
+
+        The unchanged-section SHA-256 projection is retained verbatim from the
+        existing Final recheck contract: it lets the Auditor see changed prose
+        while preserving the identity of unchanged sections.  It is not a new
+        runtime gate or CAS mechanism.
+        """
+
+        review = self._review_context(values["review"])
+        typed_chapter = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
+        findings = review.pending_by_chapter.get(typed_chapter, [])
+        if not findings:
+            return DeclarativeFinalRecheckContext(
+                chapter_id=typed_chapter,
+                status="skipped",
+            )
+        state = _restore_state(review.state)
+        section_ids = chapter_section_ids(
+            typed_chapter,
+            review.current.special_topic_plan,
+        )
+        current_bodies = _section_bodies(review.current, typed_chapter)
+        changed_ids = {
+            section_id
+            for finding in findings
+            for section_id in finding.target_section_ids
+        }
+        changed_bodies = {
+            section_id: body
+            for section_id, body in current_bodies.items()
+            if section_id in changed_ids
+        }
+        unchanged_section_sha256 = {
+            section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
+            for section_id, body in current_bodies.items()
+            if section_id not in changed_ids
+        }
+        revision = review.revision_number
+        run_id = str(state["run_id"])
+        contract = FinalChapterLaneInput(
+            phase="recheck",
+            run_id=run_id,
+            subject_ref=review.subject_ref,
+            chapter_id=typed_chapter,
+            review_focus=list(final_lane_specialization(typed_chapter).review_focus),
+            section_ids=list(section_ids),
+            section_bodies=changed_bodies,
+            unchanged_section_sha256=unchanged_section_sha256,
+            required_findings=list(findings),
+            revision_responses=list(review.revision_responses[typed_chapter]),
+            special_topic_plan=state.get("special_topic_plan"),
+            revision=revision,
+        )
+        input_ref = (
+            f"Work/runs/{run_id}/context/"
+            f"final-chapter-{typed_chapter}-input-r{revision}.json"
+        )
+        self.store.write_json(input_ref, contract.model_dump(mode="json"))
+        envelope = TaskEnvelope(
+            task_id=f"final-chapter-{typed_chapter}-r{revision}",
+            run_id=run_id,
+            agent_id="chief-editor-auditor",
+            objective=(
+                f"只复核 Chapter {typed_chapter} 的 assigned findings 并提交 verdicts。"
+            ),
+            input_refs=[input_ref],
+            constraints=[
+                "只提交 final_chapter_lane_verdict_submission",
+                "verdicts 必须覆盖该章全部 required_findings，new_findings 只能留在该章",
+            ],
+            allowed_outputs=["final_chapter_lane_verdict_submission"],
+            allowed_tools=["submit_result"],
+            revision=revision,
+            prior_result_ref=review.subject_ref,
+            input_contract_kind="final_chapter_lane_input",
+            input_contract_ref=input_ref,
+            artifact_delivery_modes={input_ref: "inline"},
+            inline_context=_final_inline_context(
+                state,
+                self.workspace,
+                typed_chapter,
+            ),
+        )
+        return DeclarativeFinalRecheckContext(
+            chapter_id=typed_chapter,
+            status="ready",
+            contract=contract,
+            input_ref=input_ref,
+            envelope=envelope,
+        )
+
+    @staticmethod
+    def recheck_requires_agent(value: Any) -> bool:
+        return DeclarativeFinalRecheckContext.model_validate(value).status == "ready"
+
+    @staticmethod
+    def _review_context(value: Any):
+        return DeclarativeFinalReviewContext.model_validate(value)
+
 
 def build_final_chapter_tool_implementations(
     *,
@@ -308,6 +461,12 @@ def build_final_chapter_tool_implementations(
             workspace=workspace,
             store=tools.store,
         )
+    )
+    implementations.update(
+        {
+            "prepare-current-final-recheck": tools.prepare_recheck,
+            "final-recheck-requires-agent": tools.recheck_requires_agent,
+        }
     )
     return implementations
 
