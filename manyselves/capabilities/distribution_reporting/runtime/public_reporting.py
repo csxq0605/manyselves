@@ -339,6 +339,9 @@ class PublicReportingWorkflowRuntime:
             return invokers
         for agent_id in tuple(invokers):
             if agent_id.startswith("module-") and agent_id.endswith("-specialist"):
+                existing = invokers[agent_id]
+                if callable(getattr(existing, "invoke", None)):
+                    continue
                 invokers[agent_id] = ModuleAuthoringAgentBridge(
                     self.workspace,
                     execution=execution,

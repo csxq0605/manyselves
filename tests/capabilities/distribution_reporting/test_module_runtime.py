@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from manyselves.capabilities.distribution_reporting.runtime import (
     module_cohort_tools,
@@ -524,3 +527,386 @@ def test_capability_module_authoring_preserves_resume_result_part_projection(
     ) == legacy_preparation.envelope.model_dump(
         mode="json", exclude={"task_attempt_id"}
     )
+
+
+def test_module_provider_composition_exposes_real_runtime_ports_and_injected_dependencies(
+    tmp_path: Path,
+) -> None:
+    """Characterize the missing Provider composition before implementation."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        build_module_provider_composition,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    bus = MessageBus()
+    execution = AgentExecutionService(bus)
+    session_factory = object()
+    gateway = object()
+    task_correlation = object()
+    recovery_callback = object()
+    dependencies = ModuleProviderDependencies(
+        artifact_gateway=gateway,
+        task_correlation=task_correlation,
+        recovery_event_callback=recovery_callback,
+    )
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+
+    composition = build_module_provider_composition(
+        services,
+        execution=execution,
+        agent_session_factory=session_factory,
+        dependencies=dependencies,
+    )
+
+    assert composition.module_runtime.agent_execution is execution
+    assert composition.module_runtime.agent_session_factory is session_factory
+    assert composition.module_runtime.agent_invokers is composition.agent_invokers
+    assert composition.dependencies is dependencies
+    assert composition.dependencies.artifact_gateway is gateway
+    assert composition.dependencies.task_correlation is task_correlation
+    assert composition.dependencies.recovery_event_callback is recovery_callback
+
+
+def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> None:
+    """The Host must not replace the Provider runtime with a tool-less bridge."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        build_module_provider_composition,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
+        PublicReportingWorkflowRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+
+    composition = build_module_provider_composition(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        agent_session_factory=lambda _runtime_id: object(),
+    )
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=object(),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+        module_runtime=composition.module_runtime,
+    )
+
+    invokers = runtime._agent_invokers()
+
+    assert invokers["module-2.4-specialist"] is composition.provider
+    assert invokers["evidence-auditor"] is composition.provider
+
+
+@pytest.mark.asyncio
+async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversation_session(
+    tmp_path: Path,
+) -> None:
+    """Provider composition uses the generic service for both Author turns."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ModuleSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        ModuleProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import Tool
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
+    run_id = "module-provider-runtime"
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    envelope = TaskEnvelope(
+        task_id="module-2.4",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_submission"],
+        allowed_tools=list(task.tools),
+        input_refs=[f"Work/runs/{run_id}/context/module-input.json"],
+        target_submodule_ids=part_ids,
+        input_contract_kind="module_authoring_input",
+        input_contract_ref=f"Work/runs/{run_id}/context/module-input.json",
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+    result_ref = f"Work/runs/{run_id}/results/module-2.4.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        ModuleSubmission(
+            module_id="2.4",
+            submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
+            claims=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=0,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    class InjectedTool(Tool):
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def __call__(self, **kwargs: Any) -> dict[str, Any]:
+            return {"name": self.name, "kwargs": kwargs}
+
+    injected = {
+        name: InjectedTool(name)
+        for name in {"inspect_image", "open_artifact", "search_text", "calculate"}
+    }
+    gateway = object()
+    task_correlation = object()
+    recovery_callback = object()
+    dependencies = ModuleProviderDependencies(
+        artifact_gateway=gateway,
+        task_correlation=task_correlation,
+        recovery_event_callback=recovery_callback,
+        tool_implementations=injected,
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    built_kwargs: list[dict[str, Any]] = []
+    received: list[UserMessage] = []
+
+    class ScriptedLoop:
+        def __init__(self, **kwargs: Any) -> None:
+            built_kwargs.append(kwargs)
+            self.runtime_id = str(kwargs["agent_type"])
+            self.callback = None
+
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self.callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self.callback is not None:
+                bus.unsubscribe(UserMessage, self.callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def loop_builder(**kwargs: Any) -> ScriptedLoop:
+        return ScriptedLoop(**kwargs)
+
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    runtime = ModuleProviderRuntime(
+        services,
+        execution=service,
+        loop_builder=loop_builder,
+        dependencies=dependencies,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(agent_id=agent.id, value="module-2.4", mode="run"),
+        run_id=run_id,
+    )
+    try:
+        first = await runtime.invoke(agent, task, context, conversation, task_id="dispatch-2.4")
+        second = await runtime.invoke(agent, task, context, conversation, task_id="dispatch-2.4")
+
+        assert first.status == "ok"
+        assert second.status == "ok"
+        assert len(built_kwargs) == 1
+        assert built_kwargs[0]["bus"] is bus
+        assert built_kwargs[0]["llm_provider"] is services.active_provider
+        assert built_kwargs[0]["config"] is services.agent_defaults
+        assert built_kwargs[0]["system_prompt"] == agent.instructions
+        assert built_kwargs[0]["artifact_gateway"] is gateway
+        assert set(built_kwargs[0]["tools"].get_all()) == set(task.tools)
+        assert len(received) == 2
+        assert first.session_id == second.session_id
+        assert conversation.external_session_id == first.session_id
+        assert len(service.sessions) == 1
+    finally:
+        await runtime.close()
+        bus.shutdown()
+        await bus_task
+
+
+def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_task(
+    tmp_path: Path,
+) -> None:
+    """Reviewer composition keeps its typed bridge and full declared tool set."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleReviewPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        ModuleProviderRuntime,
+        build_module_provider_tools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
+        ModuleReviewerAgentBridge,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import Tool
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "evidence-auditor")
+    task = registry.require(DefinitionKind.TASK, "module-runtime-initial-review")
+    run_id = "module-provider-review"
+    envelope = TaskEnvelope(
+        task_id="module-2.4-initial-review-r0",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_review_finding_submission"],
+        allowed_tools=list(task.tools),
+        input_refs=[f"Work/runs/{run_id}/reviews/input.json"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.4"].submodules),
+        input_contract_kind="module_review_input",
+        input_contract_ref=f"Work/runs/{run_id}/reviews/input.json",
+    )
+    review = DeclarativeModuleReviewPreparation.model_construct(
+        envelope=envelope,
+        reviewer_session_key="module-auditor-2.4",
+        prepared=object(),
+    )
+    context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="review_ready",
+        review=review,
+    )
+
+    class InjectedTool(Tool):
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def __call__(self, **kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+    injected = {
+        name: InjectedTool(name)
+        for name in ("inspect_image", "calculate")
+    }
+    dependencies = ModuleProviderDependencies(
+        artifact_gateway=object(),
+        task_correlation=object(),
+        recovery_event_callback=object(),
+        tool_implementations=injected,
+    )
+    captured: dict[str, Any] = {}
+    built_registry: dict[str, Any] = {}
+
+    def tool_builder(*args: Any, **kwargs: Any):
+        captured.update(kwargs)
+        built_registry["value"] = build_module_provider_tools(*args, **kwargs)
+        return built_registry["value"]
+
+    bus = MessageBus()
+    runtime = ModuleProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=AgentExecutionService(bus),
+        dependencies=dependencies,
+        tool_builder=tool_builder,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(agent_id=agent.id, value="module-review", mode="run"),
+        run_id=run_id,
+    )
+
+    bridge = runtime._bridge(agent, task, context, conversation, task_id="review-r0")
+
+    assert isinstance(bridge, ModuleReviewerAgentBridge)
+    assert captured["tool_names"] == list(task.tools)
+    assert captured["dependencies"] is dependencies
+    assert set(built_registry["value"].get_all()) == set(task.tools)
