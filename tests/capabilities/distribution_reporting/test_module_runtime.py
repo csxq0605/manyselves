@@ -910,3 +910,143 @@ def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_tas
     assert captured["tool_names"] == list(task.tools)
     assert captured["dependencies"] is dependencies
     assert set(built_registry["value"].get_all()) == set(task.tools)
+
+
+@pytest.mark.asyncio
+async def test_module_provider_tools_assemble_artifact_tools_and_reuse_completed_results(
+    tmp_path: Path,
+) -> None:
+    """Capability composition owns the declared artifact/calculation tools."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        build_module_provider_tools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider_tools import (
+        CalculateTool as CapabilityCalculateTool,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider_tools import (
+        InspectImageTool as CapabilityInspectImageTool,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.reporting.agent_runner import (
+        CalculateTool as LegacyCalculateTool,
+    )
+    from manyselves.core.reporting.agent_runner import (
+        InspectImageTool as LegacyInspectImageTool,
+    )
+    from manyselves.core.tools.result_memory import RunToolResultIndex
+
+    assert LegacyCalculateTool is CapabilityCalculateTool
+    assert LegacyInspectImageTool is CapabilityInspectImageTool
+
+    image_path = tmp_path / "image-ref"
+    image_path.write_bytes(
+        bytes.fromhex(
+            "89504e470d0a1a0a0000000d494844520000000100000001"
+            "08060000001f15c4890000000d49444154789c6360f8cf000000"
+            "03000100c9fe92ef0000000049454e44ae426082"
+        )
+    )
+
+    class Gateway:
+        def __init__(self) -> None:
+            self.open_calls: list[tuple[str, int, int]] = []
+            self.search_calls: list[tuple[str, str]] = []
+
+        def describe(self, ref: str) -> SimpleNamespace:
+            del ref
+            return SimpleNamespace(
+                kind="image",
+                allowed_operations=("inspect_image",),
+            )
+
+        def _resolve(self, ref: str) -> Path:
+            del ref
+            return image_path
+
+        def open(self, ref: str, *, offset: int, limit: int) -> SimpleNamespace:
+            self.open_calls.append((ref, offset, limit))
+            return SimpleNamespace(
+                as_dict=lambda: {
+                    "ref": ref,
+                    "offset": offset,
+                    "limit": limit,
+                    "content": "artifact content",
+                }
+            )
+
+        def search(
+            self,
+            ref: str,
+            query: str,
+            *,
+            max_matches: int,
+            context_lines: int,
+        ) -> dict[str, Any]:
+            del max_matches, context_lines
+            self.search_calls.append((ref, query))
+            return {"ref": ref, "query": query, "matches": []}
+
+    gateway = Gateway()
+    result_index = RunToolResultIndex(tmp_path, "module-provider-tools")
+    artifact_access = SimpleNamespace(
+        capabilities=(),
+        readable_refs=("artifact-ref", "image-ref"),
+        photo_map=lambda: {},
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.4",
+        run_id="module-provider-tools",
+        agent_id="module-2.4-specialist",
+        objective="assemble declared tools",
+        allowed_outputs=["module_submission"],
+    )
+    registry = build_module_provider_tools(
+        tmp_path,
+        envelope=envelope,
+        module_id="2.4",
+        session_id="module-session",
+        workflow_id="public-reporting",
+        bus=MessageBus(),
+        store=ReportingStore(tmp_path),
+        global_knowledge_root=None,
+        tool_names=("inspect_image", "calculate", "open_artifact", "search_text"),
+        expected_part_ids=(),
+        dependencies=ModuleProviderDependencies(
+            artifact_gateway=gateway,
+            artifact_access=artifact_access,
+            result_index=result_index,
+        ),
+    )
+
+    assert set(registry.get_all()) == {
+        "inspect_image",
+        "calculate",
+        "open_artifact",
+        "search_text",
+    }
+    calculate = registry.get("calculate")
+    inspect_image = registry.get("inspect_image")
+    open_artifact = registry.get("open_artifact")
+    search_text = registry.get("search_text")
+    assert calculate is not None
+    assert inspect_image is not None
+    assert open_artifact is not None
+    assert search_text is not None
+    assert (await calculate(expression="2 + 3"))["result"] == 5
+    inspected = await inspect_image(ref="image-ref")
+    assert inspected["path"] == "image-ref"
+
+    first_open = await open_artifact("artifact-ref", limit=20)
+    second_open = await open_artifact("artifact-ref", limit=20)
+    assert first_open == second_open
+    assert gateway.open_calls == [("artifact-ref", 0, 20)]
+
+    first_search = await search_text("artifact-ref", "evidence")
+    second_search = await search_text("artifact-ref", "evidence")
+    assert first_search == second_search
+    assert gateway.search_calls == [("artifact-ref", "evidence")]

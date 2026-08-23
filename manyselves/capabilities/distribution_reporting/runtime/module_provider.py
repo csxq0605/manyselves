@@ -8,8 +8,10 @@ generic Agent execution service one stable session per Conversation.
 Artifact, task-correlation, and recovery objects are injected ports.  They are
 deliberately not constructed or reimplemented here; the existing owner of
 those concerns may pass its concrete objects through the
-``ModuleProviderDependencies`` value.  Durable Tool-result reuse and Provider
-attempt observers remain outside this initial-turn slice.
+``ModuleProviderDependencies`` value.  The existing ``RunToolResultIndex`` is
+passed through the same value and is used by the moved artifact readers for
+completed-result reuse.  Provider-attempt recovery beyond the current bridge
+remains outside this initial-turn slice.
 """
 
 from __future__ import annotations
@@ -70,6 +72,7 @@ from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.tools.document_tool import InspectDocumentTool
 from manyselves.core.tools.registry import Tool, ToolRegistry
+from manyselves.core.tools.result_memory import RunToolResultIndex
 from manyselves.kernel.definitions import (
     AgentDefinition,
     RecoveryPolicyDefinition,
@@ -83,6 +86,13 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .contracts.submissions import submission_schema
+from .module_provider_tools import (
+    CalculateTool,
+    _IndexedInspectImageTool,
+    _IndexedOpenArtifactTool,
+    _IndexedOpenToolResultTool,
+    _IndexedSearchTextTool,
+)
 from .module_runtime import CapabilityModuleRuntime, SessionFactory
 
 LoopBuilder = Callable[..., AgentSessionLoop]
@@ -100,6 +110,8 @@ class ModuleProviderDependencies:
     """
 
     artifact_gateway: Any | None = None
+    artifact_access: Any | None = None
+    result_index: RunToolResultIndex | None = None
     task_correlation: Any | None = None
     recovery_event_callback: RecoveryCallback | None = None
     tool_implementations: Mapping[str, Tool] = field(default_factory=dict)
@@ -161,9 +173,12 @@ def build_module_provider_tools(
 ) -> ToolRegistry:
     """Build the declared Module tool set from Capability-owned implementations.
 
-    Four generic/artifact tools are supplied by the caller because their
-    existing implementations need the caller-owned artifact and result-index
-    context.  A missing declared tool is reported rather than silently omitted.
+    The artifact gateway/access and existing result index are injected through
+    ``dependencies``; when present, this function assembles the moved
+    ``inspect_image``, ``open_artifact``, ``open_tool_result`` and ``search_text``
+    readers with completed-result reuse.  ``calculate`` is always assembled
+    locally.  A missing declared dependency or tool implementation is reported
+    rather than silently omitted.
     """
 
     workspace = Path(workspace).resolve()
@@ -194,6 +209,7 @@ def build_module_provider_tools(
         "web_search": WebSearchTool(web_backend),
         "open_web_source": OpenWebSourceTool(web_backend, ledger),
         "inspect_document": InspectDocumentTool(workspace),
+        "calculate": CalculateTool(),
         "query_peer": QueryPeerTool(
             bus,
             envelope.task_id,
@@ -255,6 +271,58 @@ def build_module_provider_tools(
             workflow_id,
         ),
     }
+    if dependencies.artifact_gateway is not None and dependencies.result_index is not None:
+        artifact_access = dependencies.artifact_access
+        capabilities = tuple(getattr(artifact_access, "capabilities", ()) or ())
+        allowed_refs = tuple(getattr(artifact_access, "readable_refs", ()) or ())
+        photo_map = getattr(artifact_access, "photo_map", None)
+        photo_refs = photo_map() if callable(photo_map) else {}
+        large_artifact_reader = envelope.agent_id in {
+            "cross-module-reviewer",
+            "chief-editor",
+            "chief-editor-auditor",
+        }
+        audit_artifact_reader = envelope.agent_id == "evidence-auditor"
+        default_limit = 160_000 if large_artifact_reader else 8_000 if audit_artifact_reader else 4_000
+        minimum_limit = 160_000 if envelope.agent_id in {
+            "cross-module-reviewer",
+            "chief-editor",
+        } else 1
+        maximum_limit = 160_000 if large_artifact_reader else 8_000
+        available.update(
+            {
+                "inspect_image": _IndexedInspectImageTool(
+                    workspace,
+                    gateway=dependencies.artifact_gateway,
+                    capabilities=capabilities,
+                    allowed_refs=allowed_refs,
+                    photo_refs=photo_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "open_artifact": _IndexedOpenArtifactTool(
+                    dependencies.artifact_gateway,
+                    default_limit=default_limit,
+                    minimum_limit=minimum_limit,
+                    maximum_limit=maximum_limit,
+                    allowed_refs=allowed_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "open_tool_result": _IndexedOpenToolResultTool(
+                    dependencies.artifact_gateway,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "search_text": _IndexedSearchTextTool(
+                    dependencies.artifact_gateway,
+                    dependencies.research_guard,
+                    allowed_refs=allowed_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+            }
+        )
     available.update(dependencies.tool_implementations)
 
     missing = [name for name in tool_names if name not in available]
