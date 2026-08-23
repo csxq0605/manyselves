@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -152,34 +152,77 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
 
 
 @pytest.mark.asyncio
-async def test_typed_distillation_agent_invoker_keeps_runner_session_and_contract_refs() -> None:
+async def test_template_distillation_bridge_uses_generic_agent_execution_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Capability bridge must not dispatch through either reporting runner."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
+        TemplateDistillationAgentBridge,
+    )
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
-        TemplateDistillationAgentInvoker,
-    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+    from manyselves.core.reporting.workflow import ReportWorkflowRunner
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+    from manyselves.runtime.agent_execution import AgentExecutionService
 
-    class RecordingRunner:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, object]] = []
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("legacy reporting runner must not be called")
 
-        async def run(self, definition, envelope, artifacts, **kwargs):
-            self.calls.append(
-                {
-                    "definition": definition,
-                    "envelope": envelope,
-                    "artifacts": artifacts,
-                    "kwargs": kwargs,
-                }
-            )
-            return SimpleNamespace(
-                status="completed",
-                payload=_submission(),
-                session_id="provider-template-session",
-            )
+    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden)
+    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden)
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    result_ref = "Work/runs/run-template-bridge/results/template-skill.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    class ScriptedLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
 
     agent = AgentDefinition(
         id="template-distiller",
@@ -197,17 +240,11 @@ async def test_typed_distillation_agent_invoker_keeps_runner_session_and_contrac
         objective="distill one template",
         input_contract="template_distillation_input",
         output_contract="template_skill_submission",
-        tools=[
-            "inspect_document",
-            "write_result_part",
-            "list_result_parts",
-            "submit_result",
-            "report_blocked",
-        ],
+        tools=["inspect_document", "write_result_part", "list_result_parts", "submit_result"],
     )
     value = TemplateDistillationInput(
-        run_id="run-template-invoker",
-        template_ref="Work/runs/run-template-invoker/templates/template-for-skill.docx",
+        run_id="run-template-bridge",
+        template_ref="Work/runs/run-template-bridge/templates/template-for-skill.docx",
         inspect_max_chars=100_000,
         required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
     )
@@ -219,14 +256,22 @@ async def test_typed_distillation_agent_invoker_keeps_runner_session_and_contrac
         ),
         run_id=value.run_id,
     )
-    runner = RecordingRunner()
-    invoker = TemplateDistillationAgentInvoker(
-        runner,
-        object(),
+    service = AgentExecutionService(bus, timeout=1)
+    loops: list[ScriptedLoop] = []
+
+    def session_factory(runtime_id: str) -> ScriptedLoop:
+        loop = ScriptedLoop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    bridge = TemplateDistillationAgentBridge(
+        tmp_path,
+        execution=service,
+        session_factory=session_factory,
         workflow_id="distill-template-skill",
     )
 
-    outcome = await invoker.invoke(
+    outcome = await bridge.invoke(
         agent,
         task,
         value,
@@ -235,18 +280,30 @@ async def test_typed_distillation_agent_invoker_keeps_runner_session_and_contrac
     )
 
     assert outcome.status == "ok"
-    assert outcome.session_id == "provider-template-session"
-    assert conversation.external_session_id == "provider-template-session"
-    assert len(runner.calls) == 1
-    call = runner.calls[0]
-    envelope = call["envelope"]
-    assert envelope.input_contract_kind == "template_distillation_input"
-    assert envelope.input_contract_ref in envelope.input_refs
-    assert envelope.input_refs[-1] == value.template_ref
-    assert call["kwargs"] == {
-        "workflow_id": "distill-template-skill",
-        "session_key": "template-distillation",
-    }
+    assert TemplateSkillSubmission.model_validate(outcome.result).kind == (
+        "template_skill_submission"
+    )
+    assert outcome.session_id == conversation.external_session_id
+
+    second = await bridge.invoke(
+        agent,
+        task,
+        value,
+        conversation,
+        task_id="invoke-template-distiller",
+    )
+    assert second.status == "ok"
+    assert second.session_id == outcome.session_id
+    assert len(loops) == 1
+    assert [message.turn_kind for message in loops[0].received] == [
+        "task_initial",
+        "task_initial",
+    ]
+    assert len(service.sessions) == 1
+
+    await service.close_workflow("distill-template-skill")
+    bus.shutdown()
+    await bus_task
 
 
 def _submission() -> TemplateSkillSubmission:

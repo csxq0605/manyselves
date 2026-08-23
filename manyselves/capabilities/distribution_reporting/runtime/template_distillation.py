@@ -8,7 +8,7 @@ not calculate hashes or own a Provider/Conversation implementation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -38,7 +38,6 @@ from manyselves.kernel.executors import (
     RuntimeContext,
     build_builtin_executor_registry,
 )
-from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
@@ -53,6 +52,7 @@ from manyselves.runtime.tool_adapter import (
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeHost
 
 from .. import load_distribution_reporting_capability
+from .agent_bridge import TemplateDistillationAgentBridge
 from .input_snapshot import RunInputSnapshotStore
 from .storage import ReportingStore
 
@@ -314,136 +314,6 @@ def build_template_distillation_tool_implementations(
     }
 
 
-class TemplateDistillationAgentInvoker:
-    """Typed bridge from the generic Agent port to the current Agent runner.
-
-    The bridge only builds the Capability-owned envelope and forwards the
-    durable conversation key.  Tool-slice continuation, one-shot inspection,
-    and result-part persistence remain the existing runner's implementation;
-    no reporting loop is recreated in the Capability.
-    """
-
-    def __init__(
-        self,
-        runner: Any,
-        reporting_definition: Any,
-        *,
-        workflow_id: str,
-        shared_artifacts: Callable[[TemplateDistillationInput], list[str]] | None = None,
-    ) -> None:
-        self._runner = runner
-        self._reporting_definition = reporting_definition
-        self._workflow_id = workflow_id
-        self._shared_artifacts = shared_artifacts or (
-            lambda value: [value.template_ref]
-        )
-
-    async def invoke(
-        self,
-        agent: Any,
-        task: Any,
-        value: Any,
-        conversation: Any,
-        *,
-        task_id: str,
-    ) -> AgentInvocationOutcome:
-        return await self._invoke(
-            agent,
-            task,
-            value,
-            conversation,
-            task_id=task_id,
-        )
-
-    async def invoke_with_recovery(
-        self,
-        agent: Any,
-        task: Any,
-        value: Any,
-        conversation: Any,
-        *,
-        task_id: str,
-        recovery_policy: Any,
-    ) -> AgentInvocationOutcome:
-        return await self._invoke(
-            agent,
-            task,
-            value,
-            conversation,
-            task_id=task_id,
-            recovery_policy=recovery_policy,
-        )
-
-    async def _invoke(
-        self,
-        agent: Any,
-        task: Any,
-        value: Any,
-        conversation: Any,
-        *,
-        task_id: str,
-        recovery_policy: Any | None = None,
-    ) -> AgentInvocationOutcome:
-        input_value = (
-            value
-            if isinstance(value, TemplateDistillationInput)
-            else TemplateDistillationInput.model_validate(value)
-        )
-        input_ref = TEMPLATE_DISTILLATION_INPUT_REF.format(
-            run_id=input_value.run_id
-        )
-        envelope = TaskEnvelope(
-            task_id=task.id,
-            run_id=input_value.run_id,
-            agent_id=agent.id,
-            objective=task.objective,
-            input_refs=[input_ref, input_value.template_ref],
-            constraints=list(task.constraints),
-            allowed_outputs=[task.output_contract],
-            allowed_tools=list(task.tools),
-            input_contract_kind=task.input_contract,
-            input_contract_ref=input_ref,
-        )
-        run_kwargs: dict[str, Any] = {
-            "workflow_id": self._workflow_id,
-            "session_key": conversation.key.value,
-        }
-        if recovery_policy is not None:
-            run_kwargs["recovery_policy"] = recovery_policy
-        try:
-            result = await self._runner.run(
-                self._reporting_definition,
-                envelope,
-                self._shared_artifacts(input_value),
-                **run_kwargs,
-            )
-        except Exception as exc:
-            return AgentInvocationOutcome(status="failed", error=str(exc))
-
-        status = getattr(getattr(result, "status", None), "value", None)
-        status = str(status or getattr(result, "status", "failed"))
-        if status.endswith(".COMPLETED"):
-            status = "completed"
-        payload = getattr(result, "payload", None)
-        if hasattr(payload, "model_dump"):
-            payload = payload.model_dump(mode="json")
-        outcome_status = {
-            "completed": "ok",
-            "blocked": "blocked",
-            "incomplete": "incomplete",
-            "failed": "failed",
-        }.get(status, "failed")
-        session_id = getattr(result, "session_id", None)
-        if session_id is not None:
-            conversation.external_session_id = session_id
-        return AgentInvocationOutcome(
-            status=outcome_status,
-            result=payload,
-            session_id=session_id,
-            error=getattr(result, "reason", None),
-        )
-
-
 class TemplateDistillationWorkflowRuntime:
     """Execute ``distill-template-skill`` through the Generic Host."""
 
@@ -639,7 +509,7 @@ __all__ = [
     "TemplateDistillationPlan",
     "TemplateInspectionPlan",
     "TemplateSkillMaterialization",
-    "TemplateDistillationAgentInvoker",
+    "TemplateDistillationAgentBridge",
     "TemplateDistillationWorkflowRuntime",
     "build_template_distillation_plan",
     "build_template_distillation_tool_implementations",
