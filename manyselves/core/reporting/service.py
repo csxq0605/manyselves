@@ -17,6 +17,7 @@ from typing import Literal
 from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
 
+from manyselves.capabilities.distribution_reporting.domain.coverage import evaluate_coverage
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     CostControlMode,
@@ -49,7 +50,6 @@ from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .assets import ReportAssetAssembler
 from .config import load_packaged_agents
-from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
 from .execution_runtime import ProviderRouter

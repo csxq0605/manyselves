@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Literal, cast
 from uuid import uuid4
 
+from manyselves.capabilities.distribution_reporting.domain.cross_specialization import (
+    cross_lane_specialization,
+)
+from manyselves.capabilities.distribution_reporting.domain.revision_diff import (
+    build_revision_diff,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     review as review_models,
@@ -83,9 +89,7 @@ from .assets import (
     validate_editor_quality,
 )
 from .chapter_parallel import CHAPTER_SECTION_IDS
-from .cross_specialization import cross_lane_specialization
 from .review_preflight import evaluate_module_review_preflight
-from .revision_diff import build_revision_diff
 
 if TYPE_CHECKING:
     from .workflow import ReportWorkflowRunner

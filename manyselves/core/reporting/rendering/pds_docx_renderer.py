@@ -18,6 +18,7 @@ from docx.shared import Cm, Pt
 from PIL import Image, ImageOps
 from pydantic import Field, field_validator, model_validator
 
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
@@ -28,7 +29,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SpecialTopicPlan,
 )
 
-from ..claim_ledger import ClaimLedger
 from ..report_markdown import (
     CanonicalMarkdownTable,
     CanonicalReportContent,

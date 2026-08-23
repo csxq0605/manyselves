@@ -10,13 +10,13 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm
 
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     SourceKind,
     SourceRecord,
 )
-from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.rendering.handoff_docx import PackagedV2DocxCore
 from manyselves.core.reporting.rendering.packaged_docx import (
     PackagedDocxCore,

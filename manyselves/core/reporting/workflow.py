@@ -20,6 +20,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
+from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
+    final_lane_specialization,
+)
+from manyselves.capabilities.distribution_reporting.domain.revision_diff import (
+    build_revision_diff,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     activate_report_taxonomy,
@@ -129,13 +136,11 @@ from .assets import (
     validate_module_markdown_consistency,
 )
 from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
-from .claim_ledger import ClaimLedger
 from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
 from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
-from .final_specialization import final_lane_specialization
 from .input_snapshot import RunInputSnapshotStore
 from .intake.wps_images import extract_wps_images
 from .rendering.contracts import RenderRequest, RenderResult
@@ -168,7 +173,6 @@ from .review_lifecycle import (
     run_module_review,
     verify_cross_owner_barrier,
 )
-from .revision_diff import build_revision_diff
 from .scheduling import (
     AdaptiveTaskScheduler,
     SchedulingCandidate,

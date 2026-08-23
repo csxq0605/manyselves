@@ -10,6 +10,9 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
+    final_lane_specialization,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     final_review as final_review_models,
 )
@@ -57,7 +60,6 @@ from .declarative_final_chapter_cohort import (
     FINAL_CHAPTER_IDS,
 )
 from .declarative_task_binding import bind_declared_task
-from .final_specialization import final_lane_specialization
 
 
 class _FinalChiefRevisionInvoker:

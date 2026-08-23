@@ -10,6 +10,9 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
+    final_lane_specialization,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     final_chapter as final_chapter_models,
 )
@@ -51,7 +54,6 @@ from manyselves.kernel.workflow import (
 )
 
 from .declarative_task_binding import bind_declared_task
-from .final_specialization import final_lane_specialization
 
 FINAL_CHAPTER_IDS = ("1", "3", "4")
 

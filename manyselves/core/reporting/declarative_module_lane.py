@@ -12,6 +12,9 @@ from typing import Any, Protocol
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.domain.revision_diff import (
+    build_revision_diff,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
@@ -50,7 +53,6 @@ from .review_lifecycle import (
     _validate_module_findings,
     _validate_verdicts,
 )
-from .revision_diff import build_revision_diff
 
 
 class ModuleSubjectValidator(Protocol):

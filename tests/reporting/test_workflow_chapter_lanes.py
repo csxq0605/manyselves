@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
+    final_lane_specialization,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChapterScopedFinalReviewFinding,
@@ -33,7 +36,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     RecoveryStateStore,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.reporting.final_specialization import final_lane_specialization
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 

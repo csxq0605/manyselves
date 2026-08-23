@@ -2,6 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import (
+    CitationBindingError,
+    ClaimLedger,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
@@ -13,7 +17,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     PhotoAsset,
     SourceLocation,
 )
-from manyselves.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
 
 
 def _first_submodule(module_id: str) -> str:

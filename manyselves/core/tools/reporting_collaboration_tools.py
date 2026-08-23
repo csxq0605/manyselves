@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
@@ -93,7 +94,6 @@ from ...interfaces.types import (
     UserMessage,
 )
 from ..loops.bus import MessageBus
-from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.message_router import artifact_path_refs, source_record_ids
 from .document_tool import InspectDocumentTool
 from .registry import Tool

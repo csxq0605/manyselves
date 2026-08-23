@@ -1,5 +1,5 @@
+from manyselves.capabilities.distribution_reporting.domain.coverage import evaluate_coverage
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportRequest
-from manyselves.core.reporting.coverage import evaluate_coverage
 from manyselves.core.reporting.evidence_readiness import EvidenceReadinessPolicy
 
 
