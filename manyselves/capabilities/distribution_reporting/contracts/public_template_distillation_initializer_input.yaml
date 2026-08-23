@@ -1,0 +1,5 @@
+id: public_template_distillation_initializer_input
+version: 1.0.0
+description: Join a Host-owned Run identity with public template-distillation input
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:PublicTemplateDistillationInitializerInput

@@ -11,6 +11,9 @@ recovery: ./recovery
 interactions: ./interactions
 outputs: ./outputs
 entrypoints:
-- distribution-reporting
+- full-report
+- module-report
+- aggregate-existing
 - render-existing
+- distill-template-skill
 runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

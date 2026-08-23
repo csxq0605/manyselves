@@ -176,7 +176,6 @@ def test_declarative_reporting_runner_does_not_inherit_legacy_runner() -> None:
     assert violations == {}
 
 
-@FINAL_ARCHITECTURE_GAP
 def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> None:
     """The five public report operations must start compiled file workflows."""
 

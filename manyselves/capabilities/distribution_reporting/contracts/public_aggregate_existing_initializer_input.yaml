@@ -1,0 +1,5 @@
+id: public_aggregate_existing_initializer_input
+version: 1.0.0
+description: Join a Host-owned Run identity with public aggregate-existing input
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:PublicAggregateExistingInitializerInput

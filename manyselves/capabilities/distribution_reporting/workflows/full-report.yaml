@@ -6,7 +6,7 @@ gates: []
 recovery: []
 outputs:
 - distribution-reporting-result
-input_contract: distribution_reporting_input
+input_contract: public_full_report_input
 input_variable: request
 output_contract: distribution_reporting_output
 state:

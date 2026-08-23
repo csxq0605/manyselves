@@ -5,7 +5,7 @@ outputs:
 - render-existing-result
 gates: []
 recovery: []
-input_contract: render_existing_input
+input_contract: public_render_existing_input
 input_variable: render-request
 output_contract: render_existing_output
 state:

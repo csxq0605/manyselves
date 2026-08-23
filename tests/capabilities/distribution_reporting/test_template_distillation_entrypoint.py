@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 
@@ -35,6 +35,7 @@ def test_distill_template_skill_compiles_with_typed_agent_contracts() -> None:
 
     assert plan.workflow_id == "distill-template-skill"
     assert plan.tool_ids == [
+        "project-public-template-distillation-input",
         "prepare-template-distillation",
         "materialize-template-skill",
     ]
@@ -96,9 +97,6 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
                 task_id=task_id,
             )
 
-    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
-        TemplateDistillationInput,
-    )
     from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
         TemplateDistillationWorkflowRuntime,
     )
@@ -106,13 +104,9 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
     template = tmp_path / "Templates/report_template.docx"
     template.parent.mkdir(parents=True)
     template.write_bytes(b"template source")
-    run_id = "distill-template-host"
-    request = TemplateDistillationInput(
-        run_id=run_id,
-        template_ref="Templates/report_template.docx",
-        inspect_max_chars=100_000,
-        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
-    )
+    command_id = UUID("60000000-0000-4000-8000-000000000001")
+    run_id = f"distill-template-skill-{command_id.hex}"
+    request = {"template_ref": "Templates/report_template.docx"}
     invoker = RecordingAgentInvoker()
 
     runtime = TemplateDistillationWorkflowRuntime(
@@ -120,9 +114,9 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
         agent_invoker=invoker,
     )
     result = await runtime.start(
-        uuid4(),
+        command_id,
         "distill-template-skill",
-        request.model_dump(mode="json"),
+        request,
     )
 
     assert result["run_id"] == run_id
@@ -161,9 +155,6 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
     from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
         TemplateDistillationAgentBridge,
     )
-    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
-        TemplateDistillationInput,
-    )
     from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
         TemplateDistillationWorkflowRuntime,
     )
@@ -179,7 +170,8 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
     monkeypatch.setattr(ReportingAgentRunner, "run", forbidden)
     monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden)
 
-    run_id = "distill-template-capability-host"
+    command_id = UUID("60000000-0000-4000-8000-000000000002")
+    run_id = f"distill-template-skill-{command_id.hex}"
     result_ref = f"Work/runs/{run_id}/results/template-skill.json"
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True)
@@ -190,12 +182,7 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
     template = tmp_path / "Templates/report_template.docx"
     template.parent.mkdir(parents=True)
     template.write_bytes(b"template source")
-    request = TemplateDistillationInput(
-        run_id=run_id,
-        template_ref="Templates/report_template.docx",
-        inspect_max_chars=100_000,
-        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
-    )
+    request = {"template_ref": "Templates/report_template.docx"}
 
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -261,9 +248,9 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
     )
     try:
         result = await runtime.start(
-            uuid4(),
+            command_id,
             "distill-template-skill",
-            request.model_dump(mode="json"),
+            request,
         )
 
         assert result["run_id"] == run_id
@@ -1620,18 +1607,20 @@ def test_distill_template_skill_definition_uses_generic_agent_actions() -> None:
     assert workflow.output_contract == "template_skill_materialization"
     assert [action["kind"] for action in workflow.actions] == [
         "invoke_tool",
+        "invoke_tool",
         "create_conversation",
         "invoke_agent",
         "invoke_tool",
         "publish_result",
         "end_workflow",
     ]
-    assert workflow.actions[0]["tool"] == "prepare-template-distillation"
-    assert workflow.actions[0]["output_variable"] == "prepared-template-distillation-input"
-    assert workflow.actions[1]["conversation_key"] == "template-distillation"
-    assert workflow.actions[3]["tool"] == "materialize-template-skill"
-    assert workflow.actions[3]["input_variable"] == "template-distillation-result"
-    assert workflow.actions[4]["output"] == "template-skill-materialization"
+    assert workflow.actions[0]["tool"] == "project-public-template-distillation-input"
+    assert workflow.actions[1]["tool"] == "prepare-template-distillation"
+    assert workflow.actions[1]["output_variable"] == "prepared-template-distillation-input"
+    assert workflow.actions[2]["conversation_key"] == "template-distillation"
+    assert workflow.actions[4]["tool"] == "materialize-template-skill"
+    assert workflow.actions[4]["input_variable"] == "template-distillation-result"
+    assert workflow.actions[5]["output"] == "template-skill-materialization"
     assert task.agent == "template-distiller"
     assert task.tools == [
         "inspect_document",

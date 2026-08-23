@@ -54,6 +54,7 @@ from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRunt
 from .. import load_distribution_reporting_capability
 from .agent_bridge import TemplateDistillationAgentBridge
 from .input_snapshot import RunInputSnapshotStore
+from .public_entrypoints import project_public_template_distillation_input
 from .storage import ReportingStore
 
 TEMPLATE_DISTILLATION_TASK_ID = "template-skill-distillation"
@@ -309,6 +310,9 @@ def build_template_distillation_tool_implementations(
         ).model_dump(mode="json")
 
     return {
+        "project-public-template-distillation-input": (
+            project_public_template_distillation_input
+        ),
         "prepare-template-distillation": prepare,
         "materialize-template-skill": materialize,
     }
@@ -332,14 +336,13 @@ class TemplateDistillationWorkflowRuntime:
         workflow_id: str,
         values: Any,
     ) -> dict[str, Any]:
-        del command_id
         if workflow_id != self.workflow_id:
             raise ValueError(f"workflow is not runnable: {workflow_id}")
         _capability, registry, contracts, plan = self._compiled()
         if plan.input_contract is None or plan.input_variable is None:
             raise TypeError("distill-template-skill has no declared input binding")
         request = contracts[plan.input_contract].validate(values)
-        run_id = request.run_id
+        run_id = f"{self.workflow_id}-{command_id.hex}"
         try:
             state = self._store.load(run_id)
         except FileNotFoundError:
@@ -349,6 +352,7 @@ class TemplateDistillationWorkflowRuntime:
                 plan,
                 initial_variables={
                     plan.input_variable: request,
+                    "run-id": run_id,
                 },
             )
         await self._execute(plan, state, registry, contracts)

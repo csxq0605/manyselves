@@ -184,7 +184,13 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     capability, registry = load_distribution_reporting_capability()
 
     assert capability.id == "distribution-reporting"
-    assert capability.entrypoints == ["distribution-reporting", "render-existing"]
+    assert capability.entrypoints == [
+        "full-report",
+        "module-report",
+        "aggregate-existing",
+        "render-existing",
+        "distill-template-skill",
+    ]
     assert capability.runtime == (
         "manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding"
     )
@@ -211,6 +217,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "template-distiller",
     }
     assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
+        "aggregate-existing",
         "full-report",
         "module-report",
         "render-existing",

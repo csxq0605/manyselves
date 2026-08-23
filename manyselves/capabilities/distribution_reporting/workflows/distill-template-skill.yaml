@@ -7,19 +7,29 @@ recovery:
 - current-reporting-recovery
 outputs:
 - template-skill-materialization
-input_contract: template_distillation_input
+input_contract: public_template_distillation_input
 input_variable: template-distillation-input
 output_contract: template_skill_materialization
 state:
+  run-id: ''
+  template-distillation-initializer: {}
+  internal-template-distillation-input: {}
   prepared-template-distillation-input: {}
   template-distillation-conversation: {}
   template-distillation-result: {}
   materialized-template-skill: {}
 actions:
+- id: project-public-template-distillation-input
+  kind: invoke_tool
+  tool: project-public-template-distillation-input
+  input_variables:
+    run_id: run-id
+    request: template-distillation-input
+  output_variable: internal-template-distillation-input
 - id: prepare-template-distillation
   kind: invoke_tool
   tool: prepare-template-distillation
-  input_variable: template-distillation-input
+  input_variable: internal-template-distillation-input
   output_variable: prepared-template-distillation-input
 - id: create-template-distillation-conversation
   kind: create_conversation

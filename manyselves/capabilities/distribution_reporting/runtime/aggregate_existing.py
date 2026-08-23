@@ -38,6 +38,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceItem,
     PhotoAsset,
 )
+from manyselves.capabilities.distribution_reporting.runtime.public_entrypoints import (
+    project_public_aggregate_existing_input,
+)
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
 from manyselves.kernel.conversations import ConversationRegistry
@@ -299,6 +302,7 @@ def build_aggregate_existing_tool_implementations(
         store=store or ReportingStore(workspace),
     )
     implementations = {
+        "project-public-aggregate-existing-input": project_public_aggregate_existing_input,
         "prepare-aggregate-existing": tools.prepare,
         "project-aggregate-editor-input": tools.project_editor_input,
         "project-aggregate-existing-handoff": project_aggregate_existing_handoff,

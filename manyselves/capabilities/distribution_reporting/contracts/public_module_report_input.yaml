@@ -1,0 +1,5 @@
+id: public_module_report_input
+version: 1.0.0
+description: User-supplied input for the public module-report Workflow root
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:PublicModuleReportRequest
