@@ -385,9 +385,9 @@ class AggregateExistingWorkflowRuntime:
     """Bind this Capability's Agent to the generic file Workflow Host.
 
     The binding supplies only run-local inputs, Tools, definitions, and the
-    injected AgentInvoker.  The Kernel and WorkflowCompiler remain unaware of
-    the aggregate-reporting task, and later Final/Delivery workflows are not
-    part of this entrypoint.
+    injected AgentInvoker mapping.  The Kernel and WorkflowCompiler remain
+    unaware of the aggregate-reporting task; selecting the packaged tail
+    workflow composes the same aggregate, Final, and Delivery definitions.
     """
 
     workflow_id = "distribution-aggregate-existing"
@@ -398,12 +398,18 @@ class AggregateExistingWorkflowRuntime:
         workspace: Path,
         *,
         input_snapshot: InputSnapshotLoader | Any,
-        agent_invoker: AgentInvoker,
+        agent_invoker: AgentInvoker | None = None,
+        agent_invokers: Mapping[str, AgentInvoker] | None = None,
+        workflow_id: str = "distribution-aggregate-existing",
         events: WorkflowEventSink | None = None,
     ) -> None:
         self.workspace = Path(workspace)
         self.input_snapshot = input_snapshot
+        self.workflow_id = workflow_id
         self.agent_invoker = agent_invoker
+        self.agent_invokers = dict(agent_invokers or {})
+        if agent_invoker is not None:
+            self.agent_invokers.setdefault(self.agent_id, agent_invoker)
         self._state_store = FileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
         self._events = (
@@ -435,7 +441,7 @@ class AggregateExistingWorkflowRuntime:
         context = RuntimeContext(
             tools=tools,
             contracts=contracts,
-            agents={self.agent_id: self.agent_invoker},
+            agents=self.agent_invokers,
             definitions=registry,
             conversations=ConversationRegistry(
                 FileConversationStore(self.workspace)

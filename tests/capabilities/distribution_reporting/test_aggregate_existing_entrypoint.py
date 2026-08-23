@@ -679,6 +679,308 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
 
 
 @pytest.mark.asyncio
+async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
+        AggregateExistingPreparationInput,
+        AggregateExistingWorkflowRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        CHIEF_SECTION_RESULT_PART_IDS,
+        ChapterScopedFinalReviewFinding,
+        ChapterScopedFinalReviewTargetChange,
+        ChiefChapterLaneRevisionSubmission,
+        FinalChapterLaneFindingSubmission,
+        FinalChapterLaneVerdictSubmission,
+        ResolutionVerdict,
+        RevisionResponse,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
+        DeclarativeFinalChapterAgentResult,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+        DeclarativeFinalChiefRevisionAgentResult,
+        DeclarativeFinalRecheckAgentResult,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        ChiefChapterLaneInput,
+        FinalChapterLaneInput,
+    )
+    from manyselves.kernel.ports import AgentInvocationOutcome
+
+    class RecordingAgentInvoker:
+        def __init__(self, role: str) -> None:
+            self.role = role
+            self.calls: list[dict[str, object]] = []
+
+        async def invoke(
+            self,
+            agent,
+            task,
+            value,
+            conversation,
+            *,
+            task_id: str,
+        ) -> AgentInvocationOutcome:
+            self.calls.append(
+                {
+                    "agent": agent.id,
+                    "task": task.id,
+                    "task_id": task_id,
+                    "conversation": conversation.key.value,
+                    "conversation_id": conversation.conversation_id,
+                    "session_id": conversation.external_session_id,
+                }
+            )
+            call = self.calls[-1]
+            if self.role == "aggregate":
+                call["returned_session_id"] = "aggregate-editor-session"
+                return AgentInvocationOutcome(
+                    result=_edited_submission_with_final_chapter_4().model_dump(
+                        mode="json"
+                    ),
+                    session_id="aggregate-editor-session",
+                )
+
+            contract = value.contract
+            if self.role == "auditor":
+                typed = FinalChapterLaneInput.model_validate(contract)
+                if typed.phase == "initial":
+                    findings = []
+                    if typed.chapter_id == "1":
+                        findings = [
+                            ChapterScopedFinalReviewFinding(
+                                id="F-runtime-tail-1",
+                                target_section_ids=["1.1"],
+                                target_changes=[
+                                    ChapterScopedFinalReviewTargetChange(
+                                            target_section_id="1.1",
+                                            required_change=(
+                                                "补充该章节缺失的核验说明、结论依据以及对应的复核结果。"
+                                            ),
+                                        reviewer_checks=[
+                                            "修订正文应明确写出核验说明和结论依据。"
+                                        ],
+                                    )
+                                ],
+                                category="completeness",
+                                impact="blocking",
+                                observation=(
+                                    "该章节未明确写出核验说明和结论依据，需进行一次修订。"
+                                ),
+                                evidence_refs=[
+                                    f"Work/runs/{typed.run_id}/reviews/final-initial-aggregate.json"
+                                ],
+                            )
+                        ]
+                    submission = FinalChapterLaneFindingSubmission(
+                        run_id=typed.run_id,
+                        chapter_id=typed.chapter_id,
+                        checked_section_ids=list(typed.section_ids),
+                        findings=findings,
+                    )
+                    result = DeclarativeFinalChapterAgentResult(
+                        status="completed",
+                        submission=submission,
+                    ).model_dump(mode="json")
+                else:
+                    required = [
+                        item
+                        for item in typed.required_findings
+                    ]
+                    submission = FinalChapterLaneVerdictSubmission(
+                        run_id=typed.run_id,
+                        chapter_id=typed.chapter_id,
+                        checked_section_ids=list(typed.section_ids),
+                        verdicts=[
+                            ResolutionVerdict(
+                                finding_id=finding.id,
+                                verdict="resolved",
+                                reason=(
+                                    "修订正文已补充核验说明和结论依据，满足本次 reviewer_checks。"
+                                ),
+                                evidence_refs=[typed.subject_ref],
+                            )
+                            for finding in required
+                        ],
+                    )
+                    result = DeclarativeFinalRecheckAgentResult(
+                        status="completed",
+                        submission=submission,
+                    ).model_dump(mode="json")
+                session_id = f"final-auditor-session-{conversation.key.value}"
+                call["returned_session_id"] = session_id
+                return AgentInvocationOutcome(
+                    result=result,
+                    session_id=session_id,
+                )
+
+            typed = ChiefChapterLaneInput.model_validate(contract)
+            part_refs: dict[str, str] = {}
+            bodies = {
+                "1.1": "修订后的背景正文，补充核验说明和结论依据。",
+                "1.2": "保留原有发现概述正文。",
+                "1.3": "保留原有区域摘要正文。",
+            }
+            for section_id in typed.section_ids:
+                part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                ref = (
+                    f"Work/runs/{typed.run_id}/drafts/chief-chapter-1-r1/r1/"
+                    f"{part_id}.md"
+                )
+                path = tmp_path / ref
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(bodies[section_id], encoding="utf-8")
+                part_refs[part_id] = ref
+            assigned = [
+                ChapterScopedFinalReviewFinding.model_validate(item)
+                for item in typed.assigned_findings
+            ]
+            submission = ChiefChapterLaneRevisionSubmission(
+                run_id=typed.run_id,
+                base_subject_ref=typed.subject_ref,
+                chapter_id=typed.chapter_id,
+                revision=typed.revision,
+                section_ids=list(typed.section_ids),
+                part_refs=part_refs,
+                revision_responses=[
+                    RevisionResponse(
+                        finding_id=finding.id,
+                        action="implemented",
+                        summary="已完成指定章节修改并补充核验说明和结论依据。",
+                        changed_target_ids=list(finding.target_section_ids),
+                    )
+                    for finding in assigned
+                ],
+            )
+            session_id = f"final-chief-session-{conversation.key.value}"
+            call["returned_session_id"] = session_id
+            return AgentInvocationOutcome(
+                result=DeclarativeFinalChiefRevisionAgentResult(
+                    status="completed",
+                    submission=submission,
+                ).model_dump(mode="json"),
+                session_id=session_id,
+            )
+
+        async def invoke_with_recovery(
+            self,
+            agent,
+            task,
+            value,
+            conversation,
+            *,
+            task_id: str,
+            recovery_policy,
+        ) -> AgentInvocationOutcome:
+            del recovery_policy
+            return await self.invoke(
+                agent,
+                task,
+                value,
+                conversation,
+                task_id=task_id,
+            )
+
+    run_id = "aggregate-runtime-tail"
+    refs = _write_frozen_modules(
+        tmp_path,
+        run_id,
+        suffixes={module_id: ".json" for module_id in REPORT_MODULE_IDS},
+    )
+    events = InMemoryWorkflowEventSink()
+    aggregate = RecordingAgentInvoker("aggregate")
+    chief = RecordingAgentInvoker("chief")
+    auditor = RecordingAgentInvoker("auditor")
+    runtime = AggregateExistingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=lambda _run_id: _FrozenSnapshot(run_id),
+        agent_invokers={
+            "aggregate-editor": aggregate,
+            "chief-editor": chief,
+            "chief-editor-auditor": auditor,
+        },
+        workflow_id="distribution-aggregate-existing-tail",
+        events=events,
+    )
+
+    completed = await runtime.execute(
+        AggregateExistingPreparationInput(
+            run_id=run_id,
+            request=_request(refs),
+        )
+    )
+
+    assert completed.status.value == "completed"
+    result = completed.outputs["result"]
+    assert result["delivery_status"] == "delivered"
+    assert result["delivery_completion_ref"] == (
+        f"Work/runs/{run_id}/delivery-completion.json"
+    )
+    assert {
+        artifact["path"] for artifact in result["output_artifacts"]
+    } >= {
+        "Outputs/Reports/配电安全专家咨询报告.md",
+        "Outputs/Reports/配电安全专家咨询报告.docx",
+        f"Work/runs/{run_id}/reviews/final-completion.json",
+    }
+    run_root = tmp_path / "Work" / "runs" / run_id
+    assert (run_root / "report/配电安全专家咨询报告.md").is_file()
+    assert (run_root / "report/配电安全专家咨询报告.docx").is_file()
+    assert (run_root / "delivery-receipt.json").is_file()
+    assert (run_root / "delivery-completion.json").is_file()
+    assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").is_file()
+    assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").is_file()
+    assert len(aggregate.calls) == 1
+    assert aggregate.calls[0]["agent"] == "aggregate-editor"
+    assert aggregate.calls[0]["conversation"] == "aggregate-existing"
+    assert aggregate.calls[0]["session_id"] is None
+    assert aggregate.calls[0]["returned_session_id"] == "aggregate-editor-session"
+    assert len(chief.calls) == 1
+    assert chief.calls[0]["agent"] == "chief-editor"
+    assert chief.calls[0]["conversation"] == "chief-chapter-1"
+    assert chief.calls[0]["session_id"] is None
+    assert chief.calls[0]["returned_session_id"] == "final-chief-session-chief-chapter-1"
+    assert len(auditor.calls) == 4
+    assert {call["agent"] for call in auditor.calls} == {"chief-editor-auditor"}
+    assert {call["conversation"] for call in auditor.calls} == {
+        "final-chapter-1",
+        "final-chapter-3",
+        "final-chapter-4",
+    }
+    assert sum(call["conversation"] == "final-chapter-1" for call in auditor.calls) == 2
+    final_chapter_1_calls = [
+        call for call in auditor.calls if call["conversation"] == "final-chapter-1"
+    ]
+    assert final_chapter_1_calls[0]["session_id"] is None
+    assert final_chapter_1_calls[1]["session_id"] == (
+        "final-auditor-session-final-chapter-1"
+    )
+    assert final_chapter_1_calls[1]["session_id"] == (
+        final_chapter_1_calls[0]["returned_session_id"]
+    )
+    assert final_chapter_1_calls[0]["conversation_id"] == (
+        final_chapter_1_calls[1]["conversation_id"]
+    )
+    assert all(
+        call["session_id"] is None
+        for call in (*aggregate.calls, *chief.calls, *auditor.calls)
+        if call not in final_chapter_1_calls[1:]
+    )
+    assert all(
+        call["returned_session_id"]
+        for call in (*aggregate.calls, *chief.calls, *auditor.calls)
+    )
+    assert not any(
+        event.workflow_id.startswith(
+            ("distribution-cross-owner", "distribution-chief-chapter")
+        )
+        for event in events.events
+    )
+
+
+@pytest.mark.asyncio
 async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     tmp_path: Path,
 ) -> None:
