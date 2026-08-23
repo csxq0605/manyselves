@@ -24,6 +24,11 @@ from manyselves.capabilities.distribution_reporting.domain.claim_ledger import C
 from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
     final_lane_specialization,
 )
+from manyselves.capabilities.distribution_reporting.domain.report_markdown import (
+    CanonicalMarkdownTable,
+    CanonicalReportContent,
+    compose_canonical_markdown,
+)
 from manyselves.capabilities.distribution_reporting.domain.revision_diff import (
     build_revision_diff,
 )
@@ -147,11 +152,6 @@ from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
-from .report_markdown import (
-    CanonicalMarkdownTable,
-    CanonicalReportContent,
-    compose_canonical_markdown,
-)
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from .review_lifecycle import (

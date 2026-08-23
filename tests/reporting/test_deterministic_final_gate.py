@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.report_markdown import (
+    CanonicalReportContent,
+    compose_canonical_markdown,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
@@ -20,10 +24,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
 from manyselves.core.reporting.assets import validate_final_report_markdown
-from manyselves.core.reporting.report_markdown import (
-    CanonicalReportContent,
-    compose_canonical_markdown,
-)
 from manyselves.core.reporting.review_lifecycle import _final_audit_markdown
 
 RUN_ID = "run-deterministic-final-gate"

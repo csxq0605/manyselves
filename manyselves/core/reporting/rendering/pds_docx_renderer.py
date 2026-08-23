@@ -19,6 +19,13 @@ from PIL import Image, ImageOps
 from pydantic import Field, field_validator, model_validator
 
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
+from manyselves.capabilities.distribution_reporting.domain.report_markdown import (
+    CanonicalMarkdownTable,
+    CanonicalReportContent,
+    compose_canonical_markdown,
+    markdown_table,
+    strip_leading_module_heading,
+)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
@@ -29,13 +36,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SpecialTopicPlan,
 )
 
-from ..report_markdown import (
-    CanonicalMarkdownTable,
-    CanonicalReportContent,
-    compose_canonical_markdown,
-    markdown_table,
-    strip_leading_module_heading,
-)
 from .handoff_docx import HandoffDocxCore
 from .packaged_docx import _expected_markdown_fragments
 
