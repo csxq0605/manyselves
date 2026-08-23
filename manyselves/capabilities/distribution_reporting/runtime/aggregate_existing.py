@@ -12,6 +12,9 @@ from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
+from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
+    build_final_chapter_tool_implementations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleSubmission,
 )
@@ -292,12 +295,19 @@ def build_aggregate_existing_tool_implementations(
         input_snapshot=input_snapshot,
         store=store or ReportingStore(workspace),
     )
-    return {
+    implementations = {
         "prepare-aggregate-existing": tools.prepare,
         "project-aggregate-editor-input": tools.project_editor_input,
         "project-aggregate-existing-handoff": project_aggregate_existing_handoff,
         "project-aggregate-existing-tail": project_aggregate_existing_tail_state,
     }
+    implementations.update(
+        build_final_chapter_tool_implementations(
+            workspace=workspace,
+            store=tools.store,
+        )
+    )
+    return implementations
 
 
 def project_aggregate_existing_handoff(value: Any) -> AggregateExistingHandoff:

@@ -616,7 +616,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
 
     with pytest.raises(
         RuntimeError,
-        match="missing tool adapter: prepare-final-chapter-cohort",
+        match="missing agent adapter: chief-editor-auditor",
     ):
         await host.execute(
             plan,
@@ -634,6 +634,12 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
     assert persisted.actions["run-final-review"].status.value == "failed"
     assert persisted.actions["run-report-delivery"].status.value == "pending"
+    final_state = WorkflowState.model_validate(
+        persisted.subworkflow_states["run-final-review"]
+    )
+    assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
+    assert final_state.actions["final-chapter-cohort"].status.value == "failed"
+    assert final_state.variables["prepared-final-state"]["run_id"] == run_id
     assert persisted.outputs == {}
     assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
     assert any(
