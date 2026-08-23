@@ -679,9 +679,173 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
 
 
 @pytest.mark.asyncio
-async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
+async def test_aggregate_editor_bridge_uses_typed_input_and_result(
     tmp_path: Path,
 ) -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_agent_bridge import (
+        AggregateEditorAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        EditedReportSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        AggregateEditorInput,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import (
+        ConversationKey,
+        ConversationMode,
+        ConversationRecord,
+    )
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    run_id = "aggregate-bridge-typed"
+    result_ref = f"Work/runs/{run_id}/reviews/aggregate-editor-result.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        json.dumps(_edited_submission().model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    editor_input = AggregateEditorInput(
+        run_id=run_id,
+        source_format="markdown",
+        approved_module_markers={
+            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            for module_id in REPORT_MODULE_IDS
+        },
+        markdown_modules={
+            module_id: _markdown(module_id) for module_id in REPORT_MODULE_IDS
+        },
+    )
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "aggregate-editor")
+    task = registry.require(DefinitionKind.TASK, "aggregate-existing")
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loops: list[object] = []
+
+    class ScriptedLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def session_factory(_runtime_id: str) -> ScriptedLoop:
+        loop = ScriptedLoop(_runtime_id)
+        loops.append(loop)
+        return loop
+
+    execution = AgentExecutionService(bus, timeout=1)
+    bridge = AggregateEditorAgentBridge(
+        tmp_path,
+        execution=execution,
+        session_factory=session_factory,
+    )
+    conversation = ConversationRecord(
+        conversation_id=(
+            f"run:{run_id}:aggregate-editor:aggregate-existing"
+        ),
+        key=ConversationKey(
+            agent_id="aggregate-editor",
+            value="aggregate-existing",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+
+    try:
+        first = await bridge.invoke(
+            agent,
+            task,
+            editor_input,
+            conversation,
+            task_id="invoke-aggregate-existing-agent",
+        )
+        second = await bridge.invoke(
+            agent,
+            task,
+            editor_input,
+            conversation,
+            task_id="invoke-aggregate-existing-agent",
+        )
+
+        assert first.status == "ok"
+        assert second.status == "ok"
+        assert first.session_id == "aggregate-existing"
+        assert second.session_id == first.session_id
+        assert isinstance(
+            EditedReportSubmission.model_validate(first.result),
+            EditedReportSubmission,
+        )
+        assert len(loops) == 1
+        assert len(loops[0].received) == 2
+        assert all(
+            message.session_id == "aggregate-existing"
+            for message in loops[0].received
+        )
+        assert all(
+            '"kind": "aggregate_editor_input"' in message.content
+            for message in loops[0].received
+        )
+        assert "模块 2.1 的既有正文" in loops[0].received[0].content
+        assert conversation.external_session_id == "aggregate-existing"
+    finally:
+        await execution.close_workflow("distribution-aggregate-existing-tail")
+        bus.shutdown()
+        await bus_task
+
+
+@pytest.mark.asyncio
+async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_agent_bridge import (
+        AggregateEditorAgentBridge,
+    )
     from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
         AggregateExistingPreparationInput,
         AggregateExistingWorkflowRuntime,
@@ -707,7 +871,18 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         ChiefChapterLaneInput,
         FinalChapterLaneInput,
     )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+    from manyselves.core.reporting.workflow import ReportWorkflowRunner
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    def forbidden_legacy_runner(*_args, **_kwargs):
+        raise AssertionError("aggregate tail must not call a Legacy Reporting runner")
+
+    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden_legacy_runner)
+    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden_legacy_runner)
 
     class RecordingAgentInvoker:
         def __init__(self, role: str) -> None:
@@ -734,15 +909,6 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
                 }
             )
             call = self.calls[-1]
-            if self.role == "aggregate":
-                call["returned_session_id"] = "aggregate-editor-session"
-                return AgentInvocationOutcome(
-                    result=_edited_submission_with_final_chapter_4().model_dump(
-                        mode="json"
-                    ),
-                    session_id="aggregate-editor-session",
-                )
-
             contract = value.contract
             if self.role == "auditor":
                 typed = FinalChapterLaneInput.model_validate(contract)
@@ -889,15 +1055,83 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         run_id,
         suffixes={module_id: ".json" for module_id in REPORT_MODULE_IDS},
     )
+    aggregate_result_ref = (
+        f"Work/runs/{run_id}/reviews/aggregate-editor-result.json"
+    )
+    aggregate_result_path = tmp_path / aggregate_result_ref
+    aggregate_result_path.parent.mkdir(parents=True, exist_ok=True)
+    aggregate_result_path.write_text(
+        json.dumps(
+            _edited_submission_with_final_chapter_4().model_dump(mode="json"),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    aggregate_loops: list[object] = []
+
+    class AggregateLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=aggregate_result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def aggregate_session_factory(runtime_id: str) -> AggregateLoop:
+        loop = AggregateLoop(runtime_id)
+        aggregate_loops.append(loop)
+        return loop
+
+    aggregate_execution = AgentExecutionService(bus, timeout=1)
+    aggregate_bridge = AggregateEditorAgentBridge(
+        tmp_path,
+        execution=aggregate_execution,
+        session_factory=aggregate_session_factory,
+    )
     events = InMemoryWorkflowEventSink()
-    aggregate = RecordingAgentInvoker("aggregate")
     chief = RecordingAgentInvoker("chief")
     auditor = RecordingAgentInvoker("auditor")
     runtime = AggregateExistingWorkflowRuntime(
         tmp_path,
         input_snapshot=lambda _run_id: _FrozenSnapshot(run_id),
         agent_invokers={
-            "aggregate-editor": aggregate,
+            "aggregate-editor": aggregate_bridge,
             "chief-editor": chief,
             "chief-editor-auditor": auditor,
         },
@@ -905,12 +1139,19 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         events=events,
     )
 
-    completed = await runtime.execute(
-        AggregateExistingPreparationInput(
-            run_id=run_id,
-            request=_request(refs),
+    try:
+        completed = await runtime.execute(
+            AggregateExistingPreparationInput(
+                run_id=run_id,
+                request=_request(refs),
+            )
         )
-    )
+    finally:
+        await aggregate_execution.close_workflow(
+            "distribution-aggregate-existing-tail"
+        )
+        bus.shutdown()
+        await bus_task
 
     assert completed.status.value == "completed"
     result = completed.outputs["result"]
@@ -932,11 +1173,12 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
     assert (run_root / "delivery-completion.json").is_file()
     assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").is_file()
     assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").is_file()
-    assert len(aggregate.calls) == 1
-    assert aggregate.calls[0]["agent"] == "aggregate-editor"
-    assert aggregate.calls[0]["conversation"] == "aggregate-existing"
-    assert aggregate.calls[0]["session_id"] is None
-    assert aggregate.calls[0]["returned_session_id"] == "aggregate-editor-session"
+    assert len(aggregate_loops) == 1
+    assert len(aggregate_loops[0].received) == 1
+    assert aggregate_loops[0].received[0].session_id == "aggregate-existing"
+    assert '"kind": "aggregate_editor_input"' in (
+        aggregate_loops[0].received[0].content
+    )
     assert len(chief.calls) == 1
     assert chief.calls[0]["agent"] == "chief-editor"
     assert chief.calls[0]["conversation"] == "chief-chapter-1"
@@ -965,12 +1207,12 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
     )
     assert all(
         call["session_id"] is None
-        for call in (*aggregate.calls, *chief.calls, *auditor.calls)
+        for call in (*chief.calls, *auditor.calls)
         if call not in final_chapter_1_calls[1:]
     )
     assert all(
         call["returned_session_id"]
-        for call in (*aggregate.calls, *chief.calls, *auditor.calls)
+        for call in (*chief.calls, *auditor.calls)
     )
     assert not any(
         event.workflow_id.startswith(
