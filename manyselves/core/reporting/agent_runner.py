@@ -15,6 +15,11 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
+    collect_reference_refs,
+    compile_agent_access,
+    scoped_gateway,
+)
 from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
     ListResultPartsTool,
     QueryPeerTool,
@@ -153,11 +158,6 @@ from ..tools.outcomes import ToolOutcome
 from ..tools.registry import Tool, ToolRegistry
 from ..tools.result_memory import RunToolResultIndex
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
-from .capabilities import (
-    collect_reference_refs,
-    compile_agent_access,
-    scoped_gateway,
-)
 from .config import AgentDefinition
 from .context_manifest import (
     HashOccurrenceTracker,

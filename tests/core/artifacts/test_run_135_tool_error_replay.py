@@ -14,11 +14,14 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
+    ConfigurationError,
+    compile_agent_access,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant, ToolContractError
 from manyselves.core.reporting.agent_runner import InspectImageTool
-from manyselves.core.reporting.capabilities import compile_agent_access
-from manyselves.core.reporting.config import ConfigurationError, load_packaged_agents
+from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.tools.artifact_tools import OpenArtifactTool
 from manyselves.core.tools.contracts import normalize_tool_call
 from manyselves.core.tools.outcomes import normalize_tool_outcome

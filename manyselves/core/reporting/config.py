@@ -6,6 +6,10 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
+    ConfigurationError,
+)
+
 KNOWN_CARRIERS = {
     "report_request",
     "project_manifest",
@@ -41,10 +45,6 @@ KNOWN_CARRIERS = {
     "citation_plan",
     "output_artifacts",
 }
-
-
-class ConfigurationError(ValueError):
-    """Raised before a reporting workflow enters the running state."""
 
 
 class AgentDefinition(BaseModel):

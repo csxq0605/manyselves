@@ -15,14 +15,24 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
+from manyselves.core.access_policy import ISOLATED_DISTILLATION_SNAPSHOT_NAME
+from manyselves.core.artifacts.gateway import ArtifactGateway, ArtifactGrant
+from manyselves.core.artifacts.types import ArtifactDescriptor
 
-from ..access_policy import ISOLATED_DISTILLATION_SNAPSHOT_NAME
-from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
-from ..artifacts.types import ArtifactDescriptor
-from .config import AgentDefinition, ConfigurationError
+
+class ConfigurationError(ValueError):
+    """Raised when a Capability artifact access contract cannot be compiled."""
+
+
+class _AgentAccessDefinition(Protocol):
+    """Minimal agent-definition shape consumed by the access compiler."""
+
+    id: str
+    tools: list[str]
+
 
 DeliveryMode = Literal["inline", "reference", "hash_retained"]
 _OPAQUE_PREFIX = "artifact:v1:"
@@ -62,7 +72,7 @@ _KNOWN_PUBLIC_ROOTS = {
 
 
 def _isolated_template_tool_ref(
-    definition: AgentDefinition,
+    definition: _AgentAccessDefinition,
     envelope: TaskEnvelope,
     typed_input: Any | None,
     gateway: ArtifactGateway,
@@ -474,7 +484,7 @@ def _load_run_photo_map(
 
 
 def compile_agent_access(
-    definition: AgentDefinition,
+    definition: _AgentAccessDefinition,
     envelope: TaskEnvelope,
     refs: list[str] | None = None,
     *,
@@ -654,6 +664,7 @@ def scoped_gateway(
 __all__ = [
     "Capability",
     "CompiledAgentAccess",
+    "ConfigurationError",
     "collect_artifact_refs",
     "collect_photo_ids",
     "collect_reference_refs",

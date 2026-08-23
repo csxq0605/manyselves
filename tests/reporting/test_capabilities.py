@@ -2,18 +2,19 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
+    ConfigurationError,
+    collect_photo_ids,
+    collect_reference_refs,
+    compile_agent_access,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     TEMPLATE_ROLE_SKILL_IDS,
     TemplateDistillationInput,
 )
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant
-from manyselves.core.reporting.capabilities import (
-    collect_photo_ids,
-    collect_reference_refs,
-    compile_agent_access,
-)
-from manyselves.core.reporting.config import ConfigurationError, load_packaged_agents
+from manyselves.core.reporting.config import load_packaged_agents
 
 
 def test_chief_has_executable_artifact_readers(tmp_path: Path) -> None:
