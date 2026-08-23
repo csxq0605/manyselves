@@ -152,6 +152,141 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
 
 
 @pytest.mark.asyncio
+async def test_distill_template_skill_host_composes_capability_agent_bridge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The standalone file Workflow must use the Capability bridge end to end."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
+        TemplateDistillationAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
+        TemplateDistillationWorkflowRuntime,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+    from manyselves.core.reporting.workflow import ReportWorkflowRunner
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("legacy reporting runner must not be called")
+
+    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden)
+    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden)
+
+    run_id = "distill-template-capability-host"
+    result_ref = f"Work/runs/{run_id}/results/template-skill.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    template = tmp_path / "Templates/report_template.docx"
+    template.parent.mkdir(parents=True)
+    template.write_bytes(b"template source")
+    request = TemplateDistillationInput(
+        run_id=run_id,
+        template_ref="Templates/report_template.docx",
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+
+    class ScriptedLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    loops: list[ScriptedLoop] = []
+
+    def session_factory(runtime_id: str) -> ScriptedLoop:
+        loop = ScriptedLoop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    service = AgentExecutionService(bus, timeout=1)
+    bridge = TemplateDistillationAgentBridge(
+        tmp_path,
+        execution=service,
+        session_factory=session_factory,
+    )
+    runtime = TemplateDistillationWorkflowRuntime(
+        tmp_path,
+        agent_invoker=bridge,
+    )
+    try:
+        result = await runtime.start(
+            uuid4(),
+            "distill-template-skill",
+            request.model_dump(mode="json"),
+        )
+
+        assert result["run_id"] == run_id
+        assert len(loops) == 1
+        assert [message.turn_kind for message in loops[0].received] == [
+            "task_initial",
+        ]
+        run = runtime.get_run(run_id)
+        assert run["run"]["status"] == "completed"
+        outputs = runtime.get_outputs(run_id)
+        materialization = next(
+            item["value"] for item in outputs["outputs"] if item["id"] == "result"
+        )
+        assert materialization["kind"] == "template_skill_materialization"
+        assert len(materialization["skill_refs"]) == len(TEMPLATE_ROLE_SKILL_IDS)
+        assert all((tmp_path / ref).is_file() for ref in materialization["skill_refs"])
+    finally:
+        await service.close_workflow("distill-template-skill")
+        bus.shutdown()
+        await bus_task
+
+
+@pytest.mark.asyncio
 async def test_template_distillation_bridge_uses_generic_agent_execution_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
