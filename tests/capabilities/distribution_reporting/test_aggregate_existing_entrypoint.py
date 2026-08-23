@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     ReportRequest,
+    SpecialTopicPlan,
+    SpecialTopicSectionRequirement,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.kernel.contracts import build_contract_catalog
@@ -89,6 +92,29 @@ def _edited_submission():
         dimension_risk_analysis="维度风险",
         data_gap_analysis="数据缺口",
         improvement_action_plan="改进行动",
+    )
+
+
+def _edited_submission_with_final_chapter_4():
+    plan = SpecialTopicPlan(
+        source_ref="Inputs/special-topic.md",
+        source_sha256="0" * 64,
+        sections=[
+            SpecialTopicSectionRequirement(
+                section_id="4.1",
+                title="专项分析",
+                requirement="说明专项事实、影响、方案条件与验证方法。",
+            )
+        ],
+    )
+    return _edited_submission().model_copy(
+        update={
+            "special_topic_plan": plan,
+            "special_topic_analysis": (
+                "### 4.1 专项分析\n\n"
+                "专项正文包含项目事实、影响判断、方案条件与验证方法。"
+            ),
+        }
     )
 
 
@@ -549,7 +575,16 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
         AggregateExistingPreparationInput,
     )
+    from manyselves.capabilities.distribution_reporting.runtime.final_agent_bridge import (
+        FinalChapterAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        FinalChapterLaneFindingSubmission,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
+    from manyselves.runtime.agent_execution import AgentExecutionService
 
     class RecordingAggregateInvoker:
         async def invoke(
@@ -564,7 +599,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
             del agent, task, value, conversation, task_id
             return AgentInvocationOutcome(
                 status="ok",
-                result=_edited_submission().model_dump(mode="json"),
+                result=_edited_submission_with_final_chapter_4().model_dump(mode="json"),
                 session_id="aggregate-editor-session",
             )
 
@@ -613,36 +648,137 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     events = InMemoryWorkflowEventSink()
     store = FileWorkflowStateStore(tmp_path)
     host = WorkflowRuntimeHost(executors, store, events)
-
-    with pytest.raises(
-        RuntimeError,
-        match="missing agent adapter: chief-editor-auditor",
-    ):
-        await host.execute(
-            plan,
-            state,
-            RuntimeContext(
-                tools=_tool_bundle(tmp_path, run_id),
-                contracts=build_contract_catalog(registry),
-                definitions=registry,
-                agents={"aggregate-editor": RecordingAggregateInvoker()},
-            ),
+    result_refs = {}
+    for chapter_id, section_ids in {
+        "1": ("1.1", "1.2", "1.3"),
+        "3": ("3.1.1", "3.1.2", "3.1.3", "3.2"),
+        "4": ("4.1",),
+    }.items():
+        result_ref = (
+            f"Work/runs/{run_id}/reviews/final-chapter-{chapter_id}-agent-result.json"
         )
+        result_path = tmp_path / result_ref
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                FinalChapterLaneFindingSubmission(
+                    run_id=run_id,
+                    chapter_id=chapter_id,
+                    checked_section_ids=list(section_ids),
+                ).model_dump(mode="json"),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        result_refs[chapter_id] = result_ref
 
-    persisted = store.load(run_id)
-    assert persisted.actions["run-aggregate-existing"].status.value == "completed"
-    assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
-    assert persisted.actions["run-final-review"].status.value == "failed"
-    assert persisted.actions["run-report-delivery"].status.value == "pending"
-    final_state = WorkflowState.model_validate(
-        persisted.subworkflow_states["run-final-review"]
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    loops = {}
+
+    class ScriptedLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                chapter_id = message.session_id.removeprefix("final-chapter-")
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_refs[chapter_id],
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def session_factory(runtime_id: str) -> ScriptedLoop:
+        loop = ScriptedLoop(runtime_id)
+        loops[runtime_id] = loop
+        return loop
+
+    agent_service = AgentExecutionService(bus, timeout=1)
+    final_bridge = FinalChapterAgentBridge(
+        tmp_path,
+        execution=agent_service,
+        session_factory=session_factory,
     )
-    assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
-    assert final_state.actions["final-chapter-cohort"].status.value == "failed"
-    assert final_state.variables["prepared-final-state"]["run_id"] == run_id
-    assert persisted.outputs == {}
-    assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
-    assert any(
-        event.kind == "action.failed" and event.action_id == "run-final-review"
-        for event in events.events
-    )
+
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="missing tool adapter: accept-current-final-chapter-initial",
+        ):
+            await host.execute(
+                plan,
+                state,
+                RuntimeContext(
+                    tools=_tool_bundle(tmp_path, run_id),
+                    contracts=build_contract_catalog(registry),
+                    definitions=registry,
+                    agents={
+                        "aggregate-editor": RecordingAggregateInvoker(),
+                        "chief-editor-auditor": final_bridge,
+                    },
+                ),
+            )
+
+        persisted = store.load(run_id)
+        assert persisted.actions["run-aggregate-existing"].status.value == "completed"
+        assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
+        assert persisted.actions["run-final-review"].status.value == "failed"
+        assert persisted.actions["run-report-delivery"].status.value == "pending"
+        final_state = WorkflowState.model_validate(
+            persisted.subworkflow_states["run-final-review"]
+        )
+        assert final_state.actions["prepare-final-chapter-cohort"].status.value == "completed"
+        assert final_state.actions["final-chapter-cohort"].status.value == "failed"
+        assert final_state.variables["prepared-final-state"]["run_id"] == run_id
+        assert len(loops) == 3
+        assert {loop.received[0].session_id for loop in loops.values()} == {
+            "final-chapter-1",
+            "final-chapter-3",
+            "final-chapter-4",
+        }
+        assert all(
+            "final_chapter_lane_input" in loop.received[0].content
+            for loop in loops.values()
+        )
+        assert len(agent_service.sessions) == 3
+        assert persisted.outputs == {}
+        assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
+        assert any(
+            event.kind == "action.failed" and event.action_id == "run-final-review"
+            for event in events.events
+        )
+    finally:
+        await agent_service.close_workflow("distribution-aggregate-existing-tail")
+        bus.shutdown()
+        await bus_task
