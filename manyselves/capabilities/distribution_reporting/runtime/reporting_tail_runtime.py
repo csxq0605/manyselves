@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
+    build_chief_chapter_tool_implementations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.cross_owner_composition import (
     build_cross_owner_tool_implementations,
     cross_owner_agent_invokers,
@@ -43,11 +46,13 @@ class ReportingTailComposition:
 
     ``cross_runtime`` is an internal Capability composition port.  The
     definition specializations are always available; Cross actions are only
-    bound when their owning lifecycle runtime is supplied.
+    bound when their owning lifecycle runtime is supplied.  ``chief_runtime``
+    follows the same rule for the Chief chapter cohort.
     """
 
     workspace: Path
     cross_runtime: Any | None = None
+    chief_runtime: Any | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", Path(self.workspace).resolve())
@@ -60,8 +65,14 @@ class ReportingTailComposition:
         """Return the Capability-owned tail Tool bindings."""
 
         store = ReportingStore(self.workspace)
+        chief_tools = (
+            build_chief_chapter_tool_implementations(self.chief_runtime)
+            if self.chief_runtime is not None
+            else {}
+        )
         return {
             **build_cross_owner_tool_implementations(self.cross_runtime),
+            **chief_tools,
             **build_final_chapter_tool_implementations(
                 workspace=self.workspace,
                 store=store,
@@ -74,9 +85,12 @@ class ReportingTailComposition:
 
     @property
     def agent_invokers(self) -> dict[str, Any]:
-        """Expose already-composed Cross invokers for Host construction."""
+        """Expose already-composed Cross and Chief invokers for Host use."""
 
-        return dict(cross_owner_agent_invokers(self.cross_runtime))
+        invokers = dict(cross_owner_agent_invokers(self.cross_runtime))
+        if self.chief_runtime is not None:
+            invokers.update(dict(self.chief_runtime.agent_invokers))
+        return invokers
 
 
 def register_reporting_tail_workflow_specializations(

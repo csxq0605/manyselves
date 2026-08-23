@@ -59,6 +59,21 @@ def _cross_port_with_all_declared_tools() -> SimpleNamespace:
     )
 
 
+def _chief_port_with_all_declared_tools() -> SimpleNamespace:
+    attributes = {
+        "prepare",
+        "prepare_lane",
+        "requires_agent",
+        "accept_lane",
+        "complete_lane",
+        "reduce",
+    }
+    return SimpleNamespace(
+        agent_invokers={"chief-editor": object()},
+        **{attribute: (lambda value=None: value) for attribute in attributes},
+    )
+
+
 def _module_submissions() -> dict[str, ModuleSubmission]:
     return {
         module_id: ModuleSubmission(
@@ -122,6 +137,78 @@ def test_full_report_tail_composition_binds_declared_cross_ports(
     assert "prepare-current-cross-owner-recheck" in tools
     assert "complete-current-cross-owner-pipeline" in tools
     assert composition.agent_invokers == cross_runtime.agent_invokers
+
+
+def test_full_report_tail_composition_binds_declared_chief_ports_and_invoker(
+    tmp_path: Path,
+) -> None:
+    """The compiled full-report Chief cohort is owned by the Chief runtime."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        ReportRequest,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
+        PublicReportingWorkflowRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime import (
+        ReportingTailComposition,
+    )
+
+    chief_runtime = _chief_port_with_all_declared_tools()
+    composition = ReportingTailComposition(tmp_path, chief_runtime=chief_runtime)
+    tools = composition.tool_implementations()
+    public_runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=lambda _run_id: {},
+        snapshot_content=lambda source, target: (target, "a" * 64, "blob"),
+        runtime_photo_ids=lambda _evidence, _photos: None,
+        workflow_specializers=(composition.workflow_specializer,),
+        additional_tool_implementations=tools,
+    )
+    _, _, plan = public_runtime.compile_plan(
+        ReportRequest(
+            operation="full_report",
+            instruction="compile the full report tail",
+            target_modules=list(REPORT_TAXONOMY),
+            missing_evidence_policy="draft",
+            preparation_mode="serial",
+        )
+    )
+    chief_plan_tool_ids = {
+        tool_id
+        for workflow_id, child_plan in plan.subworkflow_plans.items()
+        if workflow_id.startswith("distribution-chief-chapter-")
+        for tool_id in child_plan.tool_ids
+    }
+
+    assert chief_plan_tool_ids <= tools.keys()
+    assert composition.agent_invokers["chief-editor"] is chief_runtime.agent_invokers[
+        "chief-editor"
+    ]
+
+
+def test_chief_tail_composition_does_not_load_core_reporting() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys, tempfile\n"
+                "from pathlib import Path\n"
+                "from types import SimpleNamespace\n"
+                "from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime "
+                "import ReportingTailComposition\n"
+                "chief = SimpleNamespace(agent_invokers={'chief-editor': object()})\n"
+                "ReportingTailComposition(Path(tempfile.mkdtemp()), chief_runtime=chief)\n"
+                "print(sorted(name for name in sys.modules if name.startswith('manyselves.core.reporting')))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout.strip() == "[]"
 
 
 def test_cross_composition_import_does_not_load_core_reporting() -> None:
