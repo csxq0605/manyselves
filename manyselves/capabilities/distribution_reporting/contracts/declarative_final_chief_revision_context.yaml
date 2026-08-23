@@ -2,4 +2,4 @@ id: declarative_final_chief_revision_context
 version: 1.0.0
 description: Typed context for one affected-only Final Chief revision lane
 adapter: pydantic
-model: manyselves.core.reporting.declarative_final_review_cycle:DeclarativeFinalChiefRevisionContext
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_review:DeclarativeFinalChiefRevisionContext

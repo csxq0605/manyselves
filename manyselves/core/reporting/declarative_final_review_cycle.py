@@ -7,10 +7,11 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    final_review as final_review_models,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
@@ -35,7 +36,6 @@ from .agentic_models import (
     EditedReportSubmission,
     FinalChapterLaneVerdictSubmission,
     ModuleSubmission,
-    RevisionResponse,
     TaskEnvelope,
 )
 from .declarative_final_chapter_cohort import (
@@ -58,110 +58,6 @@ from .models import (
     SpecialTopicPlan,
     chapter_section_ids,
 )
-
-
-class DeclarativeFinalVerdictRecord(BaseModel):
-    """One persisted Final recheck verdict retained across declared rounds."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    submission: FinalChapterLaneVerdictSubmission
-    output_ref: str
-
-
-class DeclarativeFinalReviewContext(BaseModel):
-    """Serializable business state threaded through Final review rounds."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    state: dict[str, Any]
-    current: EditedReportSubmission
-    subject_ref: str
-    findings_by_chapter: dict[str, list[ChapterScopedFinalReviewFinding]]
-    pending_by_chapter: dict[str, list[ChapterScopedFinalReviewFinding]]
-    initial_lane_refs: dict[str, str]
-    initial_residual_risks: list[str] = Field(default_factory=list)
-    revision_responses: dict[str, list[RevisionResponse]] = Field(default_factory=dict)
-    verdict_history: list[DeclarativeFinalVerdictRecord] = Field(default_factory=list)
-    latest_verdict_refs: dict[str, str] = Field(default_factory=dict)
-    revision_number: int = 0
-    already_completed: bool = False
-
-
-class DeclarativeFinalChiefRevisionAgentResult(BaseModel):
-    """Typed result from one affected Chief revision Agent invocation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: ChiefChapterLaneRevisionSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeFinalChiefRevisionContext(BaseModel):
-    """Prepared or accepted state for one affected Chief revision branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["ready", "resumed", "accepted", "skipped", "failed"]
-    contract: ChiefChapterLaneInput | None = None
-    input_ref: str | None = None
-    envelope: TaskEnvelope | None = None
-    submission: ChiefChapterLaneRevisionSubmission | None = None
-    output_ref: str | None = None
-    parts: dict[str, str] = Field(default_factory=dict)
-    error: str | None = None
-
-
-class DeclarativeFinalChiefRevisionOutcome(BaseModel):
-    """Terminal result from one drained Chief revision branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["completed", "skipped", "failed"]
-    submission: ChiefChapterLaneRevisionSubmission | None = None
-    output_ref: str | None = None
-    parts: dict[str, str] = Field(default_factory=dict)
-    error: str | None = None
-
-
-class DeclarativeFinalRecheckAgentResult(BaseModel):
-    """Typed result from one affected Final recheck Agent invocation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: FinalChapterLaneVerdictSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeFinalRecheckContext(BaseModel):
-    """Prepared or accepted state for one affected Final recheck branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["ready", "resumed", "accepted", "skipped", "failed"]
-    contract: FinalChapterLaneInput | None = None
-    input_ref: str | None = None
-    envelope: TaskEnvelope | None = None
-    submission: FinalChapterLaneVerdictSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
-
-
-class DeclarativeFinalRecheckOutcome(BaseModel):
-    """Terminal result from one drained Final recheck branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["completed", "skipped", "failed"]
-    submission: FinalChapterLaneVerdictSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
 
 
 class _FinalChiefRevisionInvoker:
@@ -216,7 +112,7 @@ class _FinalChiefRevisionInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeFinalChiefRevisionContext.model_validate(value)
+        context = final_review_models.DeclarativeFinalChiefRevisionContext.model_validate(value)
         envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
@@ -232,14 +128,14 @@ class _FinalChiefRevisionInvoker:
                 self._runtime._workflow_id,
                 **runner_kwargs,
             )
-            result = DeclarativeFinalChiefRevisionAgentResult(
+            result = final_review_models.DeclarativeFinalChiefRevisionAgentResult(
                 status="completed",
                 submission=ChiefChapterLaneRevisionSubmission.model_validate(payload),
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeFinalChiefRevisionAgentResult(
+            result = final_review_models.DeclarativeFinalChiefRevisionAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -298,7 +194,7 @@ class _FinalRecheckInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeFinalRecheckContext.model_validate(value)
+        context = final_review_models.DeclarativeFinalRecheckContext.model_validate(value)
         envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
@@ -314,14 +210,14 @@ class _FinalRecheckInvoker:
                 self._runtime._workflow_id,
                 **runner_kwargs,
             )
-            result = DeclarativeFinalRecheckAgentResult(
+            result = final_review_models.DeclarativeFinalRecheckAgentResult(
                 status="completed",
                 submission=FinalChapterLaneVerdictSubmission.model_validate(payload),
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeFinalRecheckAgentResult(
+            result = final_review_models.DeclarativeFinalRecheckAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -502,7 +398,10 @@ class DeclarativeFinalReviewRuntime:
         self.chief_invoker: AgentInvoker = _FinalChiefRevisionInvoker(self)
         self.recheck_invoker: AgentInvoker = _FinalRecheckInvoker(self)
 
-    def start_cycle(self, values: Mapping[str, Any]) -> DeclarativeFinalReviewContext:
+    def start_cycle(
+        self,
+        values: Mapping[str, Any],
+    ) -> final_review_models.DeclarativeFinalReviewContext:
         state = deepcopy(dict(values["state"]))
         _restore_state(state)
         self.current_state = state
@@ -516,7 +415,7 @@ class DeclarativeFinalReviewRuntime:
             for chapter_id, outcome in dict(values["outcomes"]).items()
         }
         if not self._production or "final_review_completion_ref" in state:
-            return DeclarativeFinalReviewContext(
+            return final_review_models.DeclarativeFinalReviewContext(
                 state=state,
                 current=current,
                 subject_ref=subject_ref,
@@ -534,7 +433,7 @@ class DeclarativeFinalReviewRuntime:
             for chapter_id in active
         }
         findings = {chapter_id: list(submissions[chapter_id].findings) for chapter_id in active}
-        return DeclarativeFinalReviewContext(
+        return final_review_models.DeclarativeFinalReviewContext(
             state=state,
             current=current,
             subject_ref=subject_ref,
@@ -553,15 +452,15 @@ class DeclarativeFinalReviewRuntime:
         )
 
     @staticmethod
-    def needs_round(review: DeclarativeFinalReviewContext) -> bool:
-        review = DeclarativeFinalReviewContext.model_validate(review)
+    def needs_round(review: final_review_models.DeclarativeFinalReviewContext) -> bool:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(review)
         return bool(review.pending_by_chapter) and not review.already_completed
 
     @staticmethod
     def advance_round(
-        review: DeclarativeFinalReviewContext,
-    ) -> DeclarativeFinalReviewContext:
-        review = DeclarativeFinalReviewContext.model_validate(review)
+        review: final_review_models.DeclarativeFinalReviewContext,
+    ) -> final_review_models.DeclarativeFinalReviewContext:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(review)
         if not review.pending_by_chapter:
             return review
         maximum = max(1, int(review.state.get("max_final_review_rounds", 3)))
@@ -578,13 +477,13 @@ class DeclarativeFinalReviewRuntime:
     def prepare_chief_revision(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalChiefRevisionContext:
-        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+    ) -> final_review_models.DeclarativeFinalChiefRevisionContext:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(values["review"])
         chapter_id = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
         self._set_current(review)
         findings = review.pending_by_chapter.get(chapter_id, [])
         if not self._production or not findings:
-            return DeclarativeFinalChiefRevisionContext(
+            return final_review_models.DeclarativeFinalChiefRevisionContext(
                 chapter_id=chapter_id,
                 status="skipped",
             )
@@ -594,7 +493,7 @@ class DeclarativeFinalReviewRuntime:
         recovered = self._recover_chief_revision(review, chapter_id)
         if recovered is not None:
             submission, output_ref, parts = recovered
-            return DeclarativeFinalChiefRevisionContext(
+            return final_review_models.DeclarativeFinalChiefRevisionContext(
                 chapter_id=chapter_id,
                 status="resumed",
                 submission=submission,
@@ -655,7 +554,7 @@ class DeclarativeFinalReviewRuntime:
                 (chapter_id,),
             ),
         )
-        return DeclarativeFinalChiefRevisionContext(
+        return final_review_models.DeclarativeFinalChiefRevisionContext(
             chapter_id=chapter_id,
             status="ready",
             contract=contract,
@@ -665,16 +564,24 @@ class DeclarativeFinalReviewRuntime:
 
     @staticmethod
     def chief_revision_requires_agent(
-        context: DeclarativeFinalChiefRevisionContext,
+        context: final_review_models.DeclarativeFinalChiefRevisionContext,
     ) -> bool:
         return context.status == "ready"
 
     def accept_chief_revision(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalChiefRevisionContext:
-        context = DeclarativeFinalChiefRevisionContext.model_validate(values["context"])
-        result = DeclarativeFinalChiefRevisionAgentResult.model_validate(values["result"])
+    ) -> final_review_models.DeclarativeFinalChiefRevisionContext:
+        context = (
+            final_review_models.DeclarativeFinalChiefRevisionContext.model_validate(
+                values["context"]
+            )
+        )
+        result = (
+            final_review_models.DeclarativeFinalChiefRevisionAgentResult.model_validate(
+                values["result"]
+            )
+        )
         if result.status == "failed":
             self._record_failure("chief-revision", context.chapter_id, result.error)
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -730,21 +637,21 @@ class DeclarativeFinalReviewRuntime:
 
     @staticmethod
     def complete_chief_revision(
-        context: DeclarativeFinalChiefRevisionContext,
-    ) -> DeclarativeFinalChiefRevisionOutcome:
-        context = DeclarativeFinalChiefRevisionContext.model_validate(context)
+        context: final_review_models.DeclarativeFinalChiefRevisionContext,
+    ) -> final_review_models.DeclarativeFinalChiefRevisionOutcome:
+        context = final_review_models.DeclarativeFinalChiefRevisionContext.model_validate(context)
         if context.status == "failed":
-            return DeclarativeFinalChiefRevisionOutcome(
+            return final_review_models.DeclarativeFinalChiefRevisionOutcome(
                 chapter_id=context.chapter_id,
                 status="failed",
                 error=context.error,
             )
         if context.status == "skipped":
-            return DeclarativeFinalChiefRevisionOutcome(
+            return final_review_models.DeclarativeFinalChiefRevisionOutcome(
                 chapter_id=context.chapter_id,
                 status="skipped",
             )
-        return DeclarativeFinalChiefRevisionOutcome(
+        return final_review_models.DeclarativeFinalChiefRevisionOutcome(
             chapter_id=context.chapter_id,
             status="completed",
             submission=context.submission,
@@ -755,12 +662,16 @@ class DeclarativeFinalReviewRuntime:
     def reduce_chief_revisions(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalReviewContext:
-        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+    ) -> final_review_models.DeclarativeFinalReviewContext:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(values["review"])
         self._set_current(review)
         runtime_state = self.current_state
         outcomes = {
-            chapter_id: DeclarativeFinalChiefRevisionOutcome.model_validate(outcome)
+            chapter_id: (
+                final_review_models.DeclarativeFinalChiefRevisionOutcome.model_validate(
+                    outcome
+                )
+            )
             for chapter_id, outcome in dict(values["outcomes"]).items()
         }
         self._raise_failures(outcomes)
@@ -849,13 +760,13 @@ class DeclarativeFinalReviewRuntime:
     def prepare_recheck(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalRecheckContext:
-        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+    ) -> final_review_models.DeclarativeFinalRecheckContext:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(values["review"])
         chapter_id = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
         self._set_current(review)
         findings = review.pending_by_chapter.get(chapter_id, [])
         if not self._production or not findings:
-            return DeclarativeFinalRecheckContext(
+            return final_review_models.DeclarativeFinalRecheckContext(
                 chapter_id=chapter_id,
                 status="skipped",
             )
@@ -889,7 +800,7 @@ class DeclarativeFinalReviewRuntime:
         recovered = self._recover_recheck(review, chapter_id, contract, input_ref)
         if recovered is not None:
             submission, output_ref = recovered
-            return DeclarativeFinalRecheckContext(
+            return final_review_models.DeclarativeFinalRecheckContext(
                 chapter_id=chapter_id,
                 status="resumed",
                 contract=contract,
@@ -923,7 +834,7 @@ class DeclarativeFinalReviewRuntime:
                 chapter_id,
             ),
         )
-        return DeclarativeFinalRecheckContext(
+        return final_review_models.DeclarativeFinalRecheckContext(
             chapter_id=chapter_id,
             status="ready",
             contract=contract,
@@ -932,15 +843,21 @@ class DeclarativeFinalReviewRuntime:
         )
 
     @staticmethod
-    def recheck_requires_agent(context: DeclarativeFinalRecheckContext) -> bool:
+    def recheck_requires_agent(
+        context: final_review_models.DeclarativeFinalRecheckContext,
+    ) -> bool:
         return context.status == "ready"
 
     def accept_recheck(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalRecheckContext:
-        context = DeclarativeFinalRecheckContext.model_validate(values["context"])
-        result = DeclarativeFinalRecheckAgentResult.model_validate(values["result"])
+    ) -> final_review_models.DeclarativeFinalRecheckContext:
+        context = final_review_models.DeclarativeFinalRecheckContext.model_validate(
+            values["context"]
+        )
+        result = final_review_models.DeclarativeFinalRecheckAgentResult.model_validate(
+            values["result"]
+        )
         if result.status == "failed":
             self._record_failure("final-recheck", context.chapter_id, result.error)
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -987,21 +904,21 @@ class DeclarativeFinalReviewRuntime:
 
     @staticmethod
     def complete_recheck(
-        context: DeclarativeFinalRecheckContext,
-    ) -> DeclarativeFinalRecheckOutcome:
-        context = DeclarativeFinalRecheckContext.model_validate(context)
+        context: final_review_models.DeclarativeFinalRecheckContext,
+    ) -> final_review_models.DeclarativeFinalRecheckOutcome:
+        context = final_review_models.DeclarativeFinalRecheckContext.model_validate(context)
         if context.status == "failed":
-            return DeclarativeFinalRecheckOutcome(
+            return final_review_models.DeclarativeFinalRecheckOutcome(
                 chapter_id=context.chapter_id,
                 status="failed",
                 error=context.error,
             )
         if context.status == "skipped":
-            return DeclarativeFinalRecheckOutcome(
+            return final_review_models.DeclarativeFinalRecheckOutcome(
                 chapter_id=context.chapter_id,
                 status="skipped",
             )
-        return DeclarativeFinalRecheckOutcome(
+        return final_review_models.DeclarativeFinalRecheckOutcome(
             chapter_id=context.chapter_id,
             status="completed",
             submission=context.submission,
@@ -1011,11 +928,11 @@ class DeclarativeFinalReviewRuntime:
     def reduce_rechecks(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalReviewContext:
-        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+    ) -> final_review_models.DeclarativeFinalReviewContext:
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(values["review"])
         self._set_current(review)
         outcomes = {
-            chapter_id: DeclarativeFinalRecheckOutcome.model_validate(outcome)
+            chapter_id: final_review_models.DeclarativeFinalRecheckOutcome.model_validate(outcome)
             for chapter_id, outcome in dict(values["outcomes"]).items()
         }
         self._raise_failures(outcomes)
@@ -1028,7 +945,7 @@ class DeclarativeFinalReviewRuntime:
             payload = cast(FinalChapterLaneVerdictSubmission, outcome.submission)
             output_ref = cast(str, outcome.output_ref)
             history.append(
-                DeclarativeFinalVerdictRecord(
+                final_review_models.DeclarativeFinalVerdictRecord(
                     submission=payload,
                     output_ref=output_ref,
                 )
@@ -1073,9 +990,9 @@ class DeclarativeFinalReviewRuntime:
 
     def complete_review(
         self,
-        review: DeclarativeFinalReviewContext,
+        review: final_review_models.DeclarativeFinalReviewContext,
     ) -> dict[str, Any]:
-        review = DeclarativeFinalReviewContext.model_validate(review)
+        review = final_review_models.DeclarativeFinalReviewContext.model_validate(review)
         state = deepcopy(review.state)
         _restore_state(state)
         self.current_state = state
@@ -1180,7 +1097,7 @@ class DeclarativeFinalReviewRuntime:
         self.current_state = state
         return state
 
-    def _set_current(self, review: DeclarativeFinalReviewContext) -> None:
+    def _set_current(self, review: final_review_models.DeclarativeFinalReviewContext) -> None:
         state = deepcopy(review.state)
         _restore_state(state)
         self.current_state = state
@@ -1188,7 +1105,7 @@ class DeclarativeFinalReviewRuntime:
 
     def _recover_chief_revision(
         self,
-        review: DeclarativeFinalReviewContext,
+        review: final_review_models.DeclarativeFinalReviewContext,
         chapter_id: str,
     ) -> tuple[ChiefChapterLaneRevisionSubmission, str, dict[str, str]] | None:
         if review.revision_number != 1:
@@ -1230,7 +1147,7 @@ class DeclarativeFinalReviewRuntime:
 
     def _recover_recheck(
         self,
-        review: DeclarativeFinalReviewContext,
+        review: final_review_models.DeclarativeFinalReviewContext,
         chapter_id: str,
         contract: FinalChapterLaneInput,
         input_ref: str,
@@ -1332,15 +1249,7 @@ def _restore_state(state: dict[str, Any]) -> None:
 
 
 __all__ = [
-    "DeclarativeFinalChiefRevisionAgentResult",
-    "DeclarativeFinalChiefRevisionContext",
-    "DeclarativeFinalChiefRevisionOutcome",
-    "DeclarativeFinalRecheckAgentResult",
-    "DeclarativeFinalRecheckContext",
-    "DeclarativeFinalRecheckOutcome",
-    "DeclarativeFinalReviewContext",
     "DeclarativeFinalReviewRuntime",
-    "DeclarativeFinalVerdictRecord",
     "compile_final_review_workflows",
     "compose_final_review_agent_invokers",
     "register_final_review_lane_specializations",

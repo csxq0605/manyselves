@@ -10,6 +10,10 @@ import pytest
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalChiefRevisionOutcome,
+    DeclarativeFinalReviewContext,
+)
 from manyselves.core.reporting.agentic_models import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
@@ -28,8 +32,6 @@ from manyselves.core.reporting.declarative_final_chapter_cohort import (
     retry_failed_final_chapter_lanes,
 )
 from manyselves.core.reporting.declarative_final_review_cycle import (
-    DeclarativeFinalChiefRevisionOutcome,
-    DeclarativeFinalReviewContext,
     DeclarativeFinalReviewRuntime,
     compile_final_review_workflows,
     compose_final_review_agent_invokers,

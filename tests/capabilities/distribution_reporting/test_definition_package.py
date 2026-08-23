@@ -290,8 +290,6 @@ def test_chief_chapter_contract_models_are_owned_by_the_capability() -> None:
         assert definition.model == f"{module_name}:{model_name}"
         model = getattr(import_module(module_name), model_name)
         assert model.__module__ == module_name
-
-
 def test_core_chief_chapter_module_does_not_expose_capability_contract_models() -> None:
     old_module = import_module(
         "manyselves.core.reporting.declarative_chief_chapter_cohort"
@@ -435,6 +433,156 @@ def test_final_chapter_contract_models_preserve_lane_values() -> None:
     ):
         with pytest.raises(ValueError):
             model.model_validate(value)
+
+
+def test_final_review_contract_models_are_owned_by_the_capability() -> None:
+    _, registry = load_distribution_reporting_capability()
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.runtime.models.final_review"
+    )
+    contract_models = {
+        "declarative_final_chief_revision_agent_result": (
+            "DeclarativeFinalChiefRevisionAgentResult"
+        ),
+        "declarative_final_chief_revision_context": (
+            "DeclarativeFinalChiefRevisionContext"
+        ),
+        "declarative_final_chief_revision_outcome": (
+            "DeclarativeFinalChiefRevisionOutcome"
+        ),
+        "declarative_final_recheck_agent_result": (
+            "DeclarativeFinalRecheckAgentResult"
+        ),
+        "declarative_final_recheck_context": "DeclarativeFinalRecheckContext",
+        "declarative_final_recheck_outcome": "DeclarativeFinalRecheckOutcome",
+        "declarative_final_review_cycle_context": "DeclarativeFinalReviewContext",
+    }
+
+    for contract_id, model_name in contract_models.items():
+        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
+        assert isinstance(definition, ContractDefinition)
+        assert definition.model == f"{module_name}:{model_name}"
+        model = getattr(import_module(module_name), model_name)
+        assert model.__module__ == module_name
+    verdict_record = getattr(
+        import_module(module_name),
+        "DeclarativeFinalVerdictRecord",
+    )
+    assert verdict_record.__module__ == module_name
+
+
+def test_core_final_review_module_does_not_expose_capability_contract_models() -> None:
+    old_module = import_module(
+        "manyselves.core.reporting.declarative_final_review_cycle"
+    )
+
+    for model_name in (
+        "DeclarativeFinalChiefRevisionAgentResult",
+        "DeclarativeFinalChiefRevisionContext",
+        "DeclarativeFinalChiefRevisionOutcome",
+        "DeclarativeFinalRecheckAgentResult",
+        "DeclarativeFinalRecheckContext",
+        "DeclarativeFinalRecheckOutcome",
+        "DeclarativeFinalReviewContext",
+        "DeclarativeFinalVerdictRecord",
+    ):
+        assert model_name not in vars(old_module)
+
+
+def test_final_review_contract_models_preserve_round_state_and_forbid_extra() -> None:
+    module = import_module(
+        "manyselves.capabilities.distribution_reporting.runtime.models.final_review"
+    )
+    edited_report = {
+        "title": "Final review report",
+        "assessment_background": "Assessment background.",
+        "findings_overview": "Findings overview.",
+        "regional_executive_summary": "Regional executive summary.",
+        "module_narratives": {
+            module_id: f"Approved narrative for {module_id}."
+            for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
+        },
+        "risk_panorama": "Risk panorama.",
+        "dimension_risk_analysis": "Dimension risk analysis.",
+        "data_gap_analysis": "Data gap analysis.",
+        "improvement_action_plan": "Improvement action plan.",
+    }
+    review = module.DeclarativeFinalReviewContext.model_validate(
+        {
+            "state": {"run_id": "run-final-review"},
+            "current": edited_report,
+            "subject_ref": "Work/runs/run-final-review/edited-revisions/chief-r1.json",
+            "findings_by_chapter": {},
+            "pending_by_chapter": {},
+            "initial_lane_refs": {"1": "reviews/final-chapter-1.json"},
+            "revision_number": 1,
+            "verdict_history": [
+                {
+                    "submission": {
+                        "run_id": "run-final-review",
+                        "chapter_id": "1",
+                        "checked_section_ids": ["1.1"],
+                    },
+                    "output_ref": "reviews/final-recheck-1-r1.json",
+                }
+            ],
+        }
+    )
+    round_tripped = module.DeclarativeFinalReviewContext.model_validate_json(
+        review.model_dump_json()
+    )
+
+    assert round_tripped.revision_number == 1
+    assert round_tripped.verdict_history[0].output_ref == (
+        "reviews/final-recheck-1-r1.json"
+    )
+    assert round_tripped.verdict_history[0].submission.chapter_id == "1"
+    with pytest.raises(ValueError):
+        module.DeclarativeFinalVerdictRecord.model_validate(
+            {
+                **review.verdict_history[0].model_dump(mode="json"),
+                "unexpected": True,
+            }
+        )
+
+    cases = (
+        (
+            module.DeclarativeFinalChiefRevisionAgentResult,
+            {"status": "failed", "error": "chief unavailable"},
+        ),
+        (
+            module.DeclarativeFinalChiefRevisionContext,
+            {"chapter_id": "4", "status": "skipped"},
+        ),
+        (
+            module.DeclarativeFinalChiefRevisionOutcome,
+            {"chapter_id": "4", "status": "skipped", "parts": {"4.1": "body"}},
+        ),
+        (
+            module.DeclarativeFinalRecheckAgentResult,
+            {"status": "failed", "error": "auditor unavailable"},
+        ),
+        (
+            module.DeclarativeFinalRecheckContext,
+            {"chapter_id": "4", "status": "skipped"},
+        ),
+        (
+            module.DeclarativeFinalRecheckOutcome,
+            {"chapter_id": "4", "status": "skipped"},
+        ),
+    )
+    for model, value in cases:
+        parsed = model.model_validate(value)
+        assert model.model_validate_json(parsed.model_dump_json()) == parsed
+        with pytest.raises(ValueError):
+            model.model_validate({**value, "unexpected": True})
+    with pytest.raises(ValueError):
+        module.DeclarativeFinalReviewContext.model_validate(
+            {
+                **review.model_dump(mode="json"),
+                "unexpected": True,
+            }
+        )
 
 
 def test_cross_owner_contract_models_are_owned_by_the_capability() -> None:
