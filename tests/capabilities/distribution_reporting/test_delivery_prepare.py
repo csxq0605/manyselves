@@ -13,6 +13,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     EditedReportSubmission,
     ModuleSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ReviewCompletionRecord,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     EvidenceItem,
@@ -97,14 +100,9 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
             self,
             _state: dict,
         ) -> tuple[EditedReportSubmission, str]:
-            assert isinstance(_state["request"], ReportRequest)
-            assert isinstance(_state["edited_report"], EditedReportSubmission)
-            assert all(
-                isinstance(value, ModuleSubmission)
-                for value in _state["module_submissions"].values()
+            raise AssertionError(
+                "production prepare must not call ReportWorkflowRunner._validated_final_audit_subject"
             )
-            assert all(isinstance(value, EvidenceItem) for value in _state["evidence_items"])
-            return edited, f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
 
         def _write_handoff_contracts(self, state: dict) -> Path:
             raise AssertionError(
@@ -139,10 +137,27 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
         "photo_assets": [],
         "edited_report": edited,
     }
+    subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+    completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+    store.write_json(subject_ref, edited.model_dump(mode="json"))
+    store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="chief-editor-auditor",
+            subject_refs=[subject_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
     serialized = json.loads(
         json.dumps(
             {
                 "run_id": state["run_id"],
+                "final_review_completion_ref": completion_ref,
                 "request": state["request"].model_dump(mode="json"),
                 "module_submissions": {
                     module_id: value.model_dump(mode="json")
@@ -187,6 +202,32 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
         (run_root / "approved-modules" / f"{module_id}.json").is_file()
         for module_id in REPORT_MODULE_IDS
     )
+    legacy_snapshot = json.loads(
+        (run_root / "reviews/final-audit-snapshot.json").read_text(encoding="utf-8")
+    )
+    assert legacy_snapshot == {
+        "kind": "final_audit_snapshot",
+        "run_id": run_id,
+        "subject_ref": subject_ref,
+        "subject_revision": 0,
+        "canonical_markdown_ref": (
+            f"Work/runs/{run_id}/validation/report-final-audit-legacy.md"
+        ),
+        "validation_report_ref": (
+            f"Work/runs/{run_id}/reviews/report-integrity-final-audit-legacy.json"
+        ),
+        "completion_ref": completion_ref,
+    }
+    assert (run_root / "validation/report-final-audit-legacy.md").is_file()
+    legacy_validation = json.loads(
+        (run_root / "reviews/report-integrity-final-audit-legacy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert legacy_validation["run_id"] == run_id
+    assert legacy_validation["subject_ref"] == legacy_snapshot["canonical_markdown_ref"]
+    assert legacy_validation["subject_revision"] == legacy_snapshot["subject_revision"]
+    assert legacy_validation["passed"] is True
     handoff_contracts = json.loads(
         (run_root / "handoff-contracts.json").read_text(encoding="utf-8")
     )

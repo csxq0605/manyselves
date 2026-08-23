@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,8 +18,10 @@ from manyselves.capabilities.distribution_reporting.runtime.delivery_projection 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     EditedReportSubmission,
+    ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ReviewCompletionRecord,
     ValidationReport,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -26,6 +29,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.report_validation import (
     validate_final_report_structure,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    load_current_review_completion,
+    validated_final_audit_subject,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
@@ -69,9 +76,25 @@ def _claims() -> list[ClaimRecord]:
 
 
 def _state(run_id: str, edited: EditedReportSubmission) -> dict:
+    claims = _claims()
+    module_submissions = {
+        module_id: ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"module {module_id} {submodule_id}"
+                for submodule_id in REPORT_TAXONOMY[module_id].submodules
+            },
+            claims=[claim for claim in claims if claim.module_id == module_id],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=0,
+        )
+        for module_id in REPORT_MODULE_IDS
+    }
     return {
         "run_id": run_id,
         "edited_report": edited,
+        "module_submissions": module_submissions,
         "evidence_items": [],
         "photo_assets": [],
     }
@@ -153,3 +176,126 @@ def test_capability_validation_persists_same_success_and_failure_reports(
         tmp_path
         / "Work/runs/run-validation-characterization-invalid/validation/report-delivery-final.md"
     ).read_text(encoding="utf-8") == markdown + invalid_suffix
+
+
+def test_final_chapter_wave_loader_merges_verdict_new_findings(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-final-chapter-wave-loader"
+    subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+    finding_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r0.json"
+    verdict_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r1.json"
+    follow_up_verdict_ref = (
+        f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r2.json"
+    )
+    completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+    store = ReportingStore(tmp_path)
+    store.write_json(subject_ref, {"kind": "subject"})
+    store.write_json(
+        finding_ref,
+        {
+            "kind": "final_chapter_lane_finding_submission",
+            "findings": [{"id": "F-1"}],
+        },
+    )
+    store.write_json(
+        verdict_ref,
+        {
+            "kind": "final_chapter_lane_verdict_submission",
+            "verdicts": [{"finding_id": "F-1"}],
+            "new_findings": [{"id": "F-2"}],
+        },
+    )
+    store.write_json(
+        follow_up_verdict_ref,
+        {
+            "kind": "final_chapter_lane_verdict_submission",
+            "verdicts": [{"finding_id": "F-2"}],
+            "new_findings": [],
+        },
+    )
+    store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="final-chapter-wave",
+            subject_refs=[subject_ref],
+            finding_refs=[finding_ref],
+            verdict_refs=[verdict_ref, follow_up_verdict_ref],
+            resolved_finding_ids=["F-1", "F-2"],
+        ).model_dump(mode="json"),
+    )
+
+    completion, artifacts = load_current_review_completion(
+        workspace=tmp_path,
+        run_id=run_id,
+        completion_ref=completion_ref,
+        lifecycle="final",
+        reviewer_agent_id="chief-editor-auditor",
+        reviewer_session_key="final-chapter-wave",
+    )
+
+    assert completion.reviewer_session_key == "final-chapter-wave"
+    assert [artifact["kind"] for artifact in artifacts] == [
+        "final_chapter_lane_finding_submission",
+        "final_chapter_lane_verdict_submission",
+        "final_chapter_lane_verdict_submission",
+    ]
+
+
+def test_final_audit_reconstructs_missing_snapshot_without_provider_boundary(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-final-audit-capability"
+    edited = _edited_report()
+    state = _state(run_id, edited)
+    subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+    completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+    state["final_review_completion_ref"] = completion_ref
+    store = ReportingStore(tmp_path)
+    store.write_json(subject_ref, edited.model_dump(mode="json"))
+    store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="chief-editor-auditor",
+            subject_refs=[subject_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
+
+    audited, snapshot_ref = validated_final_audit_subject(
+        workspace=tmp_path,
+        store=store,
+        state=state,
+    )
+
+    assert audited == edited
+    assert snapshot_ref == f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+    snapshot = json.loads((tmp_path / snapshot_ref).read_text(encoding="utf-8"))
+    assert snapshot["subject_ref"] == subject_ref
+    assert snapshot["completion_ref"] == completion_ref
+    assert (
+        tmp_path / f"Work/runs/{run_id}/validation/report-final-audit-legacy.md"
+    ).is_file()
+    assert (
+        tmp_path
+        / f"Work/runs/{run_id}/reviews/report-integrity-final-audit-legacy.json"
+    ).is_file()
+
+    tampered = {
+        **state,
+        "edited_report": edited.model_copy(update={"title": "tampered after audit"}),
+    }
+    with pytest.raises(ValueError, match="changed after final audit"):
+        validated_final_audit_subject(
+            workspace=tmp_path,
+            store=store,
+            state=tampered,
+        )

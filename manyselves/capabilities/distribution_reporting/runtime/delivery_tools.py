@@ -5,8 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +28,7 @@ from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .report_validation import validate_final_report_structure
+from .review_artifacts import validated_final_audit_subject
 from .source_ledger import SourceLedger
 from .storage import ReportingStore
 from .template_resolver import resolve_report_template
@@ -62,15 +62,6 @@ def _restore_delivery_state(state: dict[str, Any]) -> None:
     plan = state.get("special_topic_plan")
     if isinstance(plan, Mapping):
         state["special_topic_plan"] = SpecialTopicPlan.model_validate(plan)
-
-
-@dataclass(frozen=True, slots=True)
-class _DeliveryPreparationDependencies:
-    """Narrow Reporting callbacks needed by the Capability preparation Tool."""
-
-    validated_final_audit_subject: Callable[
-        [dict[str, Any]], tuple[EditedReportSubmission, str]
-    ]
 
 
 def delivery_root(workspace: Path, run_id: str) -> Path:
@@ -117,18 +108,13 @@ class DeliveryTools:
         self,
         workspace: Path,
         store: ReportingStore,
-        *,
-        preparation: _DeliveryPreparationDependencies | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.store = store
-        self.preparation = preparation
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         """Prepare and render the current run through Capability-owned Tools."""
 
-        if self.preparation is None:
-            raise RuntimeError("Delivery prepare Tool requires Reporting callbacks")
         _restore_delivery_state(state)
         context = self._prepare_context(state)
         state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
@@ -138,9 +124,10 @@ class DeliveryTools:
         return state
 
     def _prepare_context(self, state: dict[str, Any]) -> DeliveryContext:
-        preparation = cast(_DeliveryPreparationDependencies, self.preparation)
-        edited, final_audit_snapshot_ref = preparation.validated_final_audit_subject(
-            state
+        edited, final_audit_snapshot_ref = validated_final_audit_subject(
+            workspace=self.workspace,
+            store=self.store,
+            state=state,
         )
         write_handoff_contracts(self.store, state)
         state["edited_report"] = edited
@@ -547,31 +534,27 @@ def build_delivery_tools(
     *,
     workspace: Path,
     store: ReportingStore,
-    preparation: _DeliveryPreparationDependencies | None = None,
 ) -> DeliveryTools:
     """Construct the Delivery Tool implementation bundle."""
 
-    return DeliveryTools(workspace, store, preparation=preparation)
+    return DeliveryTools(workspace, store)
 
 
 def build_delivery_tool_implementations(
     *,
     workspace: Path,
     store: ReportingStore,
-    preparation: _DeliveryPreparationDependencies | None = None,
 ) -> dict[str, Any]:
     """Bind the file-declared Delivery Tool implementations."""
 
     tools = build_delivery_tools(
         workspace=workspace,
         store=store,
-        preparation=preparation,
     )
     implementations = {
+        "prepare-render-delivery": tools.prepare,
         "publish-materialize-delivery": tools.publish,
     }
-    if preparation is not None:
-        implementations["prepare-render-delivery"] = tools.prepare
     implementations["complete-delivery"] = tools.complete
     return implementations
 

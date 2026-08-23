@@ -60,7 +60,6 @@ from manyselves.capabilities.distribution_reporting.runtime.delivery_projection 
 )
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     DeliveryTools,
-    _DeliveryPreparationDependencies,
 )
 from manyselves.capabilities.distribution_reporting.runtime.handoff_contracts import (
     write_handoff_contracts as capability_write_handoff_contracts,
@@ -157,6 +156,21 @@ from manyselves.capabilities.distribution_reporting.runtime.research.project_evi
     ProjectEvidenceIndex,
     project_evidence_locator,
 )
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    FINAL_REVIEW_COMPLETION_SESSION_KEYS,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    latest_cross_synthesis as capability_latest_cross_synthesis,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    latest_final_residual_risks as capability_latest_final_residual_risks,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    load_current_review_completion as capability_load_current_review_completion,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    validated_final_audit_subject as capability_validated_final_audit_subject,
+)
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     AggregateState,
@@ -213,9 +227,6 @@ if TYPE_CHECKING:
 
 TEMPLATE_SKILL_ROOT = Path("Work/report-template-role-skills")
 TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
-FINAL_REVIEW_COMPLETION_SESSION_KEYS = frozenset(
-    {"chief-editor-auditor", "final-chapter-wave"}
-)
 
 
 @dataclass(slots=True)
@@ -2569,165 +2580,15 @@ class ReportWorkflowRunner:
         reviewer_session_key: str | set[str] | frozenset[str],
         subject_refs: list[str] | None = None,
     ) -> tuple[ReviewCompletionRecord, list[object]]:
-        """Load one exact current-protocol completion and all referenced artifacts."""
-
-        run_prefix = f"Work/runs/{run_id}/"
-
-        def read_ref(ref: str) -> tuple[dict, Path]:
-            if not ref.startswith(run_prefix):
-                raise ValueError(f"review ref is outside current run: {ref}")
-            path = (self.service.workspace / ref).resolve()
-            run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
-            if not path.is_relative_to(run_root) or not path.is_file():
-                raise ValueError(f"review ref is not a readable current-run artifact: {ref}")
-            return json.loads(path.read_text(encoding="utf-8")), path
-
-        raw, _ = read_ref(completion_ref)
-        completion = ReviewCompletionRecord.model_validate(raw)
-        chapter_scoped_final = (
-            lifecycle == "final"
-            and completion.reviewer_session_key == "final-chapter-wave"
+        return capability_load_current_review_completion(
+            workspace=self.service.workspace,
+            run_id=run_id,
+            completion_ref=completion_ref,
+            lifecycle=lifecycle,
+            reviewer_agent_id=reviewer_agent_id,
+            reviewer_session_key=reviewer_session_key,
+            subject_refs=subject_refs,
         )
-        reviewer_session_matches = (
-            completion.reviewer_session_key == reviewer_session_key
-            if isinstance(reviewer_session_key, str)
-            else completion.reviewer_session_key in reviewer_session_key
-        )
-        if (
-            completion.lifecycle != lifecycle
-            or completion.run_id != run_id
-            or completion.reviewer_agent_id != reviewer_agent_id
-            or not reviewer_session_matches
-        ):
-            raise ValueError("review completion identity does not match the active lifecycle")
-        if subject_refs is not None and completion.subject_refs != subject_refs:
-            raise ValueError("review completion subject refs do not match current subjects")
-        for ref in completion.subject_refs:
-            read_ref(ref)
-        lifecycle_kinds = {
-            "module": {
-                "finding": "module_review_finding_submission",
-                "verdict": "module_review_verdict_submission",
-            },
-            "cross": {
-                "finding": "cross_review_finding_submission",
-                "verdict": "cross_review_verdict_submission",
-            },
-            "final": {
-                "finding": "final_review_finding_submission",
-                "verdict": "final_review_verdict_submission",
-            },
-        }
-        artifacts: list[object] = []
-        findings_by_id: dict[str, dict] = {}
-        regression_findings_by_id: dict[str, dict] = {}
-        embedded_new_findings_by_id: dict[str, dict] = {}
-        verdict_ids: set[str] = set()
-
-        def artifact_values(
-            payload: dict,
-            *,
-            field: str,
-            id_field: str,
-            ref: str,
-        ) -> list[tuple[str, dict]]:
-            values = payload.get(field, [])
-            if not isinstance(values, list):
-                raise ValueError(f"review completion artifact has non-list {field}: {ref}")
-            identified = [
-                (value.get(id_field), value) for value in values if isinstance(value, dict)
-            ]
-            if len(identified) != len(values) or any(
-                not isinstance(value_id, str) or not value_id for value_id, _ in identified
-            ):
-                raise ValueError(f"review completion artifact has invalid {field} ids: {ref}")
-            return identified
-
-        expected_finding_kind = (
-            "final_chapter_lane_finding_submission"
-            if chapter_scoped_final
-            else lifecycle_kinds[lifecycle]["finding"]
-        )
-        for index, ref in enumerate(completion.finding_refs):
-            payload, _ = read_ref(ref)
-            artifact_kind = str(payload.get("kind", ""))
-            if artifact_kind != expected_finding_kind:
-                raise ValueError(
-                    f"review completion finding ref has the wrong artifact kind: {ref}"
-                )
-            artifacts.append(payload)
-            for finding_id, finding in artifact_values(
-                payload,
-                field="findings",
-                id_field="id",
-                ref=ref,
-            ):
-                if finding_id in findings_by_id:
-                    raise ValueError("review completion contains duplicate immutable finding ids")
-                findings_by_id[finding_id] = finding
-                if index > 0 and not chapter_scoped_final:
-                    regression_findings_by_id[finding_id] = finding
-
-        expected_verdict_kind = (
-            "final_chapter_lane_verdict_submission"
-            if chapter_scoped_final
-            else lifecycle_kinds[lifecycle]["verdict"]
-        )
-        for ref in completion.verdict_refs:
-            payload, _ = read_ref(ref)
-            artifact_kind = str(payload.get("kind", ""))
-            if artifact_kind != expected_verdict_kind:
-                raise ValueError(
-                    f"review completion verdict ref has the wrong artifact kind: {ref}"
-                )
-            artifacts.append(payload)
-            verdict_ids.update(
-                verdict_id
-                for verdict_id, _ in artifact_values(
-                    payload,
-                    field="verdicts",
-                    id_field="finding_id",
-                    ref=ref,
-                )
-            )
-            for finding_id, finding in artifact_values(
-                payload,
-                field="new_findings",
-                id_field="id",
-                ref=ref,
-            ):
-                if finding_id in embedded_new_findings_by_id:
-                    raise ValueError("review completion verdicts repeat a new immutable finding id")
-                embedded_new_findings_by_id[finding_id] = finding
-                if chapter_scoped_final:
-                    if finding_id in findings_by_id:
-                        raise ValueError(
-                            "review completion contains duplicate immutable finding ids"
-                        )
-                    findings_by_id[finding_id] = finding
-
-        if (
-            not chapter_scoped_final
-            and set(regression_findings_by_id) != set(embedded_new_findings_by_id)
-        ):
-            raise ValueError(
-                "review completion regression finding refs do not match verdict new findings"
-            )
-        if (
-            not chapter_scoped_final
-            and regression_findings_by_id != embedded_new_findings_by_id
-        ):
-            raise ValueError(
-                "review completion regression findings differ from verdict new findings"
-            )
-
-        finding_ids = set(findings_by_id)
-        resolved_ids = set(completion.resolved_finding_ids)
-        if resolved_ids != finding_ids:
-            raise ValueError("review completion resolved ids do not equal all immutable findings")
-        if not finding_ids.issubset(verdict_ids):
-            raise ValueError("review completion lacks reviewer verdicts for findings")
-        return completion, artifacts
 
     @staticmethod
     def _module_reviewer_session_keys(
@@ -2741,35 +2602,11 @@ class ReportWorkflowRunner:
 
     @staticmethod
     def _latest_cross_synthesis(artifacts: list[object]) -> list:
-        synthesis = []
-        for artifact in artifacts:
-            if isinstance(artifact, dict) and artifact.get("kind") in {
-                "cross_review_finding_submission",
-                "cross_review_verdict_submission",
-            }:
-                synthesis = [
-                    CrossSynthesisInput.model_validate(item)
-                    for item in artifact.get("synthesis_inputs", [])
-                ]
-        return synthesis
+        return capability_latest_cross_synthesis(artifacts)
 
     @staticmethod
     def _latest_final_residual_risks(artifacts: list[object]) -> list[str]:
-        residual_risks: list[str] = []
-        for artifact in artifacts:
-            if isinstance(artifact, dict) and artifact.get("kind") in {
-                "final_review_finding_submission",
-                "final_review_verdict_submission",
-                "final_chapter_lane_finding_submission",
-                "final_chapter_lane_verdict_submission",
-            }:
-                values = artifact.get("residual_risks", [])
-                if not isinstance(values, list) or not all(
-                    isinstance(value, str) for value in values
-                ):
-                    raise ValueError("final review residual_risks must be a string list")
-                residual_risks = values
-        return residual_risks
+        return capability_latest_final_residual_risks(artifacts)
 
     def _require_current_run_artifact(
         self,
@@ -8032,119 +7869,17 @@ class ReportWorkflowRunner:
         self,
         state: dict,
     ) -> tuple[EditedReportSubmission, str]:
-        """Load the exact audited subject and bind its canonical prose to delivery."""
+        """Compatibility wrapper around the Capability final-audit Tool."""
 
-        run_id = state["run_id"]
-        completion_ref = state["final_review_completion_ref"]
-        completion, _ = self._load_current_review_completion(
-            run_id=run_id,
-            completion_ref=completion_ref,
-            lifecycle="final",
-            reviewer_agent_id="chief-editor-auditor",
-            reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
-        )
-        if len(completion.subject_refs) != 1:
-            raise AgentWorkflowError("final audit completion must bind exactly one subject")
-        subject_ref = completion.subject_refs[0]
-        subject_path = self.service.workspace / subject_ref
-        audited = EditedReportSubmission.model_validate_json(
-            subject_path.read_text(encoding="utf-8")
-        )
-        subject_revision_match = re.search(r"chief-r(\d+)\.json$", subject_ref)
-        subject_revision = (
-            int(subject_revision_match.group(1))
-            if subject_revision_match is not None
-            else 0
-        )
-        snapshot_ref = (
-            f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
-        )
-        snapshot_path = self.service.workspace / snapshot_ref
-        if not snapshot_path.is_file():
-            # Legacy same-run recovery: the final completion already binds the
-            # exact edited JSON. Reconstruct only its deterministic Markdown
-            # projection; no provider or reviewer call is repeated.
-            _, canonical = self._delivery_projection(state, audited)
-            validate_final_report_markdown(canonical, audited.special_topic_plan)
-            canonical_ref = (
-                f"Work/runs/{run_id}/validation/report-final-audit-legacy.md"
+        try:
+            return capability_validated_final_audit_subject(
+                workspace=self.service.workspace,
+                store=self.service.store,
+                state=state,
+                reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
             )
-            validation_ref = (
-                f"Work/runs/{run_id}/reviews/report-integrity-final-audit-legacy.json"
-            )
-            self.service.store.write_text(canonical_ref, canonical)
-            self.service.store.write_json(
-                validation_ref,
-                ValidationReport(
-                    validation_protocol_version=2,
-                    run_id=run_id,
-                    subject_ref=canonical_ref,
-                    subject_revision=subject_revision,
-                    validator="final-audit-legacy-snapshot/v2",
-                    check_ids=["final_report.fixed_sections_and_markdown"],
-                    passed=True,
-                ).model_dump(mode="json"),
-            )
-            snapshot_path = self.service.store.write_json(
-                snapshot_ref,
-                FinalAuditSnapshot(
-                    run_id=run_id,
-                    subject_ref=subject_ref,
-                    subject_revision=subject_revision,
-                    canonical_markdown_ref=canonical_ref,
-                    validation_report_ref=validation_ref,
-                    completion_ref=completion_ref,
-                ).model_dump(mode="json"),
-            )
-        snapshot = FinalAuditSnapshot.model_validate_json(
-            snapshot_path.read_text(encoding="utf-8")
-        )
-        run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
-        for ref in (
-            snapshot.subject_ref,
-            snapshot.canonical_markdown_ref,
-            snapshot.validation_report_ref,
-            snapshot.completion_ref,
-        ):
-            path = (self.service.workspace / ref).resolve()
-            if not path.is_relative_to(run_root) or not path.is_file():
-                raise AgentWorkflowError(
-                    f"final audit snapshot ref is outside the current run: {ref}"
-                )
-        if (
-            snapshot.run_id != run_id
-            or snapshot.subject_ref != subject_ref
-            or snapshot.completion_ref != completion_ref
-            or snapshot.subject_revision != subject_revision
-        ):
-            raise AgentWorkflowError("final audit snapshot identity is stale")
-        validation = ValidationReport.model_validate_json(
-            (
-                self.service.workspace / snapshot.validation_report_ref
-            ).read_text(encoding="utf-8")
-        )
-        if (
-            not validation.passed
-            or validation.run_id != run_id
-            or validation.subject_ref != snapshot.canonical_markdown_ref
-            or validation.subject_revision != snapshot.subject_revision
-        ):
-            raise AgentWorkflowError("final audit snapshot validation identity is stale")
-        _, audited_canonical = self._delivery_projection(state, audited)
-        validate_final_report_markdown(
-            audited_canonical,
-            audited.special_topic_plan,
-        )
-        current = state.get("edited_report")
-        if (
-            current is not None
-            and current.model_dump(mode="json") != audited.model_dump(mode="json")
-        ):
-            raise AgentWorkflowError(
-                "in-memory edited report changed after final audit completion"
-            )
-        state["final_audit_snapshot_ref"] = snapshot_ref
-        return audited, snapshot_ref
+        except ValueError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
 
     def _delivery_projection(
         self,
@@ -8166,13 +7901,9 @@ class ReportWorkflowRunner:
         self._complete_delivery(context)
 
     def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
-        preparation = _DeliveryPreparationDependencies(
-            validated_final_audit_subject=self._validated_final_audit_subject,
-        )
         state = DeliveryTools(
             self.service.workspace,
             self.service.store,
-            preparation=preparation,
         ).prepare(state)
         return DeliveryContext.model_validate(
             {

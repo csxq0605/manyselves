@@ -9,7 +9,6 @@ from typing import Any
 from pydantic import BaseModel
 
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
-    _DeliveryPreparationDependencies,
     _restore_delivery_state,
     build_delivery_tool_implementations,
 )
@@ -62,13 +61,9 @@ class DeclarativeDeliveryRuntime:
         workspace = workspace or getattr(service, "workspace", None)
         store = store or getattr(service, "store", None)
         if prepare_tool is None and workspace is not None:
-            preparation = _DeliveryPreparationDependencies(
-                validated_final_audit_subject=self._runner._validated_final_audit_subject,
-            )
             prepare_tool = build_delivery_tool_implementations(
                 workspace=Path(workspace),
                 store=store or ReportingStore(Path(workspace)),
-                preparation=preparation,
             )["prepare-render-delivery"]
         if publish_tool is None and workspace is not None:
             publish_tool = build_delivery_tool_implementations(
