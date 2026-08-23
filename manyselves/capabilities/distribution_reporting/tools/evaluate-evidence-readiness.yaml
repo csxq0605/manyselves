@@ -1,0 +1,10 @@
+id: evaluate-evidence-readiness
+version: 1.0.0
+description: Apply the request evidence policy to prepared coverage
+implementation: capability:distribution-reporting:evaluate-evidence-readiness
+input_contract: preparation_context
+output_contract: evidence_readiness_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

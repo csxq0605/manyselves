@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — 建立 Distribution Reporting Domain Runtime`
-- Current slice: `FA-03/M6.6 专项问题、Evidence Index 与照片绑定所有权已完成；下一步 M6.7 文件化 Evidence Readiness Interaction`
+- Current slice: `FA-03/M6.7 文件化 Evidence Readiness、通用 WAITING/Resume 与同 Run Preparation 回环已完成；正在执行 M7.1 渲染叶子迁移`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `e023be9 Runtime: own completed agent result reuse`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `Characterization First 实现 Evidence Readiness 的 Capability Tool/Interaction/Output 与通用 WAITING/Resume；不新增 Kernel 状态或业务 Action`
+- Next automatic action: `Characterization First 迁移 Capability-owned Rendering 叶子并以行为测试替换固定源码 SHA 门禁；随后实现文件定义 Delivery Tools`
 
 ## Why the prior completion claim is reopened
 
@@ -127,6 +127,7 @@
 - FA-03/M6.5b 新增 Capability `runtime/preparation_tools.py` 与 `preparation_snapshot.py`：Manifest、Taxonomy、文件 worker、Evidence/Photo 归一化、Coverage、canonical Persist/Restore 均以 `PreparationContext` 为唯一值，并由 `build_preparation_tool_implementations` 精确绑定 7 个 YAML Tool ID。输入快照、content snapshot 与照片 ID 逻辑通过窄构造依赖注入，Capability 不导入 `core.reporting`；Normalize 删除旧 direct-mapper fallback。Canonical snapshot 使用既有 `ReportingStore`、staging directory 与 `os.replace`，completion 不再复制旧 `preparation_sha256`、CAS、FullReportCheckpoint、workflow-state 比对或 photo repair。Characterization 在模块缺失时分别先 `3 failed` 与 `ModuleNotFoundError`，实现后 Preparation focused `14 passed`；现有声明式父 Runner 的 passthrough 已删除，旧 mid-stage 编译只移除已由父 Runner 完成的两个 Preparation Action，最终 Generic Run service 将原样编译文件 Workflow。没有新增 Hash、CAS、锁、Gate、validator、Agent/Provider 调用、Action Kind 或依赖。
 - FA-03/M6.6 将 Reporting 专属 `special_topics.py` 与 `research/project_evidence.py` 真实迁入 Capability runtime，并从旧 `assets.py` 只提取纯 `runtime_photo_ids` 到 Capability domain；旧两个模块删除且不留 shim/re-export，Workflow、Service、Chief cohort、Research Tool 与测试消费者均直接使用新路径。Characterization 在新路径缺失时先出现 3 个 import error，迁移后 ownership `2 passed`；主工作区 special-topic/evidence/photo affected `33 passed`。Ruff、新消费者 import-order Ruff、compileall、逐字节迁移、旧路径扫描和 `git diff --check` 通过。专项来源 SHA 与 Evidence snapshot/content SHA 只是原逻辑机械迁移，未新增或扩大 Hash、CAS、锁、Gate、validator 或依赖。
 - FA-03/M6.6a 将专项问题计划加载、Evidence Index 与 Source Ledger 物化显式接入 Capability-owned Preparation 文件工作流：`load-special-topic-plan` 在 Persist 前运行，`finalize-preparation` 在新建与恢复分支的 Persist/Restore 后运行，并把 canonical refs 回写 `PreparationContext`；两者均是 YAML 声明的非模型可见 Tool，Kernel、Compiler、Host 无 Reporting 分支。Characterization First 先 `4 failed`，实现后 Agent focused `48 passed`；主工作区 Preparation/definition/架构复核 `19 passed, 4 xfailed`，定向 Ruff 与 `git diff --check` 通过。实现仅调用 M6.6 已迁入 Capability 的既有 `ProjectEvidenceIndex`/`SourceLedger`，没有新增或复制 Hash、CAS、锁、Gate、validator 或依赖。
+- FA-03/M6.7 新增 Capability-owned Evidence Readiness domain/runtime/models、6 个 typed Contract、Interaction、Output、4 个非模型可见 Tool 与独立文件 Workflow。`ask` 在通用 `RequestInput` 前先用 `PublishResult` 暴露缺失证据/受影响模块，`block` 使用既有 `FailWorkflow`，`draft/skip` 直接发布并结束；`supplement` 只经 typed Tool 投影后，以现有 `Subworkflow` 真实重跑 `distribution-reporting-preparation`，再用 `Goto` 在同一 Run 重新评估，不引入 callback/Runner/Provider 或 Kernel 业务 Action。Characterization First 初始 `3 failed`、supplement 子工作流另取得 `1 failed`，实现后新 focused `9 passed`，Definition/Preparation affected `47 passed`；定向 Ruff、compileall 与 `git diff --check` 通过。未新增 Hash、CAS、锁、Gate、validator 或依赖；顶层 operation 对该子工作流的组合留在 M8 文件 entrypoint 切片完成。
 - FA-02 新增 `runtime/agent_execution.py`：服务直接管理 `(workflow_id, conversation_key)` session registry、AgentLoop 创建/恢复/启动/复用、单轮消息发布与 terminal 等待、turn completion 和 workflow close；该模块只依赖中立 `AgentSessionLoop`/`AgentMessageBus` 结构协议，不导入历史 `core` 具体类。Reporting 生产路径已改用 `start_or_restore`、`dispatch_turn`、`wait_until_turn_complete` 和 `close_workflow`，不再直接 `loop.start/stop`、`bus.wait_for` 或构造 `UserMessage`。
 - AgentExecutionService Characterization 先因模块不存在取得 RED；Runtime execution/adapter/recovery `13 passed`，Reporting stable-session/persisted-recovery/auditor-isolation/max-token/tool-slice/no-progress/correction `8 passed`，声明式 recovery policy 选择 `5 passed`。定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。新服务未新增 Gate、Hash、CAS、锁或生产依赖；Reporting 原有 correlation/hash 仍原地保留且未复制。
 - FA-02 恢复循环继续收敛：Runtime 用 `AgentRecoveryCompleted/Required/Stopped` 分型观察直接分派 RecoveryController 的动作，Capability 端口统一为 async 的 terminal 解释、领域消息构造、stop 持久化与 result reuse；移除了可冲突 boolean/optional 组合、sync/async 双态、`None` 拒绝语义和 action compatibility 判断门禁。Reporting 的真实 natural-language-without-submission 现在通过 `execute_with_recovery` 在原 session 执行 CORRECT/STOP/FAIL，Reporting 仅构造 correction Prompt、解码 typed result 和保留既有结果持久化。

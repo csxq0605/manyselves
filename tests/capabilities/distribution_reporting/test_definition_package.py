@@ -210,6 +210,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "template-distiller",
     }
     assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
+        "distribution-evidence-readiness",
         "distribution-chief-chapter-1-lane",
         "distribution-chief-chapter-3-lane",
         "distribution-chief-chapter-4-lane",
@@ -265,6 +266,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert registry.all(DefinitionKind.GATE) == ()
     assert {definition.id for definition in registry.all(DefinitionKind.INTERACTION)} == {
         "cross-owner-main-exception-decision",
+        "evidence-readiness-decision",
         "module-main-exception-decision",
     }
 

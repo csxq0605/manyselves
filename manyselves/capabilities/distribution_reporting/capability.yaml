@@ -9,6 +9,7 @@ tools: ./tools
 gates: ./gates
 recovery: ./recovery
 interactions: ./interactions
+outputs: ./outputs
 entrypoints:
 - distribution-reporting
 runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

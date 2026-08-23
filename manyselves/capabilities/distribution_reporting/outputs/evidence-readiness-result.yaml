@@ -1,0 +1,6 @@
+id: evidence-readiness-result
+version: 1.0.0
+description: Evidence readiness result exposed by the generic Run projection
+output_type: json
+contract: evidence_readiness_output
+label: Evidence readiness

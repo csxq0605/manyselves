@@ -1,0 +1,5 @@
+id: evidence_decision_input
+version: 1.0.0
+description: User decision and optional same-run evidence supplements
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.evidence_readiness:EvidenceDecisionInput

@@ -1,0 +1,106 @@
+id: distribution-evidence-readiness
+version: 1.0.0
+description: Apply evidence readiness policy through generic WAITING and workflow actions
+interactions:
+- evidence-readiness-decision
+outputs:
+- evidence-readiness-result
+gates: []
+recovery: []
+input_contract: preparation_context
+input_variable: preparation-context
+output_contract: evidence_readiness_output
+max_iterations: 20
+state: {}
+actions:
+- id: evaluate-readiness
+  kind: invoke_tool
+  tool: evaluate-evidence-readiness
+  input_variable: preparation-context
+  output_variable: readiness-state
+- id: route-readiness
+  kind: invoke_tool
+  tool: route-evidence-readiness
+  input_variable: readiness-state
+  output_variable: readiness-route
+- id: choose-initial-route
+  kind: if
+  condition:
+    variable: readiness-route
+    operator: eq
+    value: ask
+  then: publish-readiness-before-decision
+  otherwise: choose-initial-block
+- id: publish-readiness-before-decision
+  kind: publish_result
+  output: evidence-readiness-result
+  input_variable: readiness-state
+  output_name: readiness
+- id: request-evidence-decision
+  kind: request_input
+  interaction: evidence-readiness-decision
+  output_variable: decision-input
+- id: apply-evidence-decision
+  kind: invoke_tool
+  tool: apply-evidence-decision
+  input_variables:
+    state: readiness-state
+    input: decision-input
+  output_variable: readiness-state
+- id: route-decision
+  kind: invoke_tool
+  tool: route-evidence-readiness
+  input_variable: readiness-state
+  output_variable: decision-route
+- id: choose-decision-route
+  kind: if
+  condition:
+    variable: decision-route
+    operator: eq
+    value: prepare
+  then: prepare-evidence-supplement
+  otherwise: choose-decision-stop
+- id: prepare-evidence-supplement
+  kind: invoke_tool
+  tool: prepare-evidence-supplement
+  input_variable: readiness-state
+  output_variable: preparation-context
+- id: run-reporting-preparation
+  kind: subworkflow
+  workflow: distribution-reporting-preparation
+  input_variable: preparation-context
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: preparation-context
+- id: continue-after-preparation
+  kind: goto
+  target: evaluate-readiness
+- id: choose-initial-block
+  kind: if
+  condition:
+    variable: readiness-route
+    operator: eq
+    value: block
+  then: fail-evidence-readiness
+  otherwise: publish-readiness
+- id: choose-decision-stop
+  kind: if
+  condition:
+    variable: decision-route
+    operator: eq
+    value: stop
+  then: fail-evidence-readiness
+  otherwise: publish-readiness
+- id: publish-readiness
+  kind: publish_result
+  output: evidence-readiness-result
+  input_variable: readiness-state
+  output_name: result
+- id: finish-readiness
+  kind: end_workflow
+  output_variable: readiness-state
+  output_name: result
+  output_contract: evidence_readiness_output
+- id: fail-evidence-readiness
+  kind: fail_workflow
+  message: evidence readiness blocked the workflow
