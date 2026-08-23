@@ -725,6 +725,29 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     )
     chief_result_path = tmp_path / chief_result_ref
     chief_result_path.parent.mkdir(parents=True, exist_ok=True)
+    chief_part_refs = {
+        CHIEF_SECTION_RESULT_PART_IDS[section_id]: (
+            f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/r1/"
+            f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"
+        )
+        for section_id in ("1.1", "1.2", "1.3")
+    }
+    chief_part_root = tmp_path / (
+        f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/r1"
+    )
+    chief_part_root.mkdir(parents=True, exist_ok=True)
+    for part_id, body in {
+        CHIEF_SECTION_RESULT_PART_IDS["1.1"]: (
+            "Updated background text with the requested verification detail."
+        ),
+        CHIEF_SECTION_RESULT_PART_IDS["1.2"]: (
+            "Existing findings overview retained for the revision lane."
+        ),
+        CHIEF_SECTION_RESULT_PART_IDS["1.3"]: (
+            "Existing regional summary retained for the revision lane."
+        ),
+    }.items():
+        (chief_part_root / f"{part_id}.md").write_text(body, encoding="utf-8")
     chief_result_path.write_text(
         json.dumps(
             ChiefChapterLaneRevisionSubmission(
@@ -735,13 +758,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
                 chapter_id="1",
                 revision=1,
                 section_ids=["1.1", "1.2", "1.3"],
-                part_refs={
-                    CHIEF_SECTION_RESULT_PART_IDS[section_id]: (
-                        f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/"
-                        f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"
-                    )
-                    for section_id in ("1.1", "1.2", "1.3")
-                },
+                part_refs=chief_part_refs,
                 revision_responses=[
                     RevisionResponse(
                         finding_id="F-final-1",
@@ -827,7 +844,7 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: accept-current-final-chief-revision",
+            match="missing tool adapter: prepare-current-final-recheck",
         ):
             await host.execute(
                 plan,
@@ -862,12 +879,59 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         assert review_state.actions["start-final-review-cycle"].status.value == "completed"
         assert review_state.actions["final-review-needs-round"].status.value == "completed"
         assert review_state.actions["advance-final-review-round"].status.value == "completed"
-        assert review_state.actions["run-final-chief-revision-cohort"].status.value == "failed"
+        assert (
+            review_state.actions["run-final-chief-revision-cohort"].status.value
+            == "completed"
+        )
+        assert review_state.actions["run-final-recheck-cohort"].status.value == "failed"
+        chief_cohort_state = WorkflowState.model_validate(
+            review_state.subworkflow_states["run-final-chief-revision-cohort"]
+        )
+        assert chief_cohort_state.status.value == "completed"
+        assert chief_cohort_state.outputs["result"]["subject_ref"] == (
+            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
+        )
+        recheck_cohort_state = WorkflowState.model_validate(
+            review_state.subworkflow_states["run-final-recheck-cohort"]
+        )
+        assert recheck_cohort_state.status.value == "failed"
+        chief_cohort_completed = {
+            event.action_id
+            for event in events.events
+            if event.kind == "action.completed"
+            and event.workflow_id == "distribution-final-chief-revision-cohort"
+        }
+        assert {
+            "final-chief-revision-cohort",
+            "join-final-chief-revision-cohort",
+            "reduce-final-chief-revision-cohort",
+        }.issubset(chief_cohort_completed)
+        assert {
+            event.action_id
+            for event in events.events
+            if event.kind == "action.completed"
+            and event.workflow_id == "distribution-final-chief-revision-1-lane"
+        } >= {
+            "accept-current-final-chief-revision",
+            "complete-current-final-chief-revision",
+        }
         review = DeclarativeFinalReviewContext.model_validate(
             review_state.variables["review"]
         )
         assert review.revision_number == 1
         assert set(review.pending_by_chapter) == {"1"}
+        assert review.subject_ref == (
+            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
+        )
+        assert review.current.assessment_background == (
+            "Updated background text with the requested verification detail."
+        )
+        chief_output_ref = (
+            tmp_path
+            / f"Work/runs/{run_id}/reviews/chief-chapter-lane-1-r1.json"
+        )
+        assert chief_output_ref.is_file()
+        assert json.loads(chief_output_ref.read_text(encoding="utf-8"))["revision"] == 1
         chief_input_ref = (
             tmp_path
             / f"Work/runs/{run_id}/context/chief-chapter-1-input-r1.json"

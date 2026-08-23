@@ -1,4 +1,4 @@
-"""Capability-owned deterministic tools for the opening Final review round."""
+"""Capability-owned deterministic tools for Final review and Chief revision."""
 
 from __future__ import annotations
 
@@ -10,16 +10,21 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    ChiefChapterLaneRevisionSubmission,
     EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
     ModuleSubmission,
     TaskEnvelope,
+    numbered_markdown_headings,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+    DeclarativeFinalChiefRevisionAgentResult,
     DeclarativeFinalChiefRevisionContext,
+    DeclarativeFinalChiefRevisionOutcome,
     DeclarativeFinalReviewContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
@@ -27,6 +32,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
+    SpecialTopicPlan,
     chapter_section_ids,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
@@ -101,10 +107,19 @@ def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
         state["edited_report"] = EditedReportSubmission.model_validate(
             state["edited_report"]
         )
+    if isinstance(state.get("special_topic_plan"), Mapping):
+        state["special_topic_plan"] = SpecialTopicPlan.model_validate(
+            state["special_topic_plan"]
+        )
     return state
 
 
-def _split_special_topic_analysis(markdown: str, plan: Any) -> dict[str, str]:
+def _split_special_topic_analysis(
+    markdown: str,
+    plan: Any,
+    *,
+    allow_single_body: bool = True,
+) -> dict[str, str]:
     plan.validate_analysis(markdown, allow_chapter_heading=True)
     expected = [section.section_id for section in plan.sections]
     lines = markdown.strip().splitlines()
@@ -115,7 +130,7 @@ def _split_special_topic_analysis(markdown: str, plan: Any) -> dict[str, str]:
         if (match := heading_re.match(line))
     ]
     if not matches:
-        if len(expected) == 1:
+        if allow_single_body and len(expected) == 1:
             return {expected[0]: markdown.strip()}
         raise ValueError("Chapter 4 result must contain one heading per planned subsection")
     sections: dict[str, str] = {}
@@ -149,6 +164,22 @@ def _section_bodies(
         section_id: getattr(edited, _STATIC_SECTION_BODIES[section_id])
         for section_id in _section_ids(edited, chapter_id)
     }
+
+
+def _render_special_topic_analysis(
+    section_bodies: dict[str, str],
+    plan: Any,
+) -> str | None:
+    if plan is None:
+        return None
+    expected = [section.section_id for section in plan.sections]
+    if set(section_bodies) != set(expected):
+        raise ValueError("Chapter 4 reducer received an incomplete subsection set")
+    return "\n\n".join(
+        f"### {section.section_id} {section.title}\n"
+        f"{section_bodies[section.section_id].strip()}"
+        for section in plan.sections
+    )
 
 
 def _source_projection(
@@ -391,6 +422,227 @@ class FinalReviewTools:
             DeclarativeFinalChiefRevisionContext.model_validate(value).status == "ready"
         )
 
+    def accept_chief_revision(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalChiefRevisionContext:
+        context = DeclarativeFinalChiefRevisionContext.model_validate(
+            values["context"]
+        )
+        result = DeclarativeFinalChiefRevisionAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            return context.model_copy(update={"status": "failed", "error": result.error})
+        submission = cast(ChiefChapterLaneRevisionSubmission, result.submission)
+        contract = cast(ChiefChapterLaneInput, context.contract)
+        try:
+            matches_identity = (
+                submission.run_id == contract.run_id
+                and submission.base_subject_ref == contract.subject_ref
+                and submission.chapter_id == context.chapter_id
+                and submission.revision == contract.revision
+            )
+            if contract.revision == 1:
+                matches_identity = matches_identity and {
+                    response.finding_id for response in submission.revision_responses
+                } == {finding.id for finding in contract.assigned_findings}
+            if not matches_identity:
+                raise ValueError(
+                    f"chief chapter {context.chapter_id} revision identity mismatch"
+                )
+            task_id = f"chief-chapter-{context.chapter_id}-r{contract.revision}"
+            parts = self._read_chief_revision_parts(
+                context.chapter_id,
+                contract.run_id,
+                submission,
+                task_id,
+                contract.special_topic_plan,
+            )
+            output_ref = (
+                f"Work/runs/{contract.run_id}/reviews/chief-chapter-lane-"
+                f"{context.chapter_id}-r{contract.revision}.json"
+            )
+            self.store.write_json(
+                output_ref,
+                submission.model_dump(mode="json"),
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(
+            update={
+                "status": "accepted",
+                "submission": submission,
+                "output_ref": output_ref,
+                "parts": parts,
+            }
+        )
+
+    def _read_chief_revision_parts(
+        self,
+        chapter_id: str,
+        run_id: str,
+        submission: ChiefChapterLaneRevisionSubmission,
+        task_id: str,
+        special_topic_plan: Any,
+    ) -> dict[str, str]:
+        """Read only the submitted lane parts from its declared task directory."""
+
+        run_root = (self.workspace / f"Work/runs/{run_id}").resolve()
+        task_root = (run_root / "drafts" / task_id / f"r{submission.revision}").resolve()
+        if not task_root.is_relative_to(run_root):
+            raise ValueError("Chief revision task root escapes the current run")
+        part_to_sections: dict[str, list[str]] = {}
+        if chapter_id == "4":
+            part_to_sections["special_topic_analysis"] = list(submission.section_ids)
+        else:
+            for section_id in submission.section_ids:
+                part_to_sections.setdefault(
+                    CHIEF_SECTION_RESULT_PART_IDS[section_id],
+                    [],
+                ).append(section_id)
+        bodies: dict[str, str] = {}
+        for part_id, ref in submission.part_refs.items():
+            path = (self.workspace / ref).resolve()
+            if (
+                not path.is_relative_to(task_root)
+                or path.suffix != ".md"
+                or not path.is_file()
+            ):
+                raise ValueError(
+                    f"Chief chapter {chapter_id} returned a part outside its lane task: {ref}"
+                )
+            content = path.read_text(encoding="utf-8")
+            if not content.strip():
+                raise ValueError(
+                    f"Chief chapter {chapter_id} returned a blank part: {part_id}"
+                )
+            if chapter_id == "4" and part_id == "special_topic_analysis":
+                bodies.update(
+                    _split_special_topic_analysis(
+                        content,
+                        special_topic_plan,
+                        allow_single_body=len(submission.section_ids) == 1,
+                    )
+                )
+            else:
+                numbered_headings = numbered_markdown_headings(content)
+                if numbered_headings:
+                    raise ValueError(
+                        f"Chief chapter {chapter_id} part {part_id} must contain section "
+                        f"body only, without numbered Markdown headings: {list(numbered_headings)}"
+                    )
+                for section_id in part_to_sections.get(part_id, []):
+                    bodies[section_id] = content
+        if set(bodies) != set(submission.section_ids):
+            raise ValueError(
+                f"Chief chapter {chapter_id} did not return every assigned section body"
+            )
+        return bodies
+
+    @staticmethod
+    def complete_chief_revision(
+        value: Any,
+    ) -> DeclarativeFinalChiefRevisionOutcome:
+        context = DeclarativeFinalChiefRevisionContext.model_validate(value)
+        if context.status == "failed":
+            return DeclarativeFinalChiefRevisionOutcome(
+                chapter_id=context.chapter_id,
+                status="failed",
+                error=context.error,
+            )
+        if context.status == "skipped":
+            return DeclarativeFinalChiefRevisionOutcome(
+                chapter_id=context.chapter_id,
+                status="skipped",
+            )
+        return DeclarativeFinalChiefRevisionOutcome(
+            chapter_id=context.chapter_id,
+            status="completed",
+            submission=context.submission,
+            output_ref=context.output_ref,
+            parts=context.parts,
+        )
+
+    def reduce_chief_revisions(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeFinalReviewContext:
+        review = DeclarativeFinalReviewContext.model_validate(values["review"])
+        outcomes = {
+            chapter_id: DeclarativeFinalChiefRevisionOutcome.model_validate(outcome)
+            for chapter_id, outcome in dict(values["outcomes"]).items()
+        }
+        failures = {
+            chapter_id: outcome.error or "Final Chief revision lane failed"
+            for chapter_id, outcome in outcomes.items()
+            if outcome.status == "failed"
+        }
+        if failures:
+            first = min(failures, key=int)
+            raise RuntimeError(failures[first])
+        active = tuple(review.pending_by_chapter)
+        parts_by_chapter = {
+            chapter_id: outcomes[chapter_id].parts for chapter_id in active
+        }
+        updates = {
+            section_id: body
+            for chapter_parts in parts_by_chapter.values()
+            for section_id, body in chapter_parts.items()
+        }
+        field_for_section = {
+            "1.1": "assessment_background",
+            "1.2": "findings_overview",
+            "1.3": "regional_executive_summary",
+            "3.1.1": "risk_panorama",
+            "3.1.2": "dimension_risk_analysis",
+            "3.1.3": "data_gap_analysis",
+            "3.2": "improvement_action_plan",
+        }
+        state = _restore_state(review.state)
+        plan = state.get("special_topic_plan") or review.current.special_topic_plan
+        current = review.current.model_copy(
+            update={
+                **{
+                    field_for_section[section_id]: body
+                    for section_id, body in updates.items()
+                    if section_id in field_for_section
+                },
+                **(
+                    {
+                        "special_topic_analysis": _render_special_topic_analysis(
+                            parts_by_chapter["4"],
+                            plan,
+                        )
+                    }
+                    if "4" in parts_by_chapter
+                    else {}
+                ),
+            }
+        )
+        run_id = str(state["run_id"])
+        revision = review.revision_number
+        subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r{revision}.json"
+        self.store.write_json(subject_ref, current.model_dump(mode="json"))
+        state["edited_report"] = current
+        state["chief_candidate_ref"] = subject_ref
+        return review.model_copy(
+            update={
+                "state": state,
+                "current": current,
+                "subject_ref": subject_ref,
+                "revision_responses": {
+                    chapter_id: list(
+                        cast(
+                            ChiefChapterLaneRevisionSubmission,
+                            outcomes[chapter_id].submission,
+                        ).revision_responses
+                    )
+                    for chapter_id in active
+                },
+            }
+        )
+
 
 def build_final_review_tool_implementations(
     *,
@@ -404,6 +656,9 @@ def build_final_review_tool_implementations(
         "advance-final-review-round": tools.advance_round,
         "prepare-current-final-chief-revision": tools.prepare_chief_revision,
         "final-chief-revision-requires-agent": tools.chief_revision_requires_agent,
+        "accept-current-final-chief-revision": tools.accept_chief_revision,
+        "complete-current-final-chief-revision": tools.complete_chief_revision,
+        "reduce-final-chief-revision-cohort": tools.reduce_chief_revisions,
     }
 
 

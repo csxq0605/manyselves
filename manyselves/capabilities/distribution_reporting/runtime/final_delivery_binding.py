@@ -2,8 +2,8 @@
 
 This module contains the deterministic preparation and Tool bindings needed to
 enter the file-defined Final chapter lanes and the opening Final review round.
-Chief revision acceptance/reduction, recheck, and Delivery remain separate
-declared boundaries until their Capability-owned adapters are available.
+Chief revision acceptance/reduction are bound here through the Capability-owned
+Final review tools; recheck and Delivery remain separate declared boundaries.
 """
 
 from __future__ import annotations
