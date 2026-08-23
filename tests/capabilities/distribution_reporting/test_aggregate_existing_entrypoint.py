@@ -1241,6 +1241,8 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         CHIEF_SECTION_RESULT_PART_IDS,
+        AgentResult,
+        AgentRunStatus,
         ChapterScopedFinalReviewFinding,
         ChapterScopedFinalReviewTargetChange,
         ChiefChapterLaneRevisionSubmission,
@@ -1374,11 +1376,18 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
             ]
         result_path.write_text(
             json.dumps(
-                FinalChapterLaneFindingSubmission(
+                AgentResult(
+                    task_id=f"final-chapter-{chapter_id}-r0",
                     run_id=run_id,
-                    chapter_id=chapter_id,
-                    checked_section_ids=list(section_ids),
-                    findings=findings,
+                    agent_id="chief-editor-auditor",
+                    session_id=f"final-chapter-{chapter_id}",
+                    status=AgentRunStatus.COMPLETED,
+                    payload=FinalChapterLaneFindingSubmission(
+                        run_id=run_id,
+                        chapter_id=chapter_id,
+                        checked_section_ids=list(section_ids),
+                        findings=findings,
+                    ),
                 ).model_dump(mode="json"),
                 ensure_ascii=False,
             ),
@@ -1445,20 +1454,27 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     recheck_result_path.parent.mkdir(parents=True, exist_ok=True)
     recheck_result_path.write_text(
         json.dumps(
-            FinalChapterLaneVerdictSubmission(
+            AgentResult(
+                task_id="final-chapter-1-r1",
                 run_id=run_id,
-                chapter_id="1",
-                checked_section_ids=["1.1", "1.2", "1.3"],
-                verdicts=[
-                    ResolutionVerdict(
-                        finding_id="F-final-1",
-                        verdict="resolved",
-                        reason="The revised section now states the requested verification detail.",
-                        evidence_refs=[
-                            f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
-                        ],
-                    )
-                ],
+                agent_id="chief-editor-auditor",
+                session_id="final-chapter-1",
+                status=AgentRunStatus.COMPLETED,
+                payload=FinalChapterLaneVerdictSubmission(
+                    run_id=run_id,
+                    chapter_id="1",
+                    checked_section_ids=["1.1", "1.2", "1.3"],
+                    verdicts=[
+                        ResolutionVerdict(
+                            finding_id="F-final-1",
+                            verdict="resolved",
+                            reason="The revised section now states the requested verification detail.",
+                            evidence_refs=[
+                                f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
+                            ],
+                        )
+                    ],
+                ),
             ).model_dump(mode="json"),
             ensure_ascii=False,
         ),
@@ -1491,20 +1507,36 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
                 self.received.append(message)
                 if message.task_id == "invoke-final-recheck-agent":
                     result_path = recheck_result_ref
+                    terminal_task_id = "final-chapter-1-r1"
+                    terminal_sender = "chief-editor-auditor"
                 else:
                     result_path = (
                         chief_result_ref
                         if message.session_id.startswith("chief-chapter-")
                         else result_refs[message.session_id.removeprefix("final-chapter-")]
                     )
+                    terminal_task_id = (
+                        message.task_id
+                        if message.session_id.startswith("chief-chapter-")
+                        else f"final-chapter-{message.session_id.removeprefix('final-chapter-')}-r0"
+                    )
+                    terminal_sender = (
+                        self.runtime_id
+                        if message.session_id.startswith("chief-chapter-")
+                        else "chief-editor-auditor"
+                    )
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender=terminal_sender,
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
+                        task_id=terminal_task_id,
                         run_id=message.run_id,
                         result_path=result_path,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id=(
+                            message.task_attempt_id
+                            if message.session_id.startswith("chief-chapter-")
+                            else ""
+                        ),
                         session_id=message.session_id,
                     )
                 )
@@ -1747,6 +1779,17 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
             for runtime_id, loop in loops.items()
             if ":chief-editor-auditor:" in runtime_id
         )
+        initial_messages = [
+            message
+            for loop in loops.values()
+            for message in loop.received
+            if message.task_id == "invoke-final-chapter-auditor"
+        ]
+        assert len(initial_messages) == 3
+        assert all(
+            message.task_attempt_id == message.task_id
+            for message in initial_messages
+        )
         recheck_messages = [
             message
             for loop in loops.values()
@@ -1754,6 +1797,8 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
             if message.task_id == "invoke-final-recheck-agent"
         ]
         assert len(recheck_messages) == 1
+        assert recheck_messages[0].task_id == "invoke-final-recheck-agent"
+        assert recheck_messages[0].task_attempt_id == recheck_messages[0].task_id
         assert recheck_messages[0].session_id == "final-chapter-1"
         assert '"phase": "recheck"' in recheck_messages[0].content
         assert '<final_lane_specialization chapter_id="1"' in recheck_messages[0].content

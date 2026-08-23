@@ -10,11 +10,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ModuleReviewInput,
@@ -105,16 +109,9 @@ class ModuleReviewerAgentBridge:
         task_id: str,
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-        review = context.review
-        review_input = (
-            ModuleReviewInput.model_validate(
-                review.prepared.review_input
-                if context.recheck is None
-                else context.recheck.prepared.review_input
-            )
-        )
+        envelope, review_input, inline_context = self._prepared_turn(context)
         workflow_id = context.workflow_id or self.workflow_id
-        run_id = str(context.reporting_state["run_id"])
+        run_id = envelope.run_id
         runtime_id = self._runtime_id(agent, conversation, workflow_id)
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
@@ -153,11 +150,7 @@ class ModuleReviewerAgentBridge:
                 agent,
                 task,
                 review_input,
-                inline_context=(
-                    review.envelope.inline_context
-                    if review.envelope is not None
-                    else None
-                ),
+                inline_context=inline_context,
             ),
             message_id=f"{task_id}:{run_id}:initial",
             workflow_id=workflow_id,
@@ -171,6 +164,9 @@ class ModuleReviewerAgentBridge:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=envelope.agent_id,
+            terminal_task_id=envelope.task_id,
+            terminal_task_attempt_id="",
         )
         outcome = await typed_turn.dispatch(
             session,
@@ -211,23 +207,38 @@ class ModuleReviewerAgentBridge:
         *,
         output_contract: str,
     ) -> dict[str, Any]:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
+        loaded = load_agent_result_payload(self.workspace, result_ref)
         if output_contract == "declarative_module_recheck_agent_result":
             submission = ModuleReviewVerdictSubmission.model_validate(
-                json.loads(path.read_text(encoding="utf-8"))
+                loaded.payload
             )
             return DeclarativeModuleRecheckAgentResult(
                 status="completed",
                 submission=submission,
             ).model_dump(mode="json")
         submission = ModuleReviewFindingSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
+            loaded.payload
         )
         return DeclarativeModuleReviewAgentResult(
             status="completed",
             submission=submission,
         ).model_dump(mode="json")
+
+    @staticmethod
+    def _prepared_turn(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> tuple[TaskEnvelope, ModuleReviewInput, str | None]:
+        if context.recheck is not None:
+            prepared = context.recheck.prepared
+        else:
+            prepared = context.review.prepared
+        envelope = cast(TaskEnvelope, prepared.envelope)
+        review_input = cast(ModuleReviewInput, prepared.review_input)
+        return (
+            cast(TaskEnvelope, envelope),
+            cast(ModuleReviewInput, review_input),
+            envelope.inline_context,
+        )
 
     @staticmethod
     def _runtime_id(

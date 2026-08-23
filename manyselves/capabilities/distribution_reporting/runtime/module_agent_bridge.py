@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleRevisionSubmission,
     ModuleSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
@@ -103,8 +107,9 @@ class ModuleAuthoringAgentBridge:
         task_id: str,
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        envelope = cast(TaskEnvelope, self._envelope(context))
         workflow_id = context.workflow_id or self.workflow_id
-        run_id = str(context.reporting_state.get("run_id", ""))
+        run_id = envelope.run_id
         runtime_id = self._runtime_id(agent, conversation, workflow_id)
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
@@ -152,6 +157,9 @@ class ModuleAuthoringAgentBridge:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=envelope.agent_id,
+            terminal_task_id=envelope.task_id,
+            terminal_task_attempt_id="",
         )
         outcome = await typed_turn.dispatch(
             session,
@@ -189,34 +197,36 @@ class ModuleAuthoringAgentBridge:
             )
         )
 
-    def _read_submission(self, result_ref: str) -> ModuleSubmission:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
-        return ModuleSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
-
     def _decode_result(
         self,
         result_ref: str,
         *,
         output_contract: str,
     ) -> dict[str, Any]:
+        loaded = load_agent_result_payload(self.workspace, result_ref)
         if output_contract == "declarative_module_revision_agent_result":
-            path = Path(result_ref)
-            path = path if path.is_absolute() else self.workspace / path
             submission = ModuleRevisionSubmission.model_validate(
-                json.loads(path.read_text(encoding="utf-8"))
+                loaded.payload
             )
             return DeclarativeModuleRevisionAgentResult(
                 status="completed",
                 submission=submission,
             ).model_dump(mode="json")
-        submission = self._read_submission(result_ref)
+        submission = ModuleSubmission.model_validate(loaded.payload)
         return DeclarativeModuleAuthoringAgentResult(
             status="completed",
             module=submission,
         ).model_dump(mode="json")
+
+    @staticmethod
+    def _envelope(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> TaskEnvelope | None:
+        if context.authoring is not None:
+            return context.authoring.envelope
+        if context.revision is not None:
+            return context.revision.prepared.envelope
+        return None
 
     def _runtime_id(
         self,

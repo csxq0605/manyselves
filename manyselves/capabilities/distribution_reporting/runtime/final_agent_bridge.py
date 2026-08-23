@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
+    load_agent_result_payload,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterAgentResult,
@@ -126,6 +130,7 @@ class FinalChapterAgentBridge:
                 FinalChapterLaneInput.model_validate(context.contract),
                 conversation,
                 task_id=task_id,
+                envelope=cast(TaskEnvelope, context.envelope),
                 inline_context=(
                     context.envelope.inline_context
                     if context.envelope is not None
@@ -141,6 +146,7 @@ class FinalChapterAgentBridge:
             FinalChapterLaneInput.model_validate(context.contract),
             conversation,
             task_id=task_id,
+            envelope=cast(TaskEnvelope, context.envelope),
             inline_context=(
                 context.envelope.inline_context
                 if context.envelope is not None
@@ -158,6 +164,7 @@ class FinalChapterAgentBridge:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        envelope: TaskEnvelope,
         inline_context: str | None,
         decode_result: Callable[[str], dict[str, Any]],
         turn_suffix: str,
@@ -212,6 +219,9 @@ class FinalChapterAgentBridge:
             task_id=task_id,
             task_attempt_id=task_id,
             session_id=session.session_id,
+            sender=envelope.agent_id,
+            terminal_task_id=envelope.task_id,
+            terminal_task_attempt_id="",
         )
         outcome = await typed_turn.dispatch(
             session,
@@ -250,10 +260,8 @@ class FinalChapterAgentBridge:
         )
 
     def _read_submission(self, result_ref: str) -> FinalChapterLaneFindingSubmission:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
         return FinalChapterLaneFindingSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
+            load_agent_result_payload(self.workspace, result_ref).payload
         )
 
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
@@ -264,10 +272,8 @@ class FinalChapterAgentBridge:
         ).model_dump(mode="json")
 
     def _read_verdict_submission(self, result_ref: str) -> FinalChapterLaneVerdictSubmission:
-        path = Path(result_ref)
-        path = path if path.is_absolute() else self.workspace / path
         return FinalChapterLaneVerdictSubmission.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
+            load_agent_result_payload(self.workspace, result_ref).payload
         )
 
     def _decode_recheck_result(self, result_ref: str) -> dict[str, Any]:

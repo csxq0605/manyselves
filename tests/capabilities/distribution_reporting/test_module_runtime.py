@@ -629,6 +629,8 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         REPORT_TAXONOMY,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
         ModuleSubmission,
         TaskEnvelope,
     )
@@ -682,13 +684,20 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
-        ModuleSubmission(
-            module_id="2.4",
-            submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
-            claims=[],
-            source_ids=[],
-            unresolved_questions=[],
-            revision=0,
+        AgentResult(
+            task_id=envelope.task_id,
+            run_id=envelope.run_id,
+            agent_id=envelope.agent_id,
+            session_id="persisted-module-session",
+            status=AgentRunStatus.COMPLETED,
+            payload=ModuleSubmission(
+                module_id="2.4",
+                submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
+                claims=[],
+                source_ids=[],
+                unresolved_questions=[],
+                revision=0,
+            ),
         ).model_dump_json(),
         encoding="utf-8",
     )
@@ -733,14 +742,34 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
                 if message.agent_type != self.runtime_id:
                     return
                 received.append(message)
+                result_path.write_text(
+                    AgentResult(
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
+                        agent_id=envelope.agent_id,
+                        session_id=message.session_id,
+                        status=AgentRunStatus.COMPLETED,
+                        payload=ModuleSubmission(
+                            module_id="2.4",
+                            submodule_narratives={
+                                part_id: f"正文 {part_id}" for part_id in part_ids
+                            },
+                            claims=[],
+                            source_ids=[],
+                            unresolved_questions=[],
+                            revision=0,
+                        ),
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
                 await bus.publish(
                     AgentResultMessage(
-                        sender=self.runtime_id,
+                        sender=envelope.agent_id,
                         workflow_id=message.workflow_id,
-                        task_id=message.task_id,
-                        run_id=message.run_id,
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
                         result_path=result_ref,
-                        task_attempt_id=message.task_attempt_id,
+                        task_attempt_id="",
                         session_id=message.session_id,
                     )
                 )
@@ -794,6 +823,285 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         assert len(service.sessions) == 1
     finally:
         await runtime.close()
+        bus.shutdown()
+        await bus_task
+
+
+@pytest.mark.asyncio
+async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_payload(
+    tmp_path: Path,
+) -> None:
+    """Author revision, Review, and Recheck use the SubmitResultTool wire shape."""
+
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ModuleReviewFindingSubmission,
+        ModuleReviewVerdictSubmission,
+        ModuleRevisionSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        ModuleReviewInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleRecheckPreparation,
+        DeclarativeModuleReviewPreparation,
+        DeclarativeModuleRevisionPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+        ModuleRecheckPreparation,
+        ModuleRevisionPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+        ModuleAuthoringAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
+        ModuleReviewerAgentBridge,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    author = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    reviewer = registry.require(DefinitionKind.AGENT, "evidence-auditor")
+    revision_task = registry.require(DefinitionKind.TASK, "module-2.4-runtime-revision")
+    review_task = registry.require(DefinitionKind.TASK, "module-runtime-initial-review")
+    recheck_task = registry.require(DefinitionKind.TASK, "module-runtime-recheck")
+    run_id = "module-bridge-terminal-contract"
+
+    revision_envelope = TaskEnvelope(
+        task_id="module-revision-r1-2.4",
+        run_id=run_id,
+        agent_id=author.id,
+        objective=revision_task.objective,
+        allowed_outputs=["module_revision_submission"],
+    )
+    revision_context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="revision_ready",
+        revision=DeclarativeModuleRevisionPreparation.model_construct(
+            prepared=ModuleRevisionPreparation.model_construct(
+                envelope=revision_envelope,
+                run_id=run_id,
+                module_id="2.4",
+                workflow_id="public-reporting",
+            )
+        ),
+    )
+
+    review_envelope = TaskEnvelope(
+        task_id="module-2.4-initial-review-r0",
+        run_id=run_id,
+        agent_id=reviewer.id,
+        objective=review_task.objective,
+        allowed_outputs=["module_review_finding_submission"],
+    )
+    review_context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="review_ready",
+        review=DeclarativeModuleReviewPreparation.model_construct(
+            envelope=review_envelope,
+            prepared=ModuleInitialReviewPreparation.model_construct(
+                envelope=review_envelope,
+                review_input=ModuleReviewInput.model_construct(),
+            ),
+        ),
+    )
+
+    recheck_envelope = TaskEnvelope(
+        task_id="module-2.4-initial-review-r1",
+        run_id=run_id,
+        agent_id=reviewer.id,
+        objective=recheck_task.objective,
+        allowed_outputs=["module_review_verdict_submission"],
+    )
+    recheck_context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="recheck_ready",
+        recheck=DeclarativeModuleRecheckPreparation.model_construct(
+            prepared=ModuleRecheckPreparation.model_construct(
+                envelope=recheck_envelope,
+                review_input=ModuleReviewInput.model_construct(phase="recheck"),
+            )
+        ),
+    )
+
+    class EnvelopeLoop:
+        def __init__(self, **kwargs: Any) -> None:
+            self.runtime_id = str(kwargs["agent_type"])
+            self.envelope = kwargs.pop("_test_envelope")
+            self.payload = kwargs.pop("_test_payload")
+            self.result_path = kwargs.pop("_test_result_path")
+            self.bus = kwargs["bus"]
+            self.received: list[UserMessage] = []
+            self.published: list[AgentResultMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                result = AgentResult(
+                    task_id=self.envelope.task_id,
+                    run_id=self.envelope.run_id,
+                    agent_id=self.envelope.agent_id,
+                    session_id=message.session_id,
+                    status=AgentRunStatus.COMPLETED,
+                    payload=self.payload,
+                )
+                self.result_path.write_text(result.model_dump_json(), encoding="utf-8")
+                terminal = AgentResultMessage(
+                    sender=self.envelope.agent_id,
+                    workflow_id=message.workflow_id,
+                    task_id=self.envelope.task_id,
+                    run_id=self.envelope.run_id,
+                    result_path=self.result_path.relative_to(tmp_path).as_posix(),
+                    task_attempt_id="",
+                    session_id=message.session_id,
+                )
+                self.published.append(terminal)
+                await self.bus.publish(terminal)
+
+            self._callback = respond
+            self.bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                self.bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    execution = AgentExecutionService(bus, timeout=1)
+    conversations = ConversationRegistry()
+    cases = (
+        (
+            "revision",
+            ModuleAuthoringAgentBridge,
+            author,
+            revision_task,
+            revision_context,
+            revision_envelope,
+            ModuleRevisionSubmission(
+                module_id="2.4",
+                base_revision=0,
+                revision=1,
+                submodule_narratives={"2.4.1.1": "修订后的正文"},
+                claims_upsert=[],
+                claim_ids_remove=[],
+                source_ids=[],
+                unresolved_questions=[],
+                revision_responses=[],
+            ),
+        ),
+        (
+            "review",
+            ModuleReviewerAgentBridge,
+            reviewer,
+            review_task,
+            review_context,
+            review_envelope,
+            ModuleReviewFindingSubmission(
+                coverage={"submodule_ids": ["2.4.1.1"]},
+                findings=[],
+            ),
+        ),
+        (
+            "recheck",
+            ModuleReviewerAgentBridge,
+            reviewer,
+            recheck_task,
+            recheck_context,
+            recheck_envelope,
+            ModuleReviewVerdictSubmission(
+                coverage={"submodule_ids": ["2.4.1.1"]},
+                verdicts=[],
+                new_findings=[],
+            ),
+        ),
+    )
+    loops: list[EnvelopeLoop] = []
+    try:
+        for label, bridge_type, agent, task, context, envelope, payload in cases:
+            result_path = tmp_path / f"Work/results/{label}.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text("{}", encoding="utf-8")
+
+            def session_factory(
+                _runtime_id: str,
+                *,
+                _envelope=envelope,
+                _payload=payload,
+                _result_path=result_path,
+            ) -> EnvelopeLoop:
+                loop = EnvelopeLoop(
+                    agent_type=_runtime_id,
+                    bus=bus,
+                    _test_envelope=_envelope,
+                    _test_payload=_payload,
+                    _test_result_path=_result_path,
+                )
+                loops.append(loop)
+                return loop
+
+            bridge = bridge_type(
+                tmp_path,
+                execution=execution,
+                session_factory=session_factory,
+            )
+            conversation = conversations.create_or_resolve(
+                ConversationKey(
+                    agent_id=agent.id,
+                    value=f"module-bridge-{label}",
+                    mode="run",
+                ),
+                run_id=run_id,
+            )
+            outcome = await bridge.invoke(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=f"host-action-{label}",
+            )
+
+            assert outcome.status == "ok"
+            assert outcome.result["status"] == "completed"
+            assert outcome.result["submission"]["kind"] == payload.kind
+            loop = loops[-1]
+            assert loop.received[0].task_id == f"host-action-{label}"
+            assert loop.published[0].sender == envelope.agent_id
+            assert loop.published[0].task_id == envelope.task_id
+            assert loop.published[0].task_attempt_id == ""
+    finally:
+        await execution.close_workflow("public-reporting")
         bus.shutdown()
         await bus_task
 
