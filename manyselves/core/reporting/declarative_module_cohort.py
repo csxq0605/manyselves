@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict
+from typing import Any
 
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    module_cohort as module_cohort_models,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRuntimeLaneContext,
@@ -45,21 +46,6 @@ from .declarative_module_lane import (
     execute_declarative_module_lane,
 )
 from .taxonomy import REPORT_TAXONOMY
-
-
-class DeclarativeModuleLaneOutcome(BaseModel):
-    """Business outcome joined after every sibling branch has drained."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    module_id: str
-    status: Literal["completed", "deferred", "failed"]
-    module: ModuleSubmission | None = None
-    error: str | None = None
-    lane_state: dict[str, Any] | None = None
-    completion_ref: str | None = None
-    completion: dict[str, Any] | None = None
-    retry_requested: bool = False
 
 
 class DeclarativeModuleCohortError(RuntimeError):
@@ -130,7 +116,7 @@ async def execute_declarative_module_cohort(
             str(values["module_id"]),
             values["state"],
             (
-                DeclarativeModuleLaneOutcome.model_validate(
+                module_cohort_models.DeclarativeModuleLaneOutcome.model_validate(
                     values["lane_outcomes"][str(values["module_id"])]
                 )
                 if str(values["module_id"]) in values.get("lane_outcomes", {})
@@ -230,7 +216,7 @@ class _StandaloneModuleRuntime:
         self,
         module_id: str,
         module_inputs: Mapping[str, Any],
-        lane_outcome: DeclarativeModuleLaneOutcome | None = None,
+        lane_outcome: module_cohort_models.DeclarativeModuleLaneOutcome | None = None,
     ) -> DeclarativeModuleRuntimeLaneContext:
         if lane_outcome is not None:
             return DeclarativeModuleRuntimeLaneContext(
@@ -411,11 +397,11 @@ class _StandaloneModuleRuntime:
     async def complete_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleLaneOutcome:
+    ) -> module_cohort_models.DeclarativeModuleLaneOutcome:
         status = (
             "completed" if context.status in {"reviewed", "completed"} else "failed"
         )
-        return DeclarativeModuleLaneOutcome(
+        return module_cohort_models.DeclarativeModuleLaneOutcome(
             module_id=context.module_id,
             status=status,
             module=context.module if status == "completed" else None,
@@ -433,7 +419,7 @@ def _retry_failed_module_lanes(
         return state
     branches = state.parallel_results.get("module-cohort", {})
     outcomes = {
-        module_id: DeclarativeModuleLaneOutcome.model_validate(
+        module_id: module_cohort_models.DeclarativeModuleLaneOutcome.model_validate(
             branches[module_id][f"outcome-{module_id}"]
         )
         for module_id in module_ids
@@ -468,7 +454,9 @@ def _retry_failed_module_lanes(
 def _reduce_module_cohort(values: Mapping[str, Any]) -> dict[str, ModuleSubmission]:
     module_ids = tuple(REPORT_TAXONOMY)
     outcomes = {
-        module_id: DeclarativeModuleLaneOutcome.model_validate(values[module_id])
+        module_id: module_cohort_models.DeclarativeModuleLaneOutcome.model_validate(
+            values[module_id]
+        )
         for module_id in module_ids
     }
     failures = {

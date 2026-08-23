@@ -186,33 +186,89 @@ def test_distribution_reporting_task_tools_are_model_visible_definitions() -> No
 
 def test_module_runtime_contract_models_are_owned_by_the_capability() -> None:
     _, registry = load_distribution_reporting_capability()
-    module_name = (
+    lane_module_name = (
         "manyselves.capabilities.distribution_reporting.runtime.models.module_lane"
     )
     contract_models = {
         "declarative_module_authoring_agent_result": (
-            "DeclarativeModuleAuthoringAgentResult"
+            lane_module_name,
+            "DeclarativeModuleAuthoringAgentResult",
         ),
         "declarative_module_recheck_agent_result": (
-            "DeclarativeModuleRecheckAgentResult"
+            lane_module_name,
+            "DeclarativeModuleRecheckAgentResult",
         ),
         "declarative_module_review_agent_result": (
-            "DeclarativeModuleReviewAgentResult"
+            lane_module_name,
+            "DeclarativeModuleReviewAgentResult",
         ),
         "declarative_module_revision_agent_result": (
-            "DeclarativeModuleRevisionAgentResult"
+            lane_module_name,
+            "DeclarativeModuleRevisionAgentResult",
         ),
         "declarative_module_runtime_lane_context": (
-            "DeclarativeModuleRuntimeLaneContext"
+            lane_module_name,
+            "DeclarativeModuleRuntimeLaneContext",
+        ),
+        "declarative_module_lane_outcome": (
+            "manyselves.capabilities.distribution_reporting.runtime.models."
+            "module_cohort",
+            "DeclarativeModuleLaneOutcome",
         ),
     }
 
-    for contract_id, model_name in contract_models.items():
+    for contract_id, (module_name, model_name) in contract_models.items():
         definition = registry.require(DefinitionKind.CONTRACT, contract_id)
         assert isinstance(definition, ContractDefinition)
         assert definition.model == f"{module_name}:{model_name}"
         model = getattr(import_module(module_name), model_name)
         assert model.__module__ == module_name
+
+    old_cohort_module = import_module(
+        "manyselves.core.reporting.declarative_module_cohort"
+    )
+    assert "DeclarativeModuleLaneOutcome" not in vars(old_cohort_module)
+
+
+def test_module_lane_outcome_contract_preserves_join_state() -> None:
+    """Characterize the typed value consumed by Cohort resume and reduction."""
+
+    _, registry = load_distribution_reporting_capability()
+    definition = registry.require(
+        DefinitionKind.CONTRACT,
+        "declarative_module_lane_outcome",
+    )
+    assert isinstance(definition, ContractDefinition)
+    module_name, model_name = definition.model.split(":", maxsplit=1)
+    model = getattr(import_module(module_name), model_name)
+
+    outcome = model.model_validate(
+        {
+            "module_id": "2.1",
+            "status": "deferred",
+            "lane_state": {"status": "reviewer_exception_deferred"},
+            "completion_ref": "completion-2.1",
+            "completion": {"status": "deferred"},
+            "retry_requested": True,
+        }
+    )
+
+    assert outcome.model_dump(mode="json", exclude_none=True) == {
+        "module_id": "2.1",
+        "status": "deferred",
+        "lane_state": {"status": "reviewer_exception_deferred"},
+        "completion_ref": "completion-2.1",
+        "completion": {"status": "deferred"},
+        "retry_requested": True,
+    }
+    with pytest.raises(ValueError):
+        model.model_validate(
+            {
+                "module_id": "2.1",
+                "status": "completed",
+                "unexpected": True,
+            }
+        )
 
 
 def test_pure_read_agent_tools_match_their_python_execution_metadata() -> None:

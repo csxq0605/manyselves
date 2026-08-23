@@ -15,6 +15,9 @@ from manyselves.capabilities.distribution_reporting import (
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_cohort import (
+    DeclarativeModuleLaneOutcome,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
@@ -98,7 +101,6 @@ from .declarative_final_review_cycle import (
     register_final_review_lane_specializations,
 )
 from .declarative_module_cohort import (
-    DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
 )
 from .declarative_reporting_tail import _ReportingTailAdapters
