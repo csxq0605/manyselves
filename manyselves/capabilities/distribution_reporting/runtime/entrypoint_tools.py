@@ -171,6 +171,16 @@ def specialize_module_cohort_workflow(
         for action in payload["actions"]
         if action["id"] in selected_action_ids
     ]
+    if len(selected) == 1:
+        selected_module = selected[0]
+        selected_action_ids.discard("module-cohort")
+        selected_action_ids.discard("join-module-cohort")
+        selected_action_ids.discard(f"resume-module-{selected_module}-after-join")
+        actions = [
+            action
+            for action in actions
+            if action["id"] in selected_action_ids
+        ]
     for action in actions:
         if action["id"] == "module-cohort":
             action["branches"] = {
@@ -185,6 +195,11 @@ def specialize_module_cohort_workflow(
             action["input_variables"] = {
                 module_id: f"outcome-{module_id}" for module_id in selected
             }
+        elif (
+            len(selected) == 1
+            and action["id"] == f"complete-module-{selected[0]}-branch"
+        ):
+            action["target"] = "reduce-module-cohort"
 
     payload["actions"] = actions
     payload["tasks"] = [
