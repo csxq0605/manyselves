@@ -258,6 +258,9 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         json.dumps(_module_submission().model_dump(mode="json")),
         encoding="utf-8",
     )
+    auditor_skill = tmp_path / "Work/report-template-role-skills/auditor-2.4/SKILL.md"
+    auditor_skill.parent.mkdir(parents=True)
+    auditor_skill.write_text("auditor-skill: preserve the review envelope", encoding="utf-8")
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     execution = AgentExecutionService(bus, timeout=1)
@@ -304,7 +307,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: prepare-current-module-review",
+            match="missing tool adapter: module-review-preflight-needs-revision",
         ):
             await runtime.execute(request, run_id)
     finally:
@@ -327,7 +330,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     assert any(
         event.kind == "action.failed"
-        and event.action_id == "prepare-current-module-review"
+        and event.action_id == "module-review-preflight-needs-revision"
         for event in events.events
     )
     lane_state = state.model_dump(mode="json")["subworkflow_states"][
@@ -335,14 +338,49 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     ]["subworkflow_states"]["execute-module-2.4"]
     assert lane_state["variables"]["module-author-result"]["module"]["module_id"] == "2.4"
     lane_context = lane_state["variables"]["lane-context"]
-    assert lane_context["status"] == "authored"
+    assert lane_context["status"] == "review_ready"
     assert lane_context["module"]["module_id"] == "2.4"
     assert (
         lane_context["reporting_state"]["specialist_submissions"]["2.4"]["module_id"]
         == "2.4"
     )
+    review = lane_context["review"]
+    assert review["reviewer_session_key"] == "module-auditor-2.4"
+    assert review["prepared"]["mode"] == "invoke_agent"
+    assert review["prepared"]["review_input"]["phase"] == "initial"
+    assert review["prepared"]["review_input"]["module_id"] == "2.4"
+    assert review["prepared"]["envelope"]["task_id"] == "module-2.4-initial-review-r0"
+    assert review["prepared"]["envelope"]["agent_id"] == "evidence-auditor"
+    assert review["prepared"]["envelope"]["input_contract_kind"] == "module_review_input"
+    assert review["prepared"]["envelope"]["input_contract_ref"].endswith(
+        "reviews/module/initial/2.4/input-r0.json"
+    )
+    review_constraints = review["prepared"]["envelope"]["constraints"]
+    assert {
+        "coverage 记录实际检查范围，不是批准状态",
+        "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
+        "不得拆成独立小节级审查任务或会话",
+        "finding 首次提出后不可改写；复审不得复述旧 finding",
+        "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
+        "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+        "首轮必须覆盖 input 中全部 required_submodule_ids",
+    }.issubset(review_constraints)
+    assert "auditor-skill: preserve the review envelope" in review["prepared"][
+        "envelope"
+    ]["inline_context"]
     assert (
         tmp_path / "Work/runs/public-module-boundary/modules/2.4-r0.json"
+    ).is_file()
+    assert (
+        tmp_path / "Work/runs/public-module-boundary/reviews/module-quality-2.4-r0-review-r0.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/public-module-boundary/reviews/module/initial/2.4/preflight-subject-r0-review-r0.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/public-module-boundary/reviews/module/initial/2.4/input-r0.json"
     ).is_file()
 
 

@@ -18,6 +18,7 @@ from .models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
+from .module_review_preparation import prepare_current_module_review
 from .storage import ReportingStore
 
 
@@ -90,6 +91,10 @@ def build_module_lane_tool_implementations(
             store=store,
         ),
         "module-lane-can-review": module_lane_can_review,
+        "prepare-current-module-review": partial(
+            prepare_current_module_review,
+            store=store,
+        ),
     }
 
 
@@ -97,4 +102,5 @@ __all__ = [
     "accept_current_module_authoring",
     "build_module_lane_tool_implementations",
     "module_lane_can_review",
+    "prepare_current_module_review",
 ]

@@ -28,7 +28,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     PhotoAsset,
     SourceLocation,
 )
-from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
+from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
+    evaluate_module_review_preflight,
+)
 
 
 def _deep_text(submodule_id: str, title: str) -> str:

@@ -1,8 +1,8 @@
-"""Deterministic module checks that run before paid semantic review.
+"""Deterministic checks that precede a module's semantic review.
 
-The checks in this module only evaluate explicit, reproducible predicates.  They
-may return a module to its original author, but they never create or close a
-reviewer finding and never imply semantic approval.
+This is a Capability-owned pure component.  It only evaluates the persisted
+module and current-run source ledger; it does not invoke an Agent or decide a
+review verdict.
 """
 
 from __future__ import annotations
@@ -12,12 +12,16 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ValidationFailure,
     ValidationReport,
 )
-from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+    SourceLedger,
+)
 
 _CHECK_IDS = (
     "module_preflight.control_markers",
@@ -29,7 +33,7 @@ _CLAIM_MARKER = re.compile(r"\[\[CLAIM:C-[^\]\s]+\]\]")
 
 @dataclass(frozen=True)
 class ModuleReviewPreflightResult:
-    """A content-bound machine report plus its exact author-correction scope."""
+    """A content-bound machine report plus its exact correction scope."""
 
     report: ValidationReport
     target_submodule_ids: frozenset[str]
@@ -65,7 +69,7 @@ def evaluate_module_review_preflight(
     subject_ref: str,
     upstream_report: ValidationReport,
 ) -> ModuleReviewPreflightResult:
-    """Evaluate structural prerequisites against one exact persisted module."""
+    """Evaluate deterministic prerequisites against one persisted subject."""
 
     workspace = Path(workspace).resolve()
     subject_path = (workspace / subject_ref).resolve()
@@ -137,3 +141,6 @@ def evaluate_module_review_preflight(
         report=report,
         target_submodule_ids=frozenset(target_submodule_ids),
     )
+
+
+__all__ = ["ModuleReviewPreflightResult", "evaluate_module_review_preflight"]
