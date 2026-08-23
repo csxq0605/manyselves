@@ -7,10 +7,11 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict
-
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models import (
+    final_chapter as final_chapter_models,
 )
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -51,43 +52,6 @@ from .models import (
 )
 
 FINAL_CHAPTER_IDS = ("1", "3", "4")
-
-
-class DeclarativeFinalChapterAgentResult(BaseModel):
-    """Typed adapter result that keeps one failed Auditor inside its branch."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["completed", "failed"]
-    submission: FinalChapterLaneFindingSubmission | None = None
-    error: str | None = None
-
-
-class DeclarativeFinalChapterContext(BaseModel):
-    """Serializable initial Final chapter preparation and result."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["ready", "resumed", "accepted", "skipped", "failed"]
-    contract: FinalChapterLaneInput | None = None
-    input_ref: str | None = None
-    envelope: TaskEnvelope | None = None
-    submission: FinalChapterLaneFindingSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
-
-
-class DeclarativeFinalChapterOutcome(BaseModel):
-    """Serializable terminal result joined after the initial Final wave."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: Literal["1", "3", "4"]
-    status: Literal["completed", "skipped", "failed"]
-    submission: FinalChapterLaneFindingSubmission | None = None
-    output_ref: str | None = None
-    error: str | None = None
 
 
 class _FinalChapterInvoker:
@@ -142,7 +106,9 @@ class _FinalChapterInvoker:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
-        context = DeclarativeFinalChapterContext.model_validate(value)
+        context = final_chapter_models.DeclarativeFinalChapterContext.model_validate(
+            value
+        )
         envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
@@ -158,14 +124,14 @@ class _FinalChapterInvoker:
                 self._runtime._workflow_id,
                 **runner_kwargs,
             )
-            result = DeclarativeFinalChapterAgentResult(
+            result = final_chapter_models.DeclarativeFinalChapterAgentResult(
                 status="completed",
                 submission=FinalChapterLaneFindingSubmission.model_validate(payload),
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            result = DeclarativeFinalChapterAgentResult(
+            result = final_chapter_models.DeclarativeFinalChapterAgentResult(
                 status="failed",
                 error=str(exc),
             )
@@ -253,17 +219,20 @@ class DeclarativeFinalChapterRuntime:
         self.current_state = state
         return deepcopy(state)
 
-    def prepare_lane(self, values: Mapping[str, Any]) -> DeclarativeFinalChapterContext:
+    def prepare_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> final_chapter_models.DeclarativeFinalChapterContext:
         chapter_id = cast(Literal["1", "3", "4"], str(values["chapter_id"]))
         if not self._production or "final_review_completion_ref" in self.current_state:
-            return DeclarativeFinalChapterContext(
+            return final_chapter_models.DeclarativeFinalChapterContext(
                 chapter_id=chapter_id,
                 status="skipped",
             )
         state = self.current_state
         active_chapters = self._current_runner._chapter_lane_ids(state)
         if chapter_id not in active_chapters:
-            return DeclarativeFinalChapterContext(
+            return final_chapter_models.DeclarativeFinalChapterContext(
                 chapter_id=chapter_id,
                 status="skipped",
             )
@@ -320,7 +289,7 @@ class DeclarativeFinalChapterRuntime:
         )
         if recovered is not None and existing_input_matches:
             submission, output_ref = recovered
-            return DeclarativeFinalChapterContext(
+            return final_chapter_models.DeclarativeFinalChapterContext(
                 chapter_id=chapter_id,
                 status="resumed",
                 contract=contract,
@@ -350,7 +319,7 @@ class DeclarativeFinalChapterRuntime:
                 chapter_id,
             ),
         )
-        return DeclarativeFinalChapterContext(
+        return final_chapter_models.DeclarativeFinalChapterContext(
             chapter_id=chapter_id,
             status="ready",
             contract=contract,
@@ -359,15 +328,21 @@ class DeclarativeFinalChapterRuntime:
         )
 
     @staticmethod
-    def requires_agent(context: DeclarativeFinalChapterContext) -> bool:
+    def requires_agent(
+        context: final_chapter_models.DeclarativeFinalChapterContext,
+    ) -> bool:
         return context.status == "ready"
 
     def accept_lane(
         self,
         values: Mapping[str, Any],
-    ) -> DeclarativeFinalChapterContext:
-        context = DeclarativeFinalChapterContext.model_validate(values["context"])
-        result = DeclarativeFinalChapterAgentResult.model_validate(values["result"])
+    ) -> final_chapter_models.DeclarativeFinalChapterContext:
+        context = final_chapter_models.DeclarativeFinalChapterContext.model_validate(
+            values["context"]
+        )
+        result = final_chapter_models.DeclarativeFinalChapterAgentResult.model_validate(
+            values["result"]
+        )
         if result.status == "failed":
             self._record_failure(context.chapter_id, result.error)
             return context.model_copy(update={"status": "failed", "error": result.error})
@@ -411,21 +386,23 @@ class DeclarativeFinalChapterRuntime:
 
     @staticmethod
     def complete_lane(
-        context: DeclarativeFinalChapterContext,
-    ) -> DeclarativeFinalChapterOutcome:
-        context = DeclarativeFinalChapterContext.model_validate(context)
+        context: final_chapter_models.DeclarativeFinalChapterContext,
+    ) -> final_chapter_models.DeclarativeFinalChapterOutcome:
+        context = final_chapter_models.DeclarativeFinalChapterContext.model_validate(
+            context
+        )
         if context.status == "failed":
-            return DeclarativeFinalChapterOutcome(
+            return final_chapter_models.DeclarativeFinalChapterOutcome(
                 chapter_id=context.chapter_id,
                 status="failed",
                 error=context.error,
             )
         if context.status == "skipped":
-            return DeclarativeFinalChapterOutcome(
+            return final_chapter_models.DeclarativeFinalChapterOutcome(
                 chapter_id=context.chapter_id,
                 status="skipped",
             )
-        return DeclarativeFinalChapterOutcome(
+        return final_chapter_models.DeclarativeFinalChapterOutcome(
             chapter_id=context.chapter_id,
             status="completed",
             submission=context.submission,
@@ -437,7 +414,9 @@ class DeclarativeFinalChapterRuntime:
         _restore_state(state)
         self.current_state = state
         outcomes = {
-            chapter_id: DeclarativeFinalChapterOutcome.model_validate(outcome)
+            chapter_id: final_chapter_models.DeclarativeFinalChapterOutcome.model_validate(
+                outcome
+            )
             for chapter_id, outcome in dict(values["outcomes"]).items()
         }
         failures = {
@@ -536,7 +515,7 @@ def retry_failed_final_chapter_lanes(
         chapter_id
         for chapter_id in FINAL_CHAPTER_IDS
         if chapter_id in branches
-        and DeclarativeFinalChapterOutcome.model_validate(
+        and final_chapter_models.DeclarativeFinalChapterOutcome.model_validate(
             branches[chapter_id][f"outcome-{chapter_id}"]
         ).status
         == "failed"
@@ -744,9 +723,6 @@ def _restore_state(state: dict[str, Any]) -> None:
 
 
 __all__ = [
-    "DeclarativeFinalChapterAgentResult",
-    "DeclarativeFinalChapterContext",
-    "DeclarativeFinalChapterOutcome",
     "DeclarativeFinalChapterRuntime",
     "compile_final_chapter_workflows",
     "register_final_chapter_lane_specializations",

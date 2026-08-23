@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
+    DeclarativeFinalChapterOutcome,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -37,7 +40,6 @@ from .agentic_models import (
 )
 from .declarative_final_chapter_cohort import (
     FINAL_CHAPTER_IDS,
-    DeclarativeFinalChapterOutcome,
 )
 from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization

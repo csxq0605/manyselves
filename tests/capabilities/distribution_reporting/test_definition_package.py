@@ -354,6 +354,89 @@ def test_chief_chapter_contract_models_preserve_lane_values() -> None:
             model.model_validate(value)
 
 
+def test_final_chapter_contract_models_are_owned_by_the_capability() -> None:
+    _, registry = load_distribution_reporting_capability()
+    module_name = (
+        "manyselves.capabilities.distribution_reporting.runtime.models.final_chapter"
+    )
+    contract_models = {
+        "declarative_final_chapter_agent_result": (
+            "DeclarativeFinalChapterAgentResult"
+        ),
+        "declarative_final_chapter_context": "DeclarativeFinalChapterContext",
+        "declarative_final_chapter_outcome": "DeclarativeFinalChapterOutcome",
+    }
+
+    for contract_id, model_name in contract_models.items():
+        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
+        assert isinstance(definition, ContractDefinition)
+        assert definition.model == f"{module_name}:{model_name}"
+        model = getattr(import_module(module_name), model_name)
+        assert model.__module__ == module_name
+
+
+def test_core_final_chapter_module_does_not_expose_capability_contract_models() -> None:
+    old_module = import_module(
+        "manyselves.core.reporting.declarative_final_chapter_cohort"
+    )
+
+    assert "DeclarativeFinalChapterAgentResult" not in vars(old_module)
+    assert "DeclarativeFinalChapterContext" not in vars(old_module)
+    assert "DeclarativeFinalChapterOutcome" not in vars(old_module)
+
+
+def test_final_chapter_contract_models_preserve_lane_values() -> None:
+    module = import_module(
+        "manyselves.capabilities.distribution_reporting.runtime.models.final_chapter"
+    )
+
+    agent_result = module.DeclarativeFinalChapterAgentResult.model_validate(
+        {"status": "failed", "error": "auditor unavailable"}
+    )
+    context = module.DeclarativeFinalChapterContext.model_validate(
+        {
+            "chapter_id": "4",
+            "status": "skipped",
+            "output_ref": "Work/runs/run-final/reviews/chapter-4.json",
+        }
+    )
+    outcome = module.DeclarativeFinalChapterOutcome.model_validate(
+        {
+            "chapter_id": "4",
+            "status": "skipped",
+            "output_ref": "Work/runs/run-final/reviews/chapter-4.json",
+        }
+    )
+
+    assert agent_result.model_dump(mode="json", exclude_none=True) == {
+        "status": "failed",
+        "error": "auditor unavailable",
+    }
+    expected_lane = {
+        "chapter_id": "4",
+        "status": "skipped",
+        "output_ref": "Work/runs/run-final/reviews/chapter-4.json",
+    }
+    assert context.model_dump(mode="json", exclude_none=True) == expected_lane
+    assert outcome.model_dump(mode="json", exclude_none=True) == expected_lane
+    for model, value in (
+        (
+            module.DeclarativeFinalChapterAgentResult,
+            {"status": "failed", "unexpected": True},
+        ),
+        (
+            module.DeclarativeFinalChapterContext,
+            {"chapter_id": "4", "status": "skipped", "unexpected": True},
+        ),
+        (
+            module.DeclarativeFinalChapterOutcome,
+            {"chapter_id": "4", "status": "skipped", "unexpected": True},
+        ),
+    ):
+        with pytest.raises(ValueError):
+            model.model_validate(value)
+
+
 def test_cross_owner_contract_models_are_owned_by_the_capability() -> None:
     _, registry = load_distribution_reporting_capability()
     module_name = (

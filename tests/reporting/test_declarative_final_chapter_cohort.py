@@ -7,6 +7,9 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
+    DeclarativeFinalChapterOutcome,
+)
 from manyselves.core.reporting.agentic_models import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
@@ -20,7 +23,6 @@ from manyselves.core.reporting.agentic_models import (
     RevisionResponse,
 )
 from manyselves.core.reporting.declarative_final_chapter_cohort import (
-    DeclarativeFinalChapterOutcome,
     DeclarativeFinalChapterRuntime,
     compile_final_chapter_workflows,
     retry_failed_final_chapter_lanes,
