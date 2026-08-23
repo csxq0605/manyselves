@@ -44,6 +44,7 @@ from .models.module_cohort import DeclarativeModuleLaneOutcome
 from .models.reporting import ReportRequest
 from .module_agent_bridge import ModuleAuthoringAgentBridge
 from .module_lane_definitions import register_module_runtime_lane_specializations
+from .module_lane_tools import build_module_lane_tool_implementations
 from .preparation_tools import build_preparation_tool_implementations
 from .storage import ReportingStore
 
@@ -229,6 +230,7 @@ class PublicReportingWorkflowRuntime:
         contracts: Mapping[str, ContractAdapter],
         plan: ResolvedPlan,
     ) -> dict[str, Any]:
+        reporting_store = ReportingStore(self.workspace)
         implementations = {
             **build_public_entrypoint_tool_implementations(),
             **build_preparation_tool_implementations(
@@ -236,10 +238,11 @@ class PublicReportingWorkflowRuntime:
                 input_snapshot=self.input_snapshot,
                 snapshot_content=self.snapshot_content,
                 runtime_photo_ids=self.runtime_photo_ids,
-                store=ReportingStore(self.workspace),
+                store=reporting_store,
             ),
             **build_evidence_readiness_tool_implementations(),
             **self._module_tool_implementations(),
+            **build_module_lane_tool_implementations(store=reporting_store),
             **self.additional_tool_implementations,
         }
         factory = CapabilityToolAdapterFactory(

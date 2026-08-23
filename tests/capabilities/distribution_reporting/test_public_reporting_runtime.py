@@ -11,16 +11,23 @@ import pytest
 from manyselves.capabilities.distribution_reporting.runtime import preparation_tools
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleAuthoringAgentResult,
+    DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     ReportRequest,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
+    accept_current_module_authoring,
+)
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.workflow import WorkflowStatus
@@ -43,6 +50,40 @@ def test_module_authoring_agent_bridge_module_exists() -> None:
     assert find_spec(
         "manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge"
     ) is not None
+
+
+def test_author_accept_projects_typed_submission_to_lane_and_reporting_state(
+    tmp_path: Path,
+) -> None:
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": "run-2-4"},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id="module-2.4-specialist",
+            envelope=None,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+    result = DeclarativeModuleAuthoringAgentResult(
+        status="completed",
+        module=_module_submission(),
+    )
+
+    accepted = accept_current_module_authoring(
+        {"context": context, "result": result},
+        store=ReportingStore(tmp_path),
+    )
+
+    assert isinstance(accepted.module, ModuleSubmission)
+    assert accepted.module.module_id == "2.4"
+    assert accepted.reporting_state["specialist_submissions"]["2.4"] == accepted.module
+    persisted = tmp_path / "Work/runs/run-2-4/modules/2.4-r0.json"
+    assert persisted.is_file()
+    assert json.loads(persisted.read_text()) == accepted.module.model_dump(mode="json")
 
 
 def _module_submission(module_id: str = "2.4") -> ModuleSubmission:
@@ -129,7 +170,26 @@ class _BoundaryModuleRuntime:
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
-        return context.model_copy(update={"status": "author_ready"})
+        envelope = TaskEnvelope(
+            task_id="module-2.4-authoring",
+            task_attempt_id="attempt-module-2.4-authoring",
+            run_id=str(context.reporting_state["run_id"]),
+            agent_id="module-2.4-specialist",
+            objective="author module 2.4",
+            inline_context="author-skill: preserve evidence references",
+        )
+        return context.model_copy(
+            update={
+                "status": "author_ready",
+                "authoring": DeclarativeModuleAuthoringPreparation(
+                    specialist_id="module-2.4-specialist",
+                    envelope=envelope,
+                    revision=0,
+                    review=False,
+                    checkpoint=False,
+                ),
+            }
+        )
 
     async def author_requires_agent(
         self,
@@ -244,7 +304,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: accept-current-module-authoring",
+            match="missing tool adapter: prepare-current-module-review",
         ):
             await runtime.execute(request, run_id)
     finally:
@@ -259,6 +319,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     assert state.actions["build-reporting-state"].status.value == "completed"
     assert len(loops) == 1
     assert [message.turn_kind for message in loops[0].received] == ["task_initial"]
+    assert "author-skill: preserve evidence references" in loops[0].received[0].content
     assert any(
         event.kind == "action.completed"
         and event.action_id == "invoke-current-module-author"
@@ -266,13 +327,23 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     assert any(
         event.kind == "action.failed"
-        and event.action_id == "accept-current-module-authoring"
+        and event.action_id == "prepare-current-module-review"
         for event in events.events
     )
     lane_state = state.model_dump(mode="json")["subworkflow_states"][
         "run-module-cohort"
     ]["subworkflow_states"]["execute-module-2.4"]
     assert lane_state["variables"]["module-author-result"]["module"]["module_id"] == "2.4"
+    lane_context = lane_state["variables"]["lane-context"]
+    assert lane_context["status"] == "authored"
+    assert lane_context["module"]["module_id"] == "2.4"
+    assert (
+        lane_context["reporting_state"]["specialist_submissions"]["2.4"]["module_id"]
+        == "2.4"
+    )
+    assert (
+        tmp_path / "Work/runs/public-module-boundary/modules/2.4-r0.json"
+    ).is_file()
 
 
 def test_full_report_stops_at_existing_tail_specialization_boundary(
