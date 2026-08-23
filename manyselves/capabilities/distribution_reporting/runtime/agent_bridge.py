@@ -8,9 +8,11 @@ proved here: a typed input is rendered into one generic Agent turn, the
 Completed-result reuse now uses the existing neutral recovery service when a
 Capability-owned loader supplies an already verified typed result.  Natural
 language without a submission now uses the same generic recovery driver for
-one Capability-owned typed correction turn.  Continuation and no-progress
-remain outside this bridge until their existing durable implementations can be
-reused without copying their policy or persistence semantics.
+one Capability-owned typed correction turn.  The existing AgentLoop max-token
+marker also uses that driver for one continuation turn.  Schema-invalid tool
+submissions and durable tool-slice/no-progress recovery remain outside this
+bridge until their existing implementations can be observed without copying
+their policy or persistence semantics.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     TemplateDistillationInput,
 )
+from manyselves.core.loops.agent_loop import AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -117,9 +120,10 @@ class TemplateDistillationAgentBridge:
     ) -> AgentInvocationOutcome:
         """Reuse a Capability-loaded completion, then run one typed turn.
 
-        Only the existing neutral ``completed_tool_result`` decision is
-        interpreted here.  Other recovery events still use the same initial
-        turn until their durable Capability-owned implementations are reused.
+        Existing completed-result, natural-language, and AgentLoop max-token
+        boundaries are interpreted here.  Schema-invalid tool submissions are
+        still owned by the Reporting tool callback because the neutral
+        ``ToolResult`` message has no task/session correlation.
         """
 
         return await self._invoke_once(
@@ -268,6 +272,15 @@ class TemplateDistillationAgentBridge:
             if outcome.kind == "error":
                 return AgentRecoveryStopped(reason=str(outcome.message))
             if isinstance(outcome.message, AgentResponse):
+                if (
+                    outcome.message.content
+                    == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+                ):
+                    return AgentRecoveryRequired(
+                        event_kind=RecoveryEventKind.MAX_TOKENS,
+                        fallback_action=RecoveryActionKind.CONTINUE,
+                        detail={"task_id": task.id},
+                    )
                 return AgentRecoveryRequired(
                     event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
                     fallback_action=RecoveryActionKind.CORRECT,
@@ -279,15 +292,33 @@ class TemplateDistillationAgentBridge:
             directive: AgentRecoveryDirective,
             _observation: AgentRecoveryRequired,
         ) -> AgentTurnRequest:
+            max_tokens_continuation = (
+                directive.event_kind is RecoveryEventKind.MAX_TOKENS
+            )
             return AgentTurnRequest(
-                content=directive.prompt or self._correction_prompt(agent, task),
-                message_id=f"{task_id}:{input_value.run_id}:correction",
+                content=(
+                    directive.prompt
+                    or (
+                        self._max_tokens_prompt(agent, task)
+                        if max_tokens_continuation
+                        else self._correction_prompt(agent, task)
+                    )
+                ),
+                message_id=(
+                    f"{task_id}:{input_value.run_id}:max-tokens-continuation"
+                    if max_tokens_continuation
+                    else f"{task_id}:{input_value.run_id}:correction"
+                ),
                 workflow_id=self.workflow_id,
                 run_id=input_value.run_id,
                 task_id=task_id,
                 task_attempt_id=task_id,
                 internal=True,
-                turn_kind="submission_correction",
+                turn_kind=(
+                    "max_tokens_continuation"
+                    if max_tokens_continuation
+                    else "submission_correction"
+                ),
             )
 
         async def stop(
@@ -439,6 +470,22 @@ class TemplateDistillationAgentBridge:
                 "立即调用 submit_result 提交 template_skill_submission。",
                 "参数必须直接符合 output contract，不要添加 payload 包装或 JSON 字符串。",
                 "</submission_correction>",
+            )
+        )
+
+    @staticmethod
+    def _max_tokens_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+    ) -> str:
+        return "\n\n".join(
+            (
+                "<max_tokens_continuation>",
+                "上一轮 Agent 输出达到单次 max_tokens 上限，任务尚未完成。",
+                f"你仍是 {agent.id}，当前任务是 {task.id}；继续使用同一会话上下文，"
+                "不要从头重复读取或检索。完成后立即调用 submit_result 提交"
+                " template_skill_submission。",
+                "</max_tokens_continuation>",
             )
         )
 
