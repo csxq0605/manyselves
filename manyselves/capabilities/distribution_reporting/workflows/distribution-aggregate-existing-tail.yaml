@@ -1,0 +1,48 @@
+id: distribution-aggregate-existing-tail
+version: 1.0.0
+description: Aggregate existing modules, then enter Final review and Delivery
+tasks: []
+gates: []
+recovery:
+- current-reporting-recovery
+outputs:
+- aggregate-existing-tail-result
+input_contract: aggregate_existing_input
+input_variable: aggregate-input
+output_contract: reporting_tail_state
+state:
+  aggregate-input: {}
+  aggregate-handoff: {}
+  reporting-state: {}
+actions:
+- id: run-aggregate-existing
+  kind: subworkflow
+  workflow: distribution-aggregate-existing
+  input_variables:
+    aggregate-input: aggregate-input
+  child_output_name: result
+  output_variable: aggregate-handoff
+- id: project-aggregate-existing-tail
+  kind: invoke_tool
+  tool: project-aggregate-existing-tail
+  input_variable: aggregate-handoff
+  output_variable: reporting-state
+- id: run-final-review
+  kind: subworkflow
+  workflow: distribution-final-chapter-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-report-delivery
+  kind: subworkflow
+  workflow: distribution-report-delivery
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: finish-aggregate-existing-tail
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result
+  output_contract: reporting_tail_state

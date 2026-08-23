@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from .agentic import ModuleSubmission
+from .agentic import EditedReportSubmission, ModuleSubmission
 from .inputs import AggregateEditorInput
 from .reporting import EvidenceItem, PhotoAsset, ReportingModel, ReportRequest
 
@@ -38,8 +38,17 @@ class AggregateExistingContext(ReportingModel):
     editor_input: AggregateEditorInput
 
 
+class AggregateExistingHandoff(ReportingModel):
+    """Typed handoff from the aggregate editor to Final and Delivery stages."""
+
+    kind: Literal["aggregate_existing_handoff"] = "aggregate_existing_handoff"
+    context: AggregateExistingContext
+    edited_report: EditedReportSubmission
+
+
 __all__ = [
     "AggregateExistingContext",
+    "AggregateExistingHandoff",
     "AggregateExistingPreparationInput",
     "ModuleId",
 ]

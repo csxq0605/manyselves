@@ -214,6 +214,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "render-existing",
         "distill-template-skill",
         "distribution-aggregate-existing",
+        "distribution-aggregate-existing-tail",
         "distribution-evidence-readiness",
         "distribution-chief-chapter-1-lane",
         "distribution-chief-chapter-3-lane",

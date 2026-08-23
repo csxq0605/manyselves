@@ -253,6 +253,7 @@ def test_aggregate_existing_workflow_declares_only_the_prepare_and_agent_slice()
         "project-aggregate-editor-input",
         "create-aggregate-existing-conversation",
         "invoke-aggregate-existing-agent",
+        "project-aggregate-existing-handoff",
         "finish-aggregate-existing-agent",
     ]
     assert referenced_workflows == set()
@@ -264,6 +265,69 @@ def test_aggregate_existing_workflow_declares_only_the_prepare_and_agent_slice()
         registry,
     )
     assert plan.workflow_id == "distribution-aggregate-existing"
+    assert workflow.output_contract == "aggregate_existing_handoff"
+
+
+def test_aggregate_existing_tail_enters_final_and_delivery_without_other_cohorts() -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+
+    _capability, registry = load_distribution_reporting_capability()
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-aggregate-existing-tail",
+    )
+    action_ids = [action["id"] for action in workflow.actions]
+    referenced_workflows = {
+        action["workflow"]
+        for action in workflow.actions
+        if "workflow" in action
+    }
+
+    assert action_ids == [
+        "run-aggregate-existing",
+        "project-aggregate-existing-tail",
+        "run-final-review",
+        "run-report-delivery",
+        "finish-aggregate-existing-tail",
+    ]
+    assert referenced_workflows == {
+        "distribution-aggregate-existing",
+        "distribution-final-chapter-cohort",
+        "distribution-report-delivery",
+    }
+    assert "distribution-cross-owner-cohort" not in referenced_workflows
+    assert "distribution-chief-chapter-cohort" not in referenced_workflows
+
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        workflow,
+        registry,
+    )
+    assert plan.final_output_contract == "reporting_tail_state"
+    assert "distribution-final-review-cycle" in plan.subworkflow_plans
+    assert "distribution-report-delivery" in plan.subworkflow_plans
+
+
+def test_aggregate_existing_agent_slice_does_not_claim_final_or_delivery_completion() -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+
+    _capability, registry = load_distribution_reporting_capability()
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-aggregate-existing",
+    )
+    assert workflow.output_contract == "aggregate_existing_handoff"
+    assert all(
+        action.get("workflow") not in {
+            "distribution-final-chapter-cohort",
+            "distribution-final-review-cycle",
+            "distribution-report-delivery",
+        }
+        for action in workflow.actions
+    )
 
 
 @pytest.mark.asyncio
@@ -348,6 +412,9 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         EditedReportSubmission,
     )
+    from manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing import (
+        AggregateExistingHandoff,
+    )
     from manyselves.kernel.ports import AgentInvocationOutcome
 
     class RecordingAggregateInvoker:
@@ -420,7 +487,8 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
     completed = await runtime.execute(value)
 
     assert completed.status.value == "completed"
-    assert isinstance(completed.outputs["result"], EditedReportSubmission)
+    assert isinstance(completed.outputs["result"], AggregateExistingHandoff)
+    assert isinstance(completed.outputs["result"].edited_report, EditedReportSubmission)
     assert len(invoker.calls) == 1
     assert invoker.calls[0]["agent"] == "aggregate-editor"
     assert invoker.calls[0]["task"] == "aggregate-existing"
@@ -457,8 +525,10 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
     repeated = await runtime.execute(value)
 
     assert repeated.status.value == "completed"
-    assert EditedReportSubmission.model_validate(repeated.outputs["result"]).title == (
-        "汇总报告"
+    assert (
+        AggregateExistingHandoff.model_validate(repeated.outputs["result"])
+        .edited_report.title
+        == "汇总报告"
     )
     assert repeated.run_id == run_id
     assert len(invoker.calls) == 1
@@ -467,3 +537,106 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
         and event.action_id == "prepare-aggregate-existing"
         for event in events.events
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_delivery(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
+        AggregateExistingPreparationInput,
+    )
+    from manyselves.kernel.ports import AgentInvocationOutcome
+
+    class RecordingAggregateInvoker:
+        async def invoke(
+            self,
+            agent,
+            task,
+            value,
+            conversation,
+            *,
+            task_id: str,
+        ) -> AgentInvocationOutcome:
+            del agent, task, value, conversation, task_id
+            return AgentInvocationOutcome(
+                status="ok",
+                result=_edited_submission().model_dump(mode="json"),
+                session_id="aggregate-editor-session",
+            )
+
+        async def invoke_with_recovery(
+            self,
+            agent,
+            task,
+            value,
+            conversation,
+            *,
+            task_id: str,
+            recovery_policy,
+        ) -> AgentInvocationOutcome:
+            del recovery_policy
+            return await self.invoke(
+                agent,
+                task,
+                value,
+                conversation,
+                task_id=task_id,
+            )
+
+    run_id = "aggregate-tail-final-boundary"
+    refs = _write_frozen_modules(
+        tmp_path,
+        run_id,
+        suffixes={module_id: ".md" for module_id in REPORT_MODULE_IDS},
+    )
+    _capability, registry = load_distribution_reporting_capability()
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-aggregate-existing-tail",
+    )
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    state = WorkflowState.for_plan(
+        run_id,
+        plan,
+        initial_variables={
+            "aggregate-input": AggregateExistingPreparationInput(
+                run_id=run_id,
+                request=_request(refs),
+            )
+        },
+    )
+    events = InMemoryWorkflowEventSink()
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, events)
+
+    with pytest.raises(
+        RuntimeError,
+        match="missing tool adapter: prepare-final-chapter-cohort",
+    ):
+        await host.execute(
+            plan,
+            state,
+            RuntimeContext(
+                tools=_tool_bundle(tmp_path, run_id),
+                contracts=build_contract_catalog(registry),
+                definitions=registry,
+                agents={"aggregate-editor": RecordingAggregateInvoker()},
+            ),
+        )
+
+    persisted = store.load(run_id)
+    assert persisted.actions["run-aggregate-existing"].status.value == "completed"
+    assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
+    assert persisted.actions["run-final-review"].status.value == "failed"
+    assert persisted.actions["run-report-delivery"].status.value == "pending"
+    assert persisted.outputs == {}
+    assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
+    assert any(
+        event.kind == "action.failed" and event.action_id == "run-final-review"
+        for event in events.events
+    )

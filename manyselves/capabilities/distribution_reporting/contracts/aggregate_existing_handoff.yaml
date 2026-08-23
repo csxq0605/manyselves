@@ -1,0 +1,5 @@
+id: aggregate_existing_handoff
+version: 1.0.0
+description: Typed aggregate editor handoff retaining prepared source context
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing:AggregateExistingHandoff

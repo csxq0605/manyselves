@@ -17,6 +17,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing import (
     AggregateExistingContext,
+    AggregateExistingHandoff,
     AggregateExistingPreparationInput,
     ModuleId,
 )
@@ -294,6 +295,42 @@ def build_aggregate_existing_tool_implementations(
     return {
         "prepare-aggregate-existing": tools.prepare,
         "project-aggregate-editor-input": tools.project_editor_input,
+        "project-aggregate-existing-handoff": project_aggregate_existing_handoff,
+        "project-aggregate-existing-tail": project_aggregate_existing_tail_state,
+    }
+
+
+def project_aggregate_existing_handoff(value: Any) -> AggregateExistingHandoff:
+    """Keep the editor result and prepared source context in one typed handoff."""
+
+    payload = value if isinstance(value, Mapping) else value
+    return AggregateExistingHandoff.model_validate(payload)
+
+
+def project_aggregate_existing_tail_state(
+    value: AggregateExistingHandoff | Any,
+) -> dict[str, Any]:
+    """Project aggregate output into the existing Final/Delivery state shape.
+
+    This is a pure in-memory projection.  It deliberately does not create a
+    final-review completion reference or any Delivery artifact; those belong to
+    the subsequent declared subworkflows.
+    """
+
+    handoff = AggregateExistingHandoff.model_validate(value)
+    context = handoff.context
+    return {
+        "run_id": context.run_id,
+        "request": context.request,
+        "edited_report": handoff.edited_report,
+        "module_submissions": context.structured_modules,
+        "markdown_modules": context.markdown_modules,
+        "evidence_items": context.evidence_items,
+        "photo_assets": context.photo_assets,
+        "aggregate_source_format": context.source_format,
+        "aggregate_source_manifest_ref": context.source_manifest_ref,
+        "aggregate_integrity_report_ref": context.integrity_report_ref,
+        "aggregate_editor_input_ref": context.editor_input_ref,
     }
 
 
