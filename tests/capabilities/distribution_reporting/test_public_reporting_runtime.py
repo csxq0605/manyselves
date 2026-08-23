@@ -19,6 +19,8 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TEMPLATE_ROLE_SKILL_IDS,
+    AgentResult,
+    AgentRunStatus,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleSubmission,
@@ -409,6 +411,23 @@ def _module_submission(module_id: str = "2.4") -> ModuleSubmission:
     )
 
 
+def _agent_result_json(
+    *,
+    task_id: str,
+    run_id: str,
+    agent_id: str,
+    payload: Any,
+) -> str:
+    return AgentResult(
+        task_id=task_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        session_id="scripted-module-session",
+        status=AgentRunStatus.COMPLETED,
+        payload=payload,
+    ).model_dump_json()
+
+
 class _ScriptedModuleAgentLoop:
     def __init__(
         self,
@@ -418,6 +437,7 @@ class _ScriptedModuleAgentLoop:
         reviewer_result_ref: str,
         revision_result_ref: str | None = None,
         recheck_result_ref: str | None = None,
+        author_task_id: str = "module-2.4",
     ) -> None:
         self.bus = bus
         self.runtime_id = runtime_id
@@ -425,6 +445,7 @@ class _ScriptedModuleAgentLoop:
         self.reviewer_result_ref = reviewer_result_ref
         self.revision_result_ref = revision_result_ref
         self.recheck_result_ref = recheck_result_ref
+        self.author_task_id = author_task_id
         self.received: list[UserMessage] = []
         self._callback = None
 
@@ -438,20 +459,24 @@ class _ScriptedModuleAgentLoop:
             self.received.append(message)
             if message.task_id == "invoke-current-module-reviewer":
                 result_ref = self.reviewer_result_ref
+                terminal_task_id = "module-2.4-initial-review-r0"
             elif message.task_id == "invoke-current-module-recheck":
                 result_ref = self.recheck_result_ref or self.reviewer_result_ref
+                terminal_task_id = "module-2.4-initial-review-r1"
             elif message.task_id == "invoke-current-module-revision":
                 result_ref = self.revision_result_ref or self.result_ref
+                terminal_task_id = "module-revision-r1-2.4"
             else:
                 result_ref = self.result_ref
+                terminal_task_id = self.author_task_id
             await self.bus.publish(
                 AgentResultMessage(
-                    sender=self.runtime_id,
+                    sender=self.runtime_id.split(":", 2)[1],
                     workflow_id=message.workflow_id,
-                    task_id=message.task_id,
+                    task_id=terminal_task_id,
                     run_id=message.run_id,
                     result_path=result_ref,
-                    task_attempt_id=message.task_attempt_id,
+                    task_attempt_id="",
                     session_id=message.session_id,
                 )
             )
@@ -630,11 +655,17 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
             }
         ],
     }
+    run_id = "public-module-boundary"
     result_ref = "Work/runs/public-module-boundary/results/module-2.4.json"
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
-        json.dumps(_module_submission().model_dump(mode="json")),
+        _agent_result_json(
+            task_id="module-2.4-authoring",
+            run_id=run_id,
+            agent_id="module-2.4-specialist",
+            payload=_module_submission(),
+        ),
         encoding="utf-8",
     )
     reviewer_result_ref = (
@@ -642,14 +673,17 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     reviewer_result_path = tmp_path / reviewer_result_ref
     reviewer_result_path.write_text(
-        json.dumps(
-            {
+        _agent_result_json(
+            task_id="module-2.4-initial-review-r0",
+            run_id=run_id,
+            agent_id="evidence-auditor",
+            payload={
                 "kind": "module_review_finding_submission",
                 "coverage": {
                     "submodule_ids": sorted(_module_submission().submodule_narratives)
                 },
                 "findings": [],
-            }
+            },
         ),
         encoding="utf-8",
     )
@@ -805,7 +839,11 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     assert "auditor-skill: preserve the review envelope" in (
         review.envelope.inline_context or ""
     )
-    finding_submission = json.loads(reviewer_result_path.read_text(encoding="utf-8"))
+    finding_result = AgentResult.model_validate_json(
+        reviewer_result_path.read_text(encoding="utf-8")
+    )
+    assert finding_result.payload is not None
+    finding_submission = finding_result.payload.model_dump(mode="json")
     assert finding_submission["kind"] == "module_review_finding_submission"
     assert finding_submission["findings"] == []
     assert finding_submission["coverage"]["submodule_ids"] == sorted(
@@ -879,15 +917,23 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
     result_path = tmp_path / result_ref
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
-        json.dumps(_module_submission().model_dump(mode="json")),
+        _agent_result_json(
+            task_id="module-2.4-authoring",
+            run_id=run_id,
+            agent_id="module-2.4-specialist",
+            payload=_module_submission(),
+        ),
         encoding="utf-8",
     )
     finding_id = "M-2.4-initial-r0-1"
     reviewer_result_ref = f"Work/runs/{run_id}/results/module-review-2.4.json"
     reviewer_result_path = tmp_path / reviewer_result_ref
     reviewer_result_path.write_text(
-        json.dumps(
-            {
+        _agent_result_json(
+            task_id="module-2.4-initial-review-r0",
+            run_id=run_id,
+            agent_id="evidence-auditor",
+            payload={
                 "kind": "module_review_finding_submission",
                 "coverage": {
                     "submodule_ids": sorted(_module_submission().submodule_narratives)
@@ -904,15 +950,18 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
                         "reviewer_checks": ["确认正文明确说明证据边界和待核实限制"],
                     }
                 ],
-            }
+            },
         ),
         encoding="utf-8",
     )
     revision_result_ref = f"Work/runs/{run_id}/results/module-revision-2.4.json"
     revision_result_path = tmp_path / revision_result_ref
     revision_result_path.write_text(
-        json.dumps(
-            {
+        _agent_result_json(
+            task_id="module-revision-r1-2.4",
+            run_id=run_id,
+            agent_id="module-2.4-specialist",
+            payload={
                 "kind": "module_revision_submission",
                 "module_id": "2.4",
                 "base_revision": 0,
@@ -932,15 +981,18 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
                         "changed_target_ids": ["2.4.1.1"],
                     }
                 ],
-            }
+            },
         ),
         encoding="utf-8",
     )
     recheck_result_ref = f"Work/runs/{run_id}/results/module-recheck-2.4.json"
     recheck_result_path = tmp_path / recheck_result_ref
     recheck_result_path.write_text(
-        json.dumps(
-            {
+        _agent_result_json(
+            task_id="module-2.4-initial-review-r1",
+            run_id=run_id,
+            agent_id="evidence-auditor",
+            payload={
                 "kind": "module_review_verdict_submission",
                 "coverage": {"submodule_ids": ["2.4.1.1"]},
                 "verdicts": [
@@ -952,7 +1004,7 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
                     }
                 ],
                 "new_findings": [],
-            }
+            },
         ),
         encoding="utf-8",
     )
@@ -973,6 +1025,7 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
             reviewer_result_ref,
             revision_result_ref,
             recheck_result_ref,
+            author_task_id="module-2.4-authoring",
         )
         loops.append(loop)
         return loop

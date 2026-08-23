@@ -14,14 +14,14 @@ from uuid import uuid4
 from manyselves.capabilities.distribution_reporting.domain.cross_specialization import (
     cross_lane_specialization,
 )
-from manyselves.capabilities.distribution_reporting.domain.revision_diff import (
-    build_revision_diff,
-)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_aggregate_retention,
     validate_editor_protection,
     validate_editor_quality,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_local_regression import (
+    build_cross_owner_local_regression_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     review as review_models,
@@ -61,7 +61,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     FinalAuditSnapshot,
     FinalReviewInput,
     ModuleReviewInput,
-    ModuleRevisionDiff,
     RequestedModuleChange,
     ReviewClaimStatement,
     ReviewCompletionRecord,
@@ -4412,67 +4411,23 @@ def _cross_owner_local_regression_context(
 ) -> tuple[review_models.ModuleLocalRegressionContext, set[str]]:
     """Build the existing Cross-triggered module regression input once."""
 
-    baseline_subject_ref = (
-        f"Work/runs/{state['run_id']}/modules/{owner_module_id}-r{reviewed_baseline.revision}.json"
-    )
-    prior_completion_ref = prior_completion_ref or state.get(
+    resolved_completion_ref = prior_completion_ref or state.get(
         "module_review_completion_refs", {}
     ).get(owner_module_id)
-    if not prior_completion_ref:
-        raise ReviewLifecycleError(
-            f"Cross local regression requires prior module review: {owner_module_id}"
-        )
     try:
-        prior_completion = ReviewCompletionRecord.model_validate_json(
-            (runner.service.workspace / prior_completion_ref).read_text(encoding="utf-8")
+        return build_cross_owner_local_regression_context(
+            workspace=runner.service.workspace,
+            store=runner.service.store,
+            run_id=state["run_id"],
+            owner_module_id=owner_module_id,
+            reviewed_baseline=reviewed_baseline,
+            revised=revised,
+            findings=findings,
+            review_round=review_round,
+            prior_completion_ref=resolved_completion_ref,
         )
-    except (OSError, ValueError) as exc:
-        raise ReviewLifecycleError(
-            f"Cross local regression prior completion is unreadable: {owner_module_id}"
-        ) from exc
-    if (
-        prior_completion.lifecycle != "module"
-        or prior_completion.run_id != state["run_id"]
-        or baseline_subject_ref not in prior_completion.subject_refs
-    ):
-        raise ReviewLifecycleError(
-            f"Cross local regression prior completion does not bind {owner_module_id}"
-        )
-
-    local_scope = {target_id for finding in findings for target_id in finding.target_submodule_ids}
-    local_diff_ref = (
-        f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
-        f"{owner_module_id}/trigger-diff-r{revised.revision}.json"
-    )
-    raw_local_diff = build_revision_diff(reviewed_baseline, revised)
-    local_diff = ModuleRevisionDiff(
-        module_id=raw_local_diff["module_id"],
-        from_revision=raw_local_diff["from_revision"],
-        to_revision=raw_local_diff["to_revision"],
-        changed_submodule_narratives=raw_local_diff["changed_submodule_narratives"],
-        changed_statement_refs=[
-            "statement-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-            for value in raw_local_diff["changed_claim_ids"]
-        ],
-        evidence_ids_added=raw_local_diff["source_ids_added"],
-        evidence_ids_removed=raw_local_diff["source_ids_removed"],
-    )
-    runner.service.store.write_json(
-        local_diff_ref,
-        local_diff.model_dump(mode="json"),
-    )
-    return (
-        review_models.ModuleLocalRegressionContext(
-            prior_review_completion_ref=prior_completion_ref,
-            prior_review_completion=prior_completion,
-            baseline_subject_ref=baseline_subject_ref,
-            trigger_cross_findings=findings,
-            trigger_revision_responses=revised.revision_responses,
-            revision_diff_ref=local_diff_ref,
-            revision_diff=local_diff,
-        ),
-        local_scope,
-    )
+    except ValueError as exc:
+        raise ReviewLifecycleError(str(exc)) from exc
 
 
 async def prepare_cross_owner_local_review(

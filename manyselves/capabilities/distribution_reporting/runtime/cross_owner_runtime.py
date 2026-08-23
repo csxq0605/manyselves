@@ -27,6 +27,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_local_regression import (
+    build_cross_owner_local_regression_context,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     CrossDecisionPack,
@@ -34,6 +37,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CrossReviewCoverageEntry,
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
+    ModuleReviewFindingSubmission,
     ModuleSubmission,
     TaskEnvelope,
 )
@@ -50,6 +54,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     module_content_view,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -58,9 +63,18 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     CrossOwnerInitialReviewAcceptance,
     CrossOwnerInitialReviewPreparation,
+    CrossOwnerLocalReviewAcceptance,
+    CrossOwnerLocalReviewPreparation,
     CrossOwnerRevisionAcceptance,
     CrossOwnerRevisionPreparation,
+    ModuleLocalRegressionContext,
     ModuleRevisionPreparation,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
+    accept_module_initial_review,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
+    prepare_module_local_regression_review,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
     accept_module_revision,
@@ -804,6 +818,119 @@ class CrossOwnerRuntime:
             update={
                 "status": "revision_accepted",
                 "revision_acceptance": revision_acceptance,
+                "error": None,
+            }
+        )
+
+    async def prepare_local_review(
+        self,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare the original module Auditor's scoped local regression."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        revision = context.revision_acceptance
+        if revision is None:
+            raise ValueError("Cross owner local review requires an accepted revision")
+        regression_context, local_scope = build_cross_owner_local_regression_context(
+            workspace=self.workspace,
+            store=self.store,
+            run_id=revision.run_id,
+            owner_module_id=revision.owner_module_id,
+            reviewed_baseline=revision.current,
+            revised=revision.revised,
+            findings=list(revision.findings),
+            review_round=revision.review_round,
+            prior_completion_ref=revision.prior_completion_ref,
+        )
+        prepared = prepare_module_local_regression_review(
+            store=self.store,
+            workflow_id=revision.workflow_id,
+            run_id=revision.run_id,
+            current=revision.revised,
+            scope=local_scope,
+            review_round=revision.review_round,
+            regression_context=regression_context,
+            user_supplements=revision.user_supplements,
+        )
+        preparation = CrossOwnerLocalReviewPreparation(
+            mode=prepared.mode,
+            run_id=revision.run_id,
+            workflow_id=revision.workflow_id,
+            owner_module_id=revision.owner_module_id,
+            review_round=revision.review_round,
+            owner_input_ref=revision.owner_input_ref,
+            reviewed_baseline=revision.current,
+            cross_responses=list(revision.revised.revision_responses),
+            regression_context=regression_context,
+            prepared=prepared,
+        )
+        return context.model_copy(
+            update={
+                "status": "local_review_ready",
+                "local_review_preparation": preparation,
+                "local_review_acceptance": None,
+                "error": None,
+            }
+        )
+
+    @staticmethod
+    def local_review_requires_agent(value: Any) -> bool:
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.local_review_preparation
+        return bool(
+            context.status == "local_review_ready"
+            and preparation is not None
+            and preparation.mode == "invoke_agent"
+        )
+
+    def accept_local_review(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept one typed original-Auditor local-regression result."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross owner local review acceptance requires context and result")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        preparation = context.local_review_preparation
+        if preparation is None or preparation.prepared is None:
+            raise ValueError("Cross owner local review acceptance has no preparation")
+        raw_result = value.get("result")
+        if isinstance(raw_result, DeclarativeModuleReviewAgentResult) or (
+            isinstance(raw_result, Mapping) and "status" in raw_result
+        ):
+            result = _model(raw_result, DeclarativeModuleReviewAgentResult)
+            if result.status != "completed" or result.submission is None:
+                return context.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": result.error or "Cross owner local Auditor failed",
+                    }
+                )
+            submission = result.submission
+        else:
+            submission = _model(raw_result, ModuleReviewFindingSubmission)
+        review = accept_module_initial_review(
+            preparation=preparation.prepared,
+            submission=submission,
+            store=self.store,
+        )
+        acceptance = CrossOwnerLocalReviewAcceptance(
+            run_id=preparation.run_id,
+            workflow_id=preparation.workflow_id,
+            owner_module_id=preparation.owner_module_id,
+            review_round=preparation.review_round,
+            owner_input_ref=preparation.owner_input_ref,
+            reviewed_baseline=preparation.reviewed_baseline,
+            cross_responses=preparation.cross_responses,
+            regression_context=cast(
+                ModuleLocalRegressionContext,
+                preparation.regression_context,
+            ),
+            review=review,
+        )
+        return context.model_copy(
+            update={
+                "status": "local_review_accepted",
+                "local_review_acceptance": acceptance,
                 "error": None,
             }
         )

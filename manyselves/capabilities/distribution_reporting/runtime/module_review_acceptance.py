@@ -18,6 +18,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     ModuleInitialReviewAcceptance,
+    ModuleInitialReviewPreparation,
     ModuleReviewProgress,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
@@ -134,6 +135,94 @@ def _save_completion(
     return completion_ref
 
 
+def accept_module_initial_review(
+    *,
+    preparation: ModuleInitialReviewPreparation,
+    submission: ModuleReviewFindingSubmission,
+    store: ReportingStore,
+) -> ModuleInitialReviewAcceptance:
+    """Accept one typed initial or local-regression Auditor submission."""
+
+    prepared = preparation
+    if prepared.mode != "invoke_agent":
+        raise ValueError("cannot accept an initial module review without an Agent invocation")
+    if prepared.subject_ref is None:
+        raise ValueError("initial module review lacks a subject ref")
+    scope = set(prepared.scope)
+    if not scope.issubset(set(submission.coverage.submodule_ids)):
+        raise ValueError("initial module review coverage omitted assigned submodules")
+    _validate_findings(
+        submission,
+        module_id=prepared.module_id,
+        lifecycle_id=prepared.lifecycle_id,
+        review_round=prepared.review_round,
+        scope=scope,
+    )
+
+    finding_ref = f"{prepared.review_root}/findings-r{prepared.review_round}.json"
+    _write_immutable_json(
+        store,
+        finding_ref,
+        submission.model_dump(mode="json"),
+    )
+    finding_refs = [finding_ref]
+    pending = list(submission.findings)
+    phase = (
+        prepared.review_input.phase
+        if prepared.review_input is not None
+        else prepared.phase
+    )
+    completion_ref: str | None = None
+    if pending:
+        next_action = "revise"
+    else:
+        completion_ref = _save_completion(
+            store,
+            run_id=prepared.run_id,
+            module_id=prepared.module_id,
+            lifecycle_id=prepared.lifecycle_id,
+            revision=prepared.current.revision,
+            reviewer_session_key=prepared.reviewer_session_key,
+            subject_ref=prepared.subject_ref,
+            finding_refs=finding_refs,
+        )
+        store.write_text(
+            f"Outputs/Modules/{prepared.module_id}.md",
+            prepared.current.markdown,
+        )
+        next_action = "completed"
+    _save_progress(
+        store,
+        progress_ref=prepared.progress_ref,
+        run_id=prepared.run_id,
+        module_id=prepared.module_id,
+        next_action=next_action,
+        current=prepared.current,
+        pending=pending,
+        finding_refs=finding_refs,
+        reviewer_session_key=prepared.reviewer_session_key,
+        review_round=prepared.review_round,
+        phase=phase,
+        scope=scope,
+        subject_ref=prepared.subject_ref,
+    )
+    return ModuleInitialReviewAcceptance(
+        run_id=prepared.run_id,
+        module_id=prepared.module_id,
+        lifecycle_id=prepared.lifecycle_id,
+        reviewer_session_key=prepared.reviewer_session_key,
+        subject_ref=prepared.subject_ref,
+        current=prepared.current,
+        findings=pending,
+        finding_refs=finding_refs,
+        verdict_refs=[],
+        resolved_ids=[],
+        next_action=next_action,
+        progress_ref=prepared.progress_ref,
+        completion_ref=completion_ref,
+    )
+
+
 def accept_current_module_review(
     value: Mapping[str, Any],
     *,
@@ -154,89 +243,20 @@ def accept_current_module_review(
     submission = ModuleReviewFindingSubmission.model_validate(result.submission)
     review = context.review
     prepared = review.prepared
-    if prepared.mode != "invoke_agent":
-        raise ValueError("cannot accept an initial module review without an Agent invocation")
-    if prepared.subject_ref is None:
-        raise ValueError("initial module review lacks a subject ref")
     if prepared.module_id != context.module_id or prepared.current.module_id != context.module_id:
         raise ValueError("module review result does not belong to the current module")
     if prepared.reviewer_session_key != review.reviewer_session_key:
         raise ValueError("module review reviewer session identity changed")
-    scope = set(prepared.scope)
-    if not scope.issubset(set(submission.coverage.submodule_ids)):
-        raise ValueError("initial module review coverage omitted assigned submodules")
-    _validate_findings(
-        submission,
-        module_id=prepared.module_id,
-        lifecycle_id=prepared.lifecycle_id,
-        review_round=prepared.review_round,
-        scope=scope,
-    )
-
-    run_id = str(context.reporting_state["run_id"])
-    finding_ref = f"{prepared.review_root}/findings-r{prepared.review_round}.json"
-    _write_immutable_json(
-        store,
-        finding_ref,
-        submission.model_dump(mode="json"),
-    )
-    finding_refs = [finding_ref]
-    pending = list(submission.findings)
-    phase = prepared.review_input.phase if prepared.review_input is not None else "initial"
-    completion_ref: str | None = None
-    if pending:
-        next_action = "revise"
-    else:
-        completion_ref = _save_completion(
-            store,
-            run_id=run_id,
-            module_id=prepared.module_id,
-            lifecycle_id=prepared.lifecycle_id,
-            revision=prepared.current.revision,
-            reviewer_session_key=prepared.reviewer_session_key,
-            subject_ref=prepared.subject_ref,
-            finding_refs=finding_refs,
-        )
-        store.write_text(
-            f"Outputs/Modules/{prepared.module_id}.md",
-            prepared.current.markdown,
-        )
-        next_action = "completed"
-    _save_progress(
-        store,
-        progress_ref=prepared.progress_ref,
-        run_id=run_id,
-        module_id=prepared.module_id,
-        next_action=next_action,
-        current=prepared.current,
-        pending=pending,
-        finding_refs=finding_refs,
-        reviewer_session_key=prepared.reviewer_session_key,
-        review_round=prepared.review_round,
-        phase=phase,
-        scope=scope,
-        subject_ref=prepared.subject_ref,
-    )
-    acceptance = ModuleInitialReviewAcceptance(
-        run_id=prepared.run_id,
-        module_id=prepared.module_id,
-        lifecycle_id=prepared.lifecycle_id,
-        reviewer_session_key=prepared.reviewer_session_key,
-        subject_ref=prepared.subject_ref,
-        current=prepared.current,
-        findings=pending,
-        finding_refs=finding_refs,
-        verdict_refs=[],
-        resolved_ids=[],
-        next_action=next_action,
-        progress_ref=prepared.progress_ref,
-        completion_ref=completion_ref,
+    acceptance = accept_module_initial_review(
+        preparation=prepared,
+        submission=submission,
+        store=store,
     )
     reporting_state = context.reporting_state
-    if completion_ref is not None:
+    if acceptance.completion_ref is not None:
         reporting_state.setdefault("module_review_completion_refs", {})[
             prepared.module_id
-        ] = completion_ref
+        ] = acceptance.completion_ref
     accepted_review = review.model_copy(update={"acceptance": acceptance})
     return context.model_copy(
         deep=True,
@@ -248,4 +268,4 @@ def accept_current_module_review(
     )
 
 
-__all__ = ["accept_current_module_review"]
+__all__ = ["accept_current_module_review", "accept_module_initial_review"]
