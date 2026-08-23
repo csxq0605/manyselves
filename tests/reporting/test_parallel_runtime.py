@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ArtifactRef,
     CrossOwnerCompletion,
     IdentityLeaseManager,
@@ -19,7 +19,7 @@ from manyselves.core.reporting.parallel_runtime import (
     bind_project_write_lease,
     reset_project_write_lease,
 )
-from manyselves.core.reporting.store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
 def _hold_identity_lease(

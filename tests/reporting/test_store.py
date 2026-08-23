@@ -6,7 +6,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     SourceKind,
     SourceRecord,
 )
-from manyselves.core.reporting.store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
 def _source() -> SourceRecord:
@@ -64,7 +64,7 @@ def test_strict_directory_fsync_propagates_eio(
     def fail_fsync(_descriptor: int) -> None:
         raise OSError(errno.EIO, "injected directory fsync failure")
 
-    monkeypatch.setattr("manyselves.core.reporting.store.os.fsync", fail_fsync)
+    monkeypatch.setattr("manyselves.capabilities.distribution_reporting.runtime.storage.os.fsync", fail_fsync)
 
     with pytest.raises(OSError) as captured:
         ReportingStore.fsync_directory(tmp_path)
@@ -79,7 +79,7 @@ def test_strict_directory_open_propagates_eio(
     def fail_open(*_args, **_kwargs) -> int:
         raise OSError(errno.EIO, "injected directory open failure")
 
-    monkeypatch.setattr("manyselves.core.reporting.store.os.open", fail_open)
+    monkeypatch.setattr("manyselves.capabilities.distribution_reporting.runtime.storage.os.open", fail_open)
 
     with pytest.raises(OSError) as captured:
         ReportingStore.fsync_directory(tmp_path)

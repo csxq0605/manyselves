@@ -18,12 +18,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     CHAPTER3_SECTION_IDS,
     SpecialTopicPlan,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.config import load_packaged_agents
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
     SubmitResultTool,

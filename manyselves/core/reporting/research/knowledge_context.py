@@ -11,10 +11,10 @@ from pathlib import Path
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import SpecialTopicPlan
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from ..input_snapshot import RunInputSnapshotStore
-from ..source_ledger import SourceLedger
-from ..store import ReportingStore
 from .reference_library import ReferenceDocument, ReferenceLibrary
 
 

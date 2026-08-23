@@ -24,13 +24,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SourceLocation,
     UserSupplement,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
 from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import (
     AgentWorkflowBlocked,
     AgentWorkflowError,

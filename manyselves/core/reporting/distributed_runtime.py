@@ -18,8 +18,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..artifacts.content_store import ContentAddressedStore
-from .parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ArtifactRef,
     IdentityLeaseHandle,
     IdentityLeaseManager,
@@ -27,11 +26,13 @@ from .parallel_runtime import (
     ProjectWriteLeaseManager,
     atomic_write_json,
     bind_project_write_lease,
+    current_bound_project_write_lease,
     exclusive_file_lock,
     reset_project_write_lease,
     validate_bound_project_write_lease,
-    current_bound_project_write_lease,
 )
+
+from ..artifacts.content_store import ContentAddressedStore
 
 
 class _StrictModel(BaseModel):

@@ -13,7 +13,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     TaskEnvelope,
 )
-from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    LaneCompletion,
+    LaneTaskSpec,
+)
 from manyselves.core.reporting.review_lifecycle import (
     MainExceptionDecisionAcceptance,
     MainExceptionDecisionPreparation,

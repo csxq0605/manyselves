@@ -36,6 +36,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     ReportRequest,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    LaneCompletion,
+    LaneTaskSpec,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.config import load_packaged_agents
@@ -56,7 +60,6 @@ from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
 from manyselves.core.reporting.declarative_task_binding import bind_declared_task
-from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,

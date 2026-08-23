@@ -28,9 +28,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     SpecialTopicPlan,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    AggregateState,
+    RecoveryStateStore,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.final_specialization import final_lane_specialization
-from manyselves.core.reporting.parallel_runtime import AggregateState, RecoveryStateStore
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 

@@ -16,13 +16,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
-
-from ..artifacts.content_store import ContentAddressedStore, ContentBlob
-from ..artifacts.storage_policy import CasPolicy, StorageMode, StoredArtifact
-from .parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     current_bound_project_write_lease,
     validate_bound_project_write_lease,
 )
+
+from ..artifacts.content_store import ContentAddressedStore, ContentBlob
+from ..artifacts.storage_policy import CasPolicy, StorageMode, StoredArtifact
 
 
 class DeliveryPackage(StrictModel):

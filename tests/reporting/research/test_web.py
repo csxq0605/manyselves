@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.core.reporting.research.web import (
     DisabledWebResearchBackend,
     OpenedWebSource,
     WebSearchHit,
 )
-from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.tools.reporting_research_tools import (
     OpenWebSourceTool,
     WebSearchTool,

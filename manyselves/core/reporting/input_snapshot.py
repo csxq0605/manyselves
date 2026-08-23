@@ -10,10 +10,12 @@ from typing import Literal
 from pydantic import Field
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    exclusive_file_lock,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from ..artifacts.content_store import ContentAddressedStore
-from .parallel_runtime import exclusive_file_lock
-from .store import ReportingStore
 
 
 class FrozenProjectFile(StrictModel):

@@ -11,7 +11,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ReviewCompletionRecord,
 )
-from manyselves.core.reporting.store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
 
 MODULES = ("2.1", "2.2", "2.3", "2.4", "2.5")

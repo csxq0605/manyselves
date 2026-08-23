@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    ArtifactRef,
+    ProjectWriteLease,
+    ProjectWriteLeaseManager,
+)
 from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.core.reporting.distributed_runtime import (
     DistributedTask,
@@ -14,9 +19,6 @@ from manyselves.core.reporting.distributed_runtime import (
     RunProjection,
     WorkspaceMaterializer,
 )
-from manyselves.core.reporting.parallel_runtime import ArtifactRef
-from manyselves.core.reporting.parallel_runtime import ProjectWriteLease
-from manyselves.core.reporting.parallel_runtime import ProjectWriteLeaseManager
 
 
 def _artifact(path: Path, workspace: Path, *, media_type: str) -> ArtifactRef:

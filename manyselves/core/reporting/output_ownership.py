@@ -14,11 +14,13 @@ from typing import Literal, Self
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    validate_bound_project_write_lease,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from ..artifacts.content_store import ContentAddressedStore
 from .delivery import DeliveryReceipt
-from .parallel_runtime import validate_bound_project_write_lease
-from .store import ReportingStore
 from .versions import ReportVersionStore
 
 OUTPUT_OWNER_REF = Path("Work/output-owner.json")

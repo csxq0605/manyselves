@@ -1,4 +1,4 @@
-"""Durable contracts for isolated, recoverable reporting lanes.
+"""Capability-owned durable contracts for isolated, recoverable reporting lanes.
 
 The reporting workflow is still coordinated in-process, but these primitives
 deliberately use project-local files and POSIX advisory locks so task identity,
@@ -18,11 +18,11 @@ import re
 import socket
 import tempfile
 import time
-from dataclasses import dataclass, field
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable, Literal, Mapping, TextIO
+from typing import Any, Callable, Iterable, Literal, Mapping, TextIO
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -2664,14 +2664,6 @@ class RecoveryStateStore:
         self.plan_root.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.plan_root / f"{plan.plan_id}.json", plan.model_dump(mode="json"))
         return plan
-
-
-# Short aliases make the state contract discoverable without coupling workers
-# to the historical ``TaskAttemptStore`` naming.
-LaneAttempt = LaneAttemptRecord
-LaneCompletionRecord = LaneCompletion
-RecoveryStore = RecoveryStateStore
-LaneRecoveryStore = RecoveryStateStore
 
 
 class WorkflowReducer:

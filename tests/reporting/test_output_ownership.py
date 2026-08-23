@@ -11,6 +11,7 @@ from docx import Document
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.delivery import DeliveryPackage, ProjectDelivery
 from manyselves.core.reporting.output_ownership import (
     CURRENT_OUTPUT_SET_REF,
@@ -22,7 +23,6 @@ from manyselves.core.reporting.output_ownership import (
     OutputOwnerStore,
     build_output_owner,
 )
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.versions import ReportVersionStore
 
 

@@ -16,9 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     RevisionRequest,
 )
-
-from .distributed_runtime import LocalEventStore, RunProjection
-from .parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ProjectWriteLeaseHandle,
     ProjectWriteLeaseManager,
     atomic_write_json,
@@ -26,6 +24,8 @@ from .parallel_runtime import (
     exclusive_file_lock,
     reset_project_write_lease,
 )
+
+from .distributed_runtime import LocalEventStore, RunProjection
 
 JobStatus = Literal[
     "queued",

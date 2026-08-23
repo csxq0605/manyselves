@@ -1,4 +1,4 @@
-"""Persistent E/R/W source registry for one reporting run."""
+"""Capability-owned persistent E/R/W source registry for one reporting run."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     SourceRecord,
 )
 
-from .parallel_runtime import exclusive_file_lock
+from .state.parallel import exclusive_file_lock
 
 _LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[Path, threading.RLock] = {}

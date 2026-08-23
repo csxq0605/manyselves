@@ -33,6 +33,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ValidationReport,
     WorkflowExceptionInput,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    ArtifactRef,
+    CrossOwnerCompletion,
+    TaskCorrelation,
+    TaskTerminal,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting import review_lifecycle as lifecycle
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
@@ -42,13 +49,6 @@ from manyselves.core.reporting.declarative_cross_owner_cohort import (
 from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
-from manyselves.core.reporting.parallel_runtime import (
-    ArtifactRef,
-    CrossOwnerCompletion,
-    TaskCorrelation,
-    TaskTerminal,
-)
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus, resume_waiting_input

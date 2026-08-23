@@ -37,6 +37,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceItem,
     SpecialTopicPlan,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.reporting.declarative_final_chapter_cohort import (
     DeclarativeFinalChapterRuntime,
     compile_final_chapter_workflows,
@@ -47,7 +48,6 @@ from manyselves.core.reporting.declarative_final_review_cycle import (
     compile_final_review_workflows,
     compose_final_review_agent_invokers,
 )
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.kernel.definitions import DefinitionKind, WorkflowDefinition
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry

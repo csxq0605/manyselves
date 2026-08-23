@@ -29,14 +29,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     RevisionRequest,
 )
-
-from .agent_runner import ReportingAgentRunner
-from .locks import exclusive_reporting_writer_lock
-from .parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ProjectWriteLeaseManager,
     bind_project_write_lease,
     reset_project_write_lease,
 )
+
+from .agent_runner import ReportingAgentRunner
+from .locks import exclusive_reporting_writer_lock
 from .session_summary import AgentSessionSummary
 from .skills.service import ProjectSkillEvolutionService
 from .versions import ReportVersion, ReportVersionStore

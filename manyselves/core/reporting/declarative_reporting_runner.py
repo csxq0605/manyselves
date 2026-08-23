@@ -44,6 +44,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_definitions import (
     register_module_runtime_lane_specializations,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import LaneCompletion
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRecord, ConversationRegistry
 from manyselves.kernel.definitions import (
@@ -115,7 +116,6 @@ from .declarative_module_cohort import (
 from .declarative_reporting_tail import _ReportingTailAdapters
 from .declarative_task_binding import bind_declared_task
 from .distributed_runtime import LocalEventStore
-from .parallel_runtime import LaneCompletion
 from .review_lifecycle import (
     DeferredMainDecision,
     MainExceptionDecisionPreparation,

@@ -13,8 +13,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import ReportingModel
-
-from .store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
 class AgentSessionSummary(ReportingModel):

@@ -18,14 +18,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     ReportingModel,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    current_bound_project_write_lease,
+    validate_bound_project_write_lease,
+)
 
 from ..artifacts.content_store import ContentAddressedStore
 from ..artifacts.storage_policy import CasPolicy, StorageMode
 from .delivery import DeliveryReceipt
-from .parallel_runtime import (
-    current_bound_project_write_lease,
-    validate_bound_project_write_lease,
-)
 
 
 class SkillProvenance(ReportingModel):

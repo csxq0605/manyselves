@@ -19,11 +19,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     RevisionRequest,
     SourceLocation,
 )
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingService
-from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.tools.task_board import TaskBoard

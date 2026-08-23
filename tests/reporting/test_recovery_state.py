@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     AggregateState,
     LaneAttemptRecord,
     RecoveryStateStore,

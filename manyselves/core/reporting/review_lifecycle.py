@@ -65,15 +65,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
 )
-
-from .assets import (
-    validate_aggregate_retention,
-    validate_editor_protection,
-    validate_editor_quality,
-)
-from .chapter_parallel import CHAPTER_SECTION_IDS
-from .cross_specialization import cross_lane_specialization
-from .parallel_runtime import (
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     AggregateState,
     ArtifactRef,
     CrossOwnerBarrier,
@@ -82,9 +75,16 @@ from .parallel_runtime import (
     TaskAttemptStore,
     WorkflowReducer,
 )
+
+from .assets import (
+    validate_aggregate_retention,
+    validate_editor_protection,
+    validate_editor_quality,
+)
+from .chapter_parallel import CHAPTER_SECTION_IDS
+from .cross_specialization import cross_lane_specialization
 from .review_preflight import evaluate_module_review_preflight
 from .revision_diff import build_revision_diff
-from .source_ledger import SourceLedger
 
 if TYPE_CHECKING:
     from .workflow import ReportWorkflowRunner

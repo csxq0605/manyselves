@@ -9,8 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import CostControlMode
-
-from .store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
 class StageCostController:

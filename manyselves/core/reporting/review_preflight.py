@@ -17,8 +17,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ValidationFailure,
     ValidationReport,
 )
-
-from .source_ledger import SourceLedger
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 
 _CHECK_IDS = (
     "module_preflight.control_markers",

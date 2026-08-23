@@ -13,8 +13,9 @@ from typing import Literal
 
 from docx import Document
 
-from ..parallel_runtime import exclusive_file_lock
-
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    exclusive_file_lock,
+)
 
 KnowledgeNamespace = Literal["project", "global"]
 _RETIRED_HISTORY_SENTINEL = "<persisted_result_part"

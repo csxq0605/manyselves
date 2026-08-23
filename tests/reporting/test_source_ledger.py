@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.source_ledger import SourceLedger
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 
 
 def test_source_ids_are_stable_per_kind_and_persisted(tmp_path: Path):

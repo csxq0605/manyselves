@@ -27,10 +27,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     RevisionRequest,
     UserSupplement,
 )
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    atomic_write_json,
+    exclusive_file_lock,
+)
 
 from .distributed_runtime import LocalEventStore
 from .headless_runtime import HeadlessReportingRuntime
-from .parallel_runtime import atomic_write_json, exclusive_file_lock
 from .production_runtime import ProductionPolicy, SecurityAuditLog
 
 Role = Literal["viewer", "editor", "owner"]

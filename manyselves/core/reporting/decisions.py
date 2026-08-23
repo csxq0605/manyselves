@@ -7,8 +7,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceDecisionAction,
     EvidenceDecisionRequest,
 )
-
-from .store import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
 class EvidenceDecisionStore:

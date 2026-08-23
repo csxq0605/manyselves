@@ -1,4 +1,4 @@
-"""Project-local persistence for reporting workflow state."""
+"""Capability-owned project-local persistence for reporting workflow state."""
 
 import json
 import os
@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .parallel_runtime import validate_bound_project_write_lease
+from .state.parallel import validate_bound_project_write_lease
 
 
 class ReportingStore:
