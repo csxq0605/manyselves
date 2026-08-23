@@ -543,6 +543,190 @@ async def test_cross_owner_agent_invoker_uses_specialized_owner_session(
     assert "template_role_skill" not in received[0].content
 
 
+@pytest.mark.parametrize(
+    ("marker", "continuation_kind", "event_name"),
+    (
+        ("plain analysis without submission", "submission_correction", "natural_language_without_submission"),
+        ("AGENT_MAX_TOKENS_CONTINUATION_REQUIRED", "max_tokens_continuation", "max_tokens"),
+        ("AGENT_TURN_CONTINUATION_REQUIRED", "tool_slice_continuation", "tool_slice_boundary"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_cross_owner_agent_invoker_recovers_in_same_session(
+    tmp_path: Path,
+    marker: str,
+    continuation_kind: str,
+    event_name: str,
+) -> None:
+    """Cross recovery follows the declared generic loop without a new session."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
+        CrossOwnerAgentInvoker,
+        CrossOwnerRuntime,
+    )
+    from manyselves.core.loops.agent_loop import (
+        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+        AGENT_TURN_CONTINUATION_REQUIRED,
+    )
+    from manyselves.interfaces.types import AgentResponse
+    from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
+
+    marker_content = {
+        "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED": AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+        "AGENT_TURN_CONTINUATION_REQUIRED": AGENT_TURN_CONTINUATION_REQUIRED,
+    }.get(marker, marker)
+    runtime = CrossOwnerRuntime(tmp_path)
+    state = runtime.prepare(_cross_state(f"cross-recovery-{event_name}"))
+    context = runtime.prepare_initial({"state": state, "owner_module_id": "2.1"})
+    envelope = context.preparation.envelope
+    assert envelope is not None
+    result_ref = f"Work/runs/{envelope.run_id}/results/cross-owner-2.1.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+
+    class ScriptedCrossRecoveryLoop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self.callback = None
+
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                if message.turn_kind == "task_initial":
+                    await bus.publish(
+                        AgentResponse(
+                            agent_type=self.runtime_id,
+                            message_id=message.message_id,
+                            content=marker_content,
+                            workflow_id=message.workflow_id,
+                            run_id=message.run_id,
+                            task_id=message.task_id,
+                            task_attempt_id=message.task_attempt_id,
+                            session_id=message.session_id,
+                        )
+                    )
+                    return
+                result_path.write_text(
+                    AgentResult(
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
+                        agent_id=envelope.agent_id,
+                        session_id=message.session_id,
+                        status=AgentRunStatus.COMPLETED,
+                        payload=CrossOwnerFindingSubmission(
+                            owner_module_id="2.1",
+                            coverage=CrossReviewCoverageEntry(
+                                module_id="2.1",
+                                checked_dimensions=["terminology"],
+                            ),
+                        ),
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=envelope.agent_id,
+                        workflow_id=message.workflow_id,
+                        task_id=envelope.task_id,
+                        run_id=envelope.run_id,
+                        result_path=result_ref,
+                        task_attempt_id="",
+                        session_id=message.session_id,
+                    )
+                )
+
+            self.callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self.callback is not None:
+                bus.unsubscribe(UserMessage, self.callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    loops: list[ScriptedCrossRecoveryLoop] = []
+
+    def session_factory(runtime_id: str) -> ScriptedCrossRecoveryLoop:
+        loop = ScriptedCrossRecoveryLoop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    execution = AgentExecutionService(bus, timeout=1)
+    bridge = CrossOwnerAgentInvoker(
+        tmp_path,
+        execution=execution,
+        session_factory=session_factory,
+    )
+    agent = AgentDefinition(
+        id="cross-module-reviewer",
+        version="1.0.0",
+        description="Cross owner reviewer",
+        instructions="Review cross-module consistency.",
+    )
+    task = TaskDefinition(
+        id="cross-owner-runtime-initial-review",
+        version="1.0.0",
+        description="Cross owner initial",
+        agent=agent.id,
+        objective="review cross-module interfaces",
+        input_contract="reporting_tool_input",
+        output_contract="declarative_cross_owner_initial_agent_result",
+    )
+    conversation = ConversationRecord(
+        conversation_id="cross-recovery-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="cross-owner-2.1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=envelope.run_id,
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id="invoke-cross-owner-2.1",
+            recovery_policy=RecoveryPolicyDefinition(
+                id=f"cross-{event_name}-recovery",
+                version="1.0.0",
+                description="recover declared Cross boundary",
+                rules={
+                    event_name: RecoveryRule(
+                        action=(
+                            "correct"
+                            if event_name == "natural_language_without_submission"
+                            else "continue"
+                        )
+                    )
+                },
+            ),
+        )
+    finally:
+        await execution.close_workflow("public-reporting")
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert outcome.result["status"] == "completed"
+    assert len(loops) == 1
+    assert [message.turn_kind for message in loops[0].received] == [
+        "task_initial",
+        continuation_kind,
+    ]
+    assert loops[0].received[0].session_id == loops[0].received[1].session_id
+
+
 @pytest.mark.asyncio
 async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_boundary(
     tmp_path: Path,

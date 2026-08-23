@@ -24,6 +24,9 @@ from manyselves.capabilities.distribution_reporting.domain.cross_specialization 
     cross_lane_specialization,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    execute_reporting_recovery,
+)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -357,10 +360,14 @@ class CrossOwnerAgentInvoker:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Keep the declared recovery port while this slice is initial-only."""
-
-        del recovery_policy
-        return await self._invoke_once(agent, task, value, conversation, task_id=task_id)
+        return await self._invoke_once(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
 
     async def _invoke_once(
         self,
@@ -370,6 +377,7 @@ class CrossOwnerAgentInvoker:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
         preparation = self.preparation_for_output(context, task.output_contract)
@@ -431,14 +439,80 @@ class CrossOwnerAgentInvoker:
             terminal_task_id=preparation.envelope.task_id,
             terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
-        outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
-        return TypedAgentTurn.map_outcome(
-            outcome,
-            session_id=session.session_id,
-            decode_result=lambda result_ref: self._decode_result(
+        def decode_result(result_ref: str) -> dict[str, Any]:
+            return self._decode_result(
                 result_ref,
                 output_contract=task.output_contract,
+            )
+        if recovery_policy is None:
+            outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
+            return TypedAgentTurn.map_outcome(
+                outcome,
+                session_id=session.session_id,
+                decode_result=decode_result,
+            )
+        recovered = await execute_reporting_recovery(
+            self.execution,
+            session,
+            request,
+            recovery_policy=recovery_policy,
+            terminals=(terminal,),
+            prompt_builder=lambda event_kind: self._recovery_prompt(
+                agent,
+                task,
+                preparation,
+                event_kind,
             ),
+            result_decoder=decode_result,
+        )
+        if isinstance(recovered, AgentInvocationOutcome):
+            return recovered
+        return AgentInvocationOutcome(
+            status="ok",
+            result=recovered,
+            session_id=session.session_id,
+        )
+
+    @staticmethod
+    def _recovery_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        preparation: Any,
+        event_kind: Any,
+    ) -> str:
+        event_name = getattr(event_kind, "value", str(event_kind))
+        if event_name == "max_tokens":
+            instruction = (
+                "继续当前 Cross owner 会话；上轮达到 max_tokens，"
+                "不要重做已经完成的分析或工具调用。"
+            )
+        elif event_name == "tool_slice_boundary":
+            instruction = (
+                "继续当前 Cross owner 会话；复用已有 tool slice 结果，"
+                "不要重放已经完成的工具。"
+            )
+        else:
+            instruction = (
+                "上一轮没有提交结构化结果；在当前会话中立即完成纠正，"
+                "不要重复已经完成的分析。"
+            )
+        return "\n\n".join(
+            (
+                f"<{event_name}>",
+                instruction,
+                f"你仍是 {agent.id}，当前任务是 {task.id}。",
+                "立即调用 submit_result，提交符合 output contract 的类型化结果。",
+                json.dumps(
+                    {
+                        "run_id": preparation.run_id,
+                        "owner_module_id": preparation.owner_module_id,
+                        "output_contract": task.output_contract,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                f"</{event_name}>",
+            )
         )
 
     @staticmethod
