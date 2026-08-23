@@ -7,9 +7,7 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
     TEMPLATE_ROLE_SKILL_IDS,
     ClaimRecord,
@@ -19,6 +17,8 @@ from manyselves.core.reporting.agentic_models import (
     ModuleSubmission,
     TemplateSkillSubmission,
 )
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.input_contracts import (
     INPUT_CONTRACT_EXAMPLES,

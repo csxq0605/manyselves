@@ -14,12 +14,7 @@ from uuid import uuid4
 from pydantic import Field
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
-)
-
-from .agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     ChiefRevisionSubmission,
     ClaimRecord,
@@ -45,6 +40,11 @@ from .agentic_models import (
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
+
 from .assets import (
     validate_aggregate_retention,
     validate_editor_protection,

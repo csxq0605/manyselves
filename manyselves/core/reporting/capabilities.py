@@ -17,10 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
+
 from ..access_policy import ISOLATED_DISTILLATION_SNAPSHOT_NAME
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..artifacts.types import ArtifactDescriptor
-from .agentic_models import TaskEnvelope
 from .config import AgentDefinition, ConfigurationError
 
 DeliveryMode = Literal["inline", "reference", "hash_retained"]

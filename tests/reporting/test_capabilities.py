@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant
-from manyselves.core.reporting.agentic_models import TaskEnvelope
 from manyselves.core.reporting.capabilities import (
-    compile_agent_access,
     collect_photo_ids,
     collect_reference_refs,
+    compile_agent_access,
 )
 from manyselves.core.reporting.config import ConfigurationError, load_packaged_agents
 from manyselves.core.reporting.input_contracts import (

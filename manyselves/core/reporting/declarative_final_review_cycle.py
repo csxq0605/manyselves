@@ -13,6 +13,14 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     final_review as final_review_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ChapterScopedFinalReviewFinding,
+    ChiefChapterLaneRevisionSubmission,
+    EditedReportSubmission,
+    FinalChapterLaneVerdictSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
@@ -39,14 +47,6 @@ from manyselves.kernel.executors import ExecutorRegistry
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowCompiler
 
-from .agentic_models import (
-    ChapterScopedFinalReviewFinding,
-    ChiefChapterLaneRevisionSubmission,
-    EditedReportSubmission,
-    FinalChapterLaneVerdictSubmission,
-    ModuleSubmission,
-    TaskEnvelope,
-)
 from .declarative_final_chapter_cohort import (
     FINAL_CHAPTER_IDS,
 )

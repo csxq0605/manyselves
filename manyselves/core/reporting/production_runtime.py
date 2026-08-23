@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 from pydantic import Field
 
-from .agentic_models import StrictModel
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
+
 from .parallel_runtime import atomic_write_json, exclusive_file_lock
 
 

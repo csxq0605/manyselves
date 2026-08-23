@@ -16,6 +16,10 @@ from manyselves.capabilities.distribution_reporting.adapters import (
     project_reporting_agent,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TaskEnvelope,
+    WorkflowDecisionSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeMainExceptionUserInput,
 )
@@ -81,7 +85,6 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .agentic_models import TaskEnvelope, WorkflowDecisionSubmission
 from .declarative_chief_chapter_cohort import (
     DeclarativeChiefChapterRuntime,
     register_chief_chapter_lane_specializations,

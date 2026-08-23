@@ -17,6 +17,12 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TEMPLATE_ROLE_SKILL_IDS,
+    AgentResult,
+    AgentRunStatus,
+    TaskEnvelope,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHIEF_RESULT_PART_IDS,
     CHIEF_SECTION_RESULT_PART_IDS,
@@ -89,12 +95,6 @@ from ..tools.reporting_research_tools import (
 )
 from ..tools.result_memory import RunToolResultIndex
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
-from .agentic_models import (
-    TEMPLATE_ROLE_SKILL_IDS,
-    AgentResult,
-    AgentRunStatus,
-    TaskEnvelope,
-)
 from .capabilities import (
     Capability,
     collect_reference_refs,

@@ -12,6 +12,12 @@ from typing import Any, Protocol
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
+    ModuleRevisionSubmission,
+    ModuleSubmission,
+)
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -31,12 +37,6 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .agentic_models import (
-    ModuleReviewFindingSubmission,
-    ModuleReviewVerdictSubmission,
-    ModuleRevisionSubmission,
-    ModuleSubmission,
-)
 from .input_contracts import (
     ModuleReviewInput,
     ModuleRevisionDiff,

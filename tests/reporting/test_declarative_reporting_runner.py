@@ -9,17 +9,7 @@ from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
-    DeclarativeModuleAuthoringPreparation,
-    DeclarativeModuleRuntimeLaneContext,
-)
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    REPORT_MODULE_IDS,
-    ReportRequest,
-)
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     AgentRunStatus,
     EditedReportSubmission,
     ModuleReviewFinding,
@@ -32,6 +22,16 @@ from manyselves.core.reporting.agentic_models import (
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleRuntimeLaneContext,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+    ReportRequest,
+)
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     compile_cross_owner_workflows,

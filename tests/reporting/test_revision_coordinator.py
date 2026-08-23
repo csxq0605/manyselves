@@ -9,6 +9,10 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     report_taxonomy_snapshot,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    EditedReportSubmission,
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     ReportRequest,
@@ -17,10 +21,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import (
-    EditedReportSubmission,
-    ModuleSubmission,
-)
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.reporting.store import ReportingStore

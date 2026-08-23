@@ -5,7 +5,7 @@ import pytest
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CrossOwnerFindingSubmission,
     CrossReviewCoverageEntry,
     TaskEnvelope,

@@ -11,7 +11,8 @@ from typing import Protocol
 
 from pydantic import Field
 
-from .agentic_models import StrictModel
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
+
 from .parallel_runtime import ArtifactRef, atomic_write_json, exclusive_file_lock
 
 

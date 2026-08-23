@@ -13,6 +13,12 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     final_chapter as final_chapter_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    EditedReportSubmission,
+    FinalChapterLaneFindingSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -41,12 +47,6 @@ from manyselves.kernel.workflow import (
     retry_parallel_branches,
 )
 
-from .agentic_models import (
-    EditedReportSubmission,
-    FinalChapterLaneFindingSubmission,
-    ModuleSubmission,
-    TaskEnvelope,
-)
 from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
 from .input_contracts import FinalChapterLaneInput

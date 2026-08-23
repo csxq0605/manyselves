@@ -7,16 +7,16 @@ from types import MethodType, SimpleNamespace
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    ChiefChapterLaneSubmission,
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.chief_chapter import (
     DeclarativeChiefChapterOutcome,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
-)
-from manyselves.core.reporting.agentic_models import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    ChiefChapterLaneSubmission,
-    ModuleSubmission,
 )
 from manyselves.core.reporting.declarative_chief_chapter_cohort import (
     DeclarativeChiefChapterRuntime,

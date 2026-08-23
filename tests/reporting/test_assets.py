@@ -6,16 +6,16 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    EvidenceItem,
-    PhotoAsset,
-    SourceLocation,
-)
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     EditedReportSubmission,
     ModuleSubmission,
     TableSubmission,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+    SourceLocation,
 )
 from manyselves.core.reporting.assets import (
     ReportAssetAssembler,

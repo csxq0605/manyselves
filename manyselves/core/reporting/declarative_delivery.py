@@ -7,6 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    EditedReportSubmission,
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
@@ -21,7 +25,6 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import ExecutorRegistry
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowCompiler
 
-from .agentic_models import EditedReportSubmission, ModuleSubmission
 from .workflow import _DeliveryContext
 
 _DELIVERY_CONTEXT_KEY = "_declarative_delivery_context"

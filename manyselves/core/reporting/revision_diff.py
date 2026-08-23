@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-
-from .agentic_models import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
 
 
 def build_revision_diff(previous: ModuleSubmission, revised: ModuleSubmission) -> dict:

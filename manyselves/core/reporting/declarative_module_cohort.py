@@ -13,6 +13,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     module_cohort as module_cohort_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRuntimeLaneContext,
 )
@@ -41,7 +42,6 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .agentic_models import ModuleSubmission
 from .declarative_module_lane import (
     ModuleSubjectValidator,
     execute_declarative_module_lane,

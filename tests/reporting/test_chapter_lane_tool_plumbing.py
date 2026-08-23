@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ChiefChapterLaneRevisionSubmission,
+    ChiefChapterLaneSubmission,
+    FinalChapterLaneFindingSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER3_SECTION_IDS,
     SpecialTopicPlan,
@@ -13,11 +18,6 @@ from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.agentic_models import (
-    ChiefChapterLaneRevisionSubmission,
-    ChiefChapterLaneSubmission,
-    FinalChapterLaneFindingSubmission,
-)
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,
@@ -449,7 +449,7 @@ def test_chapter_lane_schemas_and_expected_result_parts_are_exact() -> None:
 
 
 def test_task_envelope_accepts_chapter_lane_input_contract_kinds() -> None:
-    from manyselves.core.reporting.agentic_models import TaskEnvelope
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 
     for kind in ("chief_chapter_lane_input", "final_chapter_lane_input"):
         envelope = TaskEnvelope(
@@ -474,8 +474,8 @@ def test_runner_chief_lane_exposes_exact_parts_and_one_output_schema(tmp_path: P
     # Chapter 1 has static sections and therefore the three corresponding
     # CHIEF_SECTION_RESULT_PART_IDS are the only writable parts.
     contract_ref = _write_contract(tmp_path, contract)
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
     from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-    from manyselves.core.reporting.agentic_models import TaskEnvelope
     from manyselves.core.reporting.config import load_packaged_agents
 
     envelope = TaskEnvelope(
@@ -521,7 +521,7 @@ def test_chief_chapter_four_tool_schema_allows_nested_planned_headings(
 ) -> None:
     contract = _chief_chapter_four()
     contract_ref = _write_contract(tmp_path, contract)
-    from manyselves.core.reporting.agentic_models import TaskEnvelope
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 
     envelope = TaskEnvelope(
         task_id="chief-ch4-schema",

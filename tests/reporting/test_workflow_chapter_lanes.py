@@ -7,12 +7,7 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHIEF_SECTION_RESULT_PART_IDS,
-    REPORT_MODULE_IDS,
-    SpecialTopicPlan,
-)
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
     ChiefChapterLaneRevisionSubmission,
@@ -23,6 +18,11 @@ from manyselves.core.reporting.agentic_models import (
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    REPORT_MODULE_IDS,
+    SpecialTopicPlan,
 )
 from manyselves.core.reporting.final_specialization import final_lane_specialization
 from manyselves.core.reporting.input_contracts import (
@@ -532,7 +532,9 @@ def test_final_findings_revise_only_affected_chapter_lanes(tmp_path: Path) -> No
                         encoding="utf-8",
                     )
                     refs[part_id] = path.relative_to(tmp_path).as_posix()
-            from manyselves.core.reporting.agentic_models import ChiefChapterLaneRevisionSubmission
+            from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+                ChiefChapterLaneRevisionSubmission,
+            )
 
             return ChiefChapterLaneRevisionSubmission(
                 run_id=state["run_id"],
@@ -665,7 +667,9 @@ def test_final_recheck_new_finding_runs_second_affected_wave(tmp_path: Path) -> 
                         encoding="utf-8",
                     )
                     refs[part_id] = path.relative_to(tmp_path).as_posix()
-            from manyselves.core.reporting.agentic_models import ChiefChapterLaneRevisionSubmission
+            from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+                ChiefChapterLaneRevisionSubmission,
+            )
 
             return ChiefChapterLaneRevisionSubmission(
                 run_id=state["run_id"],

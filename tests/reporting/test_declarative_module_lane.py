@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleReviewFindingSubmission,
     ModuleSubmission,
 )

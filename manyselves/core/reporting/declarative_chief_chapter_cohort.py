@@ -14,6 +14,12 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     chief_chapter as chief_chapter_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ChiefChapterLaneSubmission,
+    EditedReportSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -40,12 +46,6 @@ from manyselves.kernel.workflow import (
     retry_parallel_branches,
 )
 
-from .agentic_models import (
-    ChiefChapterLaneSubmission,
-    EditedReportSubmission,
-    ModuleSubmission,
-    TaskEnvelope,
-)
 from .assets import ReportAssetAssembler
 from .declarative_task_binding import bind_declared_task
 from .input_contracts import ChiefChapterLaneInput

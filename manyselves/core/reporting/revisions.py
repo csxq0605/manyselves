@@ -15,6 +15,12 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     activate_report_taxonomy,
     reset_report_taxonomy,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    EditedReportSubmission,
+    ModuleDispatchPlan,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     EvidenceItem,
@@ -25,12 +31,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 
 from .agent_runner import ReportingAgentRunner
-from .agentic_models import (
-    EditedReportSubmission,
-    ModuleDispatchPlan,
-    ModuleSubmission,
-    TaskEnvelope,
-)
 from .locks import exclusive_reporting_writer_lock
 from .parallel_runtime import (
     ProjectWriteLeaseManager,

@@ -2,5 +2,5 @@ id: final_chapter_lane_verdict_submission
 version: 1.0.0
 description: Current Reporting final_chapter_lane_verdict_submission contract
 adapter: pydantic
-model: manyselves.core.reporting.agentic_models:FinalChapterLaneVerdictSubmission
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:FinalChapterLaneVerdictSubmission
 

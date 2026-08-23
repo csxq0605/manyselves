@@ -17,6 +17,14 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    SUBMISSION_INPUT_TYPES,
+    TEMPLATE_ROLE_SKILL_IDS,
+    AgentRunStatus,
+    CrossReviewFinding,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.artifacts import ToolContractError
 from manyselves.core.artifacts.content_store import ContentAddressedStore
@@ -35,14 +43,6 @@ from manyselves.core.reporting.agent_runner import (
     InspectImageTool,
     ReportingAgentRunner,
     load_conversation_trace,
-)
-from manyselves.core.reporting.agentic_models import (
-    SUBMISSION_INPUT_TYPES,
-    TEMPLATE_ROLE_SKILL_IDS,
-    AgentRunStatus,
-    CrossReviewFinding,
-    ModuleSubmission,
-    TaskEnvelope,
 )
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (

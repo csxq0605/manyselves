@@ -19,7 +19,8 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .agentic_models import StrictModel
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
+
 from .scheduling import AdaptiveTaskScheduler, SchedulingCandidate
 
 

@@ -9,11 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
-    DeclarativeCrossOwnerPipelineOutcome,
-)
-from manyselves.core.reporting import review_lifecycle as lifecycle
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
@@ -27,6 +23,10 @@ from manyselves.core.reporting.agentic_models import (
     RevisionResponse,
     WorkflowDecisionSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+    DeclarativeCrossOwnerPipelineOutcome,
+)
+from manyselves.core.reporting import review_lifecycle as lifecycle
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
     compile_cross_owner_workflows,

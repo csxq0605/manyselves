@@ -179,8 +179,11 @@ class RunProductSkillMaintainerTool(Tool):
     ) -> dict[str, Any]:
         """Run one Product Skill Maintainer task in its restricted identity."""
 
+        from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+            TaskEnvelope,
+        )
+
         from ..reporting.agent_runner import ReportingAgentRunner
-        from ..reporting.agentic_models import TaskEnvelope
         from ..reporting.config import load_packaged_agents
 
         run_id = f"product-skill-{uuid.uuid4().hex[:10]}"

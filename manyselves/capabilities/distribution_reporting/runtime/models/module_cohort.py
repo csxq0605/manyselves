@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from manyselves.core.reporting.agentic_models import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
 
 
 class DeclarativeModuleLaneOutcome(BaseModel):

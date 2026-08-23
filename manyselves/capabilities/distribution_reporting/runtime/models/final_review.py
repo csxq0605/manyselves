@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChapterScopedFinalReviewFinding,
     ChiefChapterLaneRevisionSubmission,
     EditedReportSubmission,

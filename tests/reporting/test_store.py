@@ -2,7 +2,10 @@ import errno
 
 import pytest
 
-from manyselves.core.reporting.agentic_models import SourceKind, SourceRecord
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    SourceKind,
+    SourceRecord,
+)
 from manyselves.core.reporting.store import ReportingStore
 
 

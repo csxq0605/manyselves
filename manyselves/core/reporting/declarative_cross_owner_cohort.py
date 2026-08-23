@@ -15,6 +15,15 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     cross_owner as cross_owner_models,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
+    ModuleReviewFindingSubmission,
+    ModuleRevisionSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
+    WorkflowDecisionSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
@@ -46,15 +55,6 @@ from manyselves.kernel.workflow import (
     retry_parallel_branches,
 )
 
-from .agentic_models import (
-    CrossOwnerFindingSubmission,
-    CrossOwnerVerdictSubmission,
-    ModuleReviewFindingSubmission,
-    ModuleRevisionSubmission,
-    ModuleSubmission,
-    TaskEnvelope,
-    WorkflowDecisionSubmission,
-)
 from .declarative_task_binding import bind_declared_task
 from .review_lifecycle import (
     CrossOwnerInitialReviewAcceptance,

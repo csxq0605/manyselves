@@ -12,7 +12,8 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from .agentic_models import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
+
 from .input_contracts import ValidationFailure, ValidationReport
 from .source_ledger import SourceLedger
 

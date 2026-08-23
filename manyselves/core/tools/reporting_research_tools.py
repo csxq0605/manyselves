@@ -7,9 +7,10 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ResearchNote
+
 from ...interfaces.types import ResearchNotePublishedMessage
 from ..loops.bus import MessageBus
-from ..reporting.agentic_models import ResearchNote
 from ..reporting.research.evidence_memory import EvidenceResearchMemory
 from ..reporting.research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from ..reporting.research.reference_library import ReferenceLibrary

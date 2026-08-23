@@ -16,9 +16,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
+
 from ...config.schema import AgentDefaults
 from ..providers.base import LLMProvider
-from .agentic_models import TaskEnvelope
 from .config import AgentDefinition
 
 

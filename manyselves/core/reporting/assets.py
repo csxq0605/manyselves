@@ -9,13 +9,17 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ClaimRecord,
+    EditedReportSubmission,
+    ModuleSubmission,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
     SpecialTopicPlan,
 )
 
-from .agentic_models import ClaimRecord, EditedReportSubmission, ModuleSubmission
 from .rendering.pds_docx_renderer import ReportPhoto, ReportTable
 
 

@@ -2,5 +2,5 @@ id: module_submission
 version: 1.0.0
 description: Current Reporting module_submission contract
 adapter: pydantic
-model: manyselves.core.reporting.agentic_models:ModuleSubmission
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:ModuleSubmission
 

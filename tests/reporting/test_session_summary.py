@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     AgentResult,
     AgentRunStatus,
     ModuleSubmission,

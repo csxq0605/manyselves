@@ -11,12 +11,12 @@ from typing import Literal
 
 from pydantic import Field
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     ReportRequest,
     RevisionRequest,
 )
 
-from .agentic_models import StrictModel
 from .distributed_runtime import LocalEventStore, RunProjection
 from .parallel_runtime import (
     ProjectWriteLeaseHandle,

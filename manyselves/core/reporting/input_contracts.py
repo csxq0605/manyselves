@@ -13,15 +13,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    CHAPTER_IDS,
-    SpecialTopicPlan,
-    chapter_section_ids,
-)
-
-from .agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FINAL_AUDIT_SECTION_IDS,
     TEMPLATE_ROLE_SKILL_IDS,
     TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
@@ -43,6 +35,14 @@ from .agentic_models import (
     TableSubmissionInput,
     TemplateRoleSkillId,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    CHAPTER_IDS,
+    SpecialTopicPlan,
+    chapter_section_ids,
+)
+
 from .submission_contracts import FIELD_GUIDANCE
 
 

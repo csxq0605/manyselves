@@ -11,6 +11,18 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ChapterScopedFinalReviewFinding,
+    ChapterScopedFinalReviewTargetChange,
+    ChiefChapterLaneRevisionSubmission,
+    ClaimRecord,
+    EditedReportSubmission,
+    FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
+    ModuleSubmission,
+    ResolutionVerdict,
+    RevisionResponse,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
 )
@@ -23,18 +35,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     EvidenceItem,
     SpecialTopicPlan,
-)
-from manyselves.core.reporting.agentic_models import (
-    ChapterScopedFinalReviewFinding,
-    ChapterScopedFinalReviewTargetChange,
-    ChiefChapterLaneRevisionSubmission,
-    ClaimRecord,
-    EditedReportSubmission,
-    FinalChapterLaneFindingSubmission,
-    FinalChapterLaneVerdictSubmission,
-    ModuleSubmission,
-    ResolutionVerdict,
-    RevisionResponse,
 )
 from manyselves.core.reporting.declarative_final_chapter_cohort import (
     DeclarativeFinalChapterRuntime,

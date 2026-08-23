@@ -9,6 +9,9 @@ from docx import Document
 from openpyxl import Workbook
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TEMPLATE_ROLE_SKILL_IDS,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceDecisionRequest,
     EvidenceItem,
@@ -23,7 +26,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import TEMPLATE_ROLE_SKILL_IDS
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
 from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.revisions import RevisionCoordinator

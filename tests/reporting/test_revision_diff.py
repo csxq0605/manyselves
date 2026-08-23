@@ -1,7 +1,10 @@
 from copy import deepcopy
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.agentic_models import ClaimRecord, ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ClaimRecord,
+    ModuleSubmission,
+)
 from manyselves.core.reporting.revision_diff import build_revision_diff
 
 

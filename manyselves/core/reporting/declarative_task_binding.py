@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.kernel.definitions import TaskDefinition
-
-from .agentic_models import TaskEnvelope
 
 
 def bind_declared_task(

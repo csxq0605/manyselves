@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.agentic_models import TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.skills.service import (
     ProductSkillEvolutionService,

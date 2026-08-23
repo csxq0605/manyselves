@@ -3,7 +3,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from manyselves.core.reporting.agentic_models import TaskEnvelope
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.core.reporting.config import AgentDefinition, load_agent_definition
 from manyselves.core.reporting.module_skills import ModuleSkillLibrary
 from manyselves.core.reporting.prompts import PromptAssembler

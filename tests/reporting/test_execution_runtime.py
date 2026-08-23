@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import TaskEnvelope
 from manyselves.core.reporting.capabilities import compile_agent_access, scoped_gateway
 from manyselves.core.reporting.config import AgentDefinition
 from manyselves.core.reporting.execution_runtime import (

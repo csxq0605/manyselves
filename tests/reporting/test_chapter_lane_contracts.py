@@ -3,14 +3,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    SpecialTopicPlan,
-    SpecialTopicSectionRequirement,
-)
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
     FinalChapterLaneFindingSubmission,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    SpecialTopicPlan,
+    SpecialTopicSectionRequirement,
 )
 from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,

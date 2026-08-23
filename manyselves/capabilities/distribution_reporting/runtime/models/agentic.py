@@ -1,3 +1,5 @@
+"""Agent task, submission, and result contracts owned by distribution reporting."""
+
 import re
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -11,19 +13,18 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     compose_module_markdown,
     resolve_submodule,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+
+from .reporting import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
     CHAPTER_IDS,
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
-    REPORT_FINAL_AUDIT_SECTION_IDS,
     REPORT_FINAL_SECTION_IDS,
     CoverageMatrix,
     EvidenceItem,
     PhotoAsset,
     SpecialTopicPlan,
-    chapter_section_ids,
 )
 
 

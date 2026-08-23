@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.agentic_models import EditedReportSubmission, ModuleSubmission
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    EditedReportSubmission,
+    ModuleSubmission,
+)
 from manyselves.core.reporting.declarative_reporting_tail import (
     execute_declarative_reporting_tail,
 )

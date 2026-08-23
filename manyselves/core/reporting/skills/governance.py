@@ -14,8 +14,7 @@ from uuid import uuid4
 from pydantic import ConfigDict, Field, model_validator
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
-
-from ..agentic_models import StrictModel
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
 
 ModuleId = Literal["2.1", "2.2", "2.3", "2.4", "2.5", "all"]
 SkillScope = Literal["project", "product"]

@@ -28,26 +28,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHAPTER1_SECTION_IDS,
-    CHAPTER3_SECTION_IDS,
-    REPORT_MODULE_IDS,
-    CostControlMode,
-    CoverageMatrix,
-    EvidenceItem,
-    OutputArtifact,
-    PhotoAsset,
-    ProjectManifest,
-    RevisionRequest,
-    ScopeExpansionRequest,
-    SpecialTopicPlan,
-    chapter_section_ids,
-)
-
-from ...kernel.definitions import RecoveryPolicyDefinition
-from ..usage_ledger import UsageLedger
-from .agent_runner import ReportingAgentRunner
-from .agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -77,6 +58,25 @@ from .agentic_models import (
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    REPORT_MODULE_IDS,
+    CostControlMode,
+    CoverageMatrix,
+    EvidenceItem,
+    OutputArtifact,
+    PhotoAsset,
+    ProjectManifest,
+    RevisionRequest,
+    ScopeExpansionRequest,
+    SpecialTopicPlan,
+    chapter_section_ids,
+)
+
+from ...kernel.definitions import RecoveryPolicyDefinition
+from ..usage_ledger import UsageLedger
+from .agent_runner import ReportingAgentRunner
 from .assets import (
     ReportAssetAssembler,
     expand_approved_module_markers,

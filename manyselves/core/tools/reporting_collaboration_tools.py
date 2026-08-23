@@ -18,23 +18,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHIEF_RESULT_PART_IDS,
-    CHIEF_SECTION_RESULT_PART_IDS,
-    EvidenceItem,
-    SpecialTopicPlan,
-)
-
-from ...interfaces.types import (
-    AgentResultMessage,
-    BlockedNoticeMessage,
-    PeerQueryMessage,
-    PeerReplyMessage,
-    ProgressNoteMessage,
-    UserMessage,
-)
-from ..loops.bus import MessageBus
-from ..reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
     TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
@@ -67,6 +51,22 @@ from ..reporting.agentic_models import (
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    CHIEF_RESULT_PART_IDS,
+    CHIEF_SECTION_RESULT_PART_IDS,
+    EvidenceItem,
+    SpecialTopicPlan,
+)
+
+from ...interfaces.types import (
+    AgentResultMessage,
+    BlockedNoticeMessage,
+    PeerQueryMessage,
+    PeerReplyMessage,
+    ProgressNoteMessage,
+    UserMessage,
+)
+from ..loops.bus import MessageBus
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
     INPUT_CONTRACT_TYPES,

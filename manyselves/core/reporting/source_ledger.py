@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from .agentic_models import SourceKind, SourceRecord
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    SourceKind,
+    SourceRecord,
+)
+
 from .parallel_runtime import exclusive_file_lock
 
 _LOCKS_GUARD = threading.Lock()

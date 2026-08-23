@@ -22,12 +22,12 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
     SpecialTopicPlan,
 )
 
-from ..agentic_models import StrictModel
 from ..claim_ledger import ClaimLedger
 from ..report_markdown import (
     CanonicalMarkdownTable,

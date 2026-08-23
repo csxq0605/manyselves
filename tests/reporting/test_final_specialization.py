@@ -5,7 +5,9 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from manyselves.core.reporting.agentic_models import TEMPLATE_ROLE_SKILL_IDS
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TEMPLATE_ROLE_SKILL_IDS,
+)
 from manyselves.core.reporting.final_specialization import (
     FINAL_LANE_SPECIALIZATIONS,
 )

@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
     CrossReviewFinding,
     CrossReviewFindingSubmission,

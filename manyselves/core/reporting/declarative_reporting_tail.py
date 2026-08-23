@@ -10,6 +10,7 @@ from typing import Any
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
     DefinitionKind,
@@ -25,7 +26,6 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .agentic_models import ModuleSubmission
 from .declarative_chief_chapter_cohort import (
     DeclarativeChiefChapterRuntime,
     compile_chief_chapter_workflows,

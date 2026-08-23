@@ -3,16 +3,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from manyselves.core.reporting.agentic_models import (
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CrossDecisionPack,
     FinalReviewFinding,
 )
 from manyselves.core.reporting.input_contracts import (
-    CrossDecisionPackView,
     INPUT_CONTRACT_EXAMPLES,
     INPUT_CONTRACT_TYPES,
+    CrossDecisionPackView,
 )
-
 
 RUN = "run-contract"
 COMPLETION = f"Work/runs/{RUN}/reviews/cross-completion.json"

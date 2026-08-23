@@ -3,15 +3,15 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ClaimRecord,
+    SourceKind,
+    SourceRecord,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     PhotoAsset,
     SourceLocation,
-)
-from manyselves.core.reporting.agentic_models import (
-    ClaimRecord,
-    SourceKind,
-    SourceRecord,
 )
 from manyselves.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
 
