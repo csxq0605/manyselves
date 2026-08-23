@@ -120,6 +120,20 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleReviewPreflightProgress,
     ModuleRevisionPreparation,
 )
+from manyselves.capabilities.distribution_reporting.runtime.rendering.contracts import (
+    RenderRequest,
+    RenderResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.handoff_docx import (
+    PackagedV2DocxCore,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
+    ApprovedReport,
+    PdsDocxRenderer,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.source_index_docx_renderer import (
+    SourceIndexDocxRenderer,
+)
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
     project_evidence_locator,
@@ -162,10 +176,6 @@ from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_snapshot import RunInputSnapshotStore
-from .rendering.contracts import RenderRequest, RenderResult
-from .rendering.handoff_docx import PackagedV2DocxCore
-from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
-from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .research.knowledge_context import KnowledgeContextBuilder
 from .review_lifecycle import (
     DeferredMainDecision,

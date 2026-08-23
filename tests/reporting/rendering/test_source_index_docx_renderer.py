@@ -5,7 +5,7 @@ from docx import Document
 from docx.enum.section import WD_ORIENT
 from docx.shared import Inches
 
-from manyselves.core.reporting.rendering.source_index_docx_renderer import (
+from manyselves.capabilities.distribution_reporting.runtime.rendering.source_index_docx_renderer import (
     SourceIndexDocxRenderer,
 )
 

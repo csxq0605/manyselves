@@ -1,4 +1,3 @@
-import hashlib
 import importlib.util
 import io
 import json
@@ -17,12 +16,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     SourceKind,
     SourceRecord,
 )
-from manyselves.core.reporting.rendering.handoff_docx import PackagedV2DocxCore
-from manyselves.core.reporting.rendering.packaged_docx import (
+from manyselves.capabilities.distribution_reporting.runtime.rendering.handoff_docx import (
+    PackagedV2DocxCore,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.packaged_docx import (
     PackagedDocxCore,
     verify_rendered_markdown,
 )
-from manyselves.core.reporting.rendering.pds_docx_renderer import (
+from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
     ReportPhoto,
@@ -45,14 +46,22 @@ def _style_east_asia_font(style) -> str | None:
     return fonts.get(qn("w:eastAsia")) if fonts is not None else None
 
 
-def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
+def test_packaged_v2_core_renders_approved_prose_via_dynamic_entrypoint() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
-    assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "b14c98dbef7a2057117baec03e5143a1a8134cee3e563ac0cf8d569397467faa"
+    name, data = core.render_approved_prose(
+        "# 配电安全专家咨询报告\n\n"
+        "## 1. 配电评估概述\n\n"
+        "关键正文保留。"
     )
+    rendered = Document(io.BytesIO(data))
+    visible_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+
+    assert name == "配电安全专家咨询报告.docx"
+    assert "1. 配电评估概述" in visible_text
+    assert "关键正文保留。" in visible_text
 
 
-def test_packaged_v2_core_supports_legacy_top_level_dynamic_loading() -> None:
+def test_packaged_v2_core_supports_dynamic_entrypoint_loading() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     spec = importlib.util.spec_from_file_location(
         "_legacy_v2_docx_renderer",

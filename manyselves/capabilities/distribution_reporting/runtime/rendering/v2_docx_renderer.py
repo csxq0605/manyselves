@@ -27,7 +27,12 @@ except Exception:
 
 
 DEFAULT_FILENAME = "配电安全专家咨询报告.docx"
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "report_template.docx"
+TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "templates"
+    / "reporting"
+    / "report_template.docx"
+)
 
 PHOTO_MAX_PIXELS = (900, 900)
 PHOTO_JPEG_QUALITY = 68

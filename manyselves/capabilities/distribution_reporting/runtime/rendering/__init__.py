@@ -1,8 +1,8 @@
 """Final artifact renderers."""
 
+from .contracts import RenderRequest, RenderResult
 from .handoff_docx import HandoffDocxCore, PackagedV2DocxCore
 from .packaged_docx import PackagedDocxCore
-from .contracts import RenderRequest, RenderResult
 from .pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,

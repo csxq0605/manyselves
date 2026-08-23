@@ -22,8 +22,10 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     PhotoAsset,
     SpecialTopicPlan,
 )
-
-from .rendering.pds_docx_renderer import ReportPhoto, ReportTable
+from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
+    ReportPhoto,
+    ReportTable,
+)
 
 
 def approved_module_marker(module_id: str) -> str:

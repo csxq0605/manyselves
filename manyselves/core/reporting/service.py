@@ -52,6 +52,15 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.preparation import (
     prepare_manifest_file,
 )
+from manyselves.capabilities.distribution_reporting.runtime.rendering import (
+    PackagedV2DocxCore,
+    PdsDocxRenderer,
+    RenderRequest,
+    RenderResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.packaged_docx import (
+    verify_rendered_markdown,
+)
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     ProjectWriteLease,
     ProjectWriteLeaseManager,
@@ -76,8 +85,6 @@ from .execution_runtime import ProviderRouter
 from .input_snapshot import RunInputSnapshotStore
 from .locks import exclusive_reporting_writer_lock
 from .provider_admission import ProviderAdmissionController
-from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
-from .rendering.packaged_docx import verify_rendered_markdown
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
 
 
