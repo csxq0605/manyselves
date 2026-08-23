@@ -10,12 +10,15 @@ import pytest
 
 from manyselves.capabilities.distribution_reporting.runtime import preparation_tools
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ModuleReviewFinding,
+    ModuleReviewFindingSubmission,
     ModuleSubmission,
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleReviewAgentResult,
     DeclarativeModuleReviewPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
@@ -28,8 +31,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
     accept_current_module_authoring,
+    accept_current_module_review,
+    module_review_needs_recheck,
+    module_review_needs_revision,
     module_review_preflight_needs_revision,
     module_review_requires_agent,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
+    _validate_findings,
 )
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
@@ -284,7 +293,9 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         json.dumps(
             {
                 "kind": "module_review_finding_submission",
-                "coverage": {"submodule_ids": ["2.4.1", "2.4.2", "2.4.3"]},
+                "coverage": {
+                    "submodule_ids": sorted(_module_submission().submodule_narratives)
+                },
                 "findings": [],
             }
         ),
@@ -344,7 +355,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: accept-current-module-review",
+            match="missing tool adapter: complete-current-module-lane",
         ):
             await runtime.execute(request, run_id)
     finally:
@@ -376,7 +387,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     assert any(
         event.kind == "action.failed"
-        and event.action_id == "accept-current-module-review"
+        and event.action_id == "complete-current-module-lane"
         for event in events.events
     )
     lane_state = state.model_dump(mode="json")["subworkflow_states"][
@@ -389,11 +400,14 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     assert lane_state["variables"]["module-review-agent-result"]["submission"][
         "coverage"
-    ]["submodule_ids"] == ["2.4.1", "2.4.2", "2.4.3"]
+    ]["submodule_ids"] == sorted(_module_submission().submodule_narratives)
+    assert lane_state["actions"]["accept-current-module-review"]["status"] == "completed"
     lane_context = lane_state["variables"]["lane-context"]
-    assert lane_context["status"] == "review_ready"
+    assert lane_context["status"] == "reviewed"
     assert module_review_preflight_needs_revision(lane_context) is False
-    assert module_review_requires_agent(lane_context) is True
+    assert module_review_requires_agent(lane_context) is False
+    assert module_review_needs_recheck(lane_context) is False
+    assert module_review_needs_revision(lane_context) is False
     assert lane_context["module"]["module_id"] == "2.4"
     assert (
         lane_context["reporting_state"]["specialist_submissions"]["2.4"]["module_id"]
@@ -437,6 +451,19 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         tmp_path
         / "Work/runs/public-module-boundary/reviews/module/initial/2.4/input-r0.json"
     ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/public-module-boundary/reviews/module/initial/2.4/findings-r0.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/public-module-boundary/reviews/module/initial/2.4/completion-r0.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/public-module-boundary/reviews/module/initial/2.4/progress.json"
+    ).is_file()
+    assert (tmp_path / "Outputs/Modules/2.4.md").read_text() == _module_submission().markdown
 
 
 def test_module_review_preflight_failure_routes_to_author_correction_gap() -> None:
@@ -472,6 +499,144 @@ def test_module_review_preflight_failure_routes_to_author_correction_gap() -> No
 
     assert module_review_preflight_needs_revision(context) is True
     assert module_review_requires_agent(context) is False
+
+
+def test_initial_review_finding_persists_and_routes_to_revision_gap(
+    tmp_path: Path,
+) -> None:
+    module = _module_submission()
+    scope = sorted(module.submodule_narratives)
+    subject_ref = "Work/runs/run-review-finding/modules/2.4-r0.json"
+    prepared = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id="run-review-finding",
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root="Work/runs/run-review-finding/reviews/module/initial/2.4",
+        progress_ref="Work/runs/run-review-finding/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=scope,
+        current=module,
+        subject_ref=subject_ref,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": "run-review-finding"},
+        status="review_ready",
+        module=module,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=prepared,
+        ),
+    )
+    finding = ModuleReviewFinding(
+        id="M-2.4-initial-r0-1",
+        target_submodule_id=scope[0],
+        category="analysis_depth",
+        impact="blocking",
+        observation="当前子模块没有说明该条件对运行后果的具体影响。",
+        evidence_refs=["module-2.4-r0"],
+        required_change="补充可观察的运行后果，并保持当前证据边界不变。",
+        reviewer_checks=["复审确认运行后果已明确写入该子模块。"],
+    )
+    advisory = finding.model_copy(
+        update={
+            "id": "M-2.4-initial-r0-2",
+            "target_submodule_id": scope[1],
+            "impact": "advisory",
+            "observation": "当前子模块缺少对行动闭环和后续验证方式的说明。",
+            "required_change": "补充责任、时序和可复核的验证方式，避免只保留原则性建议。",
+        }
+    )
+    result = DeclarativeModuleReviewAgentResult(
+        status="completed",
+        submission=ModuleReviewFindingSubmission(
+            coverage={"submodule_ids": scope},
+            findings=[finding, advisory],
+        ),
+    )
+    duplicate_submission = ModuleReviewFindingSubmission.model_construct(
+        kind="module_review_finding_submission",
+        coverage={"submodule_ids": scope},
+        findings=[finding, finding],
+    )
+    with pytest.raises(ValueError, match="duplicate ids"):
+        _validate_findings(
+            duplicate_submission,
+            module_id="2.4",
+            lifecycle_id="initial",
+            review_round=0,
+            scope=set(scope),
+        )
+
+    accepted = accept_current_module_review(
+        {"context": context, "result": result},
+        store=ReportingStore(tmp_path),
+    )
+
+    assert accepted.status == "reviewed"
+    assert accepted.review is not None
+    assert accepted.review.acceptance is not None
+    assert accepted.review.acceptance.next_action == "revise"
+    assert accepted.review.acceptance.findings[0].id == "M-2.4-initial-r0-1"
+    assert accepted.review.acceptance.findings[1].impact == "advisory"
+    assert module_review_needs_recheck(accepted) is False
+    assert module_review_needs_revision(accepted) is True
+    assert (
+        tmp_path
+        / "Work/runs/run-review-finding/reviews/module/initial/2.4/findings-r0.json"
+    ).is_file()
+    progress = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-review-finding/reviews/module/initial/2.4/progress.json"
+        ).read_text()
+    )
+    assert progress["next_action"] == "revise"
+    assert progress["pending"][0]["id"] == "M-2.4-initial-r0-1"
+    assert progress["pending"][1]["id"] == "M-2.4-initial-r0-2"
+    accepted_again = accept_current_module_review(
+        {"context": context, "result": result},
+        store=ReportingStore(tmp_path),
+    )
+    assert accepted_again.review is not None
+    assert accepted_again.review.acceptance is not None
+    assert accepted_again.review.acceptance.finding_refs == accepted.review.acceptance.finding_refs
+    changed_result = result.model_copy(
+        update={
+            "submission": result.submission.model_copy(
+                update={"findings": [finding]}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="refusing to overwrite immutable audit artifact"):
+        accept_current_module_review(
+            {"context": context, "result": changed_result},
+            store=ReportingStore(tmp_path),
+        )
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot={},
+        snapshot_content=lambda *args: None,
+        runtime_photo_ids=lambda *args: None,
+    )
+    plan = runtime.compile_plan(
+        ReportRequest(
+            operation="module_report",
+            instruction="run only module 2.4",
+            target_modules=["2.4"],
+        )
+    )[2]
+    review_route = next(
+        action
+        for action in plan.subworkflow_plans["distribution-module-2.4-runtime-lane"].actions
+        if action.id == "choose-module-review-revision"
+    )
+    assert review_route.then == "prepare-current-module-revision"
 
 
 def test_full_report_stops_at_existing_tail_specialization_boundary(

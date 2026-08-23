@@ -18,6 +18,8 @@ from .models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
+from .models.review import ModuleInitialReviewAcceptance, ModuleRecheckAcceptance
+from .module_review_acceptance import accept_current_module_review
 from .module_review_preparation import prepare_current_module_review
 from .storage import ReportingStore
 
@@ -99,7 +101,34 @@ def module_review_requires_agent(
     context = _context(value)
     return (
         context.review is not None
+        and context.review.acceptance is None
         and context.review.prepared.mode == "invoke_agent"
+    )
+
+
+def module_review_needs_recheck(
+    value: DeclarativeModuleRuntimeLaneContext,
+) -> bool:
+    """Route only a future recheck continuation to the Auditor recheck branch."""
+
+    context = _context(value)
+    acceptance = context.review.acceptance if context.review is not None else None
+    return (
+        isinstance(acceptance, ModuleRecheckAcceptance)
+        and acceptance.next_action == "continue_existing"
+    )
+
+
+def module_review_needs_revision(
+    value: DeclarativeModuleRuntimeLaneContext,
+) -> bool:
+    """Route initial findings to the next Author revision boundary."""
+
+    context = _context(value)
+    acceptance = context.review.acceptance if context.review is not None else None
+    return (
+        isinstance(acceptance, ModuleInitialReviewAcceptance)
+        and acceptance.next_action == "revise"
     )
 
 
@@ -117,6 +146,12 @@ def build_module_lane_tool_implementations(
         "module-lane-can-review": module_lane_can_review,
         "module-review-preflight-needs-revision": module_review_preflight_needs_revision,
         "module-review-requires-agent": module_review_requires_agent,
+        "accept-current-module-review": partial(
+            accept_current_module_review,
+            store=store,
+        ),
+        "module-review-needs-recheck": module_review_needs_recheck,
+        "module-review-needs-revision": module_review_needs_revision,
         "prepare-current-module-review": partial(
             prepare_current_module_review,
             store=store,
@@ -126,9 +161,12 @@ def build_module_lane_tool_implementations(
 
 __all__ = [
     "accept_current_module_authoring",
+    "accept_current_module_review",
     "build_module_lane_tool_implementations",
     "module_lane_can_review",
     "module_review_preflight_needs_revision",
     "module_review_requires_agent",
+    "module_review_needs_recheck",
+    "module_review_needs_revision",
     "prepare_current_module_review",
 ]
