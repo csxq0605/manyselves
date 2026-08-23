@@ -45,6 +45,7 @@ from .models.reporting import ReportRequest
 from .module_agent_bridge import ModuleAuthoringAgentBridge
 from .module_lane_definitions import register_module_runtime_lane_specializations
 from .module_lane_tools import build_module_lane_tool_implementations
+from .module_reviewer_bridge import ModuleReviewerAgentBridge
 from .preparation_tools import build_preparation_tool_implementations
 from .storage import ReportingStore
 
@@ -341,6 +342,14 @@ class PublicReportingWorkflowRuntime:
                     execution=execution,
                     session_factory=session_factory,
                 )
+        invokers.setdefault(
+            "evidence-auditor",
+            ModuleReviewerAgentBridge(
+                self.workspace,
+                execution=execution,
+                session_factory=session_factory,
+            ),
+        )
         return invokers
 
     @staticmethod

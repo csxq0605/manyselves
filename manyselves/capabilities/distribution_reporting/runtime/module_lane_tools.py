@@ -79,6 +79,30 @@ def module_lane_can_review(
     return _context(value).status == "authored"
 
 
+def module_review_preflight_needs_revision(
+    value: DeclarativeModuleRuntimeLaneContext,
+) -> bool:
+    """Route only a prepared machine-preflight failure to author correction."""
+
+    context = _context(value)
+    return (
+        context.review is not None
+        and context.review.prepared.mode == "preflight_revision"
+    )
+
+
+def module_review_requires_agent(
+    value: DeclarativeModuleRuntimeLaneContext,
+) -> bool:
+    """Route a passed initial preflight to the declared Auditor Agent."""
+
+    context = _context(value)
+    return (
+        context.review is not None
+        and context.review.prepared.mode == "invoke_agent"
+    )
+
+
 def build_module_lane_tool_implementations(
     *,
     store: ReportingStore,
@@ -91,6 +115,8 @@ def build_module_lane_tool_implementations(
             store=store,
         ),
         "module-lane-can-review": module_lane_can_review,
+        "module-review-preflight-needs-revision": module_review_preflight_needs_revision,
+        "module-review-requires-agent": module_review_requires_agent,
         "prepare-current-module-review": partial(
             prepare_current_module_review,
             store=store,
@@ -102,5 +128,7 @@ __all__ = [
     "accept_current_module_authoring",
     "build_module_lane_tool_implementations",
     "module_lane_can_review",
+    "module_review_preflight_needs_revision",
+    "module_review_requires_agent",
     "prepare_current_module_review",
 ]

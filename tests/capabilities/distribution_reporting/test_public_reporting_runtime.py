@@ -16,13 +16,20 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleReviewPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     ReportRequest,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+    ModuleInitialReviewPreparation,
+    ModuleReviewPreflightProgress,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_tools import (
     accept_current_module_authoring,
+    module_review_preflight_needs_revision,
+    module_review_requires_agent,
 )
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
@@ -105,10 +112,17 @@ def _module_submission(module_id: str = "2.4") -> ModuleSubmission:
 
 
 class _ScriptedModuleAgentLoop:
-    def __init__(self, bus: MessageBus, runtime_id: str, result_ref: str) -> None:
+    def __init__(
+        self,
+        bus: MessageBus,
+        runtime_id: str,
+        result_ref: str,
+        reviewer_result_ref: str,
+    ) -> None:
         self.bus = bus
         self.runtime_id = runtime_id
         self.result_ref = result_ref
+        self.reviewer_result_ref = reviewer_result_ref
         self.received: list[UserMessage] = []
         self._callback = None
 
@@ -126,7 +140,11 @@ class _ScriptedModuleAgentLoop:
                     workflow_id=message.workflow_id,
                     task_id=message.task_id,
                     run_id=message.run_id,
-                    result_path=self.result_ref,
+                    result_path=(
+                        self.reviewer_result_ref
+                        if message.task_id == "invoke-current-module-reviewer"
+                        else self.result_ref
+                    ),
                     task_attempt_id=message.task_attempt_id,
                     session_id=message.session_id,
                 )
@@ -258,6 +276,20 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         json.dumps(_module_submission().model_dump(mode="json")),
         encoding="utf-8",
     )
+    reviewer_result_ref = (
+        "Work/runs/public-module-boundary/results/module-review-2.4.json"
+    )
+    reviewer_result_path = tmp_path / reviewer_result_ref
+    reviewer_result_path.write_text(
+        json.dumps(
+            {
+                "kind": "module_review_finding_submission",
+                "coverage": {"submodule_ids": ["2.4.1", "2.4.2", "2.4.3"]},
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     auditor_skill = tmp_path / "Work/report-template-role-skills/auditor-2.4/SKILL.md"
     auditor_skill.parent.mkdir(parents=True)
     auditor_skill.write_text("auditor-skill: preserve the review envelope", encoding="utf-8")
@@ -267,7 +299,12 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     loops: list[_ScriptedModuleAgentLoop] = []
 
     def session_factory(runtime_id: str) -> _ScriptedModuleAgentLoop:
-        loop = _ScriptedModuleAgentLoop(bus, runtime_id, result_ref)
+        loop = _ScriptedModuleAgentLoop(
+            bus,
+            runtime_id,
+            result_ref,
+            reviewer_result_ref,
+        )
         loops.append(loop)
         return loop
 
@@ -307,7 +344,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     try:
         with pytest.raises(
             RuntimeError,
-            match="missing tool adapter: module-review-preflight-needs-revision",
+            match="missing tool adapter: accept-current-module-review",
         ):
             await runtime.execute(request, run_id)
     finally:
@@ -320,9 +357,18 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     assert state.actions["run-reporting-preparation"].status.value == "completed"
     assert state.actions["run-evidence-readiness"].status.value == "completed"
     assert state.actions["build-reporting-state"].status.value == "completed"
-    assert len(loops) == 1
-    assert [message.turn_kind for message in loops[0].received] == ["task_initial"]
-    assert "author-skill: preserve evidence references" in loops[0].received[0].content
+    assert len(loops) == 2
+    author_loop = next(loop for loop in loops if "module-2.4-specialist" in loop.runtime_id)
+    reviewer_loop = next(loop for loop in loops if "evidence-auditor" in loop.runtime_id)
+    assert [message.turn_kind for message in author_loop.received] == ["task_initial"]
+    assert "author-skill: preserve evidence references" in author_loop.received[0].content
+    assert [message.turn_kind for message in reviewer_loop.received] == ["task_initial"]
+    assert reviewer_loop.runtime_id == (
+        "public-reporting:evidence-auditor:module-auditor-2.4"
+    )
+    assert reviewer_loop.received[0].session_id == "public-reporting:module-auditor-2.4"
+    assert "auditor-skill: preserve the review envelope" in reviewer_loop.received[0].content
+    assert '"module_id": "2.4"' in reviewer_loop.received[0].content
     assert any(
         event.kind == "action.completed"
         and event.action_id == "invoke-current-module-author"
@@ -330,15 +376,24 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
     )
     assert any(
         event.kind == "action.failed"
-        and event.action_id == "module-review-preflight-needs-revision"
+        and event.action_id == "accept-current-module-review"
         for event in events.events
     )
     lane_state = state.model_dump(mode="json")["subworkflow_states"][
         "run-module-cohort"
     ]["subworkflow_states"]["execute-module-2.4"]
     assert lane_state["variables"]["module-author-result"]["module"]["module_id"] == "2.4"
+    assert (
+        lane_state["variables"]["module-review-agent-result"]["submission"]["kind"]
+        == "module_review_finding_submission"
+    )
+    assert lane_state["variables"]["module-review-agent-result"]["submission"][
+        "coverage"
+    ]["submodule_ids"] == ["2.4.1", "2.4.2", "2.4.3"]
     lane_context = lane_state["variables"]["lane-context"]
     assert lane_context["status"] == "review_ready"
+    assert module_review_preflight_needs_revision(lane_context) is False
+    assert module_review_requires_agent(lane_context) is True
     assert lane_context["module"]["module_id"] == "2.4"
     assert (
         lane_context["reporting_state"]["specialist_submissions"]["2.4"]["module_id"]
@@ -382,6 +437,41 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         tmp_path
         / "Work/runs/public-module-boundary/reviews/module/initial/2.4/input-r0.json"
     ).is_file()
+
+
+def test_module_review_preflight_failure_routes_to_author_correction_gap() -> None:
+    module = _module_submission()
+    prepared = ModuleInitialReviewPreparation(
+        mode="preflight_revision",
+        run_id="run-preflight-failure",
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root="Work/runs/run-preflight-failure/reviews/module/initial/2.4",
+        progress_ref="Work/runs/run-preflight-failure/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=["2.4.1"],
+        current=module,
+        validation_ref="Work/runs/run-preflight-failure/reviews/module/initial/2.4/preflight.json",
+        validation_target_submodule_ids=["2.4.1"],
+        preflight_progress=ModuleReviewPreflightProgress(current=module, attempts=1),
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": "run-preflight-failure"},
+        status="preflight_revision_pending",
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=prepared,
+        ),
+        module=module,
+    )
+
+    assert module_review_preflight_needs_revision(context) is True
+    assert module_review_requires_agent(context) is False
 
 
 def test_full_report_stops_at_existing_tail_specialization_boundary(
