@@ -1820,9 +1820,37 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
         )
 
 
+def _observe_runtime_recovery_events(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: ReportingAgentRunner,
+) -> list[RecoveryEventKind]:
+    events: list[RecoveryEventKind] = []
+    execute_with_recovery = runner._agent_execution.execute_with_recovery
+
+    async def observe_runtime_recovery(*args, **kwargs):
+        interpret = kwargs["interpret"]
+
+        async def observe_interpret(outcome, request):
+            observation = await interpret(outcome, request)
+            if isinstance(observation, agent_runner_module.AgentRecoveryRequired):
+                events.append(observation.event_kind)
+            return observation
+
+        kwargs["interpret"] = observe_interpret
+        return await execute_with_recovery(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runner._agent_execution,
+        "execute_with_recovery",
+        observe_runtime_recovery,
+    )
+    return events
+
+
 @pytest.mark.asyncio
 async def test_max_tokens_continues_same_identity_without_submission_correction(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -1837,6 +1865,7 @@ async def test_max_tokens_continues_same_identity_without_submission_correction(
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=5), timeout=5
     )
+    recovery_events = _observe_runtime_recovery_events(monkeypatch, runner)
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id="run-max-tokens-continuation",
@@ -1859,6 +1888,7 @@ async def test_max_tokens_continues_same_identity_without_submission_correction(
         await bus_task
 
     assert result.status is AgentRunStatus.COMPLETED
+    assert RecoveryEventKind.MAX_TOKENS in recovery_events
     assert provider.truncated_once is True
     assert all(value == 32768 for value in provider.max_tokens_seen)
     continuation_messages = [
@@ -2467,6 +2497,7 @@ async def test_reporting_agent_runner_reprompts_untyped_completion_once_then_sto
 @pytest.mark.asyncio
 async def test_tool_iteration_boundary_continues_same_identity_until_typed_submission(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -2474,6 +2505,7 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
     )
+    recovery_events = _observe_runtime_recovery_events(monkeypatch, runner)
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id="run-continuation",
@@ -2500,6 +2532,7 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
         await bus_task
 
     assert result.status is AgentRunStatus.COMPLETED
+    assert RecoveryEventKind.TOOL_SLICE_BOUNDARY in recovery_events
     assert result.session_id == session_id
     assert provider.calls == 3
     turn_kinds = [
@@ -4193,7 +4226,10 @@ async def test_recovery_policy_fail_fails_tool_slice_explicitly(
         target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
     )
     try:
-        with pytest.raises(RuntimeError, match="failed tool_slice_boundary"):
+        with pytest.raises(
+            RuntimeError,
+            match="declared fail for tool_slice_boundary",
+        ):
             await runner.run(
                 load_packaged_agents()["module-2.1-specialist"].model_copy(
                     update={"max_turns": 1}

@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from ...config.schema import AgentDefaults
@@ -4082,7 +4082,10 @@ class ReportingAgentRunner:
             async def finish_tool_slices(
                 turn: AgentResult | AgentResponse,
                 *,
-                origin_turn_kind: str = "task_initial",
+                origin_turn_kind: Literal[
+                    "task_initial",
+                    "submission_correction",
+                ] = "task_initial",
             ) -> AgentResult | AgentResponse:
                 """Continue only while durable/conversational state is advancing."""
 
@@ -4150,29 +4153,11 @@ class ReportingAgentRunner:
                     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
                 }:
                     max_tokens_continuation = turn.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
-                    recovery_decision = apply_recovery_policy(
-                        (
-                            RecoveryEventKind.MAX_TOKENS
-                            if max_tokens_continuation
-                            else RecoveryEventKind.TOOL_SLICE_BOUNDARY
-                        ),
-                        RecoveryActionKind.CONTINUE,
-                        {"task_id": envelope.task_id},
+                    recovery_event_kind = (
+                        RecoveryEventKind.MAX_TOKENS
+                        if max_tokens_continuation
+                        else RecoveryEventKind.TOOL_SLICE_BOUNDARY
                     )
-                    if (
-                        recovery_decision is not None
-                        and recovery_decision.action is RecoveryActionKind.STOP
-                    ):
-                        return turn.model_copy(
-                            update={
-                                "content": (
-                                    f"{CONTINUATION_HARNESS_STOPPED}"
-                                    f"recovery_policy_stop;turn_kind="
-                                    f"{'max_tokens_continuation' if max_tokens_continuation else 'tool_slice_continuation'}"
-                                ),
-                                "internal": True,
-                            }
-                        )
                     continuation_kind = (
                         "max_tokens_continuation"
                         if max_tokens_continuation
@@ -4266,69 +4251,181 @@ class ReportingAgentRunner:
                             }
                         )
 
-                    state["continuation_counts"][continuation_kind] = count + 1
-                    event["decision"] = "continue"
-                    state["events"].append(event)
-                    state["status"] = "continuing"
-                    save_state(state)
-                    if recovery_decision is not None and recovery_decision.prompt:
-                        continuation_instruction = recovery_decision.prompt
-                    elif max_tokens_continuation:
-                        continuation_instruction = (
-                            "上一模型轮次达到单次 max_tokens 上限，未产生完整提交；"
-                            "这是未完成续写，不是提交格式纠正，也不表示分析已经完成。"
-                            "使用原任务输入和已获得的上下文继续，优先完成必要判断并调用 "
-                            "submit_result；不要从头重复检索。"
+                    observed_boundary = True
+
+                    async def interpret_continuation_terminal(
+                        outcome: AgentTurnOutcome,
+                        _request: AgentTurnRequest,
+                    ) -> AgentRecoveryObservation:
+                        nonlocal observed_boundary
+                        if observed_boundary:
+                            observed_boundary = False
+                            return AgentRecoveryRequired(
+                                event_kind=recovery_event_kind,
+                                fallback_action=RecoveryActionKind.CONTINUE,
+                                detail={"task_id": envelope.task_id},
+                            )
+                        if outcome.kind == "typed_result":
+                            return AgentRecoveryCompleted(
+                                result=load_typed_result(
+                                    cast(AgentResultMessage, outcome.message)
+                                )
+                            )
+                        if outcome.kind == "error":
+                            error = cast(Any, outcome.message)
+                            marker = "REPORTING_RUN_BUDGET_EXHAUSTED:"
+                            if marker in error.message:
+                                from .workflow import ReportingNeedsDecisionError
+
+                                raise ReportingNeedsDecisionError(
+                                    error.message.split(marker, 1)[1].strip()
+                                )
+                            raise RuntimeError(error.message)
+                        return AgentRecoveryCompleted(
+                            result=cast(AgentResponse, outcome.message)
                         )
-                    else:
-                        continuation_instruction = (
-                            "先调用 list_result_parts 查看已保存分段，只继续未完成部分；不要重新检索或重写"
-                            "已保存内容。"
-                            if loop.tools.get("list_result_parts") is not None
-                            else "继续使用当前输入引用和已经获得的上下文；不要重新检索或重读已有内容。"
+
+                    async def build_continuation_turn(
+                        directive: AgentRecoveryDirective,
+                        _observation: AgentRecoveryRequired,
+                    ) -> AgentTurnRequest:
+                        state["continuation_counts"][continuation_kind] = count + 1
+                        event["decision"] = "continue"
+                        state["events"].append(event)
+                        state["status"] = "continuing"
+                        save_state(state)
+                        if directive.prompt:
+                            continuation_instruction = directive.prompt
+                        elif max_tokens_continuation:
+                            continuation_instruction = (
+                                "上一模型轮次达到单次 max_tokens 上限，未产生完整提交；"
+                                "这是未完成续写，不是提交格式纠正，也不表示分析已经完成。"
+                                "使用原任务输入和已获得的上下文继续，优先完成必要判断并调用 "
+                                "submit_result；不要从头重复检索。"
+                            )
+                        else:
+                            continuation_instruction = (
+                                "先调用 list_result_parts 查看已保存分段，只继续未完成部分；不要重新检索或重写"
+                                "已保存内容。"
+                                if loop.tools.get("list_result_parts") is not None
+                                else "继续使用当前输入引用和已经获得的上下文；不要重新检索或重读已有内容。"
+                            )
+                        boundary_explanation = (
+                            ""
+                            if directive.prompt
+                            else (
+                                "上一模型输出达到单次生成上限，但任务没有失败。你仍是原 Agent。"
+                                if max_tokens_continuation
+                                else "上一工具执行片段已达到单次轮次边界，但任务没有失败。你仍是原 Agent。"
+                            )
                         )
-                    boundary_explanation = (
-                        ""
-                        if recovery_decision is not None and recovery_decision.prompt
-                        else (
-                            "上一模型输出达到单次生成上限，但任务没有失败。你仍是原 Agent。"
-                            if max_tokens_continuation
-                            else "上一工具执行片段已达到单次轮次边界，但任务没有失败。你仍是原 Agent。"
-                        )
-                    )
-                    semantic_reason = PromptAssembler.semantic_turn(
-                        (
-                            f"{boundary_explanation}{continuation_instruction}"
-                            "完成后必须调用 submit_result 提交本任务规定的结构化结果。"
-                        ),
-                        turn_kind=continuation_kind,
-                        next_action="submit_result",
-                    )
-                    continuation_message = (
-                        "<same_identity_continuation>\n"
-                        f"{semantic_reason}\n"
-                        "</same_identity_continuation>"
-                    )
-                    self._context_reason_turn(
-                        context_rebuilder,
-                        content=continuation_message,
-                        turn_kind=continuation_kind,
-                        prior_output=next(
+                        semantic_reason = PromptAssembler.semantic_turn(
                             (
-                                str(getattr(item, "content", "") or "")
-                                for item in reversed(loop._conversation_history)
-                                if getattr(item, "role", None) == "assistant"
-                                and str(getattr(item, "content", "") or "")
+                                f"{boundary_explanation}{continuation_instruction}"
+                                "完成后必须调用 submit_result 提交本任务规定的结构化结果。"
                             ),
-                            None,
+                            turn_kind=continuation_kind,
+                            next_action="submit_result",
+                        )
+                        continuation_message = (
+                            "<same_identity_continuation>\n"
+                            f"{semantic_reason}\n"
+                            "</same_identity_continuation>"
+                        )
+                        self._context_reason_turn(
+                            context_rebuilder,
+                            content=continuation_message,
+                            turn_kind=continuation_kind,
+                            prior_output=next(
+                                (
+                                    str(getattr(item, "content", "") or "")
+                                    for item in reversed(loop._conversation_history)
+                                    if getattr(item, "role", None) == "assistant"
+                                    and str(getattr(item, "content", "") or "")
+                                ),
+                                None,
+                            ),
+                        )
+                        return AgentTurnRequest(
+                            content=continuation_message,
+                            message_id=envelope.task_id,
+                            workflow_id=workflow_id,
+                            run_id=envelope.run_id,
+                            task_id=envelope.task_id,
+                            task_attempt_id=envelope.task_attempt_id,
+                            internal=True,
+                            turn_kind=continuation_kind,
+                            provider_stream_idle_timeout_seconds=(
+                                REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
+                            ),
+                        )
+
+                    async def stop_continuation_recovery(
+                        outcome: AgentTurnOutcome,
+                        _directive: AgentRecoveryDirective,
+                    ) -> AgentResponse:
+                        response = cast(AgentResponse, outcome.message)
+                        return response.model_copy(
+                            update={
+                                "content": (
+                                    f"{CONTINUATION_HARNESS_STOPPED}"
+                                    f"recovery_policy_stop;turn_kind="
+                                    f"{continuation_kind}"
+                                ),
+                                "internal": True,
+                            }
+                        )
+
+                    async def reuse_continuation_result(
+                        outcome: AgentTurnOutcome,
+                        _directive: AgentRecoveryDirective,
+                    ) -> AgentResult:
+                        return load_typed_result(
+                            cast(AgentResultMessage, outcome.message)
+                        )
+
+                    turn = await self._agent_execution.execute_with_recovery(
+                        execution_session,
+                        AgentTurnRequest(
+                            content=turn.content,
+                            message_id=envelope.task_id,
+                            workflow_id=workflow_id,
+                            run_id=envelope.run_id,
+                            task_id=envelope.task_id,
+                            task_attempt_id=envelope.task_attempt_id,
+                            internal=True,
+                            turn_kind=origin_turn_kind,
                         ),
-                    )
-                    turn = await one_turn(
-                        continuation_message,
-                        internal=True,
-                        turn_kind=continuation_kind,
-                        provider_stream_idle_timeout_seconds=(
-                            REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
+                        recovery=recovery_driver,
+                        interpret=interpret_continuation_terminal,
+                        build_turn=build_continuation_turn,
+                        stop=stop_continuation_recovery,
+                        reuse_result=reuse_continuation_result,
+                        terminals=(
+                            AgentTerminalSubscription(
+                                kind="typed_result",
+                                message_type=AgentResultMessage,
+                                predicate=lambda item: (
+                                    item.workflow_id == workflow_id
+                                    and item.run_id == envelope.run_id
+                                    and item.task_id == envelope.task_id
+                                    and item.task_attempt_id
+                                    == envelope.task_attempt_id
+                                    and item.sender == definition.id
+                                    and item.session_id == session_id
+                                    and item.identity_key == identity_key
+                                    and item.lease_owner_id
+                                    == identity_lease.owner_id
+                                    and item.lease_epoch
+                                    == identity_lease.lease_epoch
+                                ),
+                            ),
+                        ),
+                        observed_outcome=AgentTurnOutcome(
+                            kind="response",
+                            message=turn,
+                            session_id=session_id,
+                            runtime_id=runtime_id,
                         ),
                     )
                 if continuation_path.is_file():
