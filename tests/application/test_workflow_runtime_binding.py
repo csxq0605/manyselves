@@ -139,7 +139,7 @@ async def test_facade_dispatches_through_definition_owned_runtime_binding(
     bindings.register(binding)
     facade = WorkflowProjectionFacade(
         tmp_path,
-        reporting_adapter=None,
+        runtime_services=None,
         catalog=_catalog(tmp_path),
         runtime_bindings=bindings,
     )
@@ -180,7 +180,7 @@ def test_workflow_without_a_runtime_binding_is_not_projected_as_runnable(
 ) -> None:
     facade = WorkflowProjectionFacade(
         tmp_path,
-        reporting_adapter=None,
+        runtime_services=None,
         catalog=_catalog(tmp_path),
         runtime_bindings=RuntimeBindingCatalog(),
     )

@@ -89,18 +89,18 @@ class WorkflowProjectionFacade:
     def __init__(
         self,
         workspace: Path,
-        reporting_adapter: Any,
+        runtime_services: Any,
         *,
         catalog: CapabilityCatalog | None = None,
         runtime_bindings: RuntimeBindingCatalog | None = None,
     ) -> None:
         self.workspace = Path(workspace)
-        self.reporting_adapter = reporting_adapter
+        self.runtime_services = runtime_services
         self._catalog = catalog or load_builtin_capability_catalog()
         self._runtime_bindings = runtime_bindings or load_runtime_bindings(
             self._catalog,
             workspace=self.workspace,
-            services=reporting_adapter,
+            services=runtime_services,
         )
 
     def list_capabilities(self) -> list[dict[str, Any]]:

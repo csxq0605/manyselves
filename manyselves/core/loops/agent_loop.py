@@ -2957,11 +2957,10 @@ class AgentLoop:
     def _gate_phase_for_message(self, phase: str) -> str:
         """Use the typed turn kind when a Runner starts a continuation turn.
 
-        ReportingAgentRunner sends every ``one_turn`` through the same AgentLoop
-        entry point, so the physical call's phase is ``initial`` even when the
-        current UserMessage is a continuation/correction.  The turn kind is a
-        durable semantic reason and is the only source used to widen the gate
-        for that fresh logical round.
+        The generic Agent runtime sends every ``one_turn`` through the same
+        AgentLoop entry point, so the physical call's phase is ``initial`` even
+        when the current UserMessage is a continuation/correction.  The turn
+        kind is the durable semantic reason for that fresh logical round.
         """
 
         if str(phase or "initial").casefold() != "initial":

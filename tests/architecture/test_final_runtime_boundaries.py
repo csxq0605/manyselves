@@ -132,6 +132,25 @@ def test_distribution_runtime_binding_does_not_depend_on_legacy_reporting_host()
     assert legacy_constructor_arguments == []
 
 
+def test_workflow_projection_uses_neutral_runtime_services_name() -> None:
+    """The generic Application projection must not name one Capability host."""
+
+    source_path = PACKAGE_ROOT / "application" / "workflow_projection.py"
+    tree = ast.parse(_read_python_source(source_path), filename=str(source_path))
+    constructor = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    arguments = {
+        argument.arg
+        for argument in [*constructor.args.args, *constructor.args.kwonlyargs]
+    }
+
+    assert "runtime_services" in arguments
+    assert "reporting_adapter" not in arguments
+
+
 def test_distribution_capability_does_not_import_core_reporting() -> None:
     """Capability runtime and adapters must not re-enter the retired Core domain."""
 

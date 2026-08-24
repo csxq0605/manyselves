@@ -2236,7 +2236,7 @@ async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling
     bindings.register(_NestedWorkflowBinding())
     projection = WorkflowProjectionFacade(
         workspace,
-        reporting_adapter=None,
+        runtime_services=None,
         runtime_bindings=bindings,
     )
     previous_projection = host.app.state.workflow_projection

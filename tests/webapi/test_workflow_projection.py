@@ -238,7 +238,7 @@ def _facade(workspace: Path, binding: _ReportingAdapter) -> WorkflowProjectionFa
     bindings.register(binding)
     return WorkflowProjectionFacade(
         workspace,
-        reporting_adapter=None,
+        runtime_services=None,
         runtime_bindings=bindings,
     )
 
@@ -706,7 +706,7 @@ def test_run_events_project_file_sink_for_current_run_only(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
+async def test_run_start_and_input_delegate_to_the_capability_binding(
     tmp_path: Path,
 ) -> None:
     adapter = _ReportingAdapter()

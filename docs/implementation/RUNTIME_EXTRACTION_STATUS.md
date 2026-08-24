@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-03/M9.13 Module 异常/恢复端口完成；production completed-result 接线待明确现有持久化机制`
+- Current slice: `FA-04/M9.17 Generic Application 命名收敛；production completed-result 接线待明确现有持久化机制`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
@@ -260,6 +260,7 @@
 - FA-05/M9.15 将仍在生产 `RuntimeFacade` 中使用、但行为仅为通用只读投影的 `LegacyRuntimeAdapter` 更名并物理迁移为 `RuntimeSnapshotAdapter`，旧模块、旧类名和兼容 shim 均删除。Characterization First 先因新模块不存在取得 `ModuleNotFoundError` RED，GREEN 后 Application facade focused `26 passed`，定向 Ruff、compileall、旧名称扫描与 `git diff --check` 通过；没有改变快照结构、锁/命令语义或运行路径，也未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - FA-05/M9.16 将 `runtime/tool_adapter.py` 中仅由旧测试消费的 `LegacyToolAdapterFactory` 和 `legacy:*` 解析路径物理删除；生产 `CapabilityToolAdapter` 改为继承中立 `ToolAdapter`，只共享声明元数据与现有 completed Tool Result lookup，Capability callable、Contract 校验和 result index 行为保持不变。Characterization First 先因中立基类不存在取得 `ImportError` RED，GREEN 后 Runtime/Parameter Adjustment/Reporting Tool affected focused `44 passed`，定向 Ruff、compileall、生产旧名称扫描与 `git diff --check` 通过；未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - FA-03/M9.13b 将真实 Binding 缺少的 8 个 Module lifecycle Tool 端口全部接入 `CapabilityModuleRuntime`：initial review/recheck 的 durable `review/revise/completed` 投影、Author/Reviewer Main exception、既有决定恢复、同 Run `request_user`、`return_to_author`、`stop_incomplete` 和 reviewer escalation 后的 recheck acceptance 均由 Capability typed state 驱动，Kernel/Compiler/Host 不认识这些 Reporting 语义。静态端口 Characterization 先证明 module/full 两个公开根均少 8 个绑定；实现后新增 7 个行为场景并复核 Public Host。Module focused `26 passed`、Public Host 精确路径 `1 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；状态 identity/completion 条件机械保留自既有 lifecycle，未新增 Hash/CAS、锁/lease、Gate、停止阈值、依赖、Action Kind 或公共接口。
+- FA-04/M9.17 将 Generic `WorkflowProjectionFacade` 的最后一个 `reporting_adapter` 构造参数/属性更名为 `runtime_services`，并删除 AgentLoop 注释中已不存在的 `ReportingAgentRunner` 主调叙述；运行时仍把同一个 account-scoped services view 注入 `RuntimeBindingCatalog`，不改变路由、状态或 Capability 选择。Characterization First 先在 Application AST 上取得 `1 failed`，GREEN 后 Architecture/Projection/Binding/Nested HTTP focused `32 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未新增兼容 alias、Gate、Hash、CAS、锁、校验链或依赖。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
