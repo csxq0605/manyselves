@@ -5,7 +5,7 @@ from .runtime_host import RuntimeHost
 from .runtime_state import RuntimeStateProjection
 
 
-class LegacyRuntimeAdapter:
+class RuntimeSnapshotAdapter:
     """Build client snapshots without leaking runtime implementation details."""
 
     def __init__(

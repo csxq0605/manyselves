@@ -23,7 +23,6 @@ from .errors import (
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
-from .legacy_runtime_adapter import LegacyRuntimeAdapter
 from .models import (
     AcceptedCommand,
     EditResendCommand,
@@ -35,6 +34,7 @@ from .models import (
     SendMessageCommand,
 )
 from .runtime_host import RuntimeHost
+from .runtime_snapshot_adapter import RuntimeSnapshotAdapter
 from .runtime_state import RuntimeStateProjection
 
 CommandResponse = AcceptedCommand | RollbackResult
@@ -133,7 +133,7 @@ class RuntimeFacade:
         host: RuntimeHost,
         *,
         leases: ControlLeaseService | None = None,
-        adapter: LegacyRuntimeAdapter | None = None,
+        adapter: RuntimeSnapshotAdapter | None = None,
         state: RuntimeStateProjection | None = None,
         command_cache_size: int = 256,
     ) -> None:
@@ -141,7 +141,7 @@ class RuntimeFacade:
             raise ValueError("Command cache size must be positive")
         self._host = host
         self.leases = leases or ControlLeaseService()
-        self._adapter = adapter or LegacyRuntimeAdapter(host, state=state)
+        self._adapter = adapter or RuntimeSnapshotAdapter(host, state=state)
         self._command_cache_size = command_cache_size
         self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()

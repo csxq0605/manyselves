@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-03/M9.13 Module 异常/恢复端口与 production completed-result 接线；FA-06/M9.14 通用事件词汇收敛`
+- Current slice: `FA-03/M9.13 Module 异常/恢复端口与 production completed-result 接线；FA-05/M9.15 通用 Runtime adapter 命名收敛`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
@@ -257,6 +257,7 @@
 - FA-02 typed progress/no-progress 切片新增不可歧义的 `AgentRecoveryProgress(progressed|no_progress)`，Runtime 负责调用 `observe_progress`、形成 `NO_PROGRESS` directive 并执行 CONTINUE/STOP/FAIL；Reporting 删除私有 action 决策/兼容校验，只提供既有 durable/conversation snapshot、既有 no-progress 阈值、状态持久化和领域 stop result。生产观察 Characterization 实现前 `2 failed`、实现后转绿；Agent/Runtime/Reporting focused `25 passed`，主工作区复核 `13 passed`，Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。Runtime 未复制 Reporting 的 hash snapshot 或阈值，未新增 Gate、Hash、CAS、lease、锁、attempt limit 或依赖；completed-result reuse 仍为下一项债务。
 - FA-02 最终 completed-result 切片新增 pre-session `AgentExecutionService.recover_completed_result`，在 Reporting 已完成既有 correlation/terminal/identity 验证和 typed decode 后，由 Runtime 主调 `COMPLETED_TOOL_RESULT` 的默认/声明式 REUSE_RESULT、STOP、FAIL。生产 spy Characterization 实现前 `1 failed`，实现后 Provider 调用仍为 `0`、Runtime session registry 为空、原 session identity 和旧 typed result 原样复用。Runtime/Reporting affected `26 passed`，主工作区复核 `15 passed`，Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过；未复制或新增 Hash、CAS、lease、锁、Gate、attempt limit、action compatibility 校验或依赖。至此 FA-02 规范列出的生产 Agent/Conversation/Recovery 主调债务清完，测试专用 Legacy adapter 留到 FA-05 删除。
 - FA-06/M9.14 将业务中立的 Workflow/Peer/Progress/Research/Blocked/AgentResult 消息从 `reporting.*` 产品事件名统一为 `workflow.*`，`ReportMessage` 继续使用通用 `report.status.changed`；React 查询失效逻辑同步移除 `reporting.` 特判。Characterization First 在旧映射上取得 `3 failed`，GREEN 后 Event Mapper/SSE focused `89 passed`、App Vitest `5 passed`，定向 ESLint、TypeScript 与 `git diff --check` 通过；未更改 Kernel、Compiler、Capability 行为或公共 HTTP 结构，未新增 Gate、Hash、CAS、锁、校验链或依赖。
+- FA-05/M9.15 将仍在生产 `RuntimeFacade` 中使用、但行为仅为通用只读投影的 `LegacyRuntimeAdapter` 更名并物理迁移为 `RuntimeSnapshotAdapter`，旧模块、旧类名和兼容 shim 均删除。Characterization First 先因新模块不存在取得 `ModuleNotFoundError` RED，GREEN 后 Application facade focused `26 passed`，定向 Ruff、compileall、旧名称扫描与 `git diff --check` 通过；没有改变快照结构、锁/命令语义或运行路径，也未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
