@@ -18,7 +18,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     ProjectManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    EvidenceDecisionRequest,
     EvidenceItem,
     OutputArtifact,
     PhotoAsset,
@@ -27,10 +26,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SourceLocation,
     UserSupplement,
 )
-from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.decisions import EvidenceDecisionStore
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.workflow import (
@@ -38,10 +35,6 @@ from manyselves.core.reporting.workflow import (
     AgentWorkflowError,
     ReportingNeedsDecisionError,
     ReportWorkflowRunner,
-)
-from manyselves.core.tools.reporting_tool import (
-    ResumeReportingWorkflowTool,
-    RunReportingWorkflowTool,
 )
 from manyselves.core.tools.task_board import TaskBoard
 from manyselves.core.usage_ledger import UsageLedger
@@ -896,44 +889,6 @@ def test_reporting_service_rejects_missing_provider(tmp_path: Path) -> None:
         )
 
 
-def test_reporting_tool_rejects_missing_provider(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="requires an LLM provider"):
-        RunReportingWorkflowTool(
-            workspace=tmp_path,
-            bus=MessageBus(),
-            task_board=TaskBoard(),
-            llm_provider=None,  # type: ignore[arg-type]
-        )
-
-
-@pytest.mark.asyncio
-async def test_reporting_tool_defaults_new_report_to_draft_policy(
-    tmp_path: Path,
-) -> None:
-    captured: dict[str, ReportRequest] = {}
-
-    class CapturingController:
-        def start(self, request: ReportRequest) -> dict:
-            captured["request"] = request
-            return {"status": "running", "run_id": "report-default-draft"}
-
-    tool = RunReportingWorkflowTool(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=TemplateResolutionProvider(),
-        controller=CapturingController(),  # type: ignore[arg-type]
-    )
-
-    payload = await tool(
-        instruction="从 Inputs 生成完整报告",
-        operation="full_report",
-    )
-
-    assert payload["status"] == "running"
-    assert captured["request"].missing_evidence_policy == "draft"
-
-
 @pytest.mark.asyncio
 async def test_service_returns_resumable_decision_before_calling_provider_when_evidence_requires_confirmation(
     tmp_path: Path,
@@ -1603,48 +1558,3 @@ async def test_user_cancellation_is_saved_as_cancelled_run(
     saved = json.loads((tmp_path / f"Work/runs/{result.run_id}.json").read_text(encoding="utf-8"))
     assert saved["status"] == "cancelled"
     assert saved["error"] == "interrupted by user"
-
-
-@pytest.mark.asyncio
-async def test_resume_tool_uses_persisted_decision_id(tmp_path: Path) -> None:
-    class NeverCalledProvider(LLMProvider):
-        def __init__(self):
-            super().__init__("test", model="never-called")
-
-        async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
-            raise AssertionError("stop must not call provider")
-
-    run_id = "report-tool-resume"
-    ReportingStore(tmp_path).write_json(
-        f"Work/runs/{run_id}/request.json",
-        ReportRequest(
-            operation="module_report",
-            instruction="生成设备模块",
-            target_modules=["2.4"],
-        ).model_dump(mode="json"),
-    )
-    decision = EvidenceDecisionStore(tmp_path).create(
-        EvidenceDecisionRequest(
-            decision_id="evidence-tool-resume",
-            run_id=run_id,
-            missing_items=["2.4.1.1 缺少证据"],
-            affected_modules=["2.4"],
-        )
-    )
-    tool = ResumeReportingWorkflowTool(
-        tmp_path,
-        MessageBus(),
-        TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-
-    payload = await tool(decision.decision_id, "stop")
-
-    assert payload["run_id"] == run_id
-    assert payload["status"] == "running"
-    task = tool.controller._tasks[run_id]
-    await task
-    persisted = ReportingRunResult.model_validate_json(
-        (tmp_path / f"Work/runs/{run_id}.json").read_text(encoding="utf-8")
-    )
-    assert persisted.status == "stopped_incomplete"

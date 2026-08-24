@@ -97,7 +97,6 @@ def _reporting_domain_import_violations(root: Path) -> dict[str, list[str]]:
     return violations
 
 
-@FINAL_ARCHITECTURE_GAP
 def test_generic_runtime_application_and_webapi_do_not_import_reporting_domain() -> None:
     """Generic infrastructure must not acquire a Distribution Reporting identity."""
 
@@ -155,6 +154,28 @@ def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     assert not (PACKAGE_ROOT / "application" / "reporting_facade.py").exists()
     assert not (PACKAGE_ROOT / "webapi" / "routes" / "reporting.py").exists()
     assert not (PACKAGE_ROOT / "webapi" / "schemas" / "reporting.py").exists()
+
+
+def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> None:
+    """Conversation runtime must not bypass file workflows through Core Reporting."""
+
+    manager_source = _read_python_source(PACKAGE_ROOT / "core" / "loops" / "manager.py")
+    loop_source = _read_python_source(PACKAGE_ROOT / "core" / "loops" / "agent_loop.py")
+    prompt_source = (PACKAGE_ROOT / "templates" / "agents" / "main_agent.md").read_text(
+        encoding="utf-8"
+    )
+
+    for legacy_tool in (
+        "run_reporting_workflow",
+        "resume_reporting_workflow",
+        "revise_reporting_workflow",
+        "cancel_reporting_workflow",
+        "get_reporting_workflow_status",
+    ):
+        assert legacy_tool not in manager_source
+        assert legacy_tool not in loop_source
+        assert legacy_tool not in prompt_source
+    assert not (PACKAGE_ROOT / "core" / "tools" / "reporting_tool.py").exists()
 
 
 def test_distribution_contract_models_are_owned_by_the_capability() -> None:

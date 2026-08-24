@@ -21,14 +21,6 @@ _TERMINAL_TOOLS = {
     "submit_result",
     "report_blocked",
 }
-_BACKGROUND_REPORT_START_TOOLS = {
-    "run_reporting_workflow",
-    "resume_reporting_workflow",
-    "revise_reporting_workflow",
-}
-_BACKGROUND_REPORT_STATUS_TOOLS = {
-    "get_reporting_workflow_status",
-}
 _FAILURE_STATUSES = {"error", "failed", "cancelled", "stopped_incomplete"}
 _BLOCKED_STATUSES = {
     "blocked",
@@ -53,16 +45,6 @@ def normalize_tool_outcome(value: Any, tool_name: str = "tool") -> ToolOutcome:
     correction_required = raw_status == "correction_required"
     if tool_name == "submit_result" and correction_required:
         terminal = False
-    # A successfully accepted background report is terminal for the *current
-    # Main turn*, not for the report workflow.  Ending the turn here is what
-    # lets Main wait for the ReportMessage instead of polling, replanning, or
-    # cancelling the still-running workflow in the same user turn.
-    if tool_name in _BACKGROUND_REPORT_START_TOOLS:
-        terminal = True
-    # A status query is one snapshot per user turn.  In particular, an
-    # in-progress snapshot must not feed the generic no-progress replanner.
-    if tool_name in _BACKGROUND_REPORT_STATUS_TOOLS:
-        terminal = True
     explicit_error = str(value.get("error") or "").strip() or None
     if correction_required:
         status = "correction"

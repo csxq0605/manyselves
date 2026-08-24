@@ -35,13 +35,6 @@ from ..tools import (
 )
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.registry import ToolRegistry
-from ..tools.reporting_tool import (
-    CancelReportingWorkflowTool,
-    GetReportingWorkflowStatusTool,
-    ResumeReportingWorkflowTool,
-    ReviseReportingWorkflowTool,
-    RunReportingWorkflowTool,
-)
 from ..tools.skill_evolution_tools import (
     ProjectSkillEvolutionTool,
     RunProductSkillMaintainerTool,
@@ -184,14 +177,6 @@ class LoopManager:
         agent_id = normalize_agent_id(agent_type)
         loop = self._loops.get(agent_id)
         if loop is None:
-            if agent_id == "report-workflow":
-                main_loop = self._loops.get("main")
-                status_tool = main_loop.tools.get("get_reporting_workflow_status") if main_loop else None
-                controller = getattr(status_tool, "controller", None)
-                if controller is not None:
-                    cancelled = controller.cancel_all()
-                    logger.info("Cancelled background report runs: {}", cancelled)
-                    return
             logger.warning("No loop found for agent: {}", agent_type)
             return
 
@@ -330,42 +315,8 @@ class LoopManager:
                     timeout=mineru_timeout,
                 ))
 
-        # Reporting orchestration is exposed only through task-scoped workflow tools.
         if agent_id == "main":
             reporting_provider = self._provider_manager.get_active_provider()
-            run_reporting_tool = RunReportingWorkflowTool(
-                workspace=self.workspace,
-                bus=self.bus,
-                task_board=self._task_board,
-                llm_provider=reporting_provider,
-                agent_defaults=self.config_manager.config.agents.defaults,
-                global_root=self.global_knowledge_root,
-            )
-            registry.register(run_reporting_tool)
-            registry.register(CancelReportingWorkflowTool(run_reporting_tool.controller))
-            registry.register(GetReportingWorkflowStatusTool(run_reporting_tool.controller))
-            registry.register(
-                ResumeReportingWorkflowTool(
-                    workspace=self.workspace,
-                    bus=self.bus,
-                    task_board=self._task_board,
-                    llm_provider=reporting_provider,
-                    agent_defaults=self.config_manager.config.agents.defaults,
-                    controller=run_reporting_tool.controller,
-                    global_root=self.global_knowledge_root,
-                )
-            )
-            registry.register(
-                ReviseReportingWorkflowTool(
-                    workspace=self.workspace,
-                    bus=self.bus,
-                    task_board=self._task_board,
-                    llm_provider=reporting_provider,
-                    agent_defaults=self.config_manager.config.agents.defaults,
-                    controller=run_reporting_tool.controller,
-                    global_root=self.global_knowledge_root,
-                )
-            )
             registry.register(ProjectSkillEvolutionTool(self.workspace))
             registry.register(
                 RunProductSkillMaintainerTool(

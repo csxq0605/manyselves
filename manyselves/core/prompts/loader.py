@@ -98,7 +98,7 @@ class PromptLoader:
 
     def _get_fallback_prompt(self, agent_type: str) -> str:
         if agent_type.lower() == "main":
-            return "你是本地配电报告 Main Agent。使用 run_reporting_workflow 协调配电报告任务。"
+            return "你是 Manyselves Main Agent。根据当前项目与可用工具协助用户。"
         return f"You are the {agent_type} role in the power-distribution reporting workflow."
 
     def reload(self) -> None:
