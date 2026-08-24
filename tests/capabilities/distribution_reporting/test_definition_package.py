@@ -11,12 +11,6 @@ import pytest
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
-from manyselves.capabilities.distribution_reporting.adapters import (
-    build_module_cohort_definition,
-    build_module_lane_definitions,
-    build_reporting_tail_definition,
-    load_reporting_agents,
-)
 from manyselves.capabilities.distribution_reporting.runtime.models import preparation
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
@@ -28,8 +22,18 @@ from manyselves.core.reporting.config import (
     load_agent_definitions,
     load_packaged_agents,
 )
+from manyselves.core.reporting.config import load_packaged_agents as load_reporting_agents
+from manyselves.core.reporting.declarative_module_cohort import (
+    build_module_cohort_definition,
+)
+from manyselves.core.reporting.declarative_module_lane import (
+    build_module_lane_definitions,
+)
 from manyselves.core.reporting.declarative_reporting_runner import (
     _compile_reporting_runtime,
+)
+from manyselves.core.reporting.declarative_reporting_tail import (
+    build_reporting_tail_definition,
 )
 from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
 from manyselves.kernel.definitions import ContractDefinition, DefinitionKind

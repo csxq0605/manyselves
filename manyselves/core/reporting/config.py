@@ -9,6 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
     ConfigurationError,
 )
+from manyselves.kernel.definitions import (
+    AgentDefinition as KernelAgentDefinition,
+)
+from manyselves.kernel.definitions import (
+    DefinitionKind,
+    load_capability,
+)
 
 KNOWN_CARRIERS = {
     "report_request",
@@ -132,11 +139,55 @@ def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
     return _load_agent_definitions(directory)
 
 
+def project_reporting_agent(
+    definition: KernelAgentDefinition,
+    *,
+    source_path: Path | None = None,
+) -> AgentDefinition:
+    """Project a file Agent snapshot into this retired runner's local model."""
+
+    limits = definition.limits
+    capability_root = (
+        Path(__file__).resolve().parents[2]
+        / "capabilities"
+        / "distribution_reporting"
+    )
+    return AgentDefinition(
+        name=definition.id,
+        description=definition.description,
+        model=definition.model,
+        tools=list(definition.tools),
+        disallowedTools=list(limits.get("disallowed_tools", ())),
+        maxTurns=int(limits.get("max_turns", 8)),
+        maxTokens=limits.get("max_tokens"),
+        effort=str(limits.get("effort", "medium")),
+        memory=definition.conversation_mode,
+        background=bool(limits.get("background", True)),
+        reads=list(definition.accepts),
+        writes=list(definition.produces),
+        instructions=definition.instructions,
+        source_path=(
+            source_path
+            if source_path is not None
+            else capability_root / "agents" / f"{definition.id}.md"
+        ),
+    )
+
+
 def load_packaged_agents() -> dict[str, AgentDefinition]:
     """Compatibility import for the packaged distribution-reporting Agents."""
 
-    from manyselves.capabilities.distribution_reporting.adapters import (
-        load_reporting_agents,
+    capability_root = (
+        Path(__file__).resolve().parents[2]
+        / "capabilities"
+        / "distribution_reporting"
     )
-
-    return load_reporting_agents()
+    _, registry = load_capability(capability_root / "capability.yaml")
+    return {
+        definition.id: project_reporting_agent(
+            definition,
+            source_path=capability_root / "agents" / f"{definition.id}.md",
+        )
+        for definition in registry.all(DefinitionKind.AGENT)
+        if isinstance(definition, KernelAgentDefinition)
+    }

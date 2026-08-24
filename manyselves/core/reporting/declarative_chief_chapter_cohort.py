@@ -8,9 +8,6 @@ from copy import deepcopy
 from inspect import isawaitable
 from typing import Any, Literal, cast
 
-from manyselves.capabilities.distribution_reporting.adapters import (
-    project_reporting_agent,
-)
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
@@ -32,6 +29,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
     chapter_section_ids,
 )
+from manyselves.core.reporting.config import project_reporting_agent
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,

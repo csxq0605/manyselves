@@ -7,9 +7,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, cast
 
-from manyselves.capabilities.distribution_reporting.adapters import (
-    project_reporting_agent,
-)
 from manyselves.capabilities.distribution_reporting.runtime.cross_owner_definitions import (
     register_cross_owner_pipeline_specializations as _register_cross_owner_pipeline_specializations,
 )
@@ -44,6 +41,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleInitialReviewPreparation,
     ModuleRevisionPreparation,
 )
+from manyselves.core.reporting.config import project_reporting_agent
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,

@@ -139,6 +139,12 @@ def test_distribution_runtime_binding_does_not_depend_on_legacy_reporting_host()
     assert legacy_constructor_arguments == []
 
 
+def test_distribution_capability_does_not_import_core_reporting() -> None:
+    """Capability runtime and adapters must not re-enter the retired Core domain."""
+
+    assert _reporting_domain_import_violations(REPORTING_CAPABILITY_ROOT) == {}
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 

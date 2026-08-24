@@ -7,9 +7,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal, cast
 
-from manyselves.capabilities.distribution_reporting.adapters import (
-    project_reporting_agent,
-)
 from manyselves.capabilities.distribution_reporting.domain.final_specialization import (
     final_lane_specialization,
 )
@@ -42,6 +39,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SpecialTopicPlan,
     chapter_section_ids,
 )
+from manyselves.core.reporting.config import project_reporting_agent
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,

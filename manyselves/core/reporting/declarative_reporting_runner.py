@@ -12,9 +12,6 @@ from typing import Any, Literal, Protocol, cast
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
-from manyselves.capabilities.distribution_reporting.adapters import (
-    project_reporting_agent,
-)
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
@@ -49,6 +46,7 @@ from manyselves.capabilities.distribution_reporting.runtime.module_lane_definiti
     register_module_runtime_lane_specializations,
 )
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import LaneCompletion
+from manyselves.core.reporting.config import project_reporting_agent
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRecord, ConversationRegistry
 from manyselves.kernel.definitions import (
