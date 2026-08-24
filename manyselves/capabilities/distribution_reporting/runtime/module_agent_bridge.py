@@ -63,12 +63,14 @@ class ModuleAuthoringAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
         completed_result_loader: CompletedResultLoader | None = None,
+        terminal_task_attempt_id: str | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
+        self.terminal_task_attempt_id = terminal_task_attempt_id
 
     async def invoke(
         self,
@@ -199,7 +201,7 @@ class ModuleAuthoringAgentBridge:
             workflow_id=workflow_id,
             run_id=run_id,
             task_id=task_id,
-            task_attempt_id=task_id,
+            task_attempt_id=self.terminal_task_attempt_id or task_id,
             turn_kind="task_initial",
         )
         terminal = typed_turn.result_terminal(
@@ -209,7 +211,7 @@ class ModuleAuthoringAgentBridge:
             session_id=session.session_id,
             sender=envelope.agent_id,
             terminal_task_id=envelope.task_id,
-            terminal_task_attempt_id="",
+            terminal_task_attempt_id=self.terminal_task_attempt_id or "",
         )
         if recovery_policy is None:
             outcome = await typed_turn.dispatch(

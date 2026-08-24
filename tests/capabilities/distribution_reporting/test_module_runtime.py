@@ -642,6 +642,9 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         ModuleProviderDependencies,
         ModuleProviderRuntime,
     )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        TaskCorrelation,
+    )
     from manyselves.config.schema import AgentDefaults
     from manyselves.core.loops.bus import MessageBus
     from manyselves.core.tools.registry import Tool
@@ -657,6 +660,7 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
     part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
     envelope = TaskEnvelope(
         task_id="module-2.4",
+        task_attempt_id="attempt-module-provider",
         run_id=run_id,
         agent_id=agent.id,
         objective=task.objective,
@@ -714,7 +718,17 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         for name in {"inspect_image", "open_artifact", "search_text", "calculate"}
     }
     gateway = object()
-    task_correlation = object()
+    task_correlation = TaskCorrelation(
+        workflow_id="public-reporting",
+        run_id=run_id,
+        task_id=envelope.task_id,
+        task_attempt_id=envelope.task_attempt_id,
+        agent_id=agent.id,
+        identity_key=agent.id,
+        session_id="public-reporting:module-2.4",
+        lease_owner_id="focused-module-provider",
+        lease_epoch=1,
+    )
     recovery_callback = object()
     dependencies = ModuleProviderDependencies(
         artifact_gateway=gateway,
@@ -769,7 +783,7 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
                         task_id=envelope.task_id,
                         run_id=envelope.run_id,
                         result_path=result_ref,
-                        task_attempt_id="",
+                        task_attempt_id=envelope.task_attempt_id,
                         session_id=message.session_id,
                     )
                 )
@@ -818,6 +832,7 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         assert built_kwargs[0]["artifact_gateway"] is gateway
         assert set(built_kwargs[0]["tools"].get_all()) == set(task.tools)
         assert len(received) == 2
+        assert received[0].task_attempt_id == envelope.task_attempt_id
         assert first.session_id == second.session_id
         assert conversation.external_session_id == first.session_id
         assert len(service.sessions) == 1

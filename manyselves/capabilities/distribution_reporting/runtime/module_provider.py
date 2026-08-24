@@ -419,15 +419,6 @@ class ModuleProviderRuntime:
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
         bridge = self._bridge(agent, task, value, conversation, task_id=task_id)
-        if self._is_reviewer(agent, task):
-            return await bridge.invoke_with_recovery(
-                agent,
-                task,
-                value,
-                conversation,
-                task_id=task_id,
-                recovery_policy=recovery_policy,
-            )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -515,6 +506,11 @@ class ModuleProviderRuntime:
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
             completed_result_loader=self._completed_result_loader(),
+            terminal_task_attempt_id=(
+                dependencies.task_correlation.task_attempt_id
+                if isinstance(dependencies.task_correlation, TaskCorrelation)
+                else None
+            ),
         )
 
     def _completed_result_loader(self) -> CompletedResultLoader | None:
