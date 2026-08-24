@@ -146,7 +146,7 @@ class ParameterAdjustmentRuntimeBinding:
         command_id: UUID,
         run_id: str,
     ) -> dict[str, Any]:
-        """Resume the persisted Plan + State after process restart."""
+        """Resume the persisted incomplete Plan + State."""
 
         del command_id
         state = self._load_state(run_id)
@@ -156,8 +156,6 @@ class ParameterAdjustmentRuntimeBinding:
             raise CapabilityRunStateError(
                 "run is waiting for input; resume it through the input endpoint"
             )
-        if state.status is WorkflowStatus.FAILED:
-            raise CapabilityRunStateError("failed runs require an explicit retry")
         try:
             plan = self._store.load_plan(run_id)
         except FileNotFoundError as exc:

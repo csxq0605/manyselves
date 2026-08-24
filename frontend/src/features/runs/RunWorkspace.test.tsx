@@ -928,14 +928,16 @@ describe("RunWorkspace", () => {
     expect(outputs).toHaveBeenCalledTimes(2);
   });
 
-  it("resumes a persisted running run through the same Run and polling lifecycle", async () => {
+  it.each(["running", "failed"] as const)(
+    "resumes a persisted %s run through the same Run and polling lifecycle",
+    async (persistedStatus) => {
     const get = vi.fn()
       .mockResolvedValueOnce({
         run: {
           active: false,
           capabilityId: "neutral-capability",
           runId: "persisted-running",
-          status: "running",
+          status: persistedStatus,
           taskId: "task-persisted",
           workflowId: "neutral-workflow",
         },
@@ -1016,12 +1018,12 @@ describe("RunWorkspace", () => {
     await user.type(await screen.findByRole("textbox", { name: "Run ID" }), "persisted-running");
     await user.click(screen.getByRole("button", { name: "打开运行" }));
 
-    expect(await screen.findByText("running")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "恢复运行" }));
+    await user.click(await screen.findByRole("button", { name: "恢复运行" }));
     await waitFor(() => expect(resume).toHaveBeenCalledWith("persisted-running", expect.any(String)));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3), { timeout: 4000 });
     expect(await screen.findByText("completed")).toBeVisible();
-  });
+    },
+  );
 
   it("opens an existing run by Run ID", async () => {
     const get = vi.fn().mockResolvedValue({

@@ -475,7 +475,7 @@ class AggregateExistingWorkflowRuntime:
         command_id: UUID,
         run_id: str,
     ) -> dict[str, Any]:
-        """Resume the persisted aggregate Plan + State after process restart."""
+        """Resume the persisted incomplete aggregate Plan + State."""
 
         del command_id
         state = self._load_state(run_id)
@@ -485,8 +485,6 @@ class AggregateExistingWorkflowRuntime:
             raise CapabilityRunStateError(
                 "run is waiting for input; resume it through the input endpoint"
             )
-        if state.status is WorkflowStatus.FAILED:
-            raise CapabilityRunStateError("failed runs require an explicit retry")
         try:
             plan = self._state_store.load_plan(run_id)
         except FileNotFoundError as exc:

@@ -320,9 +320,14 @@ async def test_public_runtime_resumes_waiting_input_through_generic_host(
 
 
 @pytest.mark.asyncio
-async def test_public_runtime_marks_persisted_reporting_state_as_resume(
+@pytest.mark.parametrize(
+    "persisted_status",
+    (WorkflowStatus.RUNNING, WorkflowStatus.FAILED),
+)
+async def test_public_runtime_marks_persisted_incomplete_reporting_state_as_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    persisted_status: WorkflowStatus,
 ) -> None:
     store = InMemoryWorkflowStateStore()
     runtime = PublicReportingWorkflowRuntime(
@@ -338,7 +343,7 @@ async def test_public_runtime_marks_persisted_reporting_state_as_resume(
         actions=[],
     )
     state = WorkflowState.for_plan("full-report-resume", plan)
-    state.status = WorkflowStatus.RUNNING
+    state.status = persisted_status
     state.variables["reporting-state"] = {
         "run_id": state.run_id,
         "resume": False,

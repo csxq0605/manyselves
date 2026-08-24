@@ -20,7 +20,6 @@ from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
-from manyselves.runtime.capability_binding import CapabilityRunStateError
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -163,7 +162,7 @@ async def test_render_existing_resume_loads_saved_plan_and_state(
 
 
 @pytest.mark.asyncio
-async def test_render_existing_resume_is_idempotent_for_completed_and_rejects_failed(
+async def test_render_existing_resume_is_idempotent_for_completed_and_retries_failed(
     tmp_path: Path,
 ) -> None:
     runtime = RenderExistingWorkflowRuntime(tmp_path)
@@ -184,12 +183,21 @@ async def test_render_existing_resume_is_idempotent_for_completed_and_rejects_fa
         store.save_plan(run_id, plan)
         store.save(state)
 
+    observed: list[WorkflowStatus] = []
+
+    async def execute(plan, state, registry, contracts):
+        del plan, registry, contracts
+        observed.append(state.status)
+        return state
+
+    runtime._execute = execute
+
     assert await runtime.resume(
         UUID("50000000-0000-4000-8000-000000000010"),
         completed.run_id,
     ) == {"run_id": completed.run_id, "task_id": None}
-    with pytest.raises(CapabilityRunStateError, match="explicit retry"):
-        await runtime.resume(
-            UUID("50000000-0000-4000-8000-000000000011"),
-            failed.run_id,
-        )
+    assert await runtime.resume(
+        UUID("50000000-0000-4000-8000-000000000011"),
+        failed.run_id,
+    ) == {"run_id": failed.run_id, "task_id": None}
+    assert observed == [WorkflowStatus.FAILED]

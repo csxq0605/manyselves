@@ -338,8 +338,8 @@ function statusClass(status: string): string {
   }
 }
 
-function isRunningStatus(status: string): boolean {
-  return statusClass(status) === "running";
+function isResumableStatus(status: string): boolean {
+  return ["running", "failed"].includes(statusClass(status));
 }
 
 function schemaFieldNames(schema: JsonSchema, required: boolean): string[] {
@@ -605,7 +605,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   const canResumeRun = run.data !== undefined
     && !run.data.run.active
     && run.data.waitingInput.length === 0
-    && isRunningStatus(rawRunStatus);
+    && isResumableStatus(rawRunStatus);
   const runStateError = run.data ? errorFromState(objectValue(run.data.state)) : undefined;
   const eventError = events.data?.events.find((event) => typeof event.error === "string" && event.error.length > 0)?.error;
   const failureError = runStateError ?? eventError;
