@@ -195,6 +195,8 @@ def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> No
         assert legacy_tool not in prompt_source
     assert "ProjectSkillEvolutionTool" not in manager_source
     assert "RunProductSkillMaintainerTool" not in manager_source
+    assert "load_packaged_agents" not in manager_source
+    assert "PromptAssembler" not in manager_source
     assert not (PACKAGE_ROOT / "core" / "tools" / "reporting_tool.py").exists()
 
 

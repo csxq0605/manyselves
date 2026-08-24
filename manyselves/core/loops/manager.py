@@ -20,8 +20,6 @@ from ...interfaces.types import (
 from ..artifacts import ArtifactGateway, ArtifactGrant
 from ..checkpoints import CheckpointManager
 from ..prompts.loader import PromptLoader
-from ..reporting.config import load_packaged_agents
-from ..reporting.prompts import PromptAssembler
 from ..tools import (
     ApplyPatchTool,
     DeleteFileTool,
@@ -206,13 +204,8 @@ class LoopManager:
         """Create the sole user-facing Main loop; workflow roles are task-scoped."""
         config = self.config_manager.config.agents.defaults
         llm_provider = self._provider_manager.get_active_provider()
-        agents = load_packaged_agents()
-        definition = agents["main-agent"]
         prompt_loader = PromptLoader()
-        prompt_parts = [
-            prompt_loader.load_prompt("main"),
-            PromptAssembler.system_prompt(definition),
-        ]
+        prompt_parts = [prompt_loader.load_prompt("main")]
         shared_prompt = prompt_loader.load_shared_context()
         if shared_prompt:
             prompt_parts.insert(1, shared_prompt)
@@ -226,8 +219,6 @@ class LoopManager:
             loop_manager=self,
             manifest_manager=self.manifest_manager,
             task_board=self._task_board,
-            # The GUI Main owns route selection while the packaged XML identity
-            # owns reporting-role boundaries.  Both are required at runtime.
             system_prompt="\n\n".join(prompt_parts),
             artifact_gateway=self._artifact_gateway,
         )
