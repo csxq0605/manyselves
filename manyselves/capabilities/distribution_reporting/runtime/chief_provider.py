@@ -15,11 +15,14 @@ recovery implementation.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
 from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
     ChiefChapterAgentInvoker,
 )
@@ -48,6 +51,7 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
@@ -127,7 +131,14 @@ class ChiefProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation, task_id=task_id)
+        bridge = self._bridge(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -145,6 +156,7 @@ class ChiefProviderRuntime:
         conversation: Any,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> ChiefChapterAgentInvoker:
         context = (
             value
@@ -165,6 +177,21 @@ class ChiefProviderRuntime:
             envelope,
             session_id=session_id,
         )
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
+        if (
+            recovery_driver is not None
+            and dependencies.recovery_event_callback is None
+        ):
+            dependencies = replace(
+                dependencies,
+                recovery_event_callback=build_tool_recovery_callback(
+                    recovery_driver
+                ),
+            )
 
         # The TaskDefinition is authoritative: build_module_provider_tools may
         # know additional Capability tools, but it registers only this exact
@@ -212,6 +239,7 @@ class ChiefProviderRuntime:
                 if dependencies.task_correlation is not None
                 else ""
             ),
+            recovery_driver=recovery_driver,
         )
 
     def _compose_artifact_dependencies(

@@ -31,7 +31,12 @@ from manyselves.kernel.conversations import (
     ConversationMode,
     ConversationRecord,
 )
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    RecoveryRule,
+    TaskDefinition,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 
 
@@ -61,6 +66,91 @@ def _state(run_id: str) -> dict[str, object]:
         "template_skill_text": {
             "chief-editor-chapter-1": "Write only the assigned Chapter 1 sections.",
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_chief_provider_shares_declared_recovery_with_tool_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import chief_provider
+    from manyselves.core.tools.registry import ToolRegistry
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured["dependencies"] = kwargs["dependencies"]
+        return ToolRegistry()
+
+    monkeypatch.setattr(chief_provider, "build_module_provider_tools", capture_tools)
+    bus = MessageBus()
+    runtime = chief_provider.ChiefProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        )
+    )
+    chief_runtime = ChiefChapterRuntime(tmp_path, state=_state("chief-schema-run"))
+    context = chief_runtime.prepare_lane(
+        {"state": chief_runtime.current_state, "chapter_id": "1"}
+    )
+    agent = AgentDefinition(
+        id="chief-editor",
+        version="1.0.0",
+        description="Chief",
+        instructions="Edit the assigned chapter.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="chief-chapter-edit",
+        version="1.0.0",
+        description="Chief lane",
+        agent=agent.id,
+        objective="Edit one chapter.",
+        input_contract="declarative_chief_chapter_context",
+        output_contract="declarative_chief_chapter_agent_result",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    policy = RecoveryPolicyDefinition(
+        id="chief-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="chief-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="chief-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id="chief-schema-run",
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        context,
+        conversation,
+        task_id="invoke-current-chief-chapter",
+        recovery_policy=policy,
+    )
+    dependencies = captured["dependencies"]
+    decision = await dependencies.recovery_event_callback(
+        "invalid_structured_output",
+        {"task_id": task.id},
+    )
+
+    assert decision.action.value == "correct"
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
     }
 
 
