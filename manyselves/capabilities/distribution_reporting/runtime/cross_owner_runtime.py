@@ -25,6 +25,7 @@ from manyselves.capabilities.distribution_reporting.domain.cross_specialization 
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    ProgressObserver,
     execute_reporting_recovery,
 )
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
@@ -334,6 +335,7 @@ class CrossOwnerAgentInvoker:
         workflow_id: str = "public-reporting",
         terminal_task_attempt_id: str = "",
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -341,6 +343,7 @@ class CrossOwnerAgentInvoker:
         self.workflow_id = workflow_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     async def invoke(
         self,
@@ -468,6 +471,7 @@ class CrossOwnerAgentInvoker:
             ),
             result_decoder=decode_result,
             recovery=self.recovery_driver,
+            progress_observer=self.progress_observer,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

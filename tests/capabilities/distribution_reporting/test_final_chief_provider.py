@@ -222,6 +222,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
     assert bridge.recovery_driver.snapshot_attempts() == {
         "invalid_structured_output": 1,
     }
+    assert bridge.progress_observer is not None
 
 
 @pytest.mark.asyncio

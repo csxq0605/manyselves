@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    ProgressObserver,
     execute_reporting_recovery,
 )
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
@@ -60,12 +61,14 @@ class ModuleReviewerAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     async def invoke(
         self,
@@ -207,6 +210,7 @@ class ModuleReviewerAgentBridge:
                 output_contract=task.output_contract,
             ),
             recovery=self.recovery_driver,
+            progress_observer=self.progress_observer,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

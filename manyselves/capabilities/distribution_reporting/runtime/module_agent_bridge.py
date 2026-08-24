@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    ProgressObserver,
     execute_reporting_recovery,
 )
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
@@ -65,6 +66,7 @@ class ModuleAuthoringAgentBridge:
         completed_result_loader: CompletedResultLoader | None = None,
         terminal_task_attempt_id: str | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -73,6 +75,7 @@ class ModuleAuthoringAgentBridge:
         self.completed_result_loader = completed_result_loader
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     async def invoke(
         self,
@@ -250,6 +253,7 @@ class ModuleAuthoringAgentBridge:
                 output_contract=task.output_contract,
             ),
             recovery=self.recovery_driver,
+            progress_observer=self.progress_observer,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    ProgressObserver,
     execute_reporting_recovery,
 )
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
@@ -65,6 +66,7 @@ class FinalChapterAgentBridge:
         workflow_id: str = "distribution-aggregate-existing-tail",
         terminal_task_attempt_id: str = "",
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -72,6 +74,7 @@ class FinalChapterAgentBridge:
         self.workflow_id = workflow_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     async def invoke(
         self,
@@ -259,6 +262,7 @@ class FinalChapterAgentBridge:
             ),
             result_decoder=decode_result,
             recovery=self.recovery_driver,
+            progress_observer=self.progress_observer,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

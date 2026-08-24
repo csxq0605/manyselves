@@ -17,6 +17,9 @@ from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
     build_tool_recovery_callback,
 )
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    ReportingContinuationProgressObserver,
+)
 from manyselves.capabilities.distribution_reporting.runtime.final_chief_agent_bridge import (
     FinalChiefAgentBridge,
 )
@@ -221,6 +224,10 @@ class FinalChiefProviderRuntime:
                 else ""
             ),
             recovery_driver=recovery_driver,
+            progress_observer=ReportingContinuationProgressObserver(
+                self.workspace,
+                envelope,
+            ).observe,
         )
 
     def _compose_artifact_dependencies(

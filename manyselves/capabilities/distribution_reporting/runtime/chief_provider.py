@@ -26,6 +26,9 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn 
 from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
     ChiefChapterAgentInvoker,
 )
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    ReportingContinuationProgressObserver,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CHIEF_SECTION_RESULT_PART_IDS,
     TaskEnvelope,
@@ -240,6 +243,10 @@ class ChiefProviderRuntime:
                 else ""
             ),
             recovery_driver=recovery_driver,
+            progress_observer=ReportingContinuationProgressObserver(
+                self.workspace,
+                envelope,
+            ).observe,
         )
 
     def _compose_artifact_dependencies(

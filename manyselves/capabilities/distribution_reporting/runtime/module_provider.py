@@ -37,6 +37,9 @@ from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools 
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
     load_completed_agent_result,
 )
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    ReportingContinuationProgressObserver,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
 )
@@ -536,6 +539,10 @@ class ModuleProviderRuntime:
                 session_factory=lambda _runtime_id: session_factory(),
                 workflow_id=self.workflow_id,
                 recovery_driver=recovery_driver,
+                progress_observer=ReportingContinuationProgressObserver(
+                    self.workspace,
+                    envelope,
+                ).observe,
             )
         return ModuleAuthoringAgentBridge(
             self.workspace,
@@ -549,6 +556,10 @@ class ModuleProviderRuntime:
                 else None
             ),
             recovery_driver=recovery_driver,
+            progress_observer=ReportingContinuationProgressObserver(
+                self.workspace,
+                envelope,
+            ).observe,
         )
 
     def _completed_result_loader(self) -> CompletedResultLoader | None:

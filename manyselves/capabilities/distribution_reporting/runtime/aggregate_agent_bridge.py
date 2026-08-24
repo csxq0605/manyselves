@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    ProgressObserver,
     execute_reporting_recovery,
 )
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
@@ -56,6 +57,7 @@ class AggregateEditorAgentBridge:
         terminal_task_id: str | None = None,
         terminal_task_attempt_id: str | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -65,6 +67,7 @@ class AggregateEditorAgentBridge:
         self.terminal_task_id = terminal_task_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     async def invoke(
         self,
@@ -191,6 +194,7 @@ class AggregateEditorAgentBridge:
             ),
             result_decoder=self._decode_result,
             recovery=self.recovery_driver,
+            progress_observer=self.progress_observer,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

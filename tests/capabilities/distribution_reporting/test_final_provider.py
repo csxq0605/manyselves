@@ -311,6 +311,7 @@ async def test_final_provider_shares_declared_recovery_with_tool_callback(
     assert bridge.recovery_driver.snapshot_attempts() == {
         "invalid_structured_output": 1,
     }
+    assert bridge.progress_observer is not None
 
 
 @pytest.mark.asyncio
