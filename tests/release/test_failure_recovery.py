@@ -23,7 +23,7 @@ RECOVERY_EVIDENCE = {
     "provider_429": "tests/webapi/test_security_and_control.py::test_http_errors_use_the_error_envelope",
     "disk_full": "tests/application/test_workspace_files.py::test_write_is_atomic_and_cleans_failed_sibling_temp",
     "upload_disconnect": "tests/application/test_workspace_files.py::test_interrupted_upload_cleans_temp_and_destination",
-    "runtime_shutdown": "tests/webapi/test_conversations_agents_reporting.py::test_failed_normal_shutdown_blocks_new_runtime_until_cleanup_finishes",
+    "runtime_shutdown": "tests/application/test_runtime_host.py::test_persistence_is_open_only_while_ready_or_orderly_shutdown_drains",
     "stale_revision": "tests/application/test_workspace_files.py::test_write_rejects_stale_revision",
     "sse_cursor_evicted": "tests/webapi/test_sse.py::test_register_replays_present_cursor_or_emits_non_replayed_resync",
     "report_waiting_user": "tests/runtime/test_workflow_host.py::test_runtime_host_waits_and_resumes_input_inside_subworkflow",
