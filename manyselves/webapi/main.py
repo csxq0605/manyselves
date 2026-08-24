@@ -36,7 +36,6 @@ from .routes.health import router as health_router
 from .routes.maintenance import router as maintenance_router
 from .routes.operations import router as operations_router
 from .routes.projects import router as projects_router
-from .routes.reporting import router as reporting_router
 from .routes.settings import router as settings_router
 from .routes.workflows import router as workflows_router
 from .schemas.common import ErrorEnvelope
@@ -106,7 +105,6 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.event_broker = None
     app.state.project_registry = None
     app.state.conversation_service = None
-    app.state.reporting_facade = None
     app.state.python_run_service = None
     app.state.maintenance_service = None
     app.state.global_knowledge_service = None
@@ -152,7 +150,6 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(conversations_router, prefix=API_PREFIX)
     app.include_router(events_router, prefix=API_PREFIX)
     app.include_router(agents_router, prefix=API_PREFIX)
-    app.include_router(reporting_router, prefix=API_PREFIX)
     app.include_router(settings_router, prefix=API_PREFIX)
     app.include_router(operations_router, prefix=API_PREFIX)
     app.include_router(maintenance_router, prefix=API_PREFIX)

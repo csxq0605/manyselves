@@ -17,7 +17,6 @@ from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
-from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_services import build_runtime_services_view
 from ..application.workflow_projection import WorkflowProjectionFacade
@@ -38,7 +37,6 @@ class LifespanCleanupOwnership:
 
     host: Any
     facade: RuntimeFacade | None
-    reporting: ReportingFacade | None
     python_runs: PythonRunService | None
     conversations: ConversationService | None
     broker: EventBroker | None
@@ -99,7 +97,6 @@ async def _cleanup_owned_runtime(
             "Capability runtime cleanup",
             ownership.workflow_projection,
         ),
-        ("reporting", "reporting cleanup", ownership.reporting),
         ("python", "Python cleanup", ownership.python_runs),
         ("conversations", "conversation cleanup", ownership.conversations),
         ("broker", "event broker cleanup", ownership.broker),
@@ -127,7 +124,6 @@ def _lifecycle_ownership(
     *,
     host: Any,
     facade: RuntimeFacade | None,
-    reporting: ReportingFacade | None,
     python_runs: PythonRunService | None,
     conversations: ConversationService | None,
     broker: EventBroker | None,
@@ -136,7 +132,6 @@ def _lifecycle_ownership(
     return LifespanCleanupOwnership(
         host=host,
         facade=facade,
-        reporting=reporting,
         python_runs=python_runs,
         conversations=conversations,
         broker=broker,
@@ -149,7 +144,6 @@ def _expose_lifecycle_ownership(app: FastAPI, ownership: LifespanCleanupOwnershi
     app.state.runtime_host = None if ownership is None else ownership.host
     app.state.runtime_facade = None if ownership is None else ownership.facade
     app.state.conversation_service = None if ownership is None else ownership.conversations
-    app.state.reporting_facade = None if ownership is None else ownership.reporting
     app.state.python_run_service = None if ownership is None else ownership.python_runs
     app.state.event_broker = None if ownership is None else ownership.broker
     app.state.workflow_projection = (
@@ -184,7 +178,6 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     host = None
     facade = None
     conversations = None
-    reporting = None
     python_runs = None
     broker = None
     workflow_projection = None
@@ -272,7 +265,6 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             facade=facade,
             bus=bus,
         )
-        reporting = ReportingFacade.from_runtime(host, workspace=active_workspace)
         workflow_projection = WorkflowProjectionFacade(
             active_workspace,
             build_runtime_services_view(host),
@@ -286,12 +278,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         maintenance = MaintenanceService(
             facade,
             conversations,
-            reporting,
+            workflow_projection,
             python_runs,
             config_manager=getattr(host, "config_manager", None),
         )
         app.state.conversation_service = conversations
-        app.state.reporting_facade = reporting
         app.state.workflow_projection = workflow_projection
 
         async def rebind_workflow_projection(workspace) -> None:
@@ -366,7 +357,6 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         ownership = _lifecycle_ownership(
             host=host,
             facade=facade,
-            reporting=reporting,
             python_runs=python_runs,
             conversations=conversations,
             broker=broker,
@@ -380,7 +370,6 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ownership = _lifecycle_ownership(
                     host=host,
                     facade=facade,
-                    reporting=reporting,
                     python_runs=python_runs,
                     conversations=conversations,
                     broker=broker,

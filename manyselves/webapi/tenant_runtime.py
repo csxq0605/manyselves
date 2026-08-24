@@ -16,7 +16,6 @@ from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
-from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
 from ..application.runtime_services import build_runtime_services_view
@@ -42,7 +41,6 @@ class TenantRuntime:
     runtime_facade: RuntimeFacade
     project_registry: ProjectRegistry
     conversation_service: ConversationService
-    reporting_facade: ReportingFacade
     python_run_service: PythonRunService
     maintenance_service: MaintenanceService
     global_knowledge_service: GlobalKnowledgeService
@@ -58,7 +56,6 @@ class TenantRuntime:
         stop_producers = getattr(self.runtime_host, "stop_producers", None)
         if callable(stop_producers):
             await stop_producers()
-        await self.reporting_facade.close()
         await self.python_run_service.close()
         await self.conversation_service.close()
         await self.event_broker.close()
@@ -144,7 +141,6 @@ async def start_tenant_runtime(
     await host.start(workspace)
     bus = getattr(host, "bus", None) or MessageBus()
     conversations = ConversationService(workspace, facade=facade, bus=bus)
-    reporting = ReportingFacade.from_runtime(host, workspace=workspace)
     workflow_projection = WorkflowProjectionFacade(
         workspace,
         build_runtime_services_view(host),
@@ -158,7 +154,7 @@ async def start_tenant_runtime(
     maintenance = MaintenanceService(
         facade,
         conversations,
-        reporting,
+        workflow_projection,
         python_runs,
         config_manager=manager,
     )
@@ -211,7 +207,6 @@ async def start_tenant_runtime(
         runtime_facade=facade,
         project_registry=registry,
         conversation_service=conversations,
-        reporting_facade=reporting,
         python_run_service=python_runs,
         maintenance_service=maintenance,
         global_knowledge_service=global_knowledge,

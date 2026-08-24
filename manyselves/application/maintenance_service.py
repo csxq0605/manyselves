@@ -7,8 +7,8 @@ from typing import Any
 
 from .conversation_service import ConversationService
 from .python_run_service import PythonRunService
-from .reporting_facade import ReportingFacade
 from .runtime_facade import RuntimeFacade
+from .workflow_projection import WorkflowProjectionFacade
 
 
 class MaintenanceService:
@@ -16,7 +16,7 @@ class MaintenanceService:
         self,
         facade: RuntimeFacade,
         conversations: ConversationService,
-        reporting: ReportingFacade,
+        workflow_runs: WorkflowProjectionFacade,
         python_runs: PythonRunService,
         *,
         config_manager: Any | None = None,
@@ -24,7 +24,7 @@ class MaintenanceService:
     ) -> None:
         self.facade = facade
         self.conversations = conversations
-        self.reporting = reporting
+        self.workflow_runs = workflow_runs
         self.python_runs = python_runs
         self.config_manager = config_manager
         self.extra_flush = extra_flush
@@ -55,7 +55,7 @@ class MaintenanceService:
         return (
             any(status != "idle" for status in statuses)
             or self.pending_work
-            or self.reporting.active
+            or self.workflow_runs.active
             or self.python_runs.active
         )
 

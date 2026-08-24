@@ -181,7 +181,6 @@ async def activate_project(
             nonlocal previous_state, target_workspace
             if (
                 state.maintenance_service.pending_work
-                or state.reporting_facade.active
                 or state.workflow_projection.active
                 or state.python_run_service.active
             ):
@@ -196,9 +195,6 @@ async def activate_project(
             record = registry.activate(project_id)
             settings.initial_project_id = record.id
             state.conversation_service.rebind(target_workspace)
-            state.reporting_facade.rebind(
-                state.runtime_host, target_workspace
-            )
             state.python_run_service.rebind(target_workspace)
             await state.rebind_workflow_projection(target_workspace)
             return _response(record)
@@ -209,9 +205,6 @@ async def activate_project(
             settings.initial_project_id = previous_state[1]
             previous_workspace = registry.project_root(previous_state[0])
             state.conversation_service.rebind(previous_workspace)
-            state.reporting_facade.rebind(
-                state.runtime_host, previous_workspace
-            )
             state.python_run_service.rebind(previous_workspace)
             await state.rebind_workflow_projection(previous_workspace)
 
@@ -222,9 +215,6 @@ async def activate_project(
             registry.restore_active(actual_project_id)
             settings.initial_project_id = actual_project_id
             state.conversation_service.rebind(workspace)
-            state.reporting_facade.rebind(
-                state.runtime_host, workspace
-            )
             state.python_run_service.rebind(workspace)
             await state.rebind_workflow_projection(workspace)
 

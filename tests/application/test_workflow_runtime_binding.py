@@ -75,6 +75,14 @@ class _FixtureBinding:
         self.inputs.append(values)
         return {"run_id": self.run_id, "task_id": None}
 
+    async def start_detached(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: dict,
+    ) -> dict:
+        return await self.start(command_id, workflow_id, values)
+
     async def provide_input(
         self,
         command_id: UUID,
