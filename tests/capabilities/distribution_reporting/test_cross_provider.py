@@ -312,14 +312,11 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
     assert len(built) == 1
     assert [message.task_id for message in loops[0].received] == [
         "invoke-cross-owner-2.1",
-        "invoke-cross-owner-2.1-again",
     ]
     assert [message.task_attempt_id for message in loops[0].received] == [
         "invoke-cross-owner-2.1",
-        "invoke-cross-owner-2.1-again",
     ]
     assert [message.session_id for message in loops[0].received] == [
-        conversation.external_session_id,
         conversation.external_session_id,
     ]
     assert conversation.external_session_id == "public-reporting:cross-owner-2.1"
@@ -337,6 +334,143 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
     assert persisted["task_id"] == "cross-owner-2.1-r0-initial"
     assert persisted["session_id"] == conversation.external_session_id
     assert persisted["payload"]["kind"] == "cross_owner_finding_submission"
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """A verified Cross completion must be reused before Provider session creation."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        ProviderTaskAttempt,
+        reporting_identity_key,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.cross_provider import (
+        build_cross_provider_composition,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        TaskAttemptStore,
+    )
+
+    run_id = "cross-provider-persisted-reuse"
+    bus = MessageBus()
+    runtime = CrossOwnerRuntime(tmp_path)
+    state = runtime.prepare(_state(run_id))
+    context = runtime.prepare_initial(
+        {"state": state, "owner_module_id": "2.1"}
+    )
+    assert context.preparation is not None
+    assert context.preparation.envelope is not None
+    envelope = context.preparation.envelope
+    conversation = ConversationRecord(
+        conversation_id="cross-provider-persisted-conversation",
+        key=ConversationKey(
+            agent_id="cross-module-reviewer",
+            value="cross-owner-2.1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+        external_session_id="persisted-cross-session",
+    )
+    agent = AgentDefinition(
+        id="cross-module-reviewer",
+        version="1.0.0",
+        description="Cross owner reviewer",
+        instructions="Review cross-module consistency.",
+        tools=["submit_result"],
+    )
+    task = TaskDefinition(
+        id="cross-owner-runtime-initial-review",
+        version="1.0.0",
+        description="Cross owner initial",
+        agent=agent.id,
+        objective="review cross-module interfaces",
+        input_contract="cross_owner_input",
+        output_contract="declarative_cross_owner_initial_agent_result",
+        tools=["submit_result"],
+    )
+    identity_key = reporting_identity_key(agent.id, conversation.key.value)
+    attempt = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id="public-reporting",
+        identity_key=identity_key,
+        session_id=conversation.external_session_id,
+    )
+    persisted = AgentResult(
+        task_id=envelope.task_id,
+        run_id=run_id,
+        agent_id=agent.id,
+        session_id=conversation.external_session_id,
+        status=AgentRunStatus.COMPLETED,
+        payload=CrossOwnerFindingSubmission(
+            owner_module_id="2.1",
+            coverage=CrossReviewCoverageEntry(
+                module_id="2.1",
+                checked_dimensions=[
+                    "terminology",
+                    "facts",
+                    "risk_levels",
+                    "dependencies",
+                    "propagation",
+                    "joint_verification",
+                ],
+            ),
+            findings=[],
+            synthesis_inputs=[],
+        ),
+    )
+    try:
+        attempt.activate()
+        TaskAttemptStore(tmp_path, run_id).persist_result(
+            attempt.correlation,
+            persisted.model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        attempt.close()
+
+    loop_calls: list[object] = []
+
+    def forbidden_loop(**kwargs: object) -> object:
+        loop_calls.append(kwargs)
+        raise AssertionError("persisted Cross result must not create a Provider loop")
+
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    composition = build_cross_provider_composition(
+        services,
+        cross_runtime=runtime,
+        execution=AgentExecutionService(bus, timeout=1),
+        loop_builder=forbidden_loop,
+    )
+    try:
+        outcome = await composition.agent_invokers[agent.id].invoke(
+            agent,
+            task,
+            context.model_dump(mode="json"),
+            conversation,
+            task_id="invoke-cross-provider-persisted",
+        )
+    finally:
+        await composition.close()
+        bus.shutdown()
+
+    assert outcome.status == "ok"
+    assert outcome.session_id == conversation.external_session_id
+    assert outcome.result["submission"]["kind"] == "cross_owner_finding_submission"
+    assert loop_calls == []
+    assert composition.execution.sessions == {}
 
 
 def test_cross_provider_does_not_load_core_reporting() -> None:

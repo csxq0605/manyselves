@@ -14,8 +14,9 @@ absent.
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
@@ -51,6 +52,7 @@ from manyselves.capabilities.distribution_reporting.runtime.main_exception impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
+    AgentResult,
     CrossDecisionPack,
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
@@ -150,6 +152,9 @@ from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 REPORT_MODULE_IDS = tuple(REPORT_TAXONOMY)
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[
+    [], AgentResult | None | Awaitable[AgentResult | None]
+]
 
 
 def _model(value: Any, model_type: type[Any]) -> Any:
@@ -334,6 +339,7 @@ class CrossOwnerAgentInvoker:
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
         terminal_task_attempt_id: str = "",
+        completed_result_loader: CompletedResultLoader | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
         progress_observer: ProgressObserver | None = None,
     ) -> None:
@@ -342,6 +348,7 @@ class CrossOwnerAgentInvoker:
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
+        self.completed_result_loader = completed_result_loader
         self.recovery_driver = recovery_driver
         self.progress_observer = progress_observer
 
@@ -399,6 +406,49 @@ class CrossOwnerAgentInvoker:
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
         )
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=self._decode_payload(
+                            persisted.payload,
+                            output_contract=task.output_contract,
+                        ),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         typed_turn = TypedAgentTurn(
             execution=self.execution,
             workflow_id=workflow_id,
@@ -571,7 +621,10 @@ class CrossOwnerAgentInvoker:
 
     def _decode_result(self, result_ref: str, *, output_contract: str) -> dict[str, Any]:
         loaded = load_agent_result_payload(self.workspace, result_ref)
-        payload = loaded.payload
+        return self._decode_payload(loaded.payload, output_contract=output_contract)
+
+    @staticmethod
+    def _decode_payload(payload: Any, *, output_contract: str) -> dict[str, Any]:
         if output_contract == "declarative_module_review_agent_result":
             return DeclarativeModuleReviewAgentResult(
                 status="completed",

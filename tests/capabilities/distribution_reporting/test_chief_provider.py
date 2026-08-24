@@ -231,6 +231,10 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         global_knowledge_root=None,
     )
     chief_runtime = ChiefChapterRuntime(tmp_path, state=_state(run_id))
+    chief_runtime.store.write_json(
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        {},
+    )
     composition = build_chief_provider_composition(
         services,
         chief_runtime=chief_runtime,
@@ -297,10 +301,146 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
     }
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
-        conversation.external_session_id,
     ]
     assert conversation.external_session_id == "public-reporting:chief-chapter-1"
     assert "Write only the assigned Chapter 1 sections." in loops[0].received[0].content
+
+
+@pytest.mark.asyncio
+async def test_chief_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """A verified Chief completion must be reused before Provider session creation."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.chief_provider import (
+        build_chief_provider_composition,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        ProviderTaskAttempt,
+        reporting_identity_key,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ChiefChapterLaneSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        TaskAttemptStore,
+    )
+
+    run_id = "chief-provider-persisted-reuse"
+    bus = MessageBus()
+    chief_runtime = ChiefChapterRuntime(tmp_path, state=_state(run_id))
+    chief_runtime.store.write_json(
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        {},
+    )
+    context = chief_runtime.prepare_lane(
+        {"state": chief_runtime.current_state, "chapter_id": "1"}
+    )
+    assert context.contract is not None
+    assert context.envelope is not None
+    envelope = context.envelope
+    conversation = ConversationRecord(
+        conversation_id="chief-provider-persisted-conversation",
+        key=ConversationKey(
+            agent_id="chief-editor",
+            value="chief-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+        external_session_id="persisted-chief-session",
+    )
+    agent = AgentDefinition(
+        id="chief-editor",
+        version="1.0.0",
+        description="Chief",
+        instructions="Edit the assigned chapter.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="chief-chapter-edit",
+        version="1.0.0",
+        description="Chief lane",
+        agent=agent.id,
+        objective="Edit one chapter.",
+        input_contract="declarative_chief_chapter_context",
+        output_contract="declarative_chief_chapter_agent_result",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    identity_key = reporting_identity_key(agent.id, conversation.key.value)
+    attempt = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id="public-reporting",
+        identity_key=identity_key,
+        session_id=conversation.external_session_id,
+    )
+    persisted = AgentResult(
+        task_id=envelope.task_id,
+        run_id=run_id,
+        agent_id=agent.id,
+        session_id=conversation.external_session_id,
+        status=AgentRunStatus.COMPLETED,
+        payload=ChiefChapterLaneSubmission(
+            run_id=run_id,
+            chapter_id="1",
+            section_ids=["1.1", "1.2", "1.3"],
+            part_refs={
+                CHIEF_SECTION_RESULT_PART_IDS[section_id]: (
+                    f"Work/runs/{run_id}/drafts/chief-chapter-1/r0/{section_id}.md"
+                )
+                for section_id in ("1.1", "1.2", "1.3")
+            },
+            revision=0,
+        ),
+    )
+    try:
+        attempt.activate()
+        TaskAttemptStore(tmp_path, run_id).persist_result(
+            attempt.correlation,
+            persisted.model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        attempt.close()
+
+    loop_calls: list[object] = []
+
+    def forbidden_loop(**kwargs: object) -> object:
+        loop_calls.append(kwargs)
+        raise AssertionError("persisted Chief result must not create a Provider loop")
+
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    composition = build_chief_provider_composition(
+        services,
+        chief_runtime=chief_runtime,
+        execution=AgentExecutionService(bus, timeout=1),
+        loop_builder=forbidden_loop,
+    )
+    try:
+        outcome = await composition.agent_invokers[agent.id].invoke(
+            agent,
+            task,
+            context.model_dump(mode="json"),
+            conversation,
+            task_id="invoke-chief-provider-persisted",
+        )
+    finally:
+        await composition.close()
+        bus.shutdown()
+
+    assert outcome.status == "ok"
+    assert outcome.session_id == conversation.external_session_id
+    assert outcome.result["submission"]["kind"] == "chief_chapter_lane_submission"
+    assert loop_calls == []
+    assert composition.execution.sessions == {}
 
 
 def test_chief_provider_does_not_load_core_reporting() -> None:

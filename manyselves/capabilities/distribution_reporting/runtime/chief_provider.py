@@ -26,6 +26,11 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn 
 from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
     ChiefChapterAgentInvoker,
 )
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
+    load_completed_agent_result,
+    reporting_identity_key,
+)
 from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
     ReportingContinuationProgressObserver,
 )
@@ -58,6 +63,7 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
+from .state.parallel import TaskCorrelation
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 
@@ -115,13 +121,13 @@ class ChiefProviderRuntime:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation, task_id=task_id)
-        return await bridge.invoke(
+        return await self._invoke(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
         )
 
     async def invoke_with_recovery(
@@ -134,7 +140,7 @@ class ChiefProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(
+        return await self._invoke(
             agent,
             task,
             value,
@@ -142,14 +148,69 @@ class ChiefProviderRuntime:
             task_id=task_id,
             recovery_policy=recovery_policy,
         )
-        return await bridge.invoke_with_recovery(
-            agent,
-            task,
-            value,
-            conversation,
-            task_id=task_id,
-            recovery_policy=recovery_policy,
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        context = (
+            value
+            if isinstance(value, DeclarativeChiefChapterContext)
+            else DeclarativeChiefChapterContext.model_validate(value)
         )
+        if context.contract is None or context.envelope is None:
+            raise ValueError("Chief Provider turn requires a prepared TaskEnvelope")
+        session_id = conversation.external_session_id or (
+            f"{self.workflow_id}:{conversation.key.value}"
+        )
+        task_attempt: ProviderTaskAttempt | None = None
+        if not isinstance(self.dependencies.task_correlation, TaskCorrelation):
+            task_attempt = ProviderTaskAttempt.acquire(
+                self.workspace,
+                context.envelope,
+                workflow_id=self.workflow_id,
+                identity_key=reporting_identity_key(
+                    agent.id,
+                    conversation.key.value,
+                ),
+                session_id=session_id,
+            )
+        try:
+            bridge = self._bridge(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+                task_attempt=task_attempt,
+            )
+            if recovery_policy is None:
+                return await bridge.invoke(
+                    agent,
+                    task,
+                    context,
+                    conversation,
+                    task_id=task_id,
+                )
+            return await bridge.invoke_with_recovery(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+            )
+        finally:
+            if task_attempt is not None:
+                task_attempt.close()
+
 
     def _bridge(
         self,
@@ -160,6 +221,7 @@ class ChiefProviderRuntime:
         *,
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        task_attempt: ProviderTaskAttempt | None = None,
     ) -> ChiefChapterAgentInvoker:
         context = (
             value
@@ -175,10 +237,19 @@ class ChiefProviderRuntime:
             f"{self.workflow_id}:{conversation.key.value}"
         )
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
+        base_dependencies = (
+            replace(
+                self.dependencies,
+                task_correlation=task_attempt.correlation,
+            )
+            if task_attempt is not None
+            else self.dependencies
+        )
         dependencies = self._compose_artifact_dependencies(
             agent,
             envelope,
             session_id=session_id,
+            base_dependencies=base_dependencies,
         )
         recovery_driver = (
             AgentRecoveryDriver(recovery_policy)
@@ -232,11 +303,23 @@ class ChiefProviderRuntime:
         existing = self.execution.session(self.workflow_id, conversation.key.value)
         if existing is not None:
             session_factory.reconfigure(existing.loop)
+        completed_result_loader = None
+        if task_attempt is not None:
+            completed_result_loader = task_attempt.load_completed_or_activate
+        elif isinstance(dependencies.task_correlation, TaskCorrelation):
+            def load_completed() -> Any:
+                return load_completed_agent_result(
+                    self.workspace,
+                    dependencies.task_correlation,
+                )
+
+            completed_result_loader = load_completed
         return ChiefChapterAgentInvoker(
             self.workspace,
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
+            completed_result_loader=completed_result_loader,
             terminal_task_attempt_id=(
                 dependencies.task_correlation.task_attempt_id
                 if dependencies.task_correlation is not None
@@ -255,15 +338,17 @@ class ChiefProviderRuntime:
         envelope: TaskEnvelope,
         *,
         session_id: str,
+        base_dependencies: ModuleProviderDependencies | None = None,
     ) -> ModuleProviderDependencies:
         """Project existing artifact access and result-index resources per task."""
 
+        base = base_dependencies or self.dependencies
         if (
-            self.dependencies.artifact_gateway is not None
-            or self.dependencies.artifact_access is not None
-            or self.dependencies.result_index is not None
+            base.artifact_gateway is not None
+            or base.artifact_access is not None
+            or base.result_index is not None
         ):
-            return self.dependencies
+            return base
         gateway = scoped_gateway(
             self._artifact_root,
             workflow_id=self.workflow_id,
@@ -277,11 +362,11 @@ class ChiefProviderRuntime:
             artifact_gateway=gateway,
             artifact_access=access,
             result_index=result_index,
-            task_correlation=self.dependencies.task_correlation,
-            recovery_event_callback=self.dependencies.recovery_event_callback,
-            tool_implementations=self.dependencies.tool_implementations,
-            web_backend=self.dependencies.web_backend,
-            research_guard=self.dependencies.research_guard,
+            task_correlation=base.task_correlation,
+            recovery_event_callback=base.recovery_event_callback,
+            tool_implementations=base.tool_implementations,
+            web_backend=base.web_backend,
+            research_guard=base.research_guard,
         )
 
 

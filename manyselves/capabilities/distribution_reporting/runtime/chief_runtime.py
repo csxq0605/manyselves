@@ -8,8 +8,9 @@ phases remain separate Capability composition points.
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -31,6 +32,7 @@ from manyselves.capabilities.distribution_reporting.runtime.final_review_tools i
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CHIEF_SECTION_RESULT_PART_IDS,
+    AgentResult,
     ChiefChapterLaneSubmission,
     EditedReportSubmission,
     ModuleSubmission,
@@ -69,6 +71,9 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[
+    [], AgentResult | None | Awaitable[AgentResult | None]
+]
 ChapterId = Literal["1", "3", "4"]
 
 
@@ -236,6 +241,7 @@ class ChiefChapterAgentInvoker:
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
         terminal_task_attempt_id: str = "",
+        completed_result_loader: CompletedResultLoader | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
         progress_observer: ProgressObserver | None = None,
     ) -> None:
@@ -244,6 +250,7 @@ class ChiefChapterAgentInvoker:
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
+        self.completed_result_loader = completed_result_loader
         self.recovery_driver = recovery_driver
         self.progress_observer = progress_observer
 
@@ -302,6 +309,46 @@ class ChiefChapterAgentInvoker:
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
         )
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=self._decode_payload(persisted.payload),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         typed_turn = TypedAgentTurn(
             execution=self.execution,
             workflow_id=workflow_id,
@@ -402,7 +449,11 @@ class ChiefChapterAgentInvoker:
 
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
         loaded = load_agent_result_payload(self.workspace, result_ref)
-        submission = ChiefChapterLaneSubmission.model_validate(loaded.payload)
+        return self._decode_payload(loaded.payload)
+
+    @staticmethod
+    def _decode_payload(payload: Any) -> dict[str, Any]:
+        submission = ChiefChapterLaneSubmission.model_validate(payload)
         return DeclarativeChiefChapterAgentResult(
             status="completed",
             submission=submission,
