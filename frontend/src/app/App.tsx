@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EventStream, type EventStreamOptions, type RuntimeEvent } from "../api/event-stream";
 import { ApiError, type ApiGateway } from "../api/gateway";
 import { createAgentStore } from "../features/agents/agent-store";
-import { createReportingStore, type ReportingStore } from "../features/reporting/reporting-store";
 import { AppRoutes } from "./routes";
 import type { PlatformBridge } from "../platform/types";
 import type { SettingsStorage } from "../features/settings/settings-storage";
@@ -23,17 +22,18 @@ export interface AppProps {
   readonly onUnauthorized?: () => void;
   readonly onLogout?: () => void;
   readonly platform?: PlatformBridge;
-  readonly reportingStore?: ReportingStore;
   readonly settingsStorage?: SettingsStorage;
 }
 
 const knownEventPrefixes = [
+  "action.",
   "agent.",
   "checkpoint.",
   "conversation.",
   "debug.",
   "file.",
   "operation.",
+  "output.",
   "project.",
   "queue.",
   "report.",
@@ -43,7 +43,13 @@ const knownEventPrefixes = [
   "task.",
   "tool.",
   "user.",
+  "workflow.",
 ] as const;
+
+function eventRunId(event: RuntimeEvent): string | null {
+  const runId = event.payload.run_id;
+  return typeof runId === "string" && runId ? runId : null;
+}
 
 function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   const prefix = knownEventPrefixes.find((candidate) => event.type.startsWith(candidate));
@@ -59,8 +65,9 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   if (prefix === "conversation." || prefix === "user.") {
     return ["conversation-messages"];
   }
-  if (prefix === "report.") {
-    return ["reporting"];
+  if (["action.", "output.", "report.", "reporting.", "workflow."].includes(prefix)) {
+    const runId = eventRunId(event);
+    return runId ? ["runs", runId] : ["runs"];
   }
   if (["checkpoint.", "debug.", "queue.", "runtime.", "system.", "task.", "tool."].includes(prefix)) {
     return ["runtime"];
@@ -76,7 +83,6 @@ export function App({
   onUnauthorized,
   onLogout,
   platform,
-  reportingStore,
   settingsStorage,
 }: AppProps) {
   const queryClient = useQueryClient();
@@ -84,9 +90,7 @@ export function App({
   const streamId = useRef<string | null>(null);
   const unknownEventTypes = useRef(new Set<string>());
   const [agentStore] = useState(() => createAgentStore());
-  const [fallbackReportingStore] = useState(() => createReportingStore());
   const [startedStreamId, setStartedStreamId] = useState<string | null>(null);
-  const reports = reportingStore ?? fallbackReportingStore;
   const resolvedEventSource = useMemo(
     () =>
       eventSource ?? {
@@ -99,7 +103,6 @@ export function App({
     queryFn: async () => {
       const snapshot = await gateway.bootstrap();
       agentStore.getState().hydrate(snapshot.runtime, snapshot.streamId);
-      reports.getState().resetStream(snapshot.streamId);
       queryClient.setQueryData(["project"], snapshot.project);
       queryClient.setQueryData(["runtime"], snapshot.runtime);
       queryClient.setQueryData(["conversations"], snapshot.conversations);
@@ -134,15 +137,12 @@ export function App({
       fetch: resolvedEventSource.fetch,
       onEvent: (event) => {
         const wasRefreshRequested = agentStore.getState().refreshRequested;
-        const wasReportingRefreshRequested = reports.getState().refreshRequested;
         agentStore.getState().applyEvent(event);
-        reports.getState().applyEvent(event);
         if (event.projectId) {
           void queryClient.invalidateQueries({ queryKey: ["event-logs", event.projectId] });
         }
         if (
-          (!wasRefreshRequested && agentStore.getState().refreshRequested)
-          || (!wasReportingRefreshRequested && reports.getState().refreshRequested)
+          !wasRefreshRequested && agentStore.getState().refreshRequested
         ) {
           setConnectionState("resyncing");
           void queryClient.invalidateQueries({
@@ -191,7 +191,6 @@ export function App({
     createEventStream,
     gateway,
     queryClient,
-    reports,
     resolvedEventSource,
     onUnauthorized,
     setConnectionState,
