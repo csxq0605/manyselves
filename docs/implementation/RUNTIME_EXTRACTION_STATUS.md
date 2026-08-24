@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-03/M9.13 Module 异常/恢复端口与 production completed-result 接线；FA-05/M9.16 删除 Legacy Tool adapter 路径`
+- Current slice: `FA-03/M9.13 Module 异常/恢复端口完成；production completed-result 接线待明确现有持久化机制`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `production completed-result reuse 缺当前 TaskCorrelation；不得从旧 current attempt 猜造，若需启用既有 Hash/CAS/lease 机制须先说明并获用户批准`
-- Next automatic action: `完成并验证真实 Binding 暴露的 8 个 Module lifecycle Tool 端口；继续审计通用 Adapter/旧 Core 残余；在不猜造 identity 的前提下收敛 completed-result 生产接线`
+- Next automatic action: `重做生产 Tool/Workflow 绑定与旧路径可达性审计；在不猜造 identity 的前提下收敛 completed-result 生产接线`
 
 ## Why the prior completion claim is reopened
 
@@ -77,11 +77,11 @@
 | FA-00 Facts and final specification | `completed` | 六份规范一致；三项生产耦合审计；完成矩阵；diff-check |
 | FA-01 Architecture boundary characterization | `completed` | 5 项生产边界 Characterization 已取得真实 RED；Contract 物理归属现已正式转绿，其余 4 项继续以 strict xfail 逐项收敛；Capability 顶层导入纯度已转绿 |
 | FA-02 Generic Agent/Conversation/Recovery Runtime | `completed` | Session/turn、定义 Tool/Agent、correction/continuation/no-progress、pre-session result reuse 均由中立 Runtime 生产主调；focused/affected 与生产 spy 证据 |
-| FA-03 Distribution Reporting Domain Runtime | `in progress` | 五个公开文件入口已接入 Compiler/Generic Host；Module 异常/恢复仍缺 8 个生产 Tool 端口，completed-result loader 尚未从生产 Binding 获得完整 correlation |
-| FA-04 Generic Capability Runtime Binding | `in progress` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口且不再构造 ReportingFacade；仍需补齐上述 production recovery composition |
+| FA-03 Distribution Reporting Domain Runtime | `in progress` | 五个公开文件入口已接入 Compiler/Generic Host；Module 异常/恢复 8 个生产 Tool 端口已接齐，completed-result loader 尚未从生产 Binding 获得完整 correlation |
+| FA-04 Generic Capability Runtime Binding | `in progress` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口且不再构造 ReportingFacade；仍需收敛 production completed-result recovery composition |
 | FA-05 Ownership convergence and legacy deletion | `completed` | 生产/发布图无旧 Runner/Facade/selector/adapter；`manyselves/core/reporting` 与旧专属测试已物理删除 |
 | FA-06 Generic FastAPI/React surface | `completed` | Schema/WAITING/Output/Event/Cost 由通用 Run Workspace 投影，无 Capability-ID 流程分支或旧 `/api/v1/reporting` 路由 |
-| FA-07 Completion audit and final real test | `pending` | 自动架构关键路径当前 `123 passed`，但独立审计发现两项生产缺口；修复后重审，再执行真实 Provider、真实项目、浏览器测试 |
+| FA-07 Completion audit and final real test | `pending` | 自动架构关键路径此前 `123 passed`；独立审计的 Module lifecycle 缺口已修复，completed-result production correlation 仍待收敛；随后重审并执行真实 Provider、真实项目、浏览器测试 |
 
 ## Historical evidence retained
 
@@ -259,6 +259,7 @@
 - FA-06/M9.14 将业务中立的 Workflow/Peer/Progress/Research/Blocked/AgentResult 消息从 `reporting.*` 产品事件名统一为 `workflow.*`，`ReportMessage` 继续使用通用 `report.status.changed`；React 查询失效逻辑同步移除 `reporting.` 特判。Characterization First 在旧映射上取得 `3 failed`，GREEN 后 Event Mapper/SSE focused `89 passed`、App Vitest `5 passed`，定向 ESLint、TypeScript 与 `git diff --check` 通过；未更改 Kernel、Compiler、Capability 行为或公共 HTTP 结构，未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - FA-05/M9.15 将仍在生产 `RuntimeFacade` 中使用、但行为仅为通用只读投影的 `LegacyRuntimeAdapter` 更名并物理迁移为 `RuntimeSnapshotAdapter`，旧模块、旧类名和兼容 shim 均删除。Characterization First 先因新模块不存在取得 `ModuleNotFoundError` RED，GREEN 后 Application facade focused `26 passed`，定向 Ruff、compileall、旧名称扫描与 `git diff --check` 通过；没有改变快照结构、锁/命令语义或运行路径，也未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - FA-05/M9.16 将 `runtime/tool_adapter.py` 中仅由旧测试消费的 `LegacyToolAdapterFactory` 和 `legacy:*` 解析路径物理删除；生产 `CapabilityToolAdapter` 改为继承中立 `ToolAdapter`，只共享声明元数据与现有 completed Tool Result lookup，Capability callable、Contract 校验和 result index 行为保持不变。Characterization First 先因中立基类不存在取得 `ImportError` RED，GREEN 后 Runtime/Parameter Adjustment/Reporting Tool affected focused `44 passed`，定向 Ruff、compileall、生产旧名称扫描与 `git diff --check` 通过；未新增 Gate、Hash、CAS、锁、校验链或依赖。
+- FA-03/M9.13b 将真实 Binding 缺少的 8 个 Module lifecycle Tool 端口全部接入 `CapabilityModuleRuntime`：initial review/recheck 的 durable `review/revise/completed` 投影、Author/Reviewer Main exception、既有决定恢复、同 Run `request_user`、`return_to_author`、`stop_incomplete` 和 reviewer escalation 后的 recheck acceptance 均由 Capability typed state 驱动，Kernel/Compiler/Host 不认识这些 Reporting 语义。静态端口 Characterization 先证明 module/full 两个公开根均少 8 个绑定；实现后新增 7 个行为场景并复核 Public Host。Module focused `26 passed`、Public Host 精确路径 `1 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；状态 identity/completion 条件机械保留自既有 lifecycle，未新增 Hash/CAS、锁/lease、Gate、停止阈值、依赖、Action Kind 或公共接口。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions

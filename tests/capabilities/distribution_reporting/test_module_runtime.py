@@ -113,9 +113,17 @@ _CAPABILITY_AVAILABLE_METHODS = (
     "prepare_recheck_lane",
     "recheck_requires_agent",
     "accept_recheck_lane",
+    "resume_review_lane",
+    "resume_recheck_lane",
     "lane_has_deferred_main_exception",
     "lane_retries_preflight_revision",
     "preflight_revision_needs_recheck",
+    "prepare_main_exception_lane",
+    "main_exception_requires_agent",
+    "accept_main_exception_lane",
+    "main_exception_requests_user",
+    "apply_main_exception_user_input",
+    "route_after_main_exception",
     "complete_lane",
     "prepare_lanes",
     "reduce_lanes",
@@ -189,7 +197,7 @@ def test_module_runtime_delegates_capability_owned_happy_path_ports(
     assert runtime.can_review_lane is module_lane_can_review
 
 
-def test_module_runtime_marks_unmigrated_lifecycle_ports_explicitly(
+def test_module_runtime_exposes_all_declared_lifecycle_ports(
     tmp_path: Path,
 ) -> None:
     runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
@@ -202,16 +210,7 @@ def test_module_runtime_marks_unmigrated_lifecycle_ports_explicitly(
     ]
 
     assert available == list(_CAPABILITY_AVAILABLE_METHODS)
-    assert missing == [
-        "resume_review_lane",
-        "resume_recheck_lane",
-        "prepare_main_exception_lane",
-        "main_exception_requires_agent",
-        "accept_main_exception_lane",
-        "main_exception_requests_user",
-        "apply_main_exception_user_input",
-        "route_after_main_exception",
-    ]
+    assert missing == []
 
 
 def test_public_runtime_exposes_migrated_lane_ports_without_boundary_runtime(
@@ -255,6 +254,57 @@ def test_public_runtime_exposes_migrated_lane_ports_without_boundary_runtime(
     assert "prepare-current-module-authoring" in (
         PublicReportingWorkflowRuntime._plan_tool_ids(plan)
     )
+
+
+@pytest.mark.parametrize(
+    ("operation", "target_modules"),
+    (
+        ("module_report", ["2.4"]),
+        ("full_report", ["2.1", "2.2", "2.3", "2.4", "2.5"]),
+    ),
+)
+def test_public_runtime_binds_all_declared_module_lane_ports(
+    tmp_path: Path,
+    operation: str,
+    target_modules: list[str],
+) -> None:
+    """Characterize the eight module adapters required by both public roots."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
+        PublicReportingWorkflowRuntime,
+    )
+
+    module_runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    public_runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=lambda _run_id: {},
+        snapshot_content=lambda source, target: (target, "a" * 64, source),
+        runtime_photo_ids=lambda _evidence, _photos: None,
+        module_runtime=module_runtime,
+    )
+    request = ReportRequest(
+        operation=operation,
+        instruction="验证 public module lane ports",
+        target_modules=target_modules,
+        missing_evidence_policy="draft",
+        preparation_mode="serial",
+    )
+    implementations = public_runtime._module_tool_implementations()
+    expected = {
+        "resume-current-module-review",
+        "resume-current-module-recheck",
+        "prepare-current-module-main-exception",
+        "module-main-exception-requires-agent",
+        "accept-current-module-main-exception",
+        "module-main-exception-requests-user",
+        "apply-current-module-main-exception-user-input",
+        "route-current-module-after-main-exception",
+    }
+
+    assert public_runtime._workflow_id(request, None) == (
+        "full-report" if operation == "full_report" else "module-report"
+    )
+    assert expected.issubset(set(implementations))
 
 
 def _author_request() -> ReportRequest:
@@ -1946,3 +1996,543 @@ async def test_module_provider_reuses_persisted_completed_result_before_provider
     assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
     assert provider_calls == 0
     assert service.sessions == {}
+
+
+def _runtime_module_submission(
+    module_id: str = "2.4",
+    *,
+    revision: int = 1,
+    revision_responses: list[Any] | None = None,
+):
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ModuleSubmission,
+    )
+
+    return ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            part_id: f"当前模块正文 {part_id}"
+            for part_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=revision,
+        revision_responses=list(revision_responses or []),
+    )
+
+
+@pytest.mark.parametrize(
+    ("next_action", "expected_status"),
+    (("completed", "reviewed"), ("revise", "revision_pending")),
+)
+def test_module_runtime_resumes_persisted_initial_review_completed_and_revise(
+    tmp_path: Path,
+    next_action: str,
+    expected_status: str,
+) -> None:
+    """Resume preserves the old completed/revise continuation projection."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+        ModuleReviewProgress,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    run_id = f"module-review-resume-{next_action}"
+    current = _runtime_module_submission(revision=1)
+    subject_ref = f"Work/runs/{run_id}/modules/2.4-r1.json"
+    progress = ModuleReviewProgress(
+        run_id=run_id,
+        module_id="2.4",
+        next_action=next_action,
+        current=current,
+        finding_refs=[f"Work/runs/{run_id}/reviews/findings.json"],
+        review_round=0,
+        phase="initial",
+        scope=["2.4.1.1"],
+        reviewer_session_key="module-auditor-2.4",
+        last_reviewed_subject_ref=subject_ref,
+    )
+    prepared = ModuleInitialReviewPreparation(
+        mode="continue_existing",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=f"Work/runs/{run_id}/reviews/module/initial/2.4",
+        progress_ref=f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=["2.4.1.1"],
+        current=current,
+        subject_ref=subject_ref,
+        progress=progress,
+    )
+    completion_ref = (
+        f"Work/runs/{run_id}/reviews/module/initial/2.4/completion-r1.json"
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={
+            "run_id": run_id,
+            **(
+                {"module_review_completion_refs": {"2.4": completion_ref}}
+                if next_action == "completed"
+                else {}
+            ),
+        },
+        status="review_resumed",
+        module=current,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=prepared,
+        ),
+    )
+
+    resumed = runtime.resume_review_lane(context)
+
+    assert resumed.status == expected_status
+    assert resumed.module == current
+    assert resumed.review is not None
+    assert resumed.review.acceptance is not None
+    assert resumed.review.acceptance.next_action == next_action
+    assert resumed.review.acceptance.completion_ref == (
+        completion_ref if next_action == "completed" else None
+    )
+
+
+@pytest.mark.parametrize(
+    ("next_action", "expected_acceptance_action"),
+    (("completed", "completed"), ("revise", "continue_existing")),
+)
+def test_module_runtime_resumes_persisted_recheck_completed_and_revise(
+    tmp_path: Path,
+    next_action: str,
+    expected_acceptance_action: str,
+) -> None:
+    """Recheck resume keeps completion and pending-revision state typed."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleRecheckPreparation,
+        DeclarativeModuleReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+        ModuleRecheckPreparation,
+        ModuleReviewProgress,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    run_id = f"module-recheck-resume-{next_action}"
+    current = _runtime_module_submission(revision=1)
+    subject_ref = f"Work/runs/{run_id}/modules/2.4-r1.json"
+    progress = ModuleReviewProgress(
+        run_id=run_id,
+        module_id="2.4",
+        next_action=next_action,
+        current=current,
+        finding_refs=[f"Work/runs/{run_id}/reviews/findings.json"],
+        review_round=1,
+        phase="recheck",
+        scope=["2.4.1.1"],
+        reviewer_session_key="module-auditor-2.4",
+        last_reviewed_subject_ref=subject_ref,
+    )
+    initial_prepared = ModuleInitialReviewPreparation(
+        mode="continue_existing",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=f"Work/runs/{run_id}/reviews/module/initial/2.4",
+        progress_ref=f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=["2.4.1.1"],
+        current=current,
+        subject_ref=subject_ref,
+    )
+    recheck_prepared = ModuleRecheckPreparation(
+        mode="continue_existing",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=f"Work/runs/{run_id}/reviews/module/initial/2.4",
+        progress_ref=f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json",
+        review_round=1,
+        scope=["2.4.1.1"],
+        current=current,
+        subject_ref=subject_ref,
+        progress=progress,
+    )
+    completion_ref = (
+        f"Work/runs/{run_id}/reviews/module/initial/2.4/completion-r1.json"
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={
+            "run_id": run_id,
+            **(
+                {"module_review_completion_refs": {"2.4": completion_ref}}
+                if next_action == "completed"
+                else {}
+            ),
+        },
+        status="review_resumed",
+        module=current,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=initial_prepared,
+        ),
+        recheck=DeclarativeModuleRecheckPreparation(prepared=recheck_prepared),
+    )
+
+    resumed = runtime.resume_recheck_lane(context)
+
+    assert resumed.status == "reviewed"
+    assert resumed.module == current
+    assert resumed.review is not None
+    assert resumed.review.acceptance is not None
+    assert resumed.review.acceptance.next_action == expected_acceptance_action
+    assert resumed.recheck is not None
+    assert resumed.recheck.acceptance is not None
+    assert resumed.recheck.acceptance.next_action == expected_acceptance_action
+    assert resumed.recheck.acceptance.completion_ref == (
+        completion_ref if next_action == "completed" else None
+    )
+
+
+def _author_exception_context(run_id: str) -> Any:
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        RevisionResponse,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewAcceptance,
+        ModuleInitialReviewPreparation,
+    )
+
+    response = RevisionResponse(
+        finding_id="F-author",
+        action="disputed",
+        summary="作者明确说明该 finding 不应改变当前正文范围。",
+    )
+    current = _runtime_module_submission(revision=1, revision_responses=[response])
+    subject_ref = f"Work/runs/{run_id}/modules/2.4-r1.json"
+    prepared = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=f"Work/runs/{run_id}/reviews/module/initial/2.4",
+        progress_ref=f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=["2.4.1.1"],
+        current=current,
+        subject_ref=subject_ref,
+    )
+    acceptance = ModuleInitialReviewAcceptance(
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        reviewer_session_key="module-auditor-2.4",
+        subject_ref=subject_ref,
+        current=current,
+        finding_refs=[f"Work/runs/{run_id}/reviews/findings.json"],
+        next_action="revise",
+        progress_ref=prepared.progress_ref,
+    )
+    return DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="author_exception_deferred",
+        module=current,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key=prepared.reviewer_session_key,
+            prepared=prepared,
+            acceptance=acceptance,
+        ),
+    )
+
+
+def _reviewer_exception_context(run_id: str) -> Any:
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ModuleReviewFinding,
+        ModuleReviewVerdictSubmission,
+        ResolutionVerdict,
+        RevisionResponse,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleRecheckPreparation,
+        DeclarativeModuleReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewAcceptance,
+        ModuleInitialReviewPreparation,
+        ModuleRecheckPreparation,
+    )
+
+    response = RevisionResponse(
+        finding_id="F-reviewer",
+        action="implemented",
+        summary="作者已经完成目标小节的修订并补充了对应的验证说明。",
+        changed_target_ids=["2.4.1.1"],
+    )
+    current = _runtime_module_submission(revision=1, revision_responses=[response])
+    subject_ref = f"Work/runs/{run_id}/modules/2.4-r1.json"
+    finding = ModuleReviewFinding(
+        id="F-reviewer",
+        target_submodule_id="2.4.1.1",
+        category="analysis_depth",
+        impact="blocking",
+        observation="当前修订仍未给出可复核的分析边界和对应证据链。",
+        evidence_refs=["E-1"],
+        required_change="补充可复核的分析边界、证据链和对应的验证步骤。",
+        reviewer_checks=["确认分析边界和证据链已经补充并可复核。"],
+    )
+    initial_prepared = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=f"Work/runs/{run_id}/reviews/module/initial/2.4",
+        progress_ref=f"Work/runs/{run_id}/reviews/module/initial/2.4/progress.json",
+        review_round=0,
+        scope=["2.4.1.1"],
+        current=current,
+        subject_ref=subject_ref,
+    )
+    initial_acceptance = ModuleInitialReviewAcceptance(
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        reviewer_session_key="module-auditor-2.4",
+        subject_ref=subject_ref,
+        current=current,
+        findings=[finding],
+        finding_refs=[f"Work/runs/{run_id}/reviews/findings.json"],
+        next_action="revise",
+        progress_ref=initial_prepared.progress_ref,
+    )
+    recheck_prepared = ModuleRecheckPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=initial_prepared.review_root,
+        progress_ref=initial_prepared.progress_ref,
+        review_round=1,
+        scope=["2.4.1.1"],
+        current=current,
+        pending=[finding],
+        responses=[response],
+        finding_refs=initial_acceptance.finding_refs,
+        subject_ref=subject_ref,
+    )
+    submission = ModuleReviewVerdictSubmission(
+        coverage={"submodule_ids": ["2.4.1.1"]},
+        verdicts=[
+            ResolutionVerdict(
+                finding_id=finding.id,
+                verdict="escalate",
+                reason="作者与审查者对该 finding 仍存在无法在本轮消解的分歧。",
+                evidence_refs=[subject_ref],
+            )
+        ],
+    )
+    return DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="reviewer_exception_deferred",
+        module=current,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key=initial_prepared.reviewer_session_key,
+            prepared=initial_prepared,
+            acceptance=initial_acceptance,
+        ),
+        recheck=DeclarativeModuleRecheckPreparation(
+            prepared=recheck_prepared,
+            submission=submission,
+        ),
+    )
+
+
+def test_module_runtime_prepares_author_and_reviewer_main_exception_triggers(
+    tmp_path: Path,
+) -> None:
+    """Both exception sources use the existing typed Main decision boundary."""
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    author = runtime.prepare_main_exception_lane(
+        _author_exception_context("module-main-author")
+    )
+    reviewer = runtime.prepare_main_exception_lane(
+        _reviewer_exception_context("module-main-reviewer")
+    )
+
+    assert author.status == "author_exception_ready"
+    assert author.main_preparation is not None
+    assert author.main_preparation.trigger == "author_response"
+    assert author.main_preparation.exception_ids == ["F-author"]
+    assert runtime.main_exception_requires_agent(author)
+
+    assert reviewer.status == "reviewer_exception_ready"
+    assert reviewer.main_preparation is not None
+    assert reviewer.main_preparation.trigger == "reviewer_escalation"
+    assert reviewer.main_preparation.exception_ids == ["F-reviewer"]
+    assert runtime.main_exception_requires_agent(reviewer)
+
+
+def test_module_runtime_resumes_existing_author_main_decision(
+    tmp_path: Path,
+) -> None:
+    """A persisted decision is accepted without creating another decision turn."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        WorkflowDecisionSubmission,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    context = _author_exception_context("module-main-author-resume")
+    ready = runtime.prepare_main_exception_lane(context)
+    assert ready.main_preparation is not None
+    persisted = WorkflowDecisionSubmission(
+        decision="accept_dispute",
+        rationale="Main 接受作者对该 finding 的明确争议。",
+        finding_ids=["F-author"],
+    )
+    ReportingStore(tmp_path).write_json(
+        ready.main_preparation.decision_ref,
+        persisted.model_dump(mode="json"),
+    )
+
+    resumed = runtime.prepare_main_exception_lane(context)
+
+    assert resumed.status == "author_exception_resumed"
+    assert resumed.main_preparation is not None
+    assert resumed.main_preparation.mode == "continue_existing"
+    assert resumed.main_acceptance is not None
+    assert resumed.main_acceptance.result == persisted
+
+
+@pytest.mark.parametrize(
+    ("user_decision", "expected_status", "route_status"),
+    (
+        ("return_to_author", "author_exception_accepted", "revision_pending"),
+        ("stop_incomplete", "failed", None),
+    ),
+)
+def test_module_runtime_routes_main_user_decisions_and_stop_incomplete(
+    tmp_path: Path,
+    user_decision: str,
+    expected_status: str,
+    route_status: str | None,
+) -> None:
+    """Request-user interaction preserves author routing and terminal stop semantics."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        WorkflowDecisionSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+        DeclarativeMainExceptionAgentResult,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    ready = runtime.prepare_main_exception_lane(
+        _author_exception_context(f"module-main-user-{user_decision}")
+    )
+    requested = runtime.accept_main_exception_lane(
+        {
+            "context": ready,
+            "result": DeclarativeMainExceptionAgentResult(
+                status="completed",
+                submission=WorkflowDecisionSubmission(
+                    decision="request_user",
+                    rationale="该争议需要用户在同一个 Run 中明确下一步。",
+                    finding_ids=["F-author"],
+                ),
+            ),
+        }
+    )
+    assert requested.status == "author_exception_accepted"
+    assert runtime.main_exception_requests_user(requested)
+
+    applied = runtime.apply_main_exception_user_input(
+        {
+            "context": requested,
+            "input": {
+                "decision": user_decision,
+                "rationale": "用户明确给出该例外节点的下一步处理意见。",
+            },
+        }
+    )
+    assert applied.status == expected_status
+    if user_decision == "stop_incomplete":
+        assert applied.error
+    else:
+        routed = runtime.route_after_main_exception(applied)
+        assert routed.status == route_status
+
+
+def test_module_runtime_routes_reviewer_escalation_through_recheck_acceptance(
+    tmp_path: Path,
+) -> None:
+    """Reviewer escalation reuses the Capability recheck acceptance before routing."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        WorkflowDecisionSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+        DeclarativeMainExceptionAgentResult,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    ready = runtime.prepare_main_exception_lane(
+        _reviewer_exception_context("module-main-reviewer-route")
+    )
+    accepted = runtime.accept_main_exception_lane(
+        {
+            "context": ready,
+            "result": DeclarativeMainExceptionAgentResult(
+                status="completed",
+                submission=WorkflowDecisionSubmission(
+                    decision="accept_dispute",
+                    rationale="Main 接受审查者与作者之间的明确争议。",
+                    finding_ids=["F-reviewer"],
+                ),
+            ),
+        }
+    )
+
+    routed = runtime.route_after_main_exception(accepted)
+
+    assert routed.status == "revision_pending"
+    assert routed.review is not None
+    assert routed.review.acceptance is not None
+    assert routed.review.acceptance.next_action == "continue_existing"
+    assert routed.recheck is None
