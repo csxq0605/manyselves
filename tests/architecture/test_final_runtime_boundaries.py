@@ -178,6 +178,15 @@ def test_packaging_does_not_publish_the_legacy_reporting_headless_service() -> N
         assert not (PACKAGE_ROOT / "core" / "reporting" / filename).exists()
 
 
+def test_no_compatibility_module_or_script_reenters_core_reporting() -> None:
+    """Retired Core Reporting must not remain reachable through helper shims."""
+
+    assert not (PACKAGE_ROOT / "core" / "context_manifest.py").exists()
+    assert not (PACKAGE_ROOT / "core" / "tools" / "skill_evolution_tools.py").exists()
+    assert not (REPOSITORY_ROOT / "scripts" / "benchmark_reporting_orchestration.py").exists()
+    assert not (REPOSITORY_ROOT / "scripts" / "preview_reporting_storage.py").exists()
+
+
 def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> None:
     """Conversation runtime must not bypass file workflows through Core Reporting."""
 
