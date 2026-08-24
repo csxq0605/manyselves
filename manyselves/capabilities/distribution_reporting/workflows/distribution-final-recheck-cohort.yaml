@@ -3,7 +3,6 @@ version: 1.0.0
 description: File-defined affected-only parallel Join for Final Auditor recheck lanes
 tasks:
 - final-chapter-recheck
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: declarative_final_review_cycle_context

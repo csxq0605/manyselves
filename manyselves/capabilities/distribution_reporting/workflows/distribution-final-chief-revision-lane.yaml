@@ -3,7 +3,6 @@ version: 1.0.0
 description: Reusable affected-only Final Chief revision lane
 tasks:
 - final-chief-chapter-revision
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: declarative_final_review_cycle_context

@@ -5,7 +5,6 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     ContractDefinition,
     DefinitionRegistry,
-    GateDefinition,
     InteractionDefinition,
     OutputDefinition,
     RecoveryPolicyDefinition,
@@ -660,28 +659,19 @@ async def test_complete_generic_action_vocabulary_executes_without_domain_logic(
         description="Neutral identity",
         instructions="No provider invocation is required.",
     )
-    gate = GateDefinition(
-        id="minimum",
-        version="1.0.0",
-        description="Require a minimum value",
-        contract=number.id,
-        expression="value >= 3",
-        on_pass="finish",
-        on_fail="fail",
-    )
-    for definition in (number, agent, gate):
+    for definition in (number, agent):
         registry.register(definition)
     workflow = WorkflowDefinition(
         id="generic-actions",
         version="1.0.0",
-        description="Exercise state, conversation, gate, and failure actions",
-        gates=[gate.id],
+        description="Exercise state, conversation, branch, and failure actions",
         state={
             "items": [1],
             "item": 2,
             "record": {"left": 1},
             "patch": {"right": 2},
             "value": 4,
+            "should_finish": True,
         },
         actions=[
             {
@@ -713,11 +703,11 @@ async def test_complete_generic_action_vocabulary_executes_without_domain_logic(
                 "output_variable": "conversation",
             },
             {
-                "id": "gate",
-                "kind": "evaluate_gate",
-                "gate": gate.id,
-                "input_variable": "value",
-                "output_variable": "gate_result",
+                "id": "route",
+                "kind": "if",
+                "condition": {"variable": "should_finish", "operator": "truthy"},
+                "then": "finish",
+                "otherwise": "fail",
             },
             {"id": "fail", "kind": "fail_workflow", "message": "below minimum"},
             {"id": "finish", "kind": "end_workflow", "output_variable": "record"},
@@ -742,7 +732,6 @@ async def test_complete_generic_action_vocabulary_executes_without_domain_logic(
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.variables["items"] == [1, 2]
     assert completed.outputs == {"result": {"left": 1, "right": 2}}
-    assert completed.variables["gate_result"]["status"] == "pass"
     assert completed.conversations["conversation"].conversation_id.endswith("reset:1")
 
 
@@ -803,35 +792,24 @@ async def test_wait_input_alias_uses_the_same_persisted_resume_protocol(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_declared_gate_failure_routes_to_fail_workflow_and_persists_failure(
+async def test_declared_condition_routes_to_fail_workflow_and_persists_failure(
     tmp_path,
 ) -> None:
     registry = DefinitionRegistry()
     number = _contract("number", "integer")
-    gate = GateDefinition(
-        id="minimum",
-        version="1.0.0",
-        description="Require a minimum value",
-        contract=number.id,
-        expression="value >= 3",
-        on_pass="finish",
-        on_fail="fail",
-    )
     registry.register(number)
-    registry.register(gate)
     workflow = WorkflowDefinition(
-        id="gate-failure",
+        id="condition-failure",
         version="1.0.0",
-        description="Route a deterministic gate failure",
-        gates=[gate.id],
+        description="Route a deterministic condition failure",
         state={"value": 1},
         actions=[
             {
-                "id": "gate",
-                "kind": "evaluate_gate",
-                "gate": gate.id,
-                "input_variable": "value",
-                "output_variable": "gate_result",
+                "id": "route",
+                "kind": "if",
+                "condition": {"variable": "value", "operator": "eq", "value": 3},
+                "then": "finish",
+                "otherwise": "fail",
             },
             {"id": "fail", "kind": "fail_workflow", "message": "below minimum"},
             {"id": "finish", "kind": "end_workflow", "output_variable": "value"},
@@ -848,14 +826,14 @@ async def test_declared_gate_failure_routes_to_fail_workflow_and_persists_failur
             InMemoryWorkflowEventSink(),
         ).execute(
             plan,
-            WorkflowState.for_plan("gate-failure-run", plan),
+            WorkflowState.for_plan("condition-failure-run", plan),
             RuntimeContext(
                 contracts=build_contract_catalog(registry),
                 definitions=registry,
             ),
         )
 
-    failed = store.load("gate-failure-run")
+    failed = store.load("condition-failure-run")
     assert failed.status is WorkflowStatus.FAILED
-    assert failed.actions["gate"].status == "completed"
+    assert failed.actions["route"].status == "completed"
     assert failed.actions["fail"].status == "failed"

@@ -16,7 +16,6 @@ def _catalog(tmp_path: Path) -> CapabilityCatalog:
     for location in (
         "agents",
         "contracts",
-        "gates",
         "recovery",
         "tasks",
         "tools",
@@ -32,7 +31,6 @@ workflows: ./workflows
 tasks: ./tasks
 contracts: ./contracts
 tools: ./tools
-gates: ./gates
 recovery: ./recovery
 entrypoints:
 - synthetic-entry

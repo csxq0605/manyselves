@@ -17,7 +17,6 @@ tasks:
 - module-2.5-runtime-revision
 interactions:
 - module-main-exception-decision
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

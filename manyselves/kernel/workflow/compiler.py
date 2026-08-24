@@ -12,7 +12,6 @@ from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionReferenceError,
     DefinitionRegistry,
-    GateDefinition,
     InteractionDefinition,
     OutputDefinition,
     RecoveryPolicyDefinition,
@@ -27,7 +26,6 @@ from .models import (
     ConditionGroupAction,
     CreateConversationAction,
     EndWorkflowAction,
-    EvaluateGateAction,
     FailWorkflowAction,
     ForEachAction,
     GotoAction,
@@ -77,7 +75,6 @@ _ACTION_MODELS: dict[ActionKind, type[Any]] = {
     ActionKind.JOIN: JoinAction,
     ActionKind.SUBWORKFLOW: SubworkflowAction,
     ActionKind.VALIDATE_CONTRACT: ValidateContractAction,
-    ActionKind.EVALUATE_GATE: EvaluateGateAction,
     ActionKind.REQUEST_INPUT: RequestInputAction,
     ActionKind.WAIT_INPUT: WaitInputAction,
     ActionKind.PUBLISH_RESULT: PublishResultAction,
@@ -155,7 +152,6 @@ class WorkflowCompiler:
         workflow_ids: list[str] = []
         interaction_ids: list[str] = []
         output_ids: list[str] = []
-        gate_ids: list[str] = []
         recovery_ids: list[str] = []
         conversation_bindings: dict[str, dict[str, str]] = {}
         conversation_agents: dict[str, str] = {}
@@ -185,10 +181,6 @@ class WorkflowCompiler:
             if not isinstance(recovery, RecoveryPolicyDefinition):
                 raise CompilerError(f"definition is not recovery: {recovery_id}")
             _append_unique(recovery_ids, recovery_id)
-        for gate_id in workflow.gates:
-            self._require(definitions, DefinitionKind.GATE, gate_id, workflow.id)
-            _append_unique(gate_ids, gate_id)
-
         for payload in workflow.actions:
             raw_kind = payload.get("kind")
             try:
@@ -218,7 +210,6 @@ class WorkflowCompiler:
                 workflow_ids,
                 interaction_ids,
                 output_ids,
-                gate_ids,
                 recovery_ids,
                 conversation_bindings,
                 conversation_agents,
@@ -289,7 +280,6 @@ class WorkflowCompiler:
             contract_ids=contract_ids,
             interaction_ids=interaction_ids,
             output_ids=output_ids,
-            gate_ids=gate_ids,
             recovery_ids=recovery_ids,
             conversation_bindings=conversation_bindings,
             control_flow_edges=control_flow_edges,
@@ -347,22 +337,6 @@ class WorkflowCompiler:
                     InvokeToolAction,
                 )
             }
-            direct_tool_ids.update(
-                gate.validator_tool
-                for action_id in branch_action_ids
-                if isinstance(
-                    branch_action := action_by_id[action_id],
-                    EvaluateGateAction,
-                )
-                and isinstance(
-                    gate := definitions.require(
-                        DefinitionKind.GATE,
-                        branch_action.gate,
-                    ),
-                    GateDefinition,
-                )
-                and gate.validator_tool is not None
-            )
             safe = all(
                 isinstance(
                     tool := definitions.require(DefinitionKind.TOOL, tool_id),
@@ -481,7 +455,6 @@ class WorkflowCompiler:
         workflow_ids: list[str],
         interaction_ids: list[str],
         output_ids: list[str],
-        gate_ids: list[str],
         recovery_ids: list[str],
         conversation_bindings: dict[str, dict[str, str]],
         conversation_agents: dict[str, str],
@@ -746,41 +719,6 @@ class WorkflowCompiler:
             defined_variables.add(action.output_variable)
             variable_contracts[action.output_variable] = action.contract
             return
-        if isinstance(action, EvaluateGateAction):
-            self._require_variable(action.input_variable, defined_variables, action.id)
-            gate = self._require(
-                definitions,
-                DefinitionKind.GATE,
-                action.gate,
-                action.id,
-            )
-            if not isinstance(gate, GateDefinition):
-                raise CompilerError(f"definition is not a gate: {action.gate}")
-            _append_unique(gate_ids, gate.id)
-            if gate.contract is not None:
-                self._require_assignable(
-                    definitions,
-                    variable_contracts.get(action.input_variable),
-                    gate.contract,
-                    action.id,
-                )
-                _append_unique(contract_ids, gate.contract)
-            if gate.validator_tool is not None:
-                validator = self._require(
-                    definitions,
-                    DefinitionKind.TOOL,
-                    gate.validator_tool,
-                    action.id,
-                )
-                if not isinstance(validator, ToolDefinition):
-                    raise CompilerError(
-                        f"definition is not a tool: {gate.validator_tool}"
-                    )
-                _append_unique(tool_ids, gate.validator_tool)
-                tool_implementations[validator.id] = validator.implementation
-            defined_variables.add(action.output_variable)
-            variable_contracts.pop(action.output_variable, None)
-            return
         if isinstance(action, (RequestInputAction, WaitInputAction)):
             interaction = self._require(
                 definitions,
@@ -892,15 +830,6 @@ class WorkflowCompiler:
                     )
                 if set(action.inputs) != set(parallel.branches):
                     raise CompilerError(f"join {action.id} inputs do not match parallel branches")
-            elif isinstance(action, EvaluateGateAction):
-                gate = definitions.require(DefinitionKind.GATE, action.gate)
-                if not isinstance(gate, GateDefinition):
-                    raise CompilerError(f"definition is not a gate: {action.gate}")
-                action_targets.extend(
-                    target
-                    for target in (gate.on_pass, gate.on_fail, gate.on_wait)
-                    if target is not None
-                )
             for target in action_targets:
                 targets.append((action.id, target))
                 successors[action.id].add(target)
@@ -1027,7 +956,7 @@ def _read_variables(action: ResolvedAction) -> set[str]:
             if action.input_variable is not None
             else set(action.input_variables.values())
         )
-    if isinstance(action, (ValidateContractAction, EvaluateGateAction)):
+    if isinstance(action, ValidateContractAction):
         return {action.input_variable}
     if isinstance(action, PublishResultAction):
         return {action.input_variable}
@@ -1062,7 +991,6 @@ def _defined_variables(
             JoinAction,
             SubworkflowAction,
             ValidateContractAction,
-            EvaluateGateAction,
             RequestInputAction,
             WaitInputAction,
         ),
@@ -1098,7 +1026,6 @@ def _snapshot_plan_definitions(
             (DefinitionKind.CONTRACT, plan.contract_ids),
             (DefinitionKind.INTERACTION, plan.interaction_ids),
             (DefinitionKind.OUTPUT, plan.output_ids),
-            (DefinitionKind.GATE, plan.gate_ids),
             (DefinitionKind.RECOVERY, plan.recovery_ids),
         ):
             pending.extend((kind, definition_id) for definition_id in definition_ids)
@@ -1144,13 +1071,6 @@ def _definition_dependencies(
         if definition.recovery is not None:
             dependencies.append((DefinitionKind.RECOVERY, definition.recovery))
         return dependencies
-    if isinstance(definition, GateDefinition):
-        dependencies = []
-        if definition.contract is not None:
-            dependencies.append((DefinitionKind.CONTRACT, definition.contract))
-        if definition.validator_tool is not None:
-            dependencies.append((DefinitionKind.TOOL, definition.validator_tool))
-        return dependencies
     if isinstance(definition, InteractionDefinition):
         return [(DefinitionKind.CONTRACT, definition.input_contract)]
     if isinstance(definition, OutputDefinition):
@@ -1162,7 +1082,6 @@ def _definition_dependencies(
     if isinstance(definition, WorkflowDefinition):
         dependencies = [
             *((DefinitionKind.TASK, value) for value in definition.tasks),
-            *((DefinitionKind.GATE, value) for value in definition.gates),
             *((DefinitionKind.RECOVERY, value) for value in definition.recovery),
             *((DefinitionKind.INTERACTION, value) for value in definition.interactions),
             *((DefinitionKind.OUTPUT, value) for value in definition.outputs),

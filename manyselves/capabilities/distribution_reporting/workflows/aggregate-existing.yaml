@@ -2,7 +2,6 @@ id: aggregate-existing
 version: 1.0.0
 description: Public aggregate-existing wrapper for the Capability aggregate tail
 tasks: []
-gates: []
 recovery: []
 outputs:
 - aggregate-existing-tail-result

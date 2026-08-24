@@ -2,7 +2,6 @@ id: module-report
 version: 1.0.0
 description: Public selected-module Reporting workflow without cross, chief, final or delivery stages
 tasks: []
-gates: []
 recovery: []
 outputs:
 - distribution-reporting-result

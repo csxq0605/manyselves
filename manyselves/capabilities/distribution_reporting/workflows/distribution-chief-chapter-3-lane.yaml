@@ -3,7 +3,6 @@ version: 1.0.0
 description: File-defined Chief editor lane for report Chapter 3
 tasks:
 - chief-chapter-edit
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

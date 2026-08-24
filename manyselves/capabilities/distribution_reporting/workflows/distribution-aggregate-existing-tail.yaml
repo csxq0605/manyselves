@@ -2,7 +2,6 @@ id: distribution-aggregate-existing-tail
 version: 1.0.0
 description: Aggregate existing modules, then enter Final review and Delivery
 tasks: []
-gates: []
 recovery:
 - current-reporting-recovery
 outputs:

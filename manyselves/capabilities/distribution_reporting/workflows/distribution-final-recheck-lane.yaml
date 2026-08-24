@@ -3,7 +3,6 @@ version: 1.0.0
 description: Reusable affected-only Final Auditor recheck lane
 tasks:
 - final-chapter-recheck
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: declarative_final_review_cycle_context

@@ -4,7 +4,6 @@ description: Declarative affected-only Final Chief revision and Auditor recheck 
 tasks:
 - final-chief-chapter-revision
 - final-chapter-recheck
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

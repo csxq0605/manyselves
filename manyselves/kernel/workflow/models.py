@@ -24,7 +24,6 @@ class ActionKind(StrEnum):
     JOIN = "join"
     SUBWORKFLOW = "subworkflow"
     VALIDATE_CONTRACT = "validate_contract"
-    EVALUATE_GATE = "evaluate_gate"
     REQUEST_INPUT = "request_input"
     WAIT_INPUT = "wait_input"
     PUBLISH_RESULT = "publish_result"
@@ -224,13 +223,6 @@ class ValidateContractAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
 
 
-class EvaluateGateAction(ResolvedActionBase):
-    kind: Literal[ActionKind.EVALUATE_GATE] = ActionKind.EVALUATE_GATE
-    gate: str = Field(min_length=1)
-    input_variable: str = Field(min_length=1)
-    output_variable: str = Field(min_length=1)
-
-
 class RequestInputAction(ResolvedActionBase):
     kind: Literal[ActionKind.REQUEST_INPUT] = ActionKind.REQUEST_INPUT
     interaction: str = Field(min_length=1)
@@ -286,7 +278,6 @@ ResolvedAction = (
     | JoinAction
     | SubworkflowAction
     | ValidateContractAction
-    | EvaluateGateAction
     | RequestInputAction
     | WaitInputAction
     | PublishResultAction
@@ -315,7 +306,6 @@ class ResolvedPlan(BaseModel):
     contract_ids: list[str] = Field(default_factory=list)
     interaction_ids: list[str] = Field(default_factory=list)
     output_ids: list[str] = Field(default_factory=list)
-    gate_ids: list[str] = Field(default_factory=list)
     recovery_ids: list[str] = Field(default_factory=list)
     conversation_bindings: dict[str, dict[str, str]] = Field(default_factory=dict)
     control_flow_edges: dict[str, list[str]] = Field(default_factory=dict)

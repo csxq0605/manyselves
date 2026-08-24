@@ -3,7 +3,6 @@ version: 1.0.0
 description: Prepare five existing module reports and invoke the aggregate editor
 tasks:
 - aggregate-existing
-gates: []
 recovery:
 - current-reporting-recovery
 outputs:

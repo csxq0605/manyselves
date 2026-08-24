@@ -7,7 +7,6 @@ tasks:
 - module-2.3-revision
 - module-2.4-revision
 - module-2.5-revision
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: distribution_reporting_input

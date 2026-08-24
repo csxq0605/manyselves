@@ -98,7 +98,6 @@ _CAPABILITY_LOCATIONS: tuple[tuple[str, DefinitionKind], ...] = (
     ("tasks", DefinitionKind.TASK),
     ("contracts", DefinitionKind.CONTRACT),
     ("tools", DefinitionKind.TOOL),
-    ("gates", DefinitionKind.GATE),
     ("recovery", DefinitionKind.RECOVERY),
     ("interactions", DefinitionKind.INTERACTION),
     ("outputs", DefinitionKind.OUTPUT),

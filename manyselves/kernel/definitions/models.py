@@ -14,7 +14,6 @@ class DefinitionKind(StrEnum):
     TOOL = "tool"
     CONTRACT = "contract"
     TASK = "task"
-    GATE = "gate"
     RECOVERY = "recovery"
     WORKFLOW = "workflow"
     INTERACTION = "interaction"
@@ -40,7 +39,6 @@ class CapabilityDefinition(DefinitionBase):
     tasks: str
     contracts: str
     tools: str
-    gates: str
     recovery: str
     interactions: str | None = None
     outputs: str | None = None
@@ -117,18 +115,6 @@ class TaskDefinition(DefinitionBase):
     completion: dict[str, Any] = Field(default_factory=dict)
 
 
-class GateDefinition(DefinitionBase):
-    """Declared contract and deterministic condition references."""
-
-    kind: Literal[DefinitionKind.GATE] = DefinitionKind.GATE
-    contract: str | None = None
-    expression: str | None = None
-    validator_tool: str | None = None
-    on_pass: str | None = None
-    on_fail: str | None = None
-    on_wait: str | None = None
-
-
 class RecoveryRule(BaseModel):
     """Capability-selected response to a generic recovery event."""
 
@@ -170,7 +156,6 @@ class WorkflowDefinition(DefinitionBase):
 
     kind: Literal[DefinitionKind.WORKFLOW] = DefinitionKind.WORKFLOW
     tasks: list[str] = Field(default_factory=list)
-    gates: list[str] = Field(default_factory=list)
     recovery: list[str] = Field(default_factory=list)
     interactions: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
@@ -189,7 +174,6 @@ Definition = (
     | ToolDefinition
     | ContractDefinition
     | TaskDefinition
-    | GateDefinition
     | RecoveryPolicyDefinition
     | InteractionDefinition
     | OutputDefinition
@@ -203,7 +187,6 @@ DEFINITION_MODELS: dict[DefinitionKind, type[DefinitionBase]] = {
     DefinitionKind.TOOL: ToolDefinition,
     DefinitionKind.CONTRACT: ContractDefinition,
     DefinitionKind.TASK: TaskDefinition,
-    DefinitionKind.GATE: GateDefinition,
     DefinitionKind.RECOVERY: RecoveryPolicyDefinition,
     DefinitionKind.INTERACTION: InteractionDefinition,
     DefinitionKind.OUTPUT: OutputDefinition,

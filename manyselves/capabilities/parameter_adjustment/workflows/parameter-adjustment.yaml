@@ -3,7 +3,6 @@ version: 1.0.0
 description: Normalize and raise an integer parameter to at least 10
 tasks:
 - adjust-parameter
-gates: []
 recovery: []
 input_contract: parameter-input
 input_variable: parameters

@@ -3,7 +3,6 @@ version: 1.0.0
 description: File-defined affected Final Auditor recheck lane for report Chapter 4
 tasks:
 - final-chapter-recheck
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: declarative_final_review_cycle_context

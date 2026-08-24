@@ -5,7 +5,6 @@ tasks:
 - cross-owner-review
 - chief-chapter-edit
 - final-chapter-review
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

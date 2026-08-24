@@ -13,7 +13,6 @@ tasks:
 - cross-owner-runtime-main-exception
 interactions:
 - cross-owner-main-exception-decision
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

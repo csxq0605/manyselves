@@ -9,7 +9,6 @@ tasks:
 - module-2.4-revision
 - module-2.5-revision
 - module-recheck
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: module_submission

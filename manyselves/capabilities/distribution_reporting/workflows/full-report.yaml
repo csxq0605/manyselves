@@ -2,7 +2,6 @@ id: full-report
 version: 1.0.0
 description: Public full Distribution Reporting workflow from preparation through delivery
 tasks: []
-gates: []
 recovery: []
 outputs:
 - distribution-reporting-result

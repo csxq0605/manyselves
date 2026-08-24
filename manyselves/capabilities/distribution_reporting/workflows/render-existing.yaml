@@ -3,7 +3,6 @@ version: 1.0.0
 description: Render one existing project Markdown artifact through the Generic Host
 outputs:
 - render-existing-result
-gates: []
 recovery: []
 input_contract: public_render_existing_input
 input_variable: render-request

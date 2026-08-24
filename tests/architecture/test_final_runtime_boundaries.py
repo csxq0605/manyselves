@@ -176,6 +176,27 @@ def test_capability_runtime_does_not_import_application_layer() -> None:
     assert violations == {}
 
 
+def test_unused_gate_definition_surface_is_absent() -> None:
+    """Business acceptance stays in contracts/control flow, not an empty Gate API."""
+
+    gate_definitions = [
+        path
+        for root in (PACKAGE_ROOT / "capabilities").iterdir()
+        for path in (root / "gates").glob("*")
+        if path.is_file() and path.name != ".gitkeep"
+    ]
+    definition_source = _read_python_source(
+        PACKAGE_ROOT / "kernel" / "definitions" / "models.py"
+    )
+    workflow_source = _read_python_source(
+        PACKAGE_ROOT / "kernel" / "workflow" / "models.py"
+    )
+
+    assert gate_definitions == []
+    assert "GateDefinition" not in definition_source
+    assert "EVALUATE_GATE" not in workflow_source
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 

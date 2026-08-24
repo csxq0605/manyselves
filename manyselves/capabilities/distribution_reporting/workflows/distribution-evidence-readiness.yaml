@@ -5,7 +5,6 @@ interactions:
 - evidence-readiness-decision
 outputs:
 - evidence-readiness-result
-gates: []
 recovery: []
 input_contract: preparation_context
 input_variable: preparation-context

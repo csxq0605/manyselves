@@ -7,7 +7,6 @@ from .models import (
     CapabilityDefinition,
     Definition,
     DefinitionKind,
-    GateDefinition,
     InteractionDefinition,
     OutputDefinition,
     TaskDefinition,
@@ -112,11 +111,6 @@ def _references(
             (DefinitionKind.TOOL, tuple(definition.tools)),
             (DefinitionKind.RECOVERY, _present([definition.recovery])),
         )
-    if isinstance(definition, GateDefinition):
-        return (
-            (DefinitionKind.CONTRACT, _present([definition.contract])),
-            (DefinitionKind.TOOL, _present([definition.validator_tool])),
-        )
     if isinstance(definition, InteractionDefinition):
         return ((DefinitionKind.CONTRACT, (definition.input_contract,)),)
     if isinstance(definition, OutputDefinition):
@@ -124,7 +118,6 @@ def _references(
     if isinstance(definition, WorkflowDefinition):
         return (
             (DefinitionKind.TASK, tuple(definition.tasks)),
-            (DefinitionKind.GATE, tuple(definition.gates)),
             (DefinitionKind.RECOVERY, tuple(definition.recovery)),
             (DefinitionKind.INTERACTION, tuple(definition.interactions)),
             (DefinitionKind.OUTPUT, tuple(definition.outputs)),

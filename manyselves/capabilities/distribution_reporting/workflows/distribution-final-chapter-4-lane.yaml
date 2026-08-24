@@ -3,7 +3,6 @@ version: 1.0.0
 description: File-defined Final initial Auditor lane for report Chapter 4
 tasks:
 - final-chapter-review
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

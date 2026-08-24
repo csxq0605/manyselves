@@ -3,7 +3,6 @@ version: 1.0.0
 description: Reusable current Chief editor lane bound to one report chapter
 tasks:
 - chief-chapter-edit
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

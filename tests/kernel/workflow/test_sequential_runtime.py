@@ -6,7 +6,6 @@ from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionRegistry,
-    GateDefinition,
     ToolDefinition,
     WorkflowDefinition,
 )
@@ -277,58 +276,6 @@ async def test_neutral_workflow_executes_and_persists_final_state(
     assert calls == [{"value": 1}]
     assert store.load("run-neutral") == completed
     assert store.load_plan("run-neutral") == plan
-
-
-@pytest.mark.asyncio
-async def test_sequential_executor_honors_a_declared_action_target(
-    tmp_path: Path,
-) -> None:
-    definitions, contract = _definitions()
-    gate = GateDefinition(
-        id="minimum",
-        version="1.0.0",
-        description="Require the declared minimum",
-        contract=contract.id,
-        expression="value['value'] >= 1",
-        on_pass="finish",
-        on_fail="fail",
-    )
-    definitions.register(gate)
-    workflow = WorkflowDefinition(
-        id="neutral-gate-route",
-        version="1.0.0",
-        description="Follow a target returned by a generic executor",
-        gates=[gate.id],
-        state={"value": {"value": 1}},
-        actions=[
-            {
-                "id": "gate",
-                "kind": "evaluate_gate",
-                "gate": gate.id,
-                "input_variable": "value",
-                "output_variable": "gate_result",
-            },
-            {"id": "fail", "kind": "fail_workflow", "message": "must be skipped"},
-            {"id": "finish", "kind": "end_workflow", "output_variable": "value"},
-        ],
-    )
-    executors = build_builtin_executor_registry()
-    plan = WorkflowCompiler(executors).compile(workflow, definitions)
-    store = FileWorkflowStateStore(tmp_path)
-
-    completed = await SequentialWorkflowExecutor(executors, store).execute(
-        plan,
-        WorkflowState.for_plan("neutral-gate-route", plan),
-        RuntimeContext(
-            contracts={contract.id: build_contract_adapter(contract)},
-            definitions=definitions,
-        ),
-    )
-
-    assert completed.status is WorkflowStatus.COMPLETED
-    assert completed.actions["fail"].status is ActionExecutionStatus.PENDING
-    assert completed.outputs == {"result": {"value": 1}}
-    assert store.load_plan("neutral-gate-route") == plan
 
 
 @pytest.mark.asyncio

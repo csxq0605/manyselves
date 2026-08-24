@@ -15,7 +15,6 @@ def _write_capability(root: Path, capability_id: str, workflow_id: str) -> Path:
     for location in (
         "agents",
         "contracts",
-        "gates",
         "recovery",
         "tasks",
         "tools",
@@ -33,7 +32,6 @@ def _write_capability(root: Path, capability_id: str, workflow_id: str) -> Path:
                 "tasks: ./tasks",
                 "contracts: ./contracts",
                 "tools: ./tools",
-                "gates: ./gates",
                 "recovery: ./recovery",
                 "",
             ]

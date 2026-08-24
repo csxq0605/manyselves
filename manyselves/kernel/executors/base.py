@@ -1,6 +1,5 @@
 """Action executor interface and registry."""
 
-import ast
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -17,7 +16,6 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
-    GateDefinition,
     InteractionDefinition,
     OutputDefinition,
     RecoveryPolicyDefinition,
@@ -31,7 +29,6 @@ from manyselves.kernel.workflow import (
     AppendVariableAction,
     CreateConversationAction,
     EndWorkflowAction,
-    EvaluateGateAction,
     FailWorkflowAction,
     InvokeAgentAction,
     InvokeToolAction,
@@ -540,64 +537,6 @@ class WaitInputExecutor(RequestInputExecutor):
     kind = ActionKind.WAIT_INPUT
 
 
-class EvaluateGateExecutor:
-    kind = ActionKind.EVALUATE_GATE
-
-    async def execute(
-        self,
-        action: ResolvedAction,
-        state: WorkflowState,
-        context: RuntimeContext,
-    ) -> ActionResult:
-        resolved = cast(EvaluateGateAction, action)
-        if context.definitions is None:
-            raise RuntimeExecutionError("gate execution requires definitions")
-        definition = context.definitions.require(DefinitionKind.GATE, resolved.gate)
-        if not isinstance(definition, GateDefinition):
-            raise RuntimeExecutionError(f"definition is not a gate: {resolved.gate}")
-        value = state.variables[resolved.input_variable]
-        status = "pass"
-        if definition.contract is not None:
-            try:
-                value = context.contracts[definition.contract].validate(value)
-            except KeyError as exc:
-                raise RuntimeExecutionError(
-                    f"missing gate contract adapter: {definition.contract}"
-                ) from exc
-            except ContractValidationError:
-                status = "fail"
-        if status == "pass" and definition.expression is not None:
-            status = (
-                "pass"
-                if _evaluate_gate_expression(definition.expression, value)
-                else "fail"
-            )
-        if status == "pass" and definition.validator_tool is not None:
-            status = await _invoke_gate_validator(
-                context,
-                definition.validator_tool,
-                value,
-                task_id=resolved.id,
-            )
-        target = {
-            "pass": definition.on_pass,
-            "fail": definition.on_fail,
-            "wait": definition.on_wait,
-        }[status]
-        result = {"status": status, "value": value}
-        return ActionResult(
-            output=result,
-            variable_updates={resolved.output_variable: result},
-            next_action_id=target,
-            events=(
-                ActionEvent(
-                    kind="branch.selected",
-                    data={"gate_id": resolved.gate, "status": status, "target": target},
-                ),
-            ),
-        )
-
-
 class FailWorkflowExecutor:
     kind = ActionKind.FAIL_WORKFLOW
 
@@ -692,89 +631,6 @@ def _restore_conversations(
         registry.remember(record)
 
 
-def _evaluate_gate_expression(expression: str, value: Any) -> bool:
-    def evaluate(node: ast.AST) -> Any:
-        if isinstance(node, ast.Expression):
-            return evaluate(node.body)
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Name) and node.id == "value":
-            return value
-        if isinstance(node, ast.Subscript):
-            return evaluate(node.value)[evaluate(node.slice)]
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-            return not evaluate(node.operand)
-        if isinstance(node, ast.BoolOp):
-            values = [bool(evaluate(item)) for item in node.values]
-            return all(values) if isinstance(node.op, ast.And) else any(values)
-        if isinstance(node, ast.Compare):
-            left = evaluate(node.left)
-            for operator, comparator in zip(node.ops, node.comparators, strict=True):
-                right = evaluate(comparator)
-                matched = (
-                    left == right
-                    if isinstance(operator, ast.Eq)
-                    else left != right
-                    if isinstance(operator, ast.NotEq)
-                    else left < right
-                    if isinstance(operator, ast.Lt)
-                    else left <= right
-                    if isinstance(operator, ast.LtE)
-                    else left > right
-                    if isinstance(operator, ast.Gt)
-                    else left >= right
-                    if isinstance(operator, ast.GtE)
-                    else left in right
-                    if isinstance(operator, ast.In)
-                    else left not in right
-                    if isinstance(operator, ast.NotIn)
-                    else None
-                )
-                if matched is None:
-                    raise RuntimeExecutionError("unsupported gate comparison")
-                if not matched:
-                    return False
-                left = right
-            return True
-        raise RuntimeExecutionError("unsupported gate expression")
-
-    try:
-        return bool(evaluate(ast.parse(expression, mode="eval")))
-    except (SyntaxError, KeyError, TypeError) as exc:
-        raise RuntimeExecutionError(f"invalid gate expression: {expression}") from exc
-
-
-async def _invoke_gate_validator(
-    context: RuntimeContext,
-    tool_id: str,
-    value: Any,
-    *,
-    task_id: str,
-) -> str:
-    try:
-        tool = context.tools[tool_id]
-    except KeyError as exc:
-        raise RuntimeExecutionError(f"missing gate validator adapter: {tool_id}") from exc
-    invoke = getattr(tool, "invoke", None)
-    outcome = invoke(value, task_id=task_id) if callable(invoke) else tool(value)
-    if isawaitable(outcome):
-        outcome = await outcome
-    if isinstance(outcome, ToolInvocationOutcome):
-        if outcome.status != "ok":
-            raise RuntimeExecutionError(
-                outcome.error or f"gate validator {tool_id} returned {outcome.status}"
-            )
-        outcome = outcome.result
-    if isinstance(outcome, Mapping):
-        if outcome.get("status") in {"pass", "fail", "wait"}:
-            return str(outcome["status"])
-        if "passed" in outcome:
-            return "pass" if bool(outcome["passed"]) else "fail"
-    if isinstance(outcome, str) and outcome in {"pass", "fail", "wait"}:
-        return outcome
-    return "pass" if bool(outcome) else "fail"
-
-
 def build_builtin_executor_registry() -> ExecutorRegistry:
     registry = ExecutorRegistry()
     registry.register(SetVariableExecutor())
@@ -786,7 +642,6 @@ def build_builtin_executor_registry() -> ExecutorRegistry:
     registry.register(ResetConversationExecutor())
     registry.register(InvokeAgentExecutor())
     registry.register(ValidateContractExecutor())
-    registry.register(EvaluateGateExecutor())
     registry.register(RequestInputExecutor())
     registry.register(WaitInputExecutor())
     registry.register(PublishResultExecutor())

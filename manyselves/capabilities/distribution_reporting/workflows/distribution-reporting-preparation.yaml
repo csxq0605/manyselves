@@ -2,7 +2,6 @@ id: distribution-reporting-preparation
 version: 1.0.0
 description: File-defined deterministic Reporting preparation
 tasks: []
-gates: []
 input_contract: preparation_context
 input_variable: preparation-context
 output_contract: preparation_context

@@ -9,7 +9,6 @@ tasks:
 - cross-owner-module-2.3-revision-r1
 - cross-owner-module-2.4-revision-r1
 - cross-owner-module-2.5-revision-r1
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: declarative_cross_owner_runtime_context

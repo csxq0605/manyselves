@@ -2,7 +2,6 @@ id: distribution-report-delivery
 version: 1.0.0
 description: File-defined Render, Publish/materialization, and Delivery completion sequence
 tasks: []
-gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state

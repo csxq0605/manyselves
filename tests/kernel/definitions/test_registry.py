@@ -65,7 +65,6 @@ workflows: ./workflows
 tasks: ./tasks
 contracts: ./contracts
 tools: ./tools
-gates: ./gates
 recovery: ./recovery
 """,
     )
@@ -155,26 +154,12 @@ rules:
     )
     _write(
         tmp_path,
-        "gates/positive.yaml",
-        """\
-id: positive
-version: 1.0.0
-description: Positive output
-contract: adjustment-output
-expression: result.value > 0
-on_pass: finish
-on_fail: adjust-value
-""",
-    )
-    _write(
-        tmp_path,
         "workflows/adjustment.yaml",
         """\
 id: adjustment
 version: 1.0.0
 description: Neutral adjustment workflow
 tasks: [adjust-value]
-gates: [positive]
 recovery: [default-recovery]
 actions:
   - {id: finish, kind: end_workflow}
@@ -191,4 +176,4 @@ actions:
         registry.require(DefinitionKind.TOOL, "increment"),
         ToolDefinition,
     )
-    assert len(registry.all()) == 9
+    assert len(registry.all()) == 8
