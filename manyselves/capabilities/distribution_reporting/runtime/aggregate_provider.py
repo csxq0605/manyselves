@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
 from manyselves.capabilities.distribution_reporting.runtime.aggregate_agent_bridge import (
     AggregateEditorAgentBridge,
 )
@@ -40,6 +43,7 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
@@ -108,7 +112,13 @@ class AggregateProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation)
+        bridge = self._bridge(
+            agent,
+            task,
+            value,
+            conversation,
+            recovery_policy=recovery_policy,
+        )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -124,6 +134,8 @@ class AggregateProviderRuntime:
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
+        *,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AggregateEditorAgentBridge:
         contract = (
             value
@@ -141,6 +153,21 @@ class AggregateProviderRuntime:
             envelope,
             session_id=session_id,
         )
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
+        if (
+            recovery_driver is not None
+            and dependencies.recovery_event_callback is None
+        ):
+            dependencies = replace(
+                dependencies,
+                recovery_event_callback=build_tool_recovery_callback(
+                    recovery_driver
+                ),
+            )
         tools = build_module_provider_tools(
             self.workspace,
             envelope=envelope,
@@ -187,6 +214,7 @@ class AggregateProviderRuntime:
                 if correlation is not None
                 else ""
             ),
+            recovery_driver=recovery_driver,
         )
 
     @staticmethod

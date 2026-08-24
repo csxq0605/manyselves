@@ -28,7 +28,12 @@ from manyselves.kernel.conversations import (
     ConversationMode,
     ConversationRecord,
 )
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    RecoveryRule,
+    TaskDefinition,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 
 
@@ -62,6 +67,132 @@ def _edited_submission() -> EditedReportSubmission:
         data_gap_analysis="数据缺口正文。",
         improvement_action_plan="改进行动正文。",
     )
+
+
+@pytest.mark.asyncio
+async def test_aggregate_provider_shares_declared_tool_and_agent_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import (
+        aggregate_agent_bridge,
+        aggregate_provider,
+    )
+    from manyselves.core.tools.registry import ToolRegistry
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured["dependencies"] = kwargs["dependencies"]
+        return ToolRegistry()
+
+    async def capture_recovery(*args, **kwargs):
+        del args
+        captured["recovery"] = kwargs["recovery"]
+        return _edited_submission().model_dump(mode="json")
+
+    class Loop:
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    monkeypatch.setattr(aggregate_provider, "build_module_provider_tools", capture_tools)
+    monkeypatch.setattr(
+        aggregate_agent_bridge,
+        "execute_reporting_recovery",
+        capture_recovery,
+        raising=False,
+    )
+    bus = MessageBus()
+    runtime = aggregate_provider.AggregateProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        loop_builder=lambda **kwargs: Loop(),
+    )
+    value = _aggregate_input("aggregate-schema-run")
+    ReportingStore(tmp_path).write_json(
+        "Work/runs/aggregate-schema-run/context/aggregate-editor-input.json",
+        value.model_dump(mode="json"),
+    )
+    agent = AgentDefinition(
+        id="aggregate-editor",
+        version="1.0.0",
+        description="Aggregate editor",
+        instructions="Aggregate the approved modules.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="aggregate-existing",
+        version="1.0.0",
+        description="Aggregate existing modules",
+        agent=agent.id,
+        objective="Aggregate approved modules.",
+        input_contract="aggregate_editor_input",
+        output_contract="edited_report_submission",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    policy = RecoveryPolicyDefinition(
+        id="aggregate-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="aggregate-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="aggregate-existing",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=value.run_id,
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        value,
+        conversation,
+        recovery_policy=policy,
+    )
+    dependencies = captured["dependencies"]
+    decision = await dependencies.recovery_event_callback(
+        "invalid_structured_output",
+        {"task_id": task.id},
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id="invoke-aggregate-existing",
+            recovery_policy=policy,
+        )
+    finally:
+        await runtime.close()
+
+    assert outcome.status == "ok"
+    assert decision.action.value == "correct"
+    assert captured["recovery"] is bridge.recovery_driver
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
+    }
 
 
 @pytest.mark.asyncio
