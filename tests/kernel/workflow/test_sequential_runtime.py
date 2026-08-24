@@ -12,7 +12,6 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import (
     ActionResult,
     RuntimeContext,
-    SequentialWorkflowExecutor,
     build_builtin_executor_registry,
 )
 from manyselves.kernel.workflow import (
@@ -31,6 +30,14 @@ from manyselves.kernel.workflow import (
     apply_action_result,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
+
+
+def _runtime(executors, store) -> WorkflowRuntimeHost:
+    return WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
 
 
 def _definitions() -> tuple[DefinitionRegistry, ContractDefinition]:
@@ -265,7 +272,7 @@ async def test_neutral_workflow_executes_and_persists_final_state(
     state = WorkflowState.for_plan("run-neutral", plan)
     store.save_plan(state.run_id, plan)
 
-    completed = await SequentialWorkflowExecutor(executors, store).execute(
+    completed = await _runtime(executors, store).execute(
         plan,
         state,
         context,
@@ -322,7 +329,7 @@ async def test_tool_action_can_compose_declared_named_state_inputs(
         received.append(value)
         return {"value": value["left"] + value["right"]}
 
-    completed = await SequentialWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -375,7 +382,7 @@ async def test_loaded_partial_state_resumes_after_completed_action(
         contracts={contract.id: build_contract_adapter(contract)},
     )
 
-    completed = await SequentialWorkflowExecutor(executors, store).execute(
+    completed = await _runtime(executors, store).execute(
         plan,
         store.load("run-resume"),
         context,

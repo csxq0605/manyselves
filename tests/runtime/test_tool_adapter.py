@@ -15,7 +15,6 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.executors import (
     RuntimeContext,
-    SequentialWorkflowExecutor,
     build_builtin_executor_registry,
 )
 from manyselves.kernel.ports import ToolInvocationOutcome
@@ -28,6 +27,14 @@ from manyselves.runtime.tool_adapter import (
     ToolAdapter,
     ToolAdapterError,
 )
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
+
+
+def _runtime(executors, store) -> WorkflowRuntimeHost:
+    return WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
 
 
 def test_capability_tool_adapter_has_no_legacy_runtime_base() -> None:
@@ -347,7 +354,7 @@ async def test_current_tool_adapter_executes_through_invoke_tool_action(
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
     state = WorkflowState.for_plan("run-neutral", plan)
 
-    completed = await SequentialWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(

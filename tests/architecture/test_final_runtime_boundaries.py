@@ -197,6 +197,18 @@ def test_unused_gate_definition_surface_is_absent() -> None:
     assert "EVALUATE_GATE" not in workflow_source
 
 
+def test_generic_host_is_the_only_packaged_workflow_executor() -> None:
+    """Historical test executors must not remain in the production package."""
+
+    executor_root = PACKAGE_ROOT / "kernel" / "executors"
+    exports = _read_python_source(executor_root / "__init__.py")
+
+    assert not (executor_root / "sequential.py").exists()
+    assert not (executor_root / "control_flow.py").exists()
+    assert "SequentialWorkflowExecutor" not in exports
+    assert "ControlFlowWorkflowExecutor" not in exports
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 

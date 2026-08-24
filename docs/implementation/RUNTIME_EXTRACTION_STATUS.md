@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence`
-- Current slice: `FA-08/M9.36 remove unused Gate definition surface`
+- Current slice: `FA-08/M9.37 remove alternate packaged Workflow executors`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `33592f1 Runtime: own capability service view`
+- HEAD at slice start: `7b78381 Kernel: remove unused gate definition surface`
 - Program status: `in progress`
 - Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
 - Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `移除生产包中的测试专用旧 Workflow 执行器，随后继续 core/runtime 物理所有权、Main/Lane 恢复和通用前端产品化`
+- Next automatic action: `继续 core/runtime 物理所有权，随后实现 Main 单一对话中的三种 Lane 恢复与通用前端产品化`
 
 ## Why the prior completion claim is reopened
 
@@ -286,6 +286,7 @@
 - FA-07/M9.34 M9.33 构建恢复同一真实 Run 后，五个 Revision Provider 均生成了 15 份 evidence binding，证明 revision result-part 修复进入真实生产路径；但旧 checkpoint 携带的 failed physical attempt A 在 `current.json` 已指向另一个 failed attempt B 时，会跳过 A 自身已有的不可变 terminal/result，重新激活 A，最终以 `immutable task attempt result already exists with different bytes` 确定性失败。服务器已立即停止，Run、旧失败结果、Conversation/Session、15 份 evidence binding 与事件现场全部保留。Characterization First 新增“A failed → B failed/current → 从旧 checkpoint A 恢复”的测试并取得旧实现重新使用 A 的 RED；GREEN 后 `ProviderTaskAttempt.acquire` 直接用既有 `TaskAttemptStore.load_verified_attempt(task_id, task_attempt_id)` 验证 checkpoint 指向的物理 attempt，非 completed terminal 轮换新 physical attempt，semantic run/task/agent/session 不变。没有新增 Hash/CAS/锁/Gate/判断算法，也没有放宽或复制既有 result/hash 完整性验证。failed-attempt 三种形态与七类生产 Provider completed-result reuse focused `10 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量。按用户要求，Main 单一对话、三种 Lane 恢复交互、侧边栏与通用界面产品化继续列为待做，当前优先恢复同一 Run 证明 Recheck → Cross → Chief → Final → Delivery 能完整跑通。
 - FA-08/M9.35 追溯 Plan base 与全 Git 历史确认 Capability `gates/` 从未存在生产 YAML，旧 “gate” 业务语义已分别由 Contract、Parallel/Join、Workflow `if`、Interaction 和 Recovery 承接；当前 `GateDefinition/EvaluateGate` 仅为未使用的早期框架预留。新的架构 Characterization 先捕获 8 个 Capability 文件反向导入 `manyselves.application.runtime_services` 的 RED；GREEN 后只读 `RuntimeServicesView` 物理下沉到 `manyselves.runtime.services`，Application 仅负责从 Account RuntimeHost 构造它，Capability 不再导入 Application。Application/Architecture/Distribution Binding focused `25 passed`，定向 Ruff 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。最终真实 Provider 验收按用户要求暂缓，下一切片继续 core/runtime 物理所有权与旧测试执行器收敛。
 - FA-08/M9.36 为未使用 Gate 表面新增架构 Characterization，先因 `GateDefinition/EVALUATE_GATE` 仍在 Kernel 得到 RED；GREEN 后物理删除 DefinitionKind/Capability location/Workflow field、Gate model、EvaluateGate Action/Executor、Compiler reference/snapshot/CFG 分支与全部空 `gates/.gitkeep`，并机械移除 40 个生产 Workflow 的空 `gates: []`。原 Gate 测试没有保留兼容接口：结构校验继续由 `validate_contract`，条件路由继续由 `if/fail_workflow` Characterization 覆盖；Parallel/Join、Interaction、Recovery 生产定义均未改变。Definitions/Compiler/Control Flow/Application/Architecture/Web projection/Distribution Binding focused `100 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。下一切片移除生产包中的测试专用 Sequential/ControlFlow 执行器。
+- FA-08/M9.37 为“发布包只能存在一个 Workflow 执行宿主”新增架构 Characterization，先因测试专用 `SequentialWorkflowExecutor` 与 `ControlFlowWorkflowExecutor` 仍位于生产包而 RED；GREEN 后将其行为测试统一迁到现有 `WorkflowRuntimeHost`（测试只注入内存 Event Sink），物理删除两个旧执行器及导出，不保留 shim 或第二套运行时。旧执行器曾把所有 Action 计入 `control_steps`，唯一 Host 已有语义只计 `If/ConditionGroup/Goto/ForEach` 控制推进，本次将内部断言对齐为 5，循环结果仍为 3；没有改变 Kernel transition 或运行上限逻辑。Workflow control/sequential/interaction/tool-adapter 与架构 focused `35 passed`，定向 Ruff、compileall、旧符号扫描与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。下一切片继续 core/runtime 物理所有权收敛。
 - 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留，等待当前 M9.34 构建重启后从网页继续，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。Main 对话中的 Run 投影、三种 Lane 恢复选择和侧边栏产品化已列为后续待做，按用户要求先以当前通用 Run 页面证明整条真实链能够完成。
 
 ## Research decisions
@@ -330,7 +331,7 @@ git diff --check
 | --- | --- |
 | Stateless Kernel business-neutral | `foundation present; final audit pending` |
 | File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
-| One Generic Runtime Host | `achieved for all five public Reporting entrypoints` |
+| One Generic Runtime Host | `achieved for all five public Reporting entrypoints; alternate packaged Sequential/ControlFlow executors removed` |
 | Generic Agent/Tool/Conversation/Recovery | `achieved for the production execution path; final legacy-adapter removal audit remains in FA-05` |
 | Capability-owned Reporting Domain Runtime | `achieved; final real Provider execution remains under acceptance` |
 | No Declarative→Legacy Runner inheritance/delegation | `achieved; old Runner/Facade/Core package deleted` |
@@ -346,12 +347,11 @@ git diff --check
 
 ## Next automatic sequence
 
-1. 执行 FA-03 Reporting Domain Runtime 解耦；
-2. 执行 FA-04 通用 Binding；
-3. 执行 FA-05 旧路径删除和物理归属收敛；
-4. 执行 FA-06 产品表面复审；
-5. 执行 FA-07 自动完成审计；
-7. 最终真实测试按用户要求暂缓，待其余自动架构与产品项完成后再恢复同一 Run。
+1. 收敛 `manyselves/core` 与 `manyselves/runtime` 的通用运行时物理所有权；
+2. 将 Main 单一对话与三种 Lane 恢复选择接入通用 Run/Interaction 投影；
+3. 完成侧边栏、Run Output/Event/Cost 与通用 Schema/WAITING 前端产品化复审；
+4. 执行最终自动架构/发布图审计；
+5. 最终真实测试按用户要求暂缓，待其余自动架构与产品项完成后再恢复同一 Run。
 
 ## Resume instruction
 

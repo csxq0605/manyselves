@@ -10,7 +10,6 @@ from manyselves.kernel.definitions import (
     load_capability,
 )
 from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
     RuntimeContext,
     build_builtin_executor_registry,
 )
@@ -22,6 +21,14 @@ from manyselves.kernel.workflow import (
     resume_waiting_input,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
+
+
+def _runtime(executors, store) -> WorkflowRuntimeHost:
+    return WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
 
 FIXTURE = (
     Path(__file__).parents[2]
@@ -47,7 +54,7 @@ async def test_request_input_waits_resumes_and_publishes_declared_output(
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, registry)
     store = FileWorkflowStateStore(tmp_path)
-    runtime = ControlFlowWorkflowExecutor(executors, store)
+    runtime = _runtime(executors, store)
 
     waiting = await runtime.execute(
         plan,

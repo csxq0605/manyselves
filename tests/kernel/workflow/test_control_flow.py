@@ -10,12 +10,19 @@ from manyselves.kernel.definitions import (
     WorkflowDefinition,
 )
 from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
     RuntimeContext,
     build_builtin_executor_registry,
 )
 from manyselves.kernel.workflow import CompilerError, WorkflowCompiler, WorkflowState
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
+
+
+def _runtime(executors, store) -> WorkflowRuntimeHost:
+    return WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
 
 
 def _definitions() -> DefinitionRegistry:
@@ -84,7 +91,7 @@ async def test_if_and_goto_execute_a_declared_finite_loop(tmp_path: Path) -> Non
     executors, plan = _compile(workflow)
     state = WorkflowState.for_plan("run-loop", plan)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -94,7 +101,7 @@ async def test_if_and_goto_execute_a_declared_finite_loop(tmp_path: Path) -> Non
     )
 
     assert completed.outputs == {"result": 3}
-    assert completed.control_steps == 9
+    assert completed.control_steps == 5
 
 
 @pytest.mark.asyncio
@@ -131,7 +138,7 @@ async def test_if_exit_condition_allows_a_loop_without_an_iteration_cap(
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -185,7 +192,7 @@ async def test_condition_group_exit_condition_allows_a_loop_without_an_iteration
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -242,7 +249,7 @@ async def test_condition_group_uses_first_matching_branch(tmp_path: Path) -> Non
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -296,7 +303,7 @@ async def test_foreach_repeats_neutral_body_and_resumes_after_collection(
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -351,7 +358,7 @@ async def test_loaded_foreach_state_continues_after_completed_iteration(
     partial.control_steps = 2
     store.save(partial)
 
-    completed = await ControlFlowWorkflowExecutor(executors, store).execute(
+    completed = await _runtime(executors, store).execute(
         plan,
         store.load(partial.run_id),
         RuntimeContext(
@@ -422,7 +429,7 @@ async def test_parallel_branches_join_declared_outputs(tmp_path: Path) -> None:
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -514,7 +521,7 @@ async def test_parallel_branches_honor_declared_concurrency_limit(
     )
     executors, plan = _compile(workflow)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
@@ -582,7 +589,7 @@ async def test_subworkflow_binds_parent_input_and_child_output(tmp_path: Path) -
     executors, child_plan = _compile(child, definitions)
     _executors, parent_plan = _compile(parent, definitions)
 
-    completed = await ControlFlowWorkflowExecutor(
+    completed = await _runtime(
         executors,
         FileWorkflowStateStore(tmp_path),
     ).execute(
