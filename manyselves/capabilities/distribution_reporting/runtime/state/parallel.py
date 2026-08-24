@@ -639,13 +639,37 @@ class TaskAttemptStore:
     ) -> tuple[TaskTerminal, dict[str, Any]] | None:
         """Load one fully persisted attempt without requiring its expired lease."""
 
+        recovered = self.load_verified_attempt(
+            correlation.task_id,
+            correlation.task_attempt_id,
+        )
+        if recovered is None:
+            return None
+        terminal, payload = recovered
+        if terminal.correlation != correlation:
+            raise RuntimeError("persisted task attempt identity or hash mismatch")
+        return terminal, payload
+
+    def load_verified_attempt(
+        self,
+        task_id: str,
+        task_attempt_id: str,
+    ) -> tuple[TaskTerminal, dict[str, Any]] | None:
+        """Load an attempt using its immutable terminal as the correlation owner."""
+
+        task_id = _safe_component(task_id, field="task_id")
+        task_attempt_id = _safe_component(
+            task_attempt_id,
+            field="task_attempt_id",
+        )
+
         relative = (
             Path("Work/runs")
             / self.run_id
             / "results"
             / "attempts"
-            / correlation.task_id
-            / f"{correlation.task_attempt_id}.json"
+            / task_id
+            / f"{task_attempt_id}.json"
         )
         result_path = self.workspace / relative
         terminal_path = result_path.with_suffix(".terminal.json")
@@ -662,7 +686,9 @@ class TaskAttemptStore:
             raise RuntimeError("persisted task attempt is unreadable or invalid") from exc
         result_bytes = result_path.read_bytes()
         if (
-            terminal.correlation != correlation
+            terminal.correlation.run_id != self.run_id
+            or terminal.correlation.task_id != task_id
+            or terminal.correlation.task_attempt_id != task_attempt_id
             or terminal.result_ref != relative.as_posix()
             or terminal.result_sha256 != _sha256_bytes(result_bytes)
             or terminal.payload_sha256 != _sha256_bytes(

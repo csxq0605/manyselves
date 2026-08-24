@@ -166,10 +166,15 @@ def load_completed_agent_result(
     current = store.current(expected.task_id)
     if current is None or not same_recoverable_task(current, expected):
         return None
-    recovered = store.load_verified_result(current)
+    recovered = store.load_verified_attempt(
+        current.task_id,
+        current.task_attempt_id,
+    )
     if recovered is None:
         return None
     terminal, payload = recovered
+    if not same_recoverable_task(terminal.correlation, expected):
+        raise RuntimeError("persisted task attempt identity or hash mismatch")
     result = AgentResult.model_validate(payload)
     if terminal.status != result.status.value:
         raise RuntimeError("persisted task result status does not match its terminal")
@@ -237,7 +242,20 @@ class ProviderTaskAttempt:
                 and previous.task_attempt_id == correlation.task_attempt_id
                 and same_recoverable_task(previous, correlation)
             ):
-                recovered = store.load_verified_result(previous)
+                recovered = store.load_verified_attempt(
+                    previous.task_id,
+                    previous.task_attempt_id,
+                )
+                if (
+                    recovered is not None
+                    and not same_recoverable_task(
+                        recovered[0].correlation,
+                        correlation,
+                    )
+                ):
+                    raise RuntimeError(
+                        "persisted task attempt identity or hash mismatch"
+                    )
                 if recovered is not None and recovered[0].status != "completed":
                     # Keep the semantic task and session, but give the resumed
                     # dispatch its own append-only result path.

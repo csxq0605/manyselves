@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
     ProviderTaskAttempt,
+    build_task_correlation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     AgentResult,
@@ -14,6 +17,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    IdentityLeaseManager,
     TaskAttemptStore,
 )
 
@@ -120,3 +124,87 @@ def test_failed_terminal_resumes_as_new_attempt_in_same_session(tmp_path: Path) 
     assert old_payload is not None and old_payload["status"] == "failed"
     assert new_terminal is not None and new_terminal.status == "completed"
     assert new_payload is not None and new_payload["status"] == "completed"
+
+
+def test_failed_terminal_resumes_after_current_pointer_gained_later_lease(
+    tmp_path: Path,
+) -> None:
+    """A later lease pointer must not hide the failed immutable terminal."""
+
+    run_id = "same-run-later-lease"
+    session_id = "public-reporting:module-2.4"
+    workflow_id = "public-reporting"
+    identity_key = "module-2.4-specialist"
+    envelope = TaskEnvelope(
+        task_id="module-revision-r1-2.4",
+        task_attempt_id="attempt-failed",
+        run_id=run_id,
+        agent_id=identity_key,
+        objective="Revise module 2.4.",
+    )
+    store = TaskAttemptStore(tmp_path, run_id)
+
+    failed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+    )
+    try:
+        failed.activate()
+        store.persist_result(
+            failed.correlation,
+            _result(
+                run_id=run_id,
+                session_id=session_id,
+                status=AgentRunStatus.FAILED,
+            ).model_dump(mode="json"),
+            status="failed",
+        )
+    finally:
+        failed.close()
+
+    manager = IdentityLeaseManager(tmp_path, run_id)
+    later_lease = manager.acquire(
+        workflow_id,
+        identity_key,
+        owner_id="later-process:attempt-failed",
+    )
+    try:
+        later_pointer = build_task_correlation(
+            tmp_path,
+            envelope,
+            workflow_id=workflow_id,
+            identity_key=identity_key,
+            session_id=session_id,
+            identity_lease=later_lease.lease,
+        )
+        store.activate(later_pointer)
+    finally:
+        later_lease.release()
+
+    assert later_pointer.task_attempt_id == failed.correlation.task_attempt_id
+    assert later_pointer.lease_epoch > failed.correlation.lease_epoch
+    with pytest.raises(
+        RuntimeError,
+        match="persisted task attempt identity or hash mismatch",
+    ):
+        store.load_verified_result(later_pointer)
+
+    resumed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+    )
+    try:
+        assert resumed.correlation.task_attempt_id != failed.correlation.task_attempt_id
+        assert resumed.correlation.run_id == failed.correlation.run_id
+        assert resumed.correlation.task_id == failed.correlation.task_id
+        assert resumed.correlation.agent_id == failed.correlation.agent_id
+        assert resumed.correlation.session_id == failed.correlation.session_id
+        assert resumed.load_completed_or_activate() is None
+    finally:
+        resumed.close()
