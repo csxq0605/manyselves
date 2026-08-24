@@ -19,6 +19,10 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
     build_tool_recovery_callback,
 )
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
+    reporting_identity_key,
+)
 from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
     ReportingContinuationProgressObserver,
 )
@@ -83,14 +87,13 @@ class TemplateDistillationProviderRuntime:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        input_value = self._input(value)
-        bridge = self._bridge(agent, task, input_value, conversation, task_id=task_id)
-        return await bridge.invoke(
+        return await self._invoke(
             agent,
             task,
-            input_value,
+            value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
         )
 
     async def invoke_with_recovery(
@@ -103,23 +106,69 @@ class TemplateDistillationProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
         input_value = self._input(value)
-        bridge = self._bridge(
-            agent,
-            task,
-            input_value,
-            conversation,
-            task_id=task_id,
-            recovery_policy=recovery_policy,
+        envelope = self._envelope(agent, task, input_value, task_id=task_id)
+        session_id = conversation.external_session_id or (
+            f"{self.workflow_id}:{conversation.key.value}"
         )
-        return await bridge.invoke_with_recovery(
-            agent,
-            task,
-            input_value,
-            conversation,
-            task_id=task_id,
-            recovery_policy=recovery_policy,
+        task_attempt = ProviderTaskAttempt.acquire(
+            self.services.workspace,
+            envelope,
+            workflow_id=self.workflow_id,
+            identity_key=reporting_identity_key(
+                agent.id,
+                conversation.key.value,
+            ),
+            session_id=session_id,
         )
+        try:
+            bridge = self._bridge(
+                agent,
+                task,
+                input_value,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+                envelope=envelope,
+                task_attempt=task_attempt,
+            )
+            if recovery_policy is None:
+                return await bridge.invoke(
+                    agent,
+                    task,
+                    input_value,
+                    conversation,
+                    task_id=task_id,
+                )
+            return await bridge.invoke_with_recovery(
+                agent,
+                task,
+                input_value,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+            )
+        finally:
+            task_attempt.close()
 
     def _bridge(
         self,
@@ -130,25 +179,11 @@ class TemplateDistillationProviderRuntime:
         *,
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        envelope: TaskEnvelope | None = None,
+        task_attempt: ProviderTaskAttempt | None = None,
     ) -> TemplateDistillationAgentBridge:
         workspace = self.services.workspace
-        input_ref = TEMPLATE_DISTILLATION_INPUT_REF.format(run_id=value.run_id)
-        envelope = TaskEnvelope(
-            # The Host action id is also the typed terminal/tool persistence
-            # identity for this dispatch.  Keeping one value here preserves
-            # the existing bridge correlation without inventing an attempt
-            # or durable recovery policy.
-            task_id=task_id,
-            run_id=value.run_id,
-            agent_id=agent.id,
-            objective=task.objective,
-            input_refs=[input_ref, value.template_ref],
-            constraints=list(TEMPLATE_DISTILLATION_CONSTRAINTS),
-            allowed_outputs=[task.output_contract],
-            allowed_tools=list(task.tools),
-            input_contract_kind=task.input_contract,
-            input_contract_ref=input_ref,
-        )
+        envelope = envelope or self._envelope(agent, task, value, task_id=task_id)
         session_id = conversation.external_session_id or (
             f"{self.workflow_id}:{conversation.key.value}"
         )
@@ -167,6 +202,9 @@ class TemplateDistillationProviderRuntime:
             bus=self.services.bus,
             store=self._store(workspace),
             tool_names=task.tools,
+            task_correlation=(
+                task_attempt.correlation if task_attempt is not None else None
+            ),
             recovery_event_callback=(
                 build_tool_recovery_callback(recovery_driver)
                 if recovery_driver is not None
@@ -192,16 +230,54 @@ class TemplateDistillationProviderRuntime:
         existing = self.execution.session(self.workflow_id, conversation.key.value)
         if existing is not None:
             session_factory.reconfigure(existing.loop)
+
+        def load_completed(*_args: Any):
+            if task_attempt is None:
+                return None
+            result = task_attempt.load_completed_or_activate()
+            if result is None:
+                return None
+            conversation.external_session_id = result.session_id
+            return result.payload
+
         return TemplateDistillationAgentBridge(
             workspace,
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
+            completed_result_loader=load_completed,
+            terminal_task_attempt_id=(
+                task_attempt.correlation.task_attempt_id
+                if task_attempt is not None
+                else None
+            ),
             recovery_driver=recovery_driver,
             progress_observer=ReportingContinuationProgressObserver(
                 workspace,
                 envelope,
             ).observe,
+        )
+
+    @staticmethod
+    def _envelope(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: TemplateDistillationInput,
+        *,
+        task_id: str,
+    ) -> TaskEnvelope:
+        input_ref = TEMPLATE_DISTILLATION_INPUT_REF.format(run_id=value.run_id)
+        return TaskEnvelope(
+            task_id=task_id,
+            run_id=value.run_id,
+            agent_id=agent.id,
+            objective=task.objective,
+            input_refs=[input_ref, value.template_ref],
+            constraints=list(TEMPLATE_DISTILLATION_CONSTRAINTS),
+            allowed_outputs=[task.output_contract],
+            allowed_tools=list(task.tools),
+            input_contract_kind=task.input_contract,
+            input_contract_ref=input_ref,
         )
 
     @staticmethod

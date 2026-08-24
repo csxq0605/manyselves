@@ -283,13 +283,6 @@ async def test_waiting_input_returns_after_resumed_state_is_persisted(
     await binding.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "production Binding does not yet supply the current semantic "
-        "TaskCorrelation to completed-result recovery"
-    ),
-)
 @pytest.mark.asyncio
 async def test_binding_module_provider_reuses_persisted_completed_result_before_provider(
     tmp_path: Path,
@@ -301,6 +294,9 @@ async def test_binding_module_provider_reuses_persisted_completed_result_before_
     )
     from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
         REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        build_task_correlation,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         AgentResult,
@@ -318,7 +314,6 @@ async def test_binding_module_provider_reuses_persisted_completed_result_before_
     from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
         IdentityLeaseManager,
         TaskAttemptStore,
-        TaskCorrelation,
     )
     from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
@@ -333,7 +328,7 @@ async def test_binding_module_provider_reuses_persisted_completed_result_before_
     task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
     workflow_id = "public-reporting"
     run_id = "binding-module-persisted"
-    session_id = "binding-persisted-session"
+    session_id = f"{workflow_id}:module-2.4"
     part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
     envelope = TaskEnvelope(
         task_id=task.id,
@@ -370,16 +365,13 @@ async def test_binding_module_provider_reuses_persisted_completed_result_before_
         workflow_id,
         agent.id,
     )
-    correlation = TaskCorrelation(
+    correlation = build_task_correlation(
+        tmp_path,
+        envelope,
         workflow_id=workflow_id,
-        run_id=run_id,
-        task_id=envelope.task_id,
-        task_attempt_id=envelope.task_attempt_id,
-        agent_id=agent.id,
         identity_key=agent.id,
         session_id=session_id,
-        lease_owner_id=lease_handle.lease.owner_id,
-        lease_epoch=lease_handle.lease.lease_epoch,
+        identity_lease=lease_handle.lease,
     )
     try:
         store = TaskAttemptStore(tmp_path, run_id)

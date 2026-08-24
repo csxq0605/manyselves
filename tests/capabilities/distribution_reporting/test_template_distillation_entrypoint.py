@@ -613,6 +613,151 @@ async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
 
 
 @pytest.mark.asyncio
+async def test_template_provider_reuses_persisted_result_before_session(
+    tmp_path: Path,
+) -> None:
+    """The production Provider composition must recover before loop creation."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        build_task_correlation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        IdentityLeaseManager,
+        TaskAttemptStore,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
+        TemplateDistillationProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        DefinitionKind,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+    )
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    run_id = "template-provider-persisted"
+    task_id = "invoke-template-distiller"
+    template_ref = f"Work/runs/{run_id}/templates/template-for-skill.docx"
+    input_ref = f"Work/runs/{run_id}/context/template-distillation-input.json"
+    template_input = TemplateDistillationInput(
+        run_id=run_id,
+        template_ref=template_ref,
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    template_path = tmp_path / template_ref
+    template_path.parent.mkdir(parents=True)
+    template_path.write_bytes(b"template source")
+    input_path = tmp_path / input_ref
+    input_path.parent.mkdir(parents=True)
+    input_path.write_text(template_input.model_dump_json(), encoding="utf-8")
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "template-distiller")
+    task = registry.require(DefinitionKind.TASK, "template-skill-distillation")
+    bus = MessageBus()
+    service = AgentExecutionService(bus)
+    provider_calls = 0
+
+    def forbidden_loop_builder(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed result must bypass Provider session")
+
+    runtime = TemplateDistillationProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=forbidden_loop_builder,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(
+            agent_id=agent.id,
+            value="template-distillation",
+            mode="run",
+        ),
+        run_id=run_id,
+    )
+    envelope = runtime._envelope(agent, task, template_input, task_id=task_id)
+    session_id = f"{runtime.workflow_id}:{conversation.key.value}"
+    lease = IdentityLeaseManager(tmp_path, run_id).acquire(
+        runtime.workflow_id,
+        agent.id,
+    )
+    correlation = build_task_correlation(
+        tmp_path,
+        envelope,
+        workflow_id=runtime.workflow_id,
+        identity_key=agent.id,
+        session_id=session_id,
+        identity_lease=lease.lease,
+    )
+    try:
+        store = TaskAttemptStore(tmp_path, run_id)
+        store.activate(correlation)
+        store.persist_result(
+            correlation,
+            AgentResult(
+                task_id=task_id,
+                run_id=run_id,
+                agent_id=agent.id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=_submission(),
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        lease.release()
+
+    try:
+        outcome = await runtime.invoke_with_recovery(
+            agent,
+            task,
+            template_input,
+            conversation,
+            task_id=task_id,
+            recovery_policy=RecoveryPolicyDefinition(
+                id="template-provider-completed-reuse",
+                version="1.0.0",
+                description="reuse persisted completed result",
+                rules={
+                    "completed_tool_result": RecoveryRule(action="reuse_result"),
+                },
+            ),
+        )
+    finally:
+        await runtime.close()
+
+    assert outcome.status == "ok"
+    assert outcome.session_id == session_id
+    assert TemplateSkillSubmission.model_validate(outcome.result).kind == (
+        "template_skill_submission"
+    )
+    assert provider_calls == 0
+    assert service.sessions == {}
+
+
+@pytest.mark.asyncio
 async def test_template_distillation_bridge_uses_generic_agent_execution_service(
     tmp_path: Path,
 ) -> None:

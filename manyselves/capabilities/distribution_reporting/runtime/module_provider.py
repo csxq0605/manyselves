@@ -35,7 +35,9 @@ from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools 
     WriteResultPartTool,
 )
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
     load_completed_agent_result,
+    reporting_identity_key,
 )
 from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
     ReportingContinuationProgressObserver,
@@ -415,13 +417,13 @@ class ModuleProviderRuntime:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation, task_id=task_id)
-        return await bridge.invoke(
+        return await self._invoke(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
         )
 
     async def invoke_with_recovery(
@@ -434,7 +436,7 @@ class ModuleProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(
+        return await self._invoke(
             agent,
             task,
             value,
@@ -442,14 +444,66 @@ class ModuleProviderRuntime:
             task_id=task_id,
             recovery_policy=recovery_policy,
         )
-        return await bridge.invoke_with_recovery(
-            agent,
-            task,
-            value,
-            conversation,
-            task_id=task_id,
-            recovery_policy=recovery_policy,
-        )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        envelope = self._envelope(context)
+        if envelope is None:
+            raise ValueError("module Provider turn requires a prepared TaskEnvelope")
+
+        task_attempt: ProviderTaskAttempt | None = None
+        if not isinstance(self.dependencies.task_correlation, TaskCorrelation):
+            session_id = conversation.external_session_id or (
+                f"{self.workflow_id}:{conversation.key.value}"
+            )
+            task_attempt = ProviderTaskAttempt.acquire(
+                self.workspace,
+                envelope,
+                workflow_id=self.workflow_id,
+                identity_key=reporting_identity_key(
+                    agent.id,
+                    conversation.key.value,
+                ),
+                session_id=session_id,
+            )
+        try:
+            bridge = self._bridge(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+                task_attempt=task_attempt,
+            )
+            if recovery_policy is None:
+                return await bridge.invoke(
+                    agent,
+                    task,
+                    context,
+                    conversation,
+                    task_id=task_id,
+                )
+            return await bridge.invoke_with_recovery(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+            )
+        finally:
+            if task_attempt is not None:
+                task_attempt.close()
 
     def _bridge(
         self,
@@ -460,6 +514,7 @@ class ModuleProviderRuntime:
         *,
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        task_attempt: ProviderTaskAttempt | None = None,
     ) -> ModuleAuthoringAgentBridge | ModuleReviewerAgentBridge:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         envelope = self._envelope(context)
@@ -469,10 +524,19 @@ class ModuleProviderRuntime:
             f"{self.workflow_id}:{conversation.key.value}"
         )
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
+        base_dependencies = (
+            replace(
+                self.dependencies,
+                task_correlation=task_attempt.correlation,
+            )
+            if task_attempt is not None
+            else self.dependencies
+        )
         dependencies = self._compose_artifact_dependencies(
             agent,
             envelope,
             session_id=session_id,
+            base_dependencies=base_dependencies,
         )
         recovery_driver = (
             AgentRecoveryDriver(recovery_policy)
@@ -533,6 +597,8 @@ class ModuleProviderRuntime:
         if existing is not None:
             session_factory.reconfigure(existing.loop)
         if self._is_reviewer(agent, task):
+            if task_attempt is not None:
+                task_attempt.activate()
             return ModuleReviewerAgentBridge(
                 self.workspace,
                 execution=self.execution,
@@ -549,7 +615,10 @@ class ModuleProviderRuntime:
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
-            completed_result_loader=self._completed_result_loader(),
+            completed_result_loader=self._completed_result_loader(
+                task_attempt=task_attempt,
+                expected=dependencies.task_correlation,
+            ),
             terminal_task_attempt_id=(
                 dependencies.task_correlation.task_attempt_id
                 if isinstance(dependencies.task_correlation, TaskCorrelation)
@@ -562,7 +631,12 @@ class ModuleProviderRuntime:
             ).observe,
         )
 
-    def _completed_result_loader(self) -> CompletedResultLoader | None:
+    def _completed_result_loader(
+        self,
+        *,
+        task_attempt: ProviderTaskAttempt | None,
+        expected: Any,
+    ) -> CompletedResultLoader | None:
         """Reuse a persisted result only when the caller supplied its identity.
 
         The Provider composition cannot derive a ``TaskCorrelation`` from a
@@ -572,7 +646,8 @@ class ModuleProviderRuntime:
         validation.
         """
 
-        expected = self.dependencies.task_correlation
+        if task_attempt is not None:
+            return task_attempt.load_completed_or_activate
         if not isinstance(expected, TaskCorrelation):
             return None
         return lambda: load_completed_agent_result(self.workspace, expected)
@@ -583,6 +658,7 @@ class ModuleProviderRuntime:
         envelope: TaskEnvelope,
         *,
         session_id: str,
+        base_dependencies: ModuleProviderDependencies | None = None,
     ) -> ModuleProviderDependencies:
         """Resolve existing artifact resources for one prepared Provider task.
 
@@ -593,12 +669,13 @@ class ModuleProviderRuntime:
         prepared envelope and typed input contract.
         """
 
+        base = base_dependencies or self.dependencies
         if (
-            self.dependencies.artifact_gateway is not None
-            or self.dependencies.artifact_access is not None
-            or self.dependencies.result_index is not None
+            base.artifact_gateway is not None
+            or base.artifact_access is not None
+            or base.result_index is not None
         ):
-            return self.dependencies
+            return base
         gateway = scoped_gateway(
             self._artifact_root,
             workflow_id=self.workflow_id,
@@ -613,7 +690,7 @@ class ModuleProviderRuntime:
         )
         result_index = RunToolResultIndex(self.workspace, envelope.run_id)
         return replace(
-            self.dependencies,
+            base,
             artifact_gateway=gateway,
             artifact_access=access,
             result_index=result_index,

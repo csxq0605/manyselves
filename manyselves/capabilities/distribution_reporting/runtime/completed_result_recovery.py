@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,7 +19,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
 )
 
-from .state.parallel import TaskAttemptStore, TaskCorrelation
+from .state.parallel import (
+    IdentityLeaseHandle,
+    IdentityLeaseManager,
+    TaskAttemptStore,
+    TaskCorrelation,
+)
 
 if TYPE_CHECKING:
     from .state.parallel import IdentityLease
@@ -125,6 +131,24 @@ def same_recoverable_task(
     )
 
 
+def reporting_identity_key(agent_id: str, session_key: str | None) -> str:
+    """Project the existing durable Reporting identity for one Agent task."""
+
+    if agent_id == "evidence-auditor" and session_key:
+        return session_key
+    if (
+        agent_id == "cross-module-reviewer"
+        and session_key
+        and session_key.startswith("cross-owner-")
+    ):
+        return session_key
+    if agent_id in {"chief-editor", "chief-editor-auditor"} and session_key:
+        for prefix in ("chief-chapter-", "final-chapter-"):
+            if session_key.startswith(prefix):
+                return session_key.split("-r", 1)[0]
+    return agent_id
+
+
 def load_completed_agent_result(
     workspace: Path,
     expected: TaskCorrelation,
@@ -160,8 +184,84 @@ def load_completed_agent_result(
     return result
 
 
+@dataclass(slots=True)
+class ProviderTaskAttempt:
+    """One live use of the existing Reporting task-attempt protocol.
+
+    The ordering is the mechanically retained behavior: acquire the existing
+    identity lease, compare/load the prior completed result, and activate the
+    current physical attempt only when that semantic result is not reusable.
+    """
+
+    workspace: Path
+    correlation: TaskCorrelation
+    lease_handle: IdentityLeaseHandle
+    _activated: bool = False
+
+    @classmethod
+    def acquire(
+        cls,
+        workspace: Path,
+        envelope: TaskEnvelope,
+        *,
+        workflow_id: str,
+        identity_key: str,
+        session_id: str,
+        execution_profile_sha256: str = "0" * 64,
+    ) -> "ProviderTaskAttempt":
+        workspace = Path(workspace).resolve()
+        manager = IdentityLeaseManager(workspace, envelope.run_id)
+        handle = manager.acquire(
+            workflow_id,
+            identity_key,
+            owner_id=(
+                f"{IdentityLeaseManager.default_owner_id()}:"
+                f"{envelope.task_attempt_id}"
+            ),
+        )
+        try:
+            correlation = build_task_correlation(
+                workspace,
+                envelope,
+                workflow_id=workflow_id,
+                identity_key=identity_key,
+                session_id=session_id,
+                identity_lease=handle.lease,
+                execution_profile_sha256=execution_profile_sha256,
+            )
+        except Exception:
+            handle.release()
+            raise
+        return cls(workspace, correlation, handle)
+
+    def activate(self) -> None:
+        if self._activated:
+            return
+        TaskAttemptStore(self.workspace, self.correlation.run_id).activate(
+            self.correlation
+        )
+        self._activated = True
+
+    def load_completed_or_activate(self) -> AgentResult | None:
+        completed = load_completed_agent_result(self.workspace, self.correlation)
+        if completed is None:
+            self.activate()
+        return completed
+
+    def close(self) -> None:
+        self.lease_handle.release()
+
+    def __enter__(self) -> "ProviderTaskAttempt":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+
 __all__ = [
+    "ProviderTaskAttempt",
     "build_task_correlation",
     "load_completed_agent_result",
+    "reporting_identity_key",
     "same_recoverable_task",
 ]

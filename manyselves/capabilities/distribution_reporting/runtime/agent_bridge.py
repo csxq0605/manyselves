@@ -82,6 +82,7 @@ class TemplateDistillationAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "distill-template-skill",
         completed_result_loader: CompletedResultLoader | None = None,
+        terminal_task_attempt_id: str | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
         progress_observer: ProgressObserver | None = None,
     ) -> None:
@@ -90,6 +91,7 @@ class TemplateDistillationAgentBridge:
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
+        self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
         self.progress_observer = progress_observer
 
@@ -244,13 +246,13 @@ class TemplateDistillationAgentBridge:
             # The generic service requires a correlation value.  The Host
             # action id is the existing durable dispatch identity for this
             # first slice; no new attempt or replay policy is introduced here.
-            task_attempt_id=task_id,
+            task_attempt_id=self.terminal_task_attempt_id or task_id,
             turn_kind="task_initial",
         )
         terminal = typed_turn.result_terminal(
             run_id=input_value.run_id,
             task_id=task_id,
-            task_attempt_id=task_id,
+            task_attempt_id=self.terminal_task_attempt_id or task_id,
             session_id=session.session_id,
         )
         if recovery_policy is None:
