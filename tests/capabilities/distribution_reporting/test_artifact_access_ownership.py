@@ -73,16 +73,12 @@ def test_artifact_access_symbols_are_physically_capability_owned() -> None:
         else not (node.module or "").startswith("manyselves.core.reporting")
         for node in imports
     )
-    assert find_spec("manyselves.core.reporting.capabilities") is None
+    assert find_spec("manyselves.core.reporting") is None
 
 
-def test_configuration_error_identity_is_preserved_for_legacy_callers() -> None:
+def test_configuration_error_remains_a_value_error() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
         ConfigurationError as CapabilityConfigurationError,
     )
-    from manyselves.core.reporting.config import (
-        ConfigurationError as LegacyConfigurationError,
-    )
 
-    assert CapabilityConfigurationError is LegacyConfigurationError
     assert issubclass(CapabilityConfigurationError, ValueError)

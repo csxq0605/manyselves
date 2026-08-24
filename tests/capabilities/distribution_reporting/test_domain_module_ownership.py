@@ -91,7 +91,7 @@ def test_pure_domain_symbols_are_physically_capability_owned() -> None:
             else not (node.module or "").startswith("manyselves.core.reporting")
             for node in imports
         )
-        assert find_spec(f"manyselves.core.reporting.{alias}") is None
+    assert find_spec("manyselves.core.reporting") is None
 
 
 def test_pure_domain_representative_outputs_remain_exact() -> None:

@@ -36,11 +36,6 @@ def test_delivery_models_are_capability_owned_and_core_definitions_are_absent() 
     assert delivery.DeliveryContext.__module__ == DELIVERY_MODEL_MODULE
     assert delivery.MaterializedDeliveryReceipt.__module__ == DELIVERY_MODEL_MODULE
 
-    core_workflow = import_module("manyselves.core.reporting.workflow")
-    core_delivery = import_module("manyselves.core.reporting.delivery")
-    assert "_DeliveryContext" not in vars(core_workflow)
-    assert "MaterializedDeliveryReceipt" not in vars(core_delivery)
-
 
 def test_delivery_models_import_without_core_reporting() -> None:
     completed = subprocess.run(

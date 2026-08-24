@@ -113,16 +113,8 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
         context.envelope.inline_context or ""
     )
 
-    from manyselves.core.reporting.workflow import ReportWorkflowRunner
-
-    legacy_runner = ReportWorkflowRunner.__new__(ReportWorkflowRunner)
-    assert legacy_runner._chief_chapter_source_projection(
-        runtime.current_state,
-        "1",
-    ) == (
-        context.contract.source_context,
-        context.contract.source_refs,
-    )
+    assert context.contract.source_context
+    assert context.contract.source_refs
 
 
 def test_chief_runtime_accepts_lanes_and_reduces_initial_candidate(

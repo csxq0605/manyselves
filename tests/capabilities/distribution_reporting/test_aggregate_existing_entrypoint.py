@@ -853,7 +853,6 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
 @pytest.mark.asyncio
 async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from manyselves.capabilities.distribution_reporting.runtime.aggregate_agent_bridge import (
         AggregateEditorAgentBridge,
@@ -885,17 +884,9 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         FinalChapterLaneInput,
     )
     from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-    from manyselves.core.reporting.workflow import ReportWorkflowRunner
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
     from manyselves.runtime.agent_execution import AgentExecutionService
-
-    def forbidden_legacy_runner(*_args, **_kwargs):
-        raise AssertionError("aggregate tail must not call a Legacy Reporting runner")
-
-    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden_legacy_runner)
-    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden_legacy_runner)
 
     class RecordingAgentInvoker:
         def __init__(self, role: str) -> None:

@@ -82,5 +82,4 @@ def test_m66_symbols_are_physically_capability_owned() -> None:
             for node in imports
         )
 
-    assert find_spec("manyselves.core.reporting.special_topics") is None
-    assert find_spec("manyselves.core.reporting.research.project_evidence") is None
+    assert find_spec("manyselves.core.reporting") is None

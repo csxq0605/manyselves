@@ -21,4 +21,4 @@ def test_legacy_policy_symbols_are_owned_by_distribution_capability() -> None:
 
 
 def test_old_core_readiness_module_is_absent() -> None:
-    assert find_spec("manyselves.core.reporting.evidence_readiness") is None
+    assert find_spec("manyselves.core.reporting") is None

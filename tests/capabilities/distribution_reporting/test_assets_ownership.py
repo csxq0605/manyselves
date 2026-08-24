@@ -73,4 +73,4 @@ def test_assets_symbols_are_physically_capability_owned() -> None:
         else not (node.module or "").startswith("manyselves.core.reporting")
         for node in imports
     )
-    assert find_spec("manyselves.core.reporting" + ".assets") is None
+    assert find_spec("manyselves.core.reporting") is None

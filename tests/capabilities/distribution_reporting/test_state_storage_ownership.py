@@ -99,10 +99,4 @@ def test_state_storage_types_are_physically_capability_owned() -> None:
             for node in imports
         )
 
-    for old_suffix in (
-        ".parallel_runtime",
-        ".store",
-        ".source_ledger",
-        ".recovery_state",
-    ):
-        assert find_spec("manyselves.core.reporting" + old_suffix) is None
+    assert find_spec("manyselves.core.reporting") is None

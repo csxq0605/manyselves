@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import DeliveryTools
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     EditedReportSubmission,
@@ -22,7 +22,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.reporting.declarative_delivery import DeclarativeDeliveryRuntime
 
 
 def _edited_report() -> EditedReportSubmission:
@@ -81,54 +80,6 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
     store = ReportingStore(tmp_path)
     edited = _edited_report()
 
-    def _private_template_resolver(_run_id: str) -> tuple[Path, str]:
-        raise AssertionError(
-            "production prepare must not call ReportingService.resolve_report_template"
-        )
-
-    class _Runner:
-        service = SimpleNamespace(
-            workspace=tmp_path,
-            store=store,
-            resolve_report_template=_private_template_resolver,
-        )
-
-        def _prepare_and_render_delivery(self, _state: dict) -> None:
-            raise AssertionError("production prepare must not call Runner private prepare")
-
-        def _validated_final_audit_subject(
-            self,
-            _state: dict,
-        ) -> tuple[EditedReportSubmission, str]:
-            raise AssertionError(
-                "production prepare must not call ReportWorkflowRunner._validated_final_audit_subject"
-            )
-
-        def _write_handoff_contracts(self, state: dict) -> Path:
-            raise AssertionError(
-                "production prepare must not call ReportWorkflowRunner._write_handoff_contracts"
-            )
-
-        def _delivery_projection(
-            self,
-            _state: dict,
-            subject: EditedReportSubmission,
-            _claims: list,
-        ) -> None:
-            raise AssertionError(
-                "production prepare must not call Runner private delivery projection"
-            )
-
-        def _validate_final_report_structure(
-            self,
-            _state: dict,
-            _markdown: str,
-            _phase: str,
-        ) -> None:
-            raise AssertionError(
-                "production prepare must not call Runner private report validation"
-            )
-
     state = {
         "run_id": run_id,
         "request": ReportRequest(instruction="Render the accepted report."),
@@ -176,7 +127,7 @@ def test_delivery_prepare_uses_capability_tool_and_writes_run_scoped_artifacts(
             }
         )
     )
-    prepared = DeclarativeDeliveryRuntime(_Runner()).prepare(serialized)
+    prepared = DeliveryTools(tmp_path, store).prepare(serialized)
 
     run_root = tmp_path / "Work" / "runs" / run_id
     expected_files = (

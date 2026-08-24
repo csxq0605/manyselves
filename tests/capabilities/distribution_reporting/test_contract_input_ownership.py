@@ -101,8 +101,7 @@ def test_contract_and_input_modules_are_physically_capability_owned() -> None:
             for node in imports
         )
 
-    assert find_spec("manyselves.core.reporting" + ".submission_contracts") is None
-    assert find_spec("manyselves.core.reporting" + ".input_contracts") is None
+    assert find_spec("manyselves.core.reporting") is None
 
 
 def test_all_input_and_submission_contract_semantics_remain_complete() -> None:

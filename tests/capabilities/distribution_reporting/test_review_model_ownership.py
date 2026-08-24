@@ -103,17 +103,11 @@ def test_review_models_import_without_core_reporting() -> None:
 def test_review_models_are_physically_capability_owned() -> None:
     review = import_module(REVIEW_MODULE)
     cross_owner = import_module(CROSS_OWNER_MODULE)
-    old_review = import_module("manyselves.core.reporting.review_lifecycle")
-    old_cross_owner = import_module(
-        "manyselves.core.reporting.declarative_cross_owner_cohort"
-    )
 
     for model_name in REVIEW_MODEL_NAMES:
         assert getattr(review, model_name).__module__ == REVIEW_MODULE
-        assert model_name not in vars(old_review)
     for model_name in CROSS_OWNER_MODEL_NAMES:
         assert getattr(cross_owner, model_name).__module__ == CROSS_OWNER_MODULE
-        assert model_name not in vars(old_cross_owner)
 
     for module in (review, cross_owner):
         source = Path(module.__file__).read_text(encoding="utf-8")

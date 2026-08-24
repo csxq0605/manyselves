@@ -69,4 +69,4 @@ def test_collaboration_tools_are_physically_capability_owned() -> None:
     assert router.artifact_path_refs.__module__ == MESSAGE_ROUTER_MODULE
     assert router.source_record_ids.__module__ == MESSAGE_ROUTER_MODULE
     assert find_spec("manyselves.core.tools.reporting_collaboration_tools") is None
-    assert find_spec("manyselves.core.reporting.message_router") is None
+    assert find_spec("manyselves.core.reporting") is None

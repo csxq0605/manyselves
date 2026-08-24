@@ -21,17 +21,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.module_lane_definitions import (
     register_module_runtime_lane_specializations,
 )
-from manyselves.core.reporting.declarative_chief_chapter_cohort import (
-    register_chief_chapter_lane_specializations,
-)
-from manyselves.core.reporting.declarative_cross_owner_cohort import (
-    register_cross_owner_pipeline_specializations,
-)
-from manyselves.core.reporting.declarative_final_chapter_cohort import (
-    register_final_chapter_lane_specializations,
-)
-from manyselves.core.reporting.declarative_final_review_cycle import (
-    register_final_review_lane_specializations,
+from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime import (
+    register_reporting_tail_workflow_specializations,
 )
 from manyselves.kernel.definitions import (
     DefinitionKind,
@@ -190,10 +181,7 @@ def _registry_with_existing_workflow_specializers() -> DefinitionRegistry:
     assert isinstance(template, WorkflowDefinition)
     registry.register(specialize_workflow(template, {"max_concurrency": 4}))
     register_module_runtime_lane_specializations(registry)
-    register_cross_owner_pipeline_specializations(registry)
-    register_chief_chapter_lane_specializations(registry)
-    register_final_chapter_lane_specializations(registry)
-    register_final_review_lane_specializations(registry)
+    register_reporting_tail_workflow_specializations(registry)
     return registry
 
 

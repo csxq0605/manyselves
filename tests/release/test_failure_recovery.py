@@ -26,7 +26,7 @@ RECOVERY_EVIDENCE = {
     "runtime_shutdown": "tests/webapi/test_conversations_agents_reporting.py::test_failed_normal_shutdown_blocks_new_runtime_until_cleanup_finishes",
     "stale_revision": "tests/application/test_workspace_files.py::test_write_rejects_stale_revision",
     "sse_cursor_evicted": "tests/webapi/test_sse.py::test_register_replays_present_cursor_or_emits_non_replayed_resync",
-    "report_waiting_user": "tests/reporting/test_service_boundary.py::test_service_retains_same_identity_registry_while_waiting_for_user",
+    "report_waiting_user": "tests/runtime/test_workflow_host.py::test_runtime_host_waits_and_resumes_input_inside_subworkflow",
     "invalid_checkpoint": "tests/webapi/test_conversations_agents_reporting.py::test_missing_checkpoint_fails_before_durable_truncation",
 }
 

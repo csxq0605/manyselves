@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
 )
+from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import DeliveryTools
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ModuleSubmission,
 )
@@ -17,7 +17,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.reporting.declarative_delivery import DeclarativeDeliveryRuntime
 
 
 def _module_submissions() -> dict[str, dict]:
@@ -87,20 +86,7 @@ def test_publish_materialize_is_capability_owned_for_serialized_delivery_context
         )
     )
 
-    class _Runner:
-        def __init__(self) -> None:
-            self.service = SimpleNamespace(
-                workspace=tmp_path,
-                store=ReportingStore(tmp_path),
-            )
-
-        def _publish_and_materialize_delivery(self, _context: DeliveryContext) -> None:
-            raise AssertionError("production publish must not call Runner private publish")
-
-    published = DeclarativeDeliveryRuntime(
-        _Runner(),
-        prepare_tool=lambda current_state: current_state,
-    ).publish(state)
+    published = DeliveryTools(tmp_path, ReportingStore(tmp_path)).publish(state)
     published_context = DeliveryContext.model_validate(
         {
             "state": published,
@@ -174,30 +160,14 @@ def test_complete_materialized_delivery_is_capability_owned_after_json_roundtrip
         )
     )
 
-    class _Runner:
-        def __init__(self) -> None:
-            self.service = SimpleNamespace(
-                workspace=tmp_path,
-                store=ReportingStore(tmp_path),
-            )
-
-        def _complete_delivery(self, _context: DeliveryContext) -> None:
-            raise AssertionError("production complete must not call Runner private complete")
-
-    runtime = DeclarativeDeliveryRuntime(
-        _Runner(),
-        prepare_tool=lambda current_state: current_state,
-    )
+    runtime = DeliveryTools(tmp_path, ReportingStore(tmp_path))
     published = runtime.publish(state)
     published["module_submissions"] = {
         module_id: submission.model_dump(mode="json")
         for module_id, submission in published["module_submissions"].items()
     }
     restored = json.loads(json.dumps(published))
-    completed = DeclarativeDeliveryRuntime(
-        _Runner(),
-        prepare_tool=lambda current_state: current_state,
-    ).complete(restored)
+    completed = DeliveryTools(tmp_path, ReportingStore(tmp_path)).complete(restored)
 
     completion = json.loads(
         (run_root / "delivery-completion.json").read_text(encoding="utf-8")

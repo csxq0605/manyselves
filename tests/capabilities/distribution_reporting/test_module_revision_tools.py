@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -33,9 +32,6 @@ from manyselves.capabilities.distribution_reporting.runtime.module_revision_tool
     prepare_module_revision,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.reporting.review_lifecycle import (
-    prepare_module_revision as prepare_core_module_revision,
-)
 
 
 def _module() -> ModuleSubmission:
@@ -54,16 +50,13 @@ def _module() -> ModuleSubmission:
 
 
 @pytest.mark.asyncio
-async def test_core_revision_projection_keeps_mapping_request_supplement(
+async def test_capability_revision_projection_keeps_mapping_request_supplement(
     tmp_path: Path,
 ) -> None:
     """Serialized request state still reaches the Provider-visible envelope."""
 
     run_id = "serialized-module-revision"
     store = ReportingStore(tmp_path)
-    runner = SimpleNamespace(
-        service=SimpleNamespace(workspace=tmp_path, store=store),
-    )
     state = {
         "run_id": run_id,
         "request": {
@@ -78,8 +71,9 @@ async def test_core_revision_projection_keeps_mapping_request_supplement(
             ]
         },
     }
-    preparation = await prepare_core_module_revision(
-        runner,
+    preparation = await prepare_module_revision(
+        workspace=tmp_path,
+        store=store,
         state=state,
         workflow_id="distribution-reporting",
         subject=_module(),
@@ -90,6 +84,7 @@ async def test_core_revision_projection_keeps_mapping_request_supplement(
                 target_submodule_ids=["2.1.1"],
             )
         ],
+        user_supplements=state["request"]["user_supplements"],
     )
 
     assert (

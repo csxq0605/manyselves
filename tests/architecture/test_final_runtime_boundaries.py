@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -31,12 +30,6 @@ REPORTING_ENTRYPOINTS = {
     "render-existing",
     "distill-template-skill",
 }
-
-
-FINAL_ARCHITECTURE_GAP = pytest.mark.xfail(
-    strict=True,
-    reason="final Capability Runtime extraction is still in progress",
-)
 
 
 def _source_module(source_path: Path) -> tuple[str, list[str]]:
@@ -241,7 +234,6 @@ def test_distribution_contract_models_are_owned_by_the_capability() -> None:
     assert violations == {}
 
 
-@FINAL_ARCHITECTURE_GAP
 def test_declarative_reporting_runner_does_not_inherit_legacy_runner() -> None:
     """Declarative execution must compose Capability services directly."""
 
@@ -258,6 +250,12 @@ def test_declarative_reporting_runner_does_not_inherit_legacy_runner() -> None:
                 violations[source_path.relative_to(REPOSITORY_ROOT).as_posix()] = bases
 
     assert violations == {}
+
+
+def test_legacy_core_reporting_python_package_is_absent() -> None:
+    """Distribution Reporting implementation must be physically Capability-owned."""
+
+    assert _python_sources(PACKAGE_ROOT / "core" / "reporting") == []
 
 
 def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> None:

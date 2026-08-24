@@ -14,17 +14,22 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
 from manyselves.capabilities.distribution_reporting.runtime.artifact_access import (
     ConfigurationError,
     compile_agent_access,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
+from manyselves.capabilities.distribution_reporting.runtime.module_provider_tools import (
+    InspectImageTool,
+)
 from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant, ToolContractError
-from manyselves.core.reporting.agent_runner import InspectImageTool
-from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.tools.artifact_tools import OpenArtifactTool
 from manyselves.core.tools.contracts import normalize_tool_call
 from manyselves.core.tools.outcomes import normalize_tool_outcome
+from manyselves.kernel.definitions import AgentDefinition, DefinitionKind
 
 BASELINE_LOG = Path(
     "/Users/zzymima0000/Documents/Codex/test-improvements/logs/"
@@ -46,6 +51,13 @@ _ANONYMOUS_LINES = (
     "ERROR search_text: 'utf-8' codec can't decode byte 0x87 in position 10: invalid start byte | args={'ref': 'Inputs/source.xlsx'}",
     "ERROR inspect_image: image must be a file inside the project | args={'path': 'P-0013'}",
 )
+
+
+def _module_agent_definition() -> AgentDefinition:
+    _capability, registry = load_distribution_reporting_capability()
+    definition = registry.require(DefinitionKind.AGENT, "module-2.1-specialist")
+    assert isinstance(definition, AgentDefinition)
+    return definition
 
 
 def _classify(line: str) -> str | None:
@@ -263,7 +275,7 @@ def test_prompt_visible_ref_compiles_and_undeclared_tool_fails_closed(
         ArtifactGrant("workflow", "task", "module-2.1-specialist", "session"),
         secret=b"c" * 32,
     )
-    definition = load_packaged_agents()["module-2.1-specialist"]
+    definition = _module_agent_definition()
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id=run_id,
@@ -313,7 +325,7 @@ async def test_p_id_maps_only_to_current_run_and_rejects_foreign_scope(
         ArtifactGrant("workflow", "task", "module-2.1-specialist", "session"),
         secret=b"p" * 32,
     )
-    definition = load_packaged_agents()["module-2.1-specialist"]
+    definition = _module_agent_definition()
     envelope = TaskEnvelope(
         task_id="module-2.1",
         run_id="run-current",

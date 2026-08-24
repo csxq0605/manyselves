@@ -148,7 +148,6 @@ async def test_distill_template_skill_host_entrypoint_materializes_typed_agent_o
 @pytest.mark.asyncio
 async def test_distill_template_skill_host_composes_capability_agent_bridge(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The standalone file Workflow must use the Capability bridge end to end."""
 
@@ -159,16 +158,8 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
         TemplateDistillationWorkflowRuntime,
     )
     from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-    from manyselves.core.reporting.workflow import ReportWorkflowRunner
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.runtime.agent_execution import AgentExecutionService
-
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("legacy reporting runner must not be called")
-
-    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden)
-    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden)
 
     command_id = UUID("60000000-0000-4000-8000-000000000002")
     run_id = f"distill-template-skill-{command_id.hex}"
@@ -624,9 +615,8 @@ async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
 @pytest.mark.asyncio
 async def test_template_distillation_bridge_uses_generic_agent_execution_service(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Capability bridge must not dispatch through either reporting runner."""
+    """The Capability bridge dispatches through the generic execution service."""
 
     from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
         TemplateDistillationAgentBridge,
@@ -635,18 +625,10 @@ async def test_template_distillation_bridge_uses_generic_agent_execution_service
         TemplateDistillationInput,
     )
     from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-    from manyselves.core.reporting.workflow import ReportWorkflowRunner
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
     from manyselves.runtime.agent_execution import AgentExecutionService
-
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("legacy reporting runner must not be called")
-
-    monkeypatch.setattr(ReportingAgentRunner, "run", forbidden)
-    monkeypatch.setattr(ReportWorkflowRunner, "run", forbidden)
 
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())

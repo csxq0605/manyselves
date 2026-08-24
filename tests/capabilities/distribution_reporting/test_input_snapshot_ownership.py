@@ -31,4 +31,4 @@ def test_run_input_snapshot_is_physically_owned_by_the_capability() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert find_spec("manyselves.core.reporting.input_snapshot") is None
+    assert find_spec("manyselves.core.reporting") is None

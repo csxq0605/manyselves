@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +26,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
+from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
+    PdsDocxRenderer,
+)
 from manyselves.capabilities.distribution_reporting.runtime.report_validation import (
     validate_final_report_structure,
 )
@@ -35,7 +37,6 @@ from manyselves.capabilities.distribution_reporting.runtime.review_artifacts imp
     validated_final_audit_subject,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 
 def _edited_report() -> EditedReportSubmission:
@@ -100,20 +101,12 @@ def _state(run_id: str, edited: EditedReportSubmission) -> dict:
     }
 
 
-def test_capability_projection_matches_current_runner_projection(
+def test_capability_projection_builds_the_canonical_renderer_markdown(
     tmp_path: Path,
 ) -> None:
     edited = _edited_report()
     claims = _claims()
     state = _state("run-projection-characterization", edited)
-    runner = SimpleNamespace(service=SimpleNamespace(workspace=tmp_path))
-
-    expected_report, expected_markdown = ReportWorkflowRunner._delivery_projection(
-        runner,
-        state,
-        edited,
-        claims,
-    )
     actual_report, actual_markdown = build_delivery_projection(
         tmp_path,
         state,
@@ -121,8 +114,9 @@ def test_capability_projection_matches_current_runner_projection(
         claims,
     )
 
-    assert actual_report.model_dump(mode="json") == expected_report.model_dump(mode="json")
-    assert actual_markdown == expected_markdown
+    assert actual_report.module_narratives == edited.module_narratives
+    assert actual_report.ledger.claims == claims
+    assert actual_markdown == PdsDocxRenderer._compose_markdown(actual_report)
 
 
 @pytest.mark.parametrize("invalid_suffix", ["\n# 99. unexpected\n"])
@@ -132,7 +126,12 @@ def test_capability_validation_persists_same_success_and_failure_reports(
 ) -> None:
     edited = _edited_report()
     state = _state("run-validation-characterization", edited)
-    markdown = ReportWorkflowRunner._canonical_markdown(edited)
+    _report, markdown = build_delivery_projection(
+        tmp_path,
+        state,
+        edited,
+        _claims(),
+    )
     store = ReportingStore(tmp_path)
 
     validate_final_report_structure(

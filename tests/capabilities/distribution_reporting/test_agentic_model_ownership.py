@@ -101,10 +101,7 @@ def test_agentic_models_are_physically_owned_by_the_capability() -> None:
         for node in imports
     )
 
-    assert find_spec("manyselves.core.reporting" + ".agentic_models") is None
-    core_reporting = import_module("manyselves.core.reporting")
-    for model_name in ownership_roots:
-        assert model_name not in vars(core_reporting)
+    assert find_spec("manyselves.core.reporting") is None
 
 
 def test_agentic_contracts_resolve_to_capability_owned_models() -> None:
