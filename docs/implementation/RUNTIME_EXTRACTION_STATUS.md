@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-04/M9.17 Generic Application 命名收敛；production completed-result 接线待明确现有持久化机制`
+- Current slice: `FA-07/M9.18 自动完成审计；production completed-result identity 决策`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `production completed-result reuse 缺当前 TaskCorrelation；不得从旧 current attempt 猜造，若需启用既有 Hash/CAS/lease 机制须先说明并获用户批准`
-- Next automatic action: `重做生产 Tool/Workflow 绑定与旧路径可达性审计；在不猜造 identity 的前提下收敛 completed-result 生产接线`
+- Next automatic action: `获得用户对机械复用既有 TaskCorrelation/TaskAttemptStore/IdentityLease 持久化机制的明确许可后，接通 production completed-result reuse，重跑 focused 自动审计，再进入唯一一次真实测试`
 
 ## Why the prior completion claim is reopened
 
@@ -61,14 +61,14 @@
 
 | Final design requirement | Current production evidence at FA-00 start | Difference | Planned correction |
 | --- | --- | --- | --- |
-| Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
-| Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
-| Reporting Python 归 Capability 所有 | Module Lane/Cohort、Cross Owner、Chief/Final Chapter、Final Review、taxonomy、Reporting 基础模型以及完整 agentic schema registry 已迁入 Capability；包装模型仍引用待迁移的 Core input/runtime primitive，Agent runner、review/render/delivery 也仍在 `manyselves/core/reporting` | 主要领域 Schema 已真实归位，但 input/runtime primitives 与完整领域执行实现尚未归位 | FA-03/FA-05 接下来按无环 DAG 迁移 input/contracts、领域服务与执行实现，而非继续停留在外层 wrapper |
-| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 与 `AgentExecutionService` 已拥有 AgentLoop/session/turn 生命周期，并在生产路径驱动 natural correction、max-token/tool-slice、typed progress→NO_PROGRESS 和 pre-session completed-result reuse；Provider=0、session 未创建、旧 typed result 原样返回 | FA-02 列出的生产主调债务已清完；Reporting 正确保留 durable-progress 算法/阈值、correlation、typed decode、领域 Prompt/结果持久化。测试专用 `runtime/agent_adapter.py` 仍是 FA-05 删除债务 | FA-03 使用该通用服务组合 Capability Domain Runtime；FA-05 删除无生产用途的旧 adapter |
-| 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
-| 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
-| 旧兼容代码不在发布图 | Sequential/ControlFlow old executor、legacy adapter、Reporting facade/runner 债务仍存在 | 无生产用途和旧产品入口尚未系统删除 | FA-05 按引用与行为测试删除 |
-| 文档直面最终形态 | 六份权威规范/状态已在 FA-00 改写为最终形态 | 当前无已知规范差异；后续持续与代码同步 | 每个切片更新本表 |
+| Declarative Reporting 不依赖 Legacy Runner | 五个公开入口由 Capability Binding 直接构造 Compiler/Generic Host/Capability Runtime；生产扫描无旧 Runner/Facade/selector | 已达到；最终真实 Provider 行为仍待一次验证 | FA-07 真实测试 |
+| Generic Application 不认识 Reporting service | `WorkflowProjectionFacade(runtime_services=...)` 只经 RuntimeBindingCatalog 选择 Capability | 已达到 | 保持架构 Characterization |
+| Reporting Python 归 Capability 所有 | Domain models、lifecycle、Provider composition、Tools、render/delivery 均在 `capabilities/distribution_reporting`；`manyselves/core/reporting` 已删除 | 已达到 | 保持 import/ownership 扫描 |
+| Generic Agent/Recovery 不依赖 Reporting | Runtime 拥有 session/turn/recovery vocabulary；Capability 提供 Prompt/typed decoder/progress；production persisted completed-result 仍缺当前 TaskCorrelation 接线 | 只剩这一项持久化 composition 缺口 | 获许可后机械接回已有 owner，不在 Kernel 复制 |
+| 文件 Workflow 是唯一流程所有者 | 五个公开入口均编译文件定义并由 Generic Host 执行，Module/Cross/Chief/Final/Delivery 作为 Capability Tool/Subworkflow | 已达到 | 真实测试确认长流程 |
+| 单一生产入口 | Generic `/runs` + RuntimeBindingCatalog，无 Legacy/declarative selector | 已达到 | 保持 API Characterization |
+| 旧兼容代码不在发布图 | 旧 Reporting Runner/Facade/API/Core 包已删除；Legacy Runtime/Tool adapter 名称和实现已删除 | 已达到 | 最终扫描 |
+| 文档直面最终形态 | 权威规范、状态、Feature matrix 和网页版真实测试交接均指向 Generic Run Workspace | 已达到；最终结果待真实测试回填 | FA-07 回填 |
 
 ## FA work package progress
 
@@ -261,6 +261,7 @@
 - FA-05/M9.16 将 `runtime/tool_adapter.py` 中仅由旧测试消费的 `LegacyToolAdapterFactory` 和 `legacy:*` 解析路径物理删除；生产 `CapabilityToolAdapter` 改为继承中立 `ToolAdapter`，只共享声明元数据与现有 completed Tool Result lookup，Capability callable、Contract 校验和 result index 行为保持不变。Characterization First 先因中立基类不存在取得 `ImportError` RED，GREEN 后 Runtime/Parameter Adjustment/Reporting Tool affected focused `44 passed`，定向 Ruff、compileall、生产旧名称扫描与 `git diff --check` 通过；未新增 Gate、Hash、CAS、锁、校验链或依赖。
 - FA-03/M9.13b 将真实 Binding 缺少的 8 个 Module lifecycle Tool 端口全部接入 `CapabilityModuleRuntime`：initial review/recheck 的 durable `review/revise/completed` 投影、Author/Reviewer Main exception、既有决定恢复、同 Run `request_user`、`return_to_author`、`stop_incomplete` 和 reviewer escalation 后的 recheck acceptance 均由 Capability typed state 驱动，Kernel/Compiler/Host 不认识这些 Reporting 语义。静态端口 Characterization 先证明 module/full 两个公开根均少 8 个绑定；实现后新增 7 个行为场景并复核 Public Host。Module focused `26 passed`、Public Host 精确路径 `1 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；状态 identity/completion 条件机械保留自既有 lifecycle，未新增 Hash/CAS、锁/lease、Gate、停止阈值、依赖、Action Kind 或公共接口。
 - FA-04/M9.17 将 Generic `WorkflowProjectionFacade` 的最后一个 `reporting_adapter` 构造参数/属性更名为 `runtime_services`，并删除 AgentLoop 注释中已不存在的 `ReportingAgentRunner` 主调叙述；运行时仍把同一个 account-scoped services view 注入 `RuntimeBindingCatalog`，不改变路由、状态或 Capability 选择。Characterization First 先在 Application AST 上取得 `1 failed`，GREEN 后 Architecture/Projection/Binding/Nested HTTP focused `32 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未新增兼容 alias、Gate、Hash、CAS、锁、校验链或依赖。
+- FA-07/M9.18 重跑最终架构关键路径 focused 选择：Architecture boundaries、Workflow Host、Typed Agent Turn、Agent Execution、Application Binding/Projection、五个 Reporting 公开入口、Module/Public/Template/Aggregate/Delivery 共 `113 passed, 1 deselected`。唯一 deselected 是 production Binding persisted completed-result RED：当前 `ModuleProviderRuntime` 能消费完整 `TaskCorrelation`，但 account Binding 没有当前语义 correlation；普通 `Work/runs/<run>/results/<task>.json` 只含 run/task/agent/session，Module 初稿 task id 在同一 Run 内稳定，无法区分用户补充、输入合同或目标变化后的旧结果。用旧 `TaskAttemptStore.current()` 作为 expected 会让旧 identity 自证，直接文件复用则可能错误跳过 Provider，因此两种简化方案都被拒绝。安全等价路径只能机械复用已有 `TaskCorrelation` 的 envelope/profile/input/subject identity、`TaskAttemptStore` terminal/result integrity 和 `IdentityLeaseManager`；这会启用用户默认禁止的既有 Hash/CAS/lease 机制，故在解释并获明确许可前不实施。没有运行全量回归或真实 Provider。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
@@ -305,17 +306,17 @@ git diff --check
 | --- | --- |
 | Stateless Kernel business-neutral | `foundation present; final audit pending` |
 | File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
-| One Generic Runtime Host | `foundation present; legacy host removal pending` |
+| One Generic Runtime Host | `achieved for all five public Reporting entrypoints` |
 | Generic Agent/Tool/Conversation/Recovery | `achieved for the production execution path; final legacy-adapter removal audit remains in FA-05` |
-| Capability-owned Reporting Domain Runtime | `not achieved` |
-| No Declarative→Legacy Runner inheritance/delegation | `production public entrypoints no longer delegate; legacy classes still present` |
+| Capability-owned Reporting Domain Runtime | `achieved except production completed-result persistence composition` |
+| No Declarative→Legacy Runner inheritance/delegation | `achieved; old Runner/Facade/Core package deleted` |
 | Generic Capability Binding/Application | `achieved; account-scoped long-lived RuntimeServicesView catalog` |
-| Generic FastAPI/React for two capabilities | `foundation present; final neutrality audit pending` |
-| Legacy Runner/Facade/selectors absent from production/release | `not achieved` |
-| Recovery/Same-run behaviors on final path | `not yet reverified after final refactor` |
-| Focused/affected checks and builds | `pending for final refactor` |
+| Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
+| Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
+| Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result achieved; persisted Agent completion production binding pending` |
+| Focused/affected checks and builds | `latest architecture selection 113 passed, 1 known RED deselected` |
 | Final real Provider/project/browser test | `not started` |
-| Docs/code/tests/release consistent | `not achieved` |
+| Docs/code/tests/release consistent | `automatic evidence aligned; final real-test result pending` |
 
 只要一项仍为 partial、pending、missing 或 indirect，就不得宣称项目完成。
 
