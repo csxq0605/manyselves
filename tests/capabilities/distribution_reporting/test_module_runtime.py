@@ -486,6 +486,112 @@ def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> No
     assert invokers["evidence-auditor"] is composition.provider
 
 
+def test_module_provider_selects_envelope_for_current_declared_task() -> None:
+    """Accumulated lane state must not bind a revision to the prior review."""
+
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRecheckPreparation,
+        DeclarativeModuleReviewPreparation,
+        DeclarativeModuleRevisionPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+        ModuleRecheckPreparation,
+        ModuleRevisionPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+        ModuleAuthoringAgentBridge,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+    from manyselves.kernel.definitions import DefinitionKind
+
+    _capability, registry = load_distribution_reporting_capability()
+    author_task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
+    review_task = registry.require(DefinitionKind.TASK, "module-runtime-initial-review")
+    revision_task = registry.require(
+        DefinitionKind.TASK,
+        "module-2.4-runtime-revision",
+    )
+    recheck_task = registry.require(DefinitionKind.TASK, "module-runtime-recheck")
+    run_id = "module-provider-current-envelope"
+
+    def envelope(task_id: str, agent_id: str, output: str) -> TaskEnvelope:
+        return TaskEnvelope(
+            task_id=task_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            objective=task_id,
+            allowed_outputs=[output],
+        )
+
+    author_envelope = envelope(
+        "module-2.4-authoring-r0",
+        "module-2.4-specialist",
+        "module_submission",
+    )
+    review_envelope = envelope(
+        "module-2.4-initial-review-r0",
+        "evidence-auditor",
+        "module_review_finding_submission",
+    )
+    revision_envelope = envelope(
+        "module-revision-r1-2.4",
+        "module-2.4-specialist",
+        "module_revision_submission",
+    )
+    recheck_envelope = envelope(
+        "module-2.4-initial-review-r1",
+        "evidence-auditor",
+        "module_review_verdict_submission",
+    )
+    context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="recheck_ready",
+        authoring=DeclarativeModuleAuthoringPreparation.model_construct(
+            specialist_id="module-2.4-specialist",
+            envelope=author_envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+        review=DeclarativeModuleReviewPreparation.model_construct(
+            envelope=review_envelope,
+            prepared=ModuleInitialReviewPreparation.model_construct(
+                envelope=review_envelope,
+            ),
+        ),
+        revision=DeclarativeModuleRevisionPreparation.model_construct(
+            prepared=ModuleRevisionPreparation.model_construct(
+                envelope=revision_envelope,
+            ),
+        ),
+        recheck=DeclarativeModuleRecheckPreparation.model_construct(
+            prepared=ModuleRecheckPreparation.model_construct(
+                envelope=recheck_envelope,
+            ),
+        ),
+    )
+
+    assert ModuleProviderRuntime._envelope(context, author_task) is author_envelope
+    assert ModuleProviderRuntime._envelope(context, review_task) is review_envelope
+    assert ModuleProviderRuntime._envelope(context, revision_task) is revision_envelope
+    assert ModuleProviderRuntime._envelope(context, recheck_task) is recheck_envelope
+    assert ModuleAuthoringAgentBridge._envelope(context, author_task) is author_envelope
+    assert ModuleAuthoringAgentBridge._envelope(context, revision_task) is revision_envelope
+
+
 @pytest.mark.asyncio
 async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversation_session(
     tmp_path: Path,

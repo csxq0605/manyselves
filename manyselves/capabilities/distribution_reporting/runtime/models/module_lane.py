@@ -173,6 +173,40 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     error: str | None = None
 
 
+def envelope_for_output_contract(
+    context: DeclarativeModuleRuntimeLaneContext,
+    output_contract: str,
+) -> TaskEnvelope | None:
+    """Project the prepared envelope for the file-declared Agent task."""
+
+    if output_contract in {
+        "declarative_module_revision_agent_result",
+        "module_revision_submission",
+    }:
+        return (
+            context.revision.prepared.envelope
+            if context.revision is not None
+            else None
+        )
+    if output_contract in {
+        "declarative_module_recheck_agent_result",
+        "module_review_verdict_submission",
+    }:
+        return (
+            context.recheck.prepared.envelope
+            if context.recheck is not None
+            else None
+        )
+    if output_contract in {
+        "declarative_module_review_agent_result",
+        "module_review_finding_submission",
+    }:
+        return context.review.envelope if context.review is not None else None
+    if output_contract == "declarative_module_authoring_agent_result":
+        return context.authoring.envelope if context.authoring is not None else None
+    return None
+
+
 __all__ = [
     "DeclarativeModuleAuthoringAgentResult",
     "DeclarativeModuleAuthoringPreparation",
@@ -184,4 +218,5 @@ __all__ = [
     "DeclarativeModuleRevisionAgentResult",
     "DeclarativeModuleRevisionPreparation",
     "DeclarativeModuleRuntimeLaneContext",
+    "envelope_for_output_contract",
 ]

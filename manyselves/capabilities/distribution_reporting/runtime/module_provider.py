@@ -50,6 +50,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRuntimeLaneContext,
+    envelope_for_output_contract,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
     CompletedResultLoader,
@@ -456,7 +457,7 @@ class ModuleProviderRuntime:
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-        envelope = self._envelope(context)
+        envelope = self._envelope(context, task)
         if envelope is None:
             raise ValueError("module Provider turn requires a prepared TaskEnvelope")
 
@@ -517,7 +518,7 @@ class ModuleProviderRuntime:
         task_attempt: ProviderTaskAttempt | None = None,
     ) -> ModuleAuthoringAgentBridge | ModuleReviewerAgentBridge:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-        envelope = self._envelope(context)
+        envelope = self._envelope(context, task)
         if envelope is None:
             raise ValueError("module Provider turn requires a prepared TaskEnvelope")
         session_id = conversation.external_session_id or (
@@ -704,16 +705,11 @@ class ModuleProviderRuntime:
         )
 
     @staticmethod
-    def _envelope(context: DeclarativeModuleRuntimeLaneContext) -> TaskEnvelope | None:
-        if context.authoring is not None:
-            return context.authoring.envelope
-        if context.review is not None:
-            return context.review.envelope
-        if context.revision is not None:
-            return getattr(context.revision.prepared, "envelope", None)
-        if context.recheck is not None:
-            return getattr(context.recheck.prepared, "envelope", None)
-        return None
+    def _envelope(
+        context: DeclarativeModuleRuntimeLaneContext,
+        task: TaskDefinition,
+    ) -> TaskEnvelope | None:
+        return envelope_for_output_contract(context, task.output_contract)
 
     @staticmethod
     def _is_reviewer(agent: AgentDefinition, task: TaskDefinition) -> bool:

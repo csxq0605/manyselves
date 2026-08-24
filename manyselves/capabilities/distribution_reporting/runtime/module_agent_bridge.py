@@ -31,6 +31,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRuntimeLaneContext,
+    envelope_for_output_contract,
 )
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -124,7 +125,7 @@ class ModuleAuthoringAgentBridge:
         recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-        envelope = cast(TaskEnvelope, self._envelope(context))
+        envelope = cast(TaskEnvelope, self._envelope(context, task))
         workflow_id = context.workflow_id or self.workflow_id
         run_id = envelope.run_id
         if self.completed_result_loader is not None:
@@ -361,12 +362,9 @@ class ModuleAuthoringAgentBridge:
     @staticmethod
     def _envelope(
         context: DeclarativeModuleRuntimeLaneContext,
+        task: TaskDefinition,
     ) -> TaskEnvelope | None:
-        if context.authoring is not None:
-            return context.authoring.envelope
-        if context.revision is not None:
-            return context.revision.prepared.envelope
-        return None
+        return envelope_for_output_contract(context, task.output_contract)
 
     def _runtime_id(
         self,
