@@ -1,0 +1,16 @@
+agents:
+  defaults:
+    model: mimo-v2.5-pro
+    provider: anthropic
+
+providers:
+  active: mimo-token-plan-cn
+  configurations:
+    - id: mimo-token-plan-cn
+      name: Xiaomi MiMo Token Plan (China)
+      presetId: anthropic-xiaomi-mimo-token-plan-china
+      provider: anthropic
+      apiKey: null
+      apiBase: https://token-plan-cn.xiaomimimo.com/anthropic
+      defaultModel: mimo-v2.5-pro
+      enabled: true

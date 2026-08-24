@@ -112,20 +112,23 @@ Multi-account manifest:
 ```yaml
 version: 1
 accounts:
-  - id: account-a
-    username: alice
-    passwordEnv: MANYSELVES_ACCOUNT_A_PASSWORD
-
-  - id: account-b
-    username: bob
-    passwordEnv: MANYSELVES_ACCOUNT_B_PASSWORD
+  - id: admin
+    username: admin
+    passwordEnv: MANYSELVES_ACCOUNT_ADMIN_PASSWORD
+  - id: yuanxi_001
+    username: yuanxi_001
+    passwordEnv: MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD
+  - id: yuanxi_002
+    username: yuanxi_002
+    passwordEnv: MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD
 ```
 
 Set the referenced passwords in the process environment:
 
 ```bash
-export MANYSELVES_ACCOUNT_A_PASSWORD='replace-me'
-export MANYSELVES_ACCOUNT_B_PASSWORD='replace-me'
+export MANYSELVES_ACCOUNT_ADMIN_PASSWORD='yuanxi@2026'
+export MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD='yuanxi@2026'
+export MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD='yuanxi@2026'
 export MANYSELVES_ACCOUNTS_FILE=/absolute/path/to/accounts.yaml
 chmod 600 /absolute/path/to/accounts.yaml
 ```
@@ -137,11 +140,18 @@ Each account receives an independent root:
 ```text
 <data-root>/
 └── accounts/
-    ├── account-a/
-    └── account-b/
+    ├── admin/
+    ├── yuanxi_001/
+    └── yuanxi_002/
 ```
 
 Each account owns its own `RuntimeHost`, provider configuration, project registry, message bus, event broker, and workflow state.
+
+The bundled CentOS Podman initializer gives every new account the same
+secret-free connection defaults: Xiaomi MiMo Token Plan (China), Anthropic
+Messages, `https://token-plan-cn.xiaomimimo.com/anthropic`, and
+`mimo-v2.5-pro`. API Keys are not shared and are saved separately in each
+account's private configuration after login.
 
 ## Project state
 

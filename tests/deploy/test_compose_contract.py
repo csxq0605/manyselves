@@ -75,6 +75,30 @@ def test_compose_maps_prefixed_provider_keys_to_runtime_environment() -> None:
     assert environment["OPENROUTER_API_KEY"] == "${MANYSELVES_OPENROUTER_API_KEY:-}"
 
 
+def test_compose_enables_three_default_isolated_accounts() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
+    environment = compose["services"]["api"]["environment"]
+
+    assert environment["MANYSELVES_ACCOUNTS_FILE"] == (
+        "${MANYSELVES_ACCOUNTS_FILE:-/data/manyselves/.manyselves/accounts.yaml}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_ADMIN_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_ADMIN_PASSWORD:-yuanxi@2026}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD:-yuanxi@2026}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD:-yuanxi@2026}"
+    )
+
+    example = Path("deploy/env.example").read_text("utf-8")
+    assert "MANYSELVES_ACCOUNTS_FILE=/data/manyselves/.manyselves/accounts.yaml" in example
+    assert "MANYSELVES_ACCOUNT_ADMIN_PASSWORD=yuanxi@2026" in example
+    assert "MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD=yuanxi@2026" in example
+    assert "MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD=yuanxi@2026" in example
+
+
 def test_cent_os_docs_cover_selinux_volume_labeling() -> None:
     docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
 

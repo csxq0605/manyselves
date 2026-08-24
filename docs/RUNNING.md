@@ -172,8 +172,9 @@ chmod 600 deploy/accounts.yaml
 Set every password variable referenced by `passwordEnv` in the manifest:
 
 ```bash
-export MANYSELVES_ACCOUNT_A_PASSWORD='replace-with-a-long-random-password'
-export MANYSELVES_ACCOUNT_B_PASSWORD='replace-with-a-long-random-password'
+export MANYSELVES_ACCOUNT_ADMIN_PASSWORD='yuanxi@2026'
+export MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD='yuanxi@2026'
+export MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD='yuanxi@2026'
 ```
 
 Start one FastAPI process:
@@ -196,6 +197,14 @@ Multi-account mode requires `--workers 1`. Each authenticated account is routed 
 ```
 
 Provider keys can be configured independently after login. Do not place real account manifests, passwords, or API keys in source control.
+
+The CentOS Podman deployment script enables these three accounts by default. It
+creates an independent Xiaomi MiMo Token Plan (China) configuration for each
+account without an API Key. Each user enters and saves their own key in the
+settings UI. Existing account configuration files are never overwritten. When
+upgrading from legacy single-account storage, the original project and provider
+configuration are copied to `accounts/admin` while the source data remains in
+place.
 
 ## Specialized split-process reporting worker
 

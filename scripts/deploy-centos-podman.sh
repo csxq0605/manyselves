@@ -303,7 +303,7 @@ label_data_dir_for_selinux
 
 info "Starting ManySelves with Podman Compose"
 compose -f deploy/compose.yaml --env-file "$ENV_FILE" down 2>/dev/null || true
-compose -f deploy/compose.yaml --env-file "$ENV_FILE" up -d --no-build
+compose -f deploy/compose.yaml --env-file "$ENV_FILE" up -d --no-build --force-recreate
 
 info "Current containers"
 podman ps --filter name=manyselves

@@ -21,6 +21,30 @@ def test_dockerfile_uses_non_root_user_and_healthcheck() -> None:
     assert "http://127.0.0.1:9000/api/v1/health/live" in healthcheck
 
 
+def test_api_image_contains_multi_account_bootstrap_assets() -> None:
+    dockerfile = Path("deploy/api/Dockerfile").read_text("utf-8")
+    assert "init_multi_account_data.py" in dockerfile
+    assert "accounts.example.yaml" in dockerfile
+    assert "manyselves.account-default.yaml" in dockerfile
+
+
+def test_entrypoint_initializes_the_selected_storage_mode_before_server() -> None:
+    script = Path("deploy/api/entrypoint.sh").read_text("utf-8")
+    assert 'if [ -n "${MANYSELVES_ACCOUNTS_FILE:-}" ]; then' in script
+    assert "init_multi_account_data.py" in script
+    assert '--accounts-file "${MANYSELVES_ACCOUNTS_FILE}"' in script
+    assert "--accounts-template" in script
+    assert "--config-template" in script
+    assert "else\n  python /app/deploy/api/init_config.py" in script
+    assert script.index("init_multi_account_data.py") < script.index("exec gunicorn")
+
+
+def test_cent_os_deployer_leaves_account_bootstrap_to_api_image() -> None:
+    script = Path("scripts/deploy-centos-podman.sh").read_text("utf-8")
+    assert "init_multi_account_data.py" not in script
+    assert "/opt/manyselves-init" not in script
+
+
 def test_initial_config_contains_no_provider_secret() -> None:
     script = Path("deploy/api/init_config.py").read_text("utf-8")
     assert '"apiKey": None' in script
