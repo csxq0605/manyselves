@@ -27,7 +27,6 @@ services:
       CONFIG_PATH: ${MANYSELVES_CONFIG_PATH:-/data/manyselves/manyselves.config.yaml}
     volumes:
       - ${MANYSELVES_DATA_DIR:?set MANYSELVES_DATA_DIR}:/data/manyselves:Z
-      - ${MANYSELVES_CONFIG_SOURCE:-./config}:/app/deploy/config:ro,Z
     expose: ["9000"]
     deploy:
       replicas: 1

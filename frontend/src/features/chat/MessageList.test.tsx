@@ -119,13 +119,13 @@ describe("MessageList", () => {
       <MessageList
         agentId="main"
         api={fakeApi()}
-        messages={[{ content: "你是上面模型", message_id: "m1", role: "user", timestamp: "2026-08-05T20:39:49" }]}
+        messages={[{ content: "你是上面模型", message_id: "m1", role: "user", timestamp: "2026-08-24T06:08:35" }]}
         projectId="project-1"
       />,
     );
 
     const message = screen.getByText("你是上面模型").closest("li");
-    expect(message?.querySelector(".message__meta")?.textContent).toBe("2026-08-05T20:39:49 user");
+    expect(message?.querySelector(".message__meta")?.textContent).toBe("2026-08-24 14:08:35 user");
     expect(screen.getByRole("button", { name: "重编辑并重发 你是上面模型" })).toHaveTextContent("✎ 重编辑");
   });
 
@@ -134,13 +134,13 @@ describe("MessageList", () => {
       <MessageList
         agentId="main"
         api={fakeApi()}
-        messages={[{ checkpoint_id: "cp-1", content: "checkpoint saved", message_id: "m1", role: "checkpoint", timestamp: "2026-08-05T20:55:31" }]}
+        messages={[{ checkpoint_id: "cp-1", content: "checkpoint saved", message_id: "m1", role: "checkpoint", timestamp: "2026-08-24T06:08:35Z" }]}
         projectId="project-1"
       />,
     );
 
     const message = screen.getByText("checkpoint saved").closest("li");
-    expect(message?.querySelector(".message__meta")?.textContent).toBe("checkpoint 2026-08-05T20:55:31");
+    expect(message?.querySelector(".message__meta")?.textContent).toBe("checkpoint 2026-08-24 14:08:35");
   });
 
   it("attaches pre checkpoints to their target message instead of rendering a checkpoint row", async () => {

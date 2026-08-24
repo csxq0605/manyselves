@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { FileEntry } from "./file-api";
 import { FileRowMenu } from "./FileRowMenu";
@@ -14,6 +14,8 @@ export interface FileListProps {
 }
 
 const PAGE_SIZE = 20;
+const ROW_BASE_PADDING = 24;
+const ROW_DEPTH_INDENT = 18;
 
 function ancestorsBelowRoot(path: string, root: string): readonly string[] {
   const segments = path.split("/");
@@ -32,7 +34,18 @@ export function FileList({
   onPreview,
 }: FileListProps) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  const [page, setPage] = useState(0);
+  const paginationKey = `${capabilities.root}\u0000${entries.map((entry) => entry.path).join("\u0000")}`;
+  const [pagination, setPagination] = useState({ key: paginationKey, page: 0 });
+  const page = pagination.key === paginationKey ? pagination.page : 0;
+  const setPage = (nextPage: number | ((currentPage: number) => number)) => {
+    setPagination((current) => {
+      const currentPage = current.key === paginationKey ? current.page : 0;
+      return {
+        key: paginationKey,
+        page: typeof nextPage === "function" ? nextPage(currentPage) : nextPage,
+      };
+    });
+  };
   const visibleEntries = entries.filter((entry) => (
     ancestorsBelowRoot(entry.path, capabilities.root).every((path) => expanded.has(path))
   ));
@@ -42,10 +55,6 @@ export function FileList({
     boundedPage * PAGE_SIZE,
     boundedPage * PAGE_SIZE + PAGE_SIZE,
   );
-
-  useEffect(() => {
-    setPage(0);
-  }, [capabilities.root, entries]);
 
   return (
     <section className="file-list-panel">
@@ -60,7 +69,7 @@ export function FileList({
                 <li
                   className="file-list__row file-list__row--directory"
                   key={entry.path}
-                  style={{ paddingInlineStart: `${depth * 18}px` }}
+                  style={{ paddingInlineStart: `${ROW_BASE_PADDING + depth * ROW_DEPTH_INDENT}px` }}
                 >
                   <button
                     aria-expanded={isExpanded}
@@ -84,7 +93,11 @@ export function FileList({
               );
             }
             return (
-              <li className="file-list__row" key={entry.path} style={{ paddingInlineStart: `${depth * 18}px` }}>
+              <li
+                className="file-list__row"
+                key={entry.path}
+                style={{ paddingInlineStart: `${ROW_BASE_PADDING + depth * ROW_DEPTH_INDENT}px` }}
+              >
                 <span className="file-list__name">{entry.name}</span>
                 <span className="file-list__size">{entry.size?.toLocaleString() ?? "—"} B</span>
                 <FileRowMenu

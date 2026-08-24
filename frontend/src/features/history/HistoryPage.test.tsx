@@ -79,4 +79,10 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("button", { name: "\u4e0a\u4e00\u9875" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "\u4e0b\u4e00\u9875" })).toBeDisabled();
   });
+
+  it("formats conversation timestamps in Asia/Shanghai", async () => {
+    renderHistory(1);
+
+    expect(await screen.findByText("2026-08-05 16:00:00")).toBeVisible();
+  });
 });

@@ -13,13 +13,19 @@ describe("project directory layout CSS", () => {
   it("uses a wide management surface and comfortable table padding", () => {
     const page = cssBlock(".project-directory");
     const row = cssBlock(".file-list__row");
+    const directory = cssBlock(".file-list__directory");
+    const pagination = cssBlock(".file-list__pagination");
+    const outputPagination = cssBlock(".output-tabs__pagination");
     const viewport = cssBlock(".file-list__viewport");
     const outputViewport = cssBlock(".output-tabs__viewport");
 
     expect(page).toContain("margin: 0 auto");
     expect(page).toContain("max-width: min(1600px, calc(100vw - 96px))");
     expect(row).toContain("min-height: 46px");
-    expect(row).toContain("padding: 9px 18px");
+    expect(row).toContain("padding: 10px 24px");
+    expect(directory).toContain("padding: 7px 0 !important");
+    expect(pagination).toContain("padding: 10px 24px");
+    expect(outputPagination).toContain("padding: 10px 24px");
     expect(viewport).toContain("min-height: 220px");
     expect(outputViewport).not.toContain("min-height");
   });

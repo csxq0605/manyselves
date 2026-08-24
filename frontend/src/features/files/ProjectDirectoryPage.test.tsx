@@ -194,6 +194,7 @@ describe("ProjectDirectoryPage", () => {
 
     expect(await screen.findByRole("region", { name: "Inputs file scroll area" })).toHaveClass("file-list__viewport");
     expect(screen.getByText("input-01.md")).toBeVisible();
+    expect(screen.getByText("input-01.md").closest("li")).toHaveStyle({ paddingInlineStart: "24px" });
     expect(screen.queryByText("input-21.md")).not.toBeInTheDocument();
     expect(screen.getByText("Page 1 / 2")).toBeVisible();
 

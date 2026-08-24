@@ -25,6 +25,13 @@ def test_compose_has_one_api_replica_and_persistent_data() -> None:
     ]
 
 
+def test_compose_does_not_shadow_api_bootstrap_assets() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
+    volumes = compose["services"]["api"]["volumes"]
+
+    assert all(":/app/deploy/config" not in volume for volume in volumes)
+
+
 def test_nginx_disables_sse_buffering_and_caches_safely() -> None:
     config = Path("deploy/nginx/default.conf").read_text("utf-8")
     assert "proxy_buffering off" in config

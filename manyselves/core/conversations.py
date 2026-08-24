@@ -9,7 +9,7 @@ Inspired by Codex's rollout JSONL and nanobot's session manager.
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,10 @@ from loguru import logger
 from ..utils.editor_context import parse_editor_context, user_visible_content
 
 _AGENT_TYPES = ["main"]
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _user_visible_content_or_empty(content: str) -> str:
@@ -63,7 +67,7 @@ class ConversationStore:
 
         # Create a session for the old content
         session_id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat(timespec="seconds")
+        timestamp = _utc_timestamp()
 
         for old_file in existing:
             agent_type = old_file.stem
@@ -154,7 +158,7 @@ class ConversationStore:
 
     def _create_new_session(self, name: str = "新对话") -> str:
         session_id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat(timespec="seconds")
+        timestamp = _utc_timestamp()
         sessions = self._load_sessions_metadata()
         sessions.insert(0, {"id": session_id, "name": name, "timestamp": timestamp, "preview": ""})
         self._save_sessions_metadata(sessions)
@@ -319,12 +323,12 @@ class ConversationStore:
         if is_new:
             sessions = self._load_sessions_metadata()
             if not any(s.get("id") == session_id for s in sessions):
-                timestamp = datetime.now().isoformat(timespec="seconds")
+                timestamp = _utc_timestamp()
                 sessions.insert(0, {"id": session_id, "name": "新对话", "timestamp": timestamp, "preview": ""})
                 self._save_sessions_metadata(sessions)
 
         record: dict[str, Any] = {
-            "ts": datetime.now().isoformat(timespec="seconds"),
+            "ts": _utc_timestamp(),
             "role": role,
             "content": content,
         }
@@ -385,12 +389,12 @@ class ConversationStore:
         if is_new:
             sessions = self._load_sessions_metadata()
             if not any(s.get("id") == session_id for s in sessions):
-                timestamp = datetime.now().isoformat(timespec="seconds")
+                timestamp = _utc_timestamp()
                 sessions.insert(0, {"id": session_id, "name": "新对话", "timestamp": timestamp, "preview": ""})
                 self._save_sessions_metadata(sessions)
 
         record = {
-            "ts": datetime.now().isoformat(timespec="seconds"),
+            "ts": _utc_timestamp(),
             "role": "tool_result",
             "content": "manage_tasks",
             "tool": "manage_tasks",

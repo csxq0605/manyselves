@@ -28,10 +28,10 @@
 
 .file-list { border: 1px solid #dcddd9; border-radius: 7px; list-style: none; margin: 0; padding: 0; }
 .file-list-panel > .file-list__viewport > .file-list { border: 0; border-radius: 0; }
-.file-list__row { align-items: center; border-bottom: 1px solid #ecece9; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) auto auto; min-height: 46px; padding: 9px 18px; }
+.file-list__row { align-items: center; border-bottom: 1px solid #ecece9; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) auto auto; min-height: 46px; padding: 10px 24px; }
 .file-list__row:last-child { border-bottom: 0; }
 .file-list__row--directory { display: block; }
-.file-list__directory { align-items: center; border: 0 !important; display: flex; font-weight: 600; gap: 8px; padding: 7px !important; width: 100%; }
+.file-list__directory { align-items: center; border: 0 !important; display: flex; font-weight: 600; gap: 8px; padding: 7px 0 !important; width: 100%; }
 .file-list__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-list__size { color: #6b6f76; font-family: "SFMono-Regular", Cascadia Mono, monospace; font-size: 11px; }
 .file-row-menu button { color: #50545a; font-size: 12px; padding: 5px 7px; }
@@ -43,7 +43,7 @@
   font-size: 13px;
   gap: 12px;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 10px 24px;
 }
 
 .file-list__pagination > div {
@@ -124,7 +124,7 @@
   font-size: 13px;
   gap: 12px;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 10px 24px;
 }
 
 .output-tabs__pagination > div {
