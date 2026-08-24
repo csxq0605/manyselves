@@ -208,3 +208,86 @@ def test_failed_terminal_resumes_after_current_pointer_gained_later_lease(
         assert resumed.load_completed_or_activate() is None
     finally:
         resumed.close()
+
+
+def test_checkpoint_attempt_does_not_reactivate_older_failed_result(
+    tmp_path: Path,
+) -> None:
+    """A stale checkpoint attempt must not replace a newer failed current pointer."""
+
+    run_id = "same-run-stale-checkpoint-attempt"
+    session_id = "public-reporting:module-2.4"
+    workflow_id = "public-reporting"
+    identity_key = "module-2.4-specialist"
+    old_envelope = TaskEnvelope(
+        task_id="module-revision-r1-2.4",
+        task_attempt_id="attempt-old-failed",
+        run_id=run_id,
+        agent_id=identity_key,
+        objective="Revise module 2.4.",
+    )
+    store = TaskAttemptStore(tmp_path, run_id)
+
+    old_failed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        old_envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+    )
+    try:
+        old_failed.activate()
+        store.persist_result(
+            old_failed.correlation,
+            _result(
+                run_id=run_id,
+                session_id=session_id,
+                status=AgentRunStatus.FAILED,
+            ).model_dump(mode="json"),
+            status="failed",
+        )
+    finally:
+        old_failed.close()
+
+    newer_envelope = old_envelope.model_copy(
+        update={"task_attempt_id": "attempt-newer-failed"}
+    )
+    newer_failed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        newer_envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+    )
+    try:
+        newer_failed.activate()
+        store.persist_result(
+            newer_failed.correlation,
+            _result(
+                run_id=run_id,
+                session_id=session_id,
+                status=AgentRunStatus.FAILED,
+            ).model_dump(mode="json"),
+            status="failed",
+        )
+    finally:
+        newer_failed.close()
+
+    assert store.current(old_envelope.task_id) == newer_failed.correlation
+
+    resumed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        old_envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+    )
+    try:
+        assert resumed.correlation.task_attempt_id not in {
+            old_failed.correlation.task_attempt_id,
+            newer_failed.correlation.task_attempt_id,
+        }
+        assert resumed.load_completed_or_activate() is None
+        assert store.current(old_envelope.task_id) == resumed.correlation
+    finally:
+        resumed.close()

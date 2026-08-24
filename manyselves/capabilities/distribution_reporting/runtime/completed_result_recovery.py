@@ -236,19 +236,13 @@ class ProviderTaskAttempt:
                 execution_profile_sha256=execution_profile_sha256,
             )
             store = TaskAttemptStore(workspace, envelope.run_id)
-            previous = store.current(envelope.task_id)
-            if (
-                previous is not None
-                and previous.task_attempt_id == correlation.task_attempt_id
-                and same_recoverable_task(previous, correlation)
-            ):
-                recovered = store.load_verified_attempt(
-                    previous.task_id,
-                    previous.task_attempt_id,
-                )
+            recovered = store.load_verified_attempt(
+                correlation.task_id,
+                correlation.task_attempt_id,
+            )
+            if recovered is not None:
                 if (
-                    recovered is not None
-                    and not same_recoverable_task(
+                    not same_recoverable_task(
                         recovered[0].correlation,
                         correlation,
                     )
@@ -256,7 +250,7 @@ class ProviderTaskAttempt:
                     raise RuntimeError(
                         "persisted task attempt identity or hash mismatch"
                     )
-                if recovered is not None and recovered[0].status != "completed":
+                if recovered[0].status != "completed":
                     # Keep the semantic task and session, but give the resumed
                     # dispatch its own append-only result path.
                     correlation = correlation.model_copy(
