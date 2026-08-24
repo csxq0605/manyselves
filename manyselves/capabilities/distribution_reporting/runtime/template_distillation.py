@@ -22,6 +22,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
     TemplateSkillSubmission,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.entrypoint import (
+    PublicTemplateDistillationRequest,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     TemplateDistillationInput,
 )
@@ -475,13 +478,15 @@ class TemplateDistillationWorkflowRuntime:
     ) -> WorkflowState:
         input_value = state.variables.get(plan.input_variable)
         if input_value is not None:
-            restored_input = (
-                input_value
-                if isinstance(input_value, TemplateDistillationInput)
-                else TemplateDistillationInput.model_validate(input_value)
-            )
-            self._source_metadata.setdefault("run_id", restored_input.run_id)
-            self._source_metadata.setdefault("template_ref", restored_input.template_ref)
+            if isinstance(input_value, TemplateDistillationInput):
+                source_run_id = input_value.run_id
+                template_ref = input_value.template_ref
+            else:
+                request = PublicTemplateDistillationRequest.model_validate(input_value)
+                source_run_id = state.run_id
+                template_ref = request.template_ref
+            self._source_metadata.setdefault("run_id", source_run_id)
+            self._source_metadata.setdefault("template_ref", template_ref)
         tools = self._tools(registry, contracts, plan.tool_ids)
         return await WorkflowRuntimeHost(
             self._executors,

@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence`
-- Current slice: `FA-08/M9.38 move generic execution substrate from Core to Runtime`
+- Current slice: `FA-08/M9.39 restore typed Template file-entrypoint input`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `ed76ec2 Runtime: remove alternate workflow executors`
+- HEAD at slice start: `68121c1 Runtime: own generic execution substrate`
 - Program status: `in progress`
 - Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
 - Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `修复既有 Template 文件入口的 typed 输入恢复偏差，随后实现 Main 单一对话中的三种 Lane 恢复与通用前端产品化`
+- Next automatic action: `实现 Main 单一对话中的三种 Lane 恢复与通用前端产品化`
 
 ## Why the prior completion claim is reopened
 
@@ -288,6 +288,7 @@
 - FA-08/M9.36 为未使用 Gate 表面新增架构 Characterization，先因 `GateDefinition/EVALUATE_GATE` 仍在 Kernel 得到 RED；GREEN 后物理删除 DefinitionKind/Capability location/Workflow field、Gate model、EvaluateGate Action/Executor、Compiler reference/snapshot/CFG 分支与全部空 `gates/.gitkeep`，并机械移除 40 个生产 Workflow 的空 `gates: []`。原 Gate 测试没有保留兼容接口：结构校验继续由 `validate_contract`，条件路由继续由 `if/fail_workflow` Characterization 覆盖；Parallel/Join、Interaction、Recovery 生产定义均未改变。Definitions/Compiler/Control Flow/Application/Architecture/Web projection/Distribution Binding focused `100 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。下一切片移除生产包中的测试专用 Sequential/ControlFlow 执行器。
 - FA-08/M9.37 为“发布包只能存在一个 Workflow 执行宿主”新增架构 Characterization，先因测试专用 `SequentialWorkflowExecutor` 与 `ControlFlowWorkflowExecutor` 仍位于生产包而 RED；GREEN 后将其行为测试统一迁到现有 `WorkflowRuntimeHost`（测试只注入内存 Event Sink），物理删除两个旧执行器及导出，不保留 shim 或第二套运行时。旧执行器曾把所有 Action 计入 `control_steps`，唯一 Host 已有语义只计 `If/ConditionGroup/Goto/ForEach` 控制推进，本次将内部断言对齐为 5，循环结果仍为 3；没有改变 Kernel transition 或运行上限逻辑。Workflow control/sequential/interaction/tool-adapter 与架构 focused `35 passed`，定向 Ruff、compileall、旧符号扫描与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。下一切片继续 core/runtime 物理所有权收敛。
 - FA-08/M9.38 为“Runtime 与 Capability 生产代码不得导入旧 Core 执行 substrate”新增架构 Characterization，先得到 25 个违规文件的 RED；GREEN 后将通用 Agent Loop/MessageBus、Provider、Tool、Artifact、Prompt、Checkpoint、Usage、runtime errors 与 access policy 作为完整无环组件物理迁入 `manyselves/runtime`，全仓生产/测试 import 与 monkeypatch target 机械更新，旧 Core 不留 shim 或 convenience re-export。`manyselves/core` 现在只保留 Conversation、项目结构、设置/历史等项目和产品服务；Capability 与 Runtime 对 Core 导入扫描为零。对应 `tests/core/{artifacts,loops,tools}` 也迁到 `tests/runtime`，当前项目指南、团队定义与发布矩阵路径同步更新。架构/发布矩阵 `18 passed`，Runtime substrate focused `196 passed`，Distribution Provider/ownership affected `37 passed`；定向 Ruff（只保留 AgentLoop 两个既有 N818 命名例外）、compileall、import scan 与 `git diff --check` 通过，未跑全量。额外选择发现 Template 文件入口的两个 typed 输入测试在本切片前的干净 `ed76ec2` 也同样失败，已用隔离 worktree 证明不是 import 迁移引入；下一切片按 Characterization 修复，不混入本物理所有权提交。没有新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。
+- FA-08/M9.39 修复 Template 文件入口的 typed 根输入恢复偏差：Characterization 已在干净 `ed76ec2` 证明两个 Host 入口因把 `PublicTemplateDistillationRequest` 误按领域 `TemplateDistillationInput` 解码而失败；GREEN 后 Capability Runtime 在文件 Workflow 根变量处按公共 Schema 模型读取 `template_ref`，Host-owned `run_id` 直接来自现有 `WorkflowState.run_id`，已完成领域输入恢复仍保持原分支。Kernel、Compiler、Host、Workflow YAML 与公共接口均未改。Template 入口/Provider/Recovery focused 全文件 `16 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法或依赖。
 - 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留，等待当前 M9.34 构建重启后从网页继续，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。Main 对话中的 Run 投影、三种 Lane 恢复选择和侧边栏产品化已列为后续待做，按用户要求先以当前通用 Run 页面证明整条真实链能够完成。
 
 ## Research decisions
