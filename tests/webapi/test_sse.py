@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from manyselves.application.project_metadata import ProjectMetadata
+from manyselves.config.schema import AppConfig
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -564,9 +565,11 @@ class FakeRuntimeHost:
         self.is_ready = False
         self.workspace: Path | None = None
         self.bus = MessageBus()
+        self.config_manager = SimpleNamespace(config=AppConfig())
         self.order: list[str] = []
         self.session_id = "session-1"
         self.loop_manager = SimpleNamespace(
+            get_loop=lambda _agent_id: None,
             get_all_agent_statuses=lambda: {"main": "idle"},
             get_agent_session_id=lambda agent_id: self.session_id,
         )
@@ -590,9 +593,11 @@ class LegacyFakeRuntimeHost:
         self.is_ready = False
         self.workspace: Path | None = None
         self.bus = MessageBus()
+        self.config_manager = SimpleNamespace(config=AppConfig())
         self.stop_count = 0
         self.session_id = "session-1"
         self.loop_manager = SimpleNamespace(
+            get_loop=lambda _agent_id: None,
             get_all_agent_statuses=lambda: {"main": "idle"},
             get_agent_session_id=lambda agent_id: self.session_id,
         )
@@ -838,7 +843,7 @@ async def test_event_context_reads_active_project_and_session_at_processing_time
 
 
 @pytest.mark.asyncio
-async def test_reporting_workflow_uses_explicit_query_and_reply_sessions(tmp_path: Path) -> None:
+async def test_peer_query_and_reply_use_explicit_sessions(tmp_path: Path) -> None:
     host = FakeRuntimeHost()
     host.session_id = None
     app = create_app(settings(tmp_path, sse_replay_capacity=4))
@@ -1202,8 +1207,8 @@ async def test_lifespan_closes_broker_after_conversation_and_before_bus(tmp_path
 
     async with app.router.lifespan_context(app):
 
-        async def close_reporting() -> None:
-            host.order.append("reporting")
+        async def close_workflow_projection() -> None:
+            host.order.append("workflow_projection")
 
         async def close_python() -> None:
             host.order.append("python")
@@ -1219,12 +1224,19 @@ async def test_lifespan_closes_broker_after_conversation_and_before_bus(tmp_path
             host.order.append("broker")
             await original_broker()
 
-        app.state.reporting_facade.close = close_reporting
+        app.state.workflow_projection.close = close_workflow_projection
         app.state.python_run_service.close = close_python
         app.state.conversation_service.close = close_conversations
         app.state.event_broker.close = close_broker
 
-    assert host.order == ["producers", "reporting", "python", "conversations", "broker", "bus"]
+    assert host.order == [
+        "producers",
+        "workflow_projection",
+        "python",
+        "conversations",
+        "broker",
+        "bus",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1247,7 +1259,7 @@ async def test_broker_close_failure_prevents_bus_teardown(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_stage", ["reporting", "python", "broker"])
+@pytest.mark.parametrize("failed_stage", ["workflow_projection", "python", "broker"])
 async def test_staged_startup_failure_cleans_subscriptions_and_same_app_retry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1258,17 +1270,21 @@ async def test_staged_startup_failure_cleans_subscriptions_and_same_app_retry(
     app.dependency_overrides[get_runtime_host] = lambda: host
     failed = False
 
-    if failed_stage == "reporting":
-        original = lifespan_module.ReportingFacade.from_runtime
+    if failed_stage == "workflow_projection":
+        original = lifespan_module.WorkflowProjectionFacade
 
-        def create_reporting(*args, **kwargs):
+        def create_workflow_projection(*args, **kwargs):
             nonlocal failed
             if not failed:
                 failed = True
-                raise RuntimeError("reporting startup failed")
+                raise RuntimeError("workflow_projection startup failed")
             return original(*args, **kwargs)
 
-        monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", create_reporting)
+        monkeypatch.setattr(
+            lifespan_module,
+            "WorkflowProjectionFacade",
+            create_workflow_projection,
+        )
     elif failed_stage == "python":
         original = lifespan_module.PythonRunService
 
@@ -1353,21 +1369,25 @@ async def test_staged_startup_preserves_original_error_when_resource_cleanup_fai
     app.dependency_overrides[get_runtime_host] = lambda: host
     original_close = lifespan_module.ConversationService.close
 
-    def fail_reporting(*args, **kwargs):
-        raise RuntimeError("reporting startup failed")
+    def fail_workflow_projection(*args, **kwargs):
+        raise RuntimeError("workflow_projection startup failed")
 
     async def close_then_fail(conversations) -> None:
         await original_close(conversations)
         raise RuntimeError("conversation cleanup failed")
 
-    monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", fail_reporting)
+    monkeypatch.setattr(
+        lifespan_module,
+        "WorkflowProjectionFacade",
+        fail_workflow_projection,
+    )
     monkeypatch.setattr(lifespan_module.ConversationService, "close", close_then_fail)
 
-    with pytest.raises(RuntimeError, match="reporting startup failed") as captured:
+    with pytest.raises(RuntimeError, match="workflow_projection startup failed") as captured:
         async with app.router.lifespan_context(app):
             pass
 
-    assert str(captured.value) == "reporting startup failed"
+    assert str(captured.value) == "workflow_projection startup failed"
     assert message_subscriber_count(host.bus) == 0
 
 
@@ -1382,7 +1402,7 @@ async def test_startup_and_pending_cleanup_secondary_diagnostics_are_secret_safe
     secret = "startup-pending-secondary-secret"
     logger_calls: list[tuple[object, ...]] = []
     original_broker_start = lifespan_module.EventBroker.start
-    original_reporting_close = lifespan_module.ReportingFacade.close
+    original_workflow_projection_close = lifespan_module.WorkflowProjectionFacade.close
     original_python_close = lifespan_module.PythonRunService.close
     startup_failed = False
 
@@ -1393,15 +1413,17 @@ async def test_startup_and_pending_cleanup_secondary_diagnostics_are_secret_safe
             startup_failed = True
             raise RuntimeError("broker startup primary")
 
-    async def fail_reporting_close(_reporting) -> None:
-        raise RuntimeError("reporting cleanup primary")
+    async def fail_workflow_projection_close(_workflow_projection) -> None:
+        raise RuntimeError("capability cleanup primary")
 
     async def fail_python_close(_python_runs) -> None:
         raise RuntimeError(f"Python cleanup contained {secret}")
 
     monkeypatch.setattr(lifespan_module.EventBroker, "start", fail_broker_once)
     monkeypatch.setattr(
-        lifespan_module.ReportingFacade, "close", fail_reporting_close
+        lifespan_module.WorkflowProjectionFacade,
+        "close",
+        fail_workflow_projection_close,
     )
     monkeypatch.setattr(lifespan_module.PythonRunService, "close", fail_python_close)
     monkeypatch.setattr(
@@ -1442,7 +1464,9 @@ async def test_startup_and_pending_cleanup_secondary_diagnostics_are_secret_safe
     assert "Python cleanup failed" in pending_diagnostics
 
     monkeypatch.setattr(
-        lifespan_module.ReportingFacade, "close", original_reporting_close
+        lifespan_module.WorkflowProjectionFacade,
+        "close",
+        original_workflow_projection_close,
     )
     monkeypatch.setattr(
         lifespan_module.PythonRunService, "close", original_python_close
@@ -1460,20 +1484,20 @@ async def test_normal_shutdown_secondary_diagnostics_are_secret_safe(
     app.dependency_overrides[get_runtime_host] = lambda: host
     secret = "normal-shutdown-secondary-secret"
 
-    with pytest.raises(RuntimeError, match="reporting cleanup primary") as captured:
+    with pytest.raises(RuntimeError, match="capability cleanup primary") as captured:
         async with app.router.lifespan_context(app):
-            reporting = app.state.reporting_facade
+            workflow_projection = app.state.workflow_projection
             python_runs = app.state.python_run_service
-            original_reporting_close = reporting.close
+            original_workflow_projection_close = workflow_projection.close
             original_python_close = python_runs.close
 
-            async def fail_reporting_close() -> None:
-                raise RuntimeError("reporting cleanup primary")
+            async def fail_workflow_projection_close() -> None:
+                raise RuntimeError("capability cleanup primary")
 
             async def fail_python_close() -> None:
                 raise RuntimeError(f"Python cleanup contained {secret}")
 
-            reporting.close = fail_reporting_close
+            workflow_projection.close = fail_workflow_projection_close
             python_runs.close = fail_python_close
 
     diagnostics = "\n".join(
@@ -1485,14 +1509,14 @@ async def test_normal_shutdown_secondary_diagnostics_are_secret_safe(
     assert secret not in diagnostics
     assert "Python cleanup failed" in diagnostics
 
-    reporting.close = original_reporting_close
+    workflow_projection.close = original_workflow_projection_close
     python_runs.close = original_python_close
     async with app.router.lifespan_context(app):
         pass
 
 
 @pytest.mark.asyncio
-async def test_staged_startup_cleanup_supports_legacy_single_stop_host(
+async def test_staged_startup_cleanup_supports_single_stop_host(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1500,12 +1524,16 @@ async def test_staged_startup_cleanup_supports_legacy_single_stop_host(
     app = create_app(settings(tmp_path))
     app.dependency_overrides[get_runtime_host] = lambda: host
 
-    def fail_reporting(*args, **kwargs):
-        raise RuntimeError("reporting startup failed")
+    def fail_workflow_projection(*args, **kwargs):
+        raise RuntimeError("workflow_projection startup failed")
 
-    monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", fail_reporting)
+    monkeypatch.setattr(
+        lifespan_module,
+        "WorkflowProjectionFacade",
+        fail_workflow_projection,
+    )
 
-    with pytest.raises(RuntimeError, match="reporting startup failed"):
+    with pytest.raises(RuntimeError, match="workflow_projection startup failed"):
         async with app.router.lifespan_context(app):
             pass
 
