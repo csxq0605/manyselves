@@ -156,6 +156,22 @@ def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     assert not (PACKAGE_ROOT / "webapi" / "schemas" / "reporting.py").exists()
 
 
+def test_packaging_does_not_publish_the_legacy_reporting_headless_service() -> None:
+    """FastAPI plus generic Capability bindings replace the old report-only API."""
+
+    project_config = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "manyselves-headless" not in project_config
+    assert not (PACKAGE_ROOT / "headless_service.py").exists()
+    for filename in (
+        "headless_runtime.py",
+        "web_runtime.py",
+        "production_runtime.py",
+        "job_runtime.py",
+    ):
+        assert not (PACKAGE_ROOT / "core" / "reporting" / filename).exists()
+
+
 def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> None:
     """Conversation runtime must not bypass file workflows through Core Reporting."""
 
@@ -171,10 +187,14 @@ def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> No
         "revise_reporting_workflow",
         "cancel_reporting_workflow",
         "get_reporting_workflow_status",
+        "project_skill_evolution",
+        "run_product_skill_maintainer",
     ):
         assert legacy_tool not in manager_source
         assert legacy_tool not in loop_source
         assert legacy_tool not in prompt_source
+    assert "ProjectSkillEvolutionTool" not in manager_source
+    assert "RunProductSkillMaintainerTool" not in manager_source
     assert not (PACKAGE_ROOT / "core" / "tools" / "reporting_tool.py").exists()
 
 

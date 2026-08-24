@@ -35,10 +35,6 @@ from ..tools import (
 )
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.registry import ToolRegistry
-from ..tools.skill_evolution_tools import (
-    ProjectSkillEvolutionTool,
-    RunProductSkillMaintainerTool,
-)
 from .agent_loop import AgentLoop
 from .bus import MessageBus
 
@@ -314,18 +310,6 @@ class LoopManager:
                     workspace=self.workspace,
                     timeout=mineru_timeout,
                 ))
-
-        if agent_id == "main":
-            reporting_provider = self._provider_manager.get_active_provider()
-            registry.register(ProjectSkillEvolutionTool(self.workspace))
-            registry.register(
-                RunProductSkillMaintainerTool(
-                    self.workspace,
-                    self.bus,
-                    reporting_provider,
-                    self.config_manager.config.agents.defaults,
-                )
-            )
 
         # Task management — all agents can manage their own tasks
         registry.register(ManageTasksTool(

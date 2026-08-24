@@ -88,8 +88,8 @@ def test_create_tools_for_main(manager):
     assert "get_reporting_workflow_status" not in tool_names
     assert "resume_reporting_workflow" not in tool_names
     assert "revise_reporting_workflow" not in tool_names
-    assert "project_skill_evolution" in tool_names
-    assert "run_product_skill_maintainer" in tool_names
+    assert "project_skill_evolution" not in tool_names
+    assert "run_product_skill_maintainer" not in tool_names
     assert "product_skill_evolution" not in tool_names
     assert "respond" not in tool_names
 

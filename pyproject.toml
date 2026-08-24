@@ -105,4 +105,3 @@ dev = [
 
 [project.scripts]
 manyselves = "manyselves.__main__:main"
-manyselves-headless = "manyselves.headless_service:main"
