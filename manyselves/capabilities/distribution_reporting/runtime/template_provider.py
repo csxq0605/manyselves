@@ -19,6 +19,9 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import 
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
     build_tool_recovery_callback,
 )
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    ReportingContinuationProgressObserver,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
 )
@@ -195,6 +198,10 @@ class TemplateDistillationProviderRuntime:
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
             recovery_driver=recovery_driver,
+            progress_observer=ReportingContinuationProgressObserver(
+                workspace,
+                envelope,
+            ).observe,
         )
 
     @staticmethod

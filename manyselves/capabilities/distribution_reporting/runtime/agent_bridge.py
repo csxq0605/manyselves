@@ -47,6 +47,7 @@ from manyselves.runtime.agent_execution import (
     AgentRecoveryCompleted,
     AgentRecoveryDirective,
     AgentRecoveryObservation,
+    AgentRecoveryProgress,
     AgentRecoveryRequired,
     AgentRecoveryStopped,
     AgentSessionLoop,
@@ -55,6 +56,8 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+
+from .agent_recovery_turn import ProgressObserver
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
@@ -80,6 +83,7 @@ class TemplateDistillationAgentBridge:
         workflow_id: str = "distill-template-skill",
         completed_result_loader: CompletedResultLoader | None = None,
         recovery_driver: AgentRecoveryDriver | None = None,
+        progress_observer: ProgressObserver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -87,6 +91,7 @@ class TemplateDistillationAgentBridge:
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
         self.recovery_driver = recovery_driver
+        self.progress_observer = progress_observer
 
     def _runtime_id(
         self,
@@ -287,21 +292,34 @@ class TemplateDistillationAgentBridge:
                     outcome.message.content
                     == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
                 ):
-                    return AgentRecoveryRequired(
+                    required = AgentRecoveryRequired(
                         event_kind=RecoveryEventKind.MAX_TOKENS,
                         fallback_action=RecoveryActionKind.CONTINUE,
                         detail={"task_id": task.id},
                     )
-                if outcome.message.content == AGENT_TURN_CONTINUATION_REQUIRED:
-                    return AgentRecoveryRequired(
+                elif outcome.message.content == AGENT_TURN_CONTINUATION_REQUIRED:
+                    required = AgentRecoveryRequired(
                         event_kind=RecoveryEventKind.TOOL_SLICE_BOUNDARY,
                         fallback_action=RecoveryActionKind.CONTINUE,
                         detail={"task_id": task.id},
                     )
-                return AgentRecoveryRequired(
-                    event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
-                    fallback_action=RecoveryActionKind.CORRECT,
-                    detail={"task_id": task.id},
+                else:
+                    return AgentRecoveryRequired(
+                        event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                        fallback_action=RecoveryActionKind.CORRECT,
+                        detail={"task_id": task.id},
+                    )
+                if self.progress_observer is None:
+                    return required
+                progress_detail = dict(required.detail or {})
+                return AgentRecoveryProgress(
+                    kind=await self.progress_observer(
+                        session.loop,
+                        required.event_kind,
+                        progress_detail,
+                    ),
+                    continuation=required,
+                    detail=progress_detail,
                 )
             return AgentRecoveryStopped(reason="Agent turn returned an unknown terminal")
 
