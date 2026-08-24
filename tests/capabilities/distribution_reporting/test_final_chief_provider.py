@@ -35,7 +35,12 @@ from manyselves.kernel.conversations import (
     ConversationMode,
     ConversationRecord,
 )
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    RecoveryRule,
+    TaskDefinition,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 
 
@@ -95,6 +100,128 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContex
         input_ref=input_ref,
         envelope=envelope,
     )
+
+
+@pytest.mark.asyncio
+async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import (
+        final_chief_agent_bridge,
+        final_chief_provider,
+    )
+    from manyselves.core.tools.registry import ToolRegistry
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured["dependencies"] = kwargs["dependencies"]
+        return ToolRegistry()
+
+    async def capture_recovery(*args, **kwargs):
+        del args
+        captured["recovery"] = kwargs["recovery"]
+        return {"status": "completed", "submission": {}}
+
+    class Loop:
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    monkeypatch.setattr(final_chief_provider, "build_module_provider_tools", capture_tools)
+    monkeypatch.setattr(
+        final_chief_agent_bridge,
+        "execute_reporting_recovery",
+        capture_recovery,
+        raising=False,
+    )
+    bus = MessageBus()
+    runtime = final_chief_provider.FinalChiefProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        loop_builder=lambda **kwargs: Loop(),
+    )
+    context = _context(tmp_path, "final-chief-provider-run")
+    agent = AgentDefinition(
+        id="chief-editor",
+        version="1.0.0",
+        description="Chief Editor",
+        instructions="Revise the assigned chapter.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="final-chief-chapter-revision",
+        version="1.0.0",
+        description="Final Chief revision lane",
+        agent=agent.id,
+        objective="Revise only the assigned chapter finding.",
+        input_contract="declarative_final_chief_revision_context",
+        output_contract="declarative_final_chief_revision_agent_result",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    policy = RecoveryPolicyDefinition(
+        id="final-chief-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-chief-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="chief-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id="final-chief-provider-run",
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        context,
+        conversation,
+        recovery_policy=policy,
+    )
+    dependencies = captured["dependencies"]
+    decision = await dependencies.recovery_event_callback(
+        "invalid_structured_output",
+        {"task_id": task.id},
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id="invoke-final-chief-action",
+            recovery_policy=policy,
+        )
+    finally:
+        await runtime.close()
+
+    assert outcome.status == "ok"
+    assert decision.action.value == "correct"
+    assert captured["recovery"] is bridge.recovery_driver
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
+    }
 
 
 @pytest.mark.asyncio
