@@ -843,6 +843,170 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
 
 
 @pytest.mark.asyncio
+async def test_module_provider_schema_correction_uses_declared_recovery_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Capability-owned SubmitResultTool reports schema recovery in-session."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+        REPORT_TAXONOMY,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleAuthoringPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import (
+        DefinitionKind,
+        RecoveryPolicyDefinition,
+    )
+    from manyselves.kernel.recovery import RecoveryActionKind, RecoveryController
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
+    policy = registry.require(DefinitionKind.RECOVERY, task.recovery)
+    assert isinstance(policy, RecoveryPolicyDefinition)
+    run_id = "module-provider-schema-recovery"
+    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    envelope = TaskEnvelope(
+        task_id="module-2.4",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_submission"],
+        allowed_tools=[],
+        target_submodule_ids=part_ids,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+    decisions: list[tuple[str, str]] = []
+    original_decide = RecoveryController.decide
+
+    def record_decision(self, event, current_policy, state):
+        decision = original_decide(self, event, current_policy, state)
+        decisions.append((event.kind.value, decision.action.value))
+        return decision
+
+    monkeypatch.setattr(RecoveryController, "decide", record_decision)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    corrections: list[dict[str, object]] = []
+    loops: list[object] = []
+
+    class SchemaCorrectionLoop:
+        def __init__(self, **kwargs: Any) -> None:
+            self.runtime_id = str(kwargs["agent_type"])
+            self.tools = kwargs["tools"]
+            self.callback = None
+            loops.append(self)
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                write_part = self.tools.get("write_result_part")
+                submit = self.tools.get("submit_result")
+                for part_id in part_ids:
+                    await write_part(
+                        part_id=part_id,
+                        content=f"{part_id} reader-visible analysis",
+                        evidence_ids=[],
+                    )
+                corrections.append(
+                    await submit(payload={"kind": "module_submission"})
+                )
+                await submit(
+                    kind="module_submission",
+                    module_id="2.4",
+                    unresolved_questions=[],
+                    revision=0,
+                )
+
+            self.callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self.callback is not None:
+                bus.unsubscribe(UserMessage, self.callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    runtime = ModuleProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=SchemaCorrectionLoop,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(agent_id=agent.id, value="module-2.4", mode="run"),
+        run_id=run_id,
+    )
+    try:
+        outcome = await runtime.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id="dispatch-module-2.4",
+            recovery_policy=policy,
+        )
+    finally:
+        await runtime.close()
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert corrections[0]["status"] == "correction_required"
+    assert decisions == [
+        ("invalid_structured_output", RecoveryActionKind.CORRECT.value)
+    ]
+    assert len(loops) == 1
+
+
+@pytest.mark.asyncio
 async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_payload(
     tmp_path: Path,
 ) -> None:

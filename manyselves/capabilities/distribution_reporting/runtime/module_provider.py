@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
 from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
     ListResultPartsTool,
     QueryPeerTool,
@@ -64,6 +67,7 @@ from manyselves.capabilities.distribution_reporting.runtime.research_tools impor
     OpenProjectSourceTool,
     OpenReferenceTool,
     OpenWebSourceTool,
+    PublishResearchNoteTool,
     SearchProjectEvidenceTool,
     SearchReferenceLibraryTool,
     WebSearchTool,
@@ -88,6 +92,7 @@ from manyselves.runtime.agent_execution import (
     AgentExecutionService,
     AgentSessionLoop,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
@@ -217,6 +222,14 @@ def build_module_provider_tools(
         "open_web_source": OpenWebSourceTool(web_backend, ledger),
         "inspect_document": InspectDocumentTool(workspace),
         "calculate": CalculateTool(),
+        "publish_research_note": PublishResearchNoteTool(
+            workspace,
+            bus,
+            workflow_id,
+            envelope.run_id,
+            envelope.task_id,
+            envelope.agent_id,
+        ),
         "query_peer": QueryPeerTool(
             bus,
             envelope.task_id,
@@ -418,7 +431,14 @@ class ModuleProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation, task_id=task_id)
+        bridge = self._bridge(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -436,6 +456,7 @@ class ModuleProviderRuntime:
         conversation: Any,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> ModuleAuthoringAgentBridge | ModuleReviewerAgentBridge:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         envelope = self._envelope(context)
@@ -450,6 +471,21 @@ class ModuleProviderRuntime:
             envelope,
             session_id=session_id,
         )
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
+        if (
+            recovery_driver is not None
+            and dependencies.recovery_event_callback is None
+        ):
+            dependencies = replace(
+                dependencies,
+                recovery_event_callback=build_tool_recovery_callback(
+                    recovery_driver
+                ),
+            )
         tool_names = list(task.tools)
         if dependencies.artifact_access is not None and (
             dependencies.artifact_gateway is not None
@@ -499,6 +535,7 @@ class ModuleProviderRuntime:
                 execution=self.execution,
                 session_factory=lambda _runtime_id: session_factory(),
                 workflow_id=self.workflow_id,
+                recovery_driver=recovery_driver,
             )
         return ModuleAuthoringAgentBridge(
             self.workspace,
@@ -511,6 +548,7 @@ class ModuleProviderRuntime:
                 if isinstance(dependencies.task_correlation, TaskCorrelation)
                 else None
             ),
+            recovery_driver=recovery_driver,
         )
 
     def _completed_result_loader(self) -> CompletedResultLoader | None:

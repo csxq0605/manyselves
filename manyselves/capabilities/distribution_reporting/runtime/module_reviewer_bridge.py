@@ -43,6 +43,7 @@ from manyselves.runtime.agent_execution import (
     AgentSessionLoop,
     AgentTurnRequest,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -58,11 +59,13 @@ class ModuleReviewerAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "public-reporting",
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.recovery_driver = recovery_driver
 
     async def invoke(
         self,
@@ -203,6 +206,7 @@ class ModuleReviewerAgentBridge:
                 result_ref,
                 output_contract=task.output_contract,
             ),
+            recovery=self.recovery_driver,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

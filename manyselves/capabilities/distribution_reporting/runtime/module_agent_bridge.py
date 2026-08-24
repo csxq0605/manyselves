@@ -64,6 +64,7 @@ class ModuleAuthoringAgentBridge:
         workflow_id: str = "public-reporting",
         completed_result_loader: CompletedResultLoader | None = None,
         terminal_task_attempt_id: str | None = None,
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
@@ -71,6 +72,7 @@ class ModuleAuthoringAgentBridge:
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
         self.terminal_task_attempt_id = terminal_task_attempt_id
+        self.recovery_driver = recovery_driver
 
     async def invoke(
         self,
@@ -152,7 +154,10 @@ class ModuleAuthoringAgentBridge:
                     )
 
                 recovered = await self.execution.recover_completed_result(
-                    recovery=AgentRecoveryDriver(recovery_policy),
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
                     detail={
                         "task_id": task.id,
                         "source": "persisted_result",
@@ -244,6 +249,7 @@ class ModuleAuthoringAgentBridge:
                 result_ref,
                 output_contract=task.output_contract,
             ),
+            recovery=self.recovery_driver,
         )
         if isinstance(recovered, AgentInvocationOutcome):
             return recovered

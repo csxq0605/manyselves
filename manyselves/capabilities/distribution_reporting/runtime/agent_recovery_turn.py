@@ -7,7 +7,7 @@ lets the Capability provide the next-turn prompt and result decoder.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from manyselves.core.loops.agent_loop import (
@@ -34,6 +34,18 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 
 PromptBuilder = Callable[[RecoveryEventKind], str]
 ResultDecoder = Callable[[str], Any]
+ToolRecoveryCallback = Callable[[str, dict[str, Any]], Awaitable[Any]]
+
+
+def build_tool_recovery_callback(
+    recovery: AgentRecoveryDriver,
+) -> ToolRecoveryCallback:
+    """Bind Capability Tool events to the same declared recovery state."""
+
+    async def callback(event_kind: str, detail: dict[str, Any]) -> Any:
+        return recovery.decide(RecoveryEventKind(event_kind), detail)
+
+    return callback
 
 
 async def execute_reporting_recovery(
@@ -45,6 +57,7 @@ async def execute_reporting_recovery(
     terminals: Sequence[AgentTerminalSubscription],
     prompt_builder: PromptBuilder,
     result_decoder: ResultDecoder,
+    recovery: AgentRecoveryDriver | None = None,
 ) -> Any:
     """Run declared Reporting recovery on the existing Agent session.
 
@@ -147,7 +160,7 @@ async def execute_reporting_recovery(
     return await execution.execute_with_recovery(
         session,
         initial,
-        recovery=AgentRecoveryDriver(recovery_policy),
+        recovery=recovery or AgentRecoveryDriver(recovery_policy),
         interpret=interpret,
         build_turn=build_turn,
         stop=stop,
@@ -156,4 +169,4 @@ async def execute_reporting_recovery(
     )
 
 
-__all__ = ["execute_reporting_recovery"]
+__all__ = ["build_tool_recovery_callback", "execute_reporting_recovery"]
