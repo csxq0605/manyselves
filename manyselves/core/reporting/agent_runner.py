@@ -30,6 +30,7 @@ from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools 
     WriteResultPartTool,
 )
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    build_task_correlation,
     same_recoverable_task,
 )
 from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
@@ -1980,68 +1981,14 @@ class ReportingAgentRunner:
         execution_profile_sha256: str = "0" * 64,
     ) -> TaskCorrelation:
         """Bind one dispatch to its immutable inputs and active identity lease."""
-
-        input_contract_ref = envelope.input_contract_ref
-        input_contract_sha256: str | None = None
-        subject_ref: str | None = None
-        subject_sha256: str | None = None
-        if input_contract_ref:
-            contract_path = (self.workspace / input_contract_ref).resolve()
-            if (
-                not contract_path.is_relative_to(self.workspace)
-                or not contract_path.is_file()
-            ):
-                raise ValueError("task input contract is not a readable workspace artifact")
-            contract_bytes = contract_path.read_bytes()
-            input_contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
-            try:
-                contract_payload = json.loads(contract_bytes)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("task input contract is not valid JSON") from exc
-            candidate_ref = next(
-                (
-                    contract_payload.get(field)
-                    for field in ("subject_ref", "base_subject_ref")
-                    if isinstance(contract_payload.get(field), str)
-                ),
-                None,
-            )
-            if candidate_ref:
-                candidate_path = (self.workspace / candidate_ref).resolve()
-                if (
-                    not candidate_path.is_relative_to(self.workspace)
-                    or not candidate_path.is_file()
-                ):
-                    raise ValueError("task subject is not a readable workspace artifact")
-                subject_ref = candidate_ref
-                subject_sha256 = hashlib.sha256(candidate_path.read_bytes()).hexdigest()
-        task_envelope_sha256 = hashlib.sha256(
-            json.dumps(
-                envelope.model_dump(
-                    mode="json",
-                    exclude={"task_attempt_id"},
-                ),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        return TaskCorrelation(
+        return build_task_correlation(
+            self.workspace,
+            envelope,
             workflow_id=workflow_id,
-            run_id=envelope.run_id,
-            task_id=envelope.task_id,
-            task_attempt_id=envelope.task_attempt_id,
-            agent_id=envelope.agent_id,
             identity_key=identity_key,
             session_id=session_id,
-            task_envelope_sha256=task_envelope_sha256,
+            identity_lease=identity_lease,
             execution_profile_sha256=execution_profile_sha256,
-            input_contract_ref=input_contract_ref,
-            input_contract_sha256=input_contract_sha256,
-            subject_ref=subject_ref,
-            subject_sha256=subject_sha256,
-            lease_owner_id=identity_lease.owner_id,
-            lease_epoch=identity_lease.lease_epoch,
         )
 
     @staticmethod
