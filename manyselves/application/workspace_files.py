@@ -269,6 +269,9 @@ class WorkspaceFiles:
         if conflict not in _UPLOAD_CONFLICTS:
             raise ValueError("Unsupported upload conflict mode")
         destination = self.resolve(relative_path)
+        if conflict != "replace":
+            with self._mutation_lock:
+                destination.parent.mkdir(parents=True, exist_ok=True)
         self._require_existing_directory(destination.parent)
         if conflict == "reject":
             self._require_upload_destination(destination)

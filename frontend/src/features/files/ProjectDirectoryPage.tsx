@@ -69,8 +69,11 @@ function ScopedProjectDirectoryPage({
   const editorApi = useMemo(() => createEditorFileApi(gateway), [gateway]);
   const editorStore = useMemo(() => createEditorStore(), []);
   const conflictResolver = useRef<((resolution: UploadConflictResolution) => void) | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const disposedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lastUploadWasDirectoryRef = useRef(false);
+  const directoryUploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadControllerRef = useRef<AbortController | null>(null);
   const [conflict, setConflict] = useState<PendingConflict | null>(null);
@@ -149,7 +152,7 @@ function ScopedProjectDirectoryPage({
     }
   }
 
-  async function uploadSelected(selected: readonly File[]) {
+  async function uploadSelected(selected: readonly File[], preserveDirectory = false) {
     if (selected.length === 0) return;
     const controller = new AbortController();
     uploadControllerRef.current = controller;
@@ -157,13 +160,24 @@ function ScopedProjectDirectoryPage({
     try {
       for (const file of selected) {
         if (disposedRef.current || controller.signal.aborted) break;
-        await uploadOne(file, joinPath(activeCapabilities.root, file.name), controller.signal);
+        const relativePath = preserveDirectory
+          ? file.webkitRelativePath || file.name
+          : file.name;
+        await uploadOne(
+          file,
+          joinPath(activeCapabilities.root, relativePath),
+          controller.signal,
+        );
       }
     } finally {
       if (uploadControllerRef.current === controller) uploadControllerRef.current = null;
       if (!disposedRef.current) {
         setUploading(false);
-        queueMicrotask(() => uploadButtonRef.current?.focus());
+        queueMicrotask(() => (
+          lastUploadWasDirectoryRef.current
+            ? directoryUploadButtonRef.current
+            : uploadButtonRef.current
+        )?.focus());
       }
     }
   }
@@ -229,8 +243,42 @@ function ScopedProjectDirectoryPage({
               ref={inputRef}
               type="file"
             />
-            <button disabled={uploading} onClick={() => inputRef.current?.click()} ref={uploadButtonRef} type="button">
+            <button
+              disabled={uploading}
+              onClick={() => {
+                lastUploadWasDirectoryRef.current = false;
+                inputRef.current?.click();
+              }}
+              ref={uploadButtonRef}
+              type="button"
+            >
               {uploading ? "上传中…" : "上传本地文件"}
+            </button>
+            <input
+              aria-label="选择本地文件夹"
+              className="project-directory__file-input"
+              multiple
+              onChange={(event) => {
+                const selected = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                void uploadSelected(selected, true);
+              }}
+              ref={(element) => {
+                directoryInputRef.current = element;
+                element?.setAttribute("webkitdirectory", "");
+              }}
+              type="file"
+            />
+            <button
+              disabled={uploading}
+              onClick={() => {
+                lastUploadWasDirectoryRef.current = true;
+                directoryInputRef.current?.click();
+              }}
+              ref={directoryUploadButtonRef}
+              type="button"
+            >
+              上传文件夹
             </button>
           </> : null}
           <button disabled={files.isFetching} onClick={() => void files.refetch()} type="button">刷新</button>
