@@ -9,11 +9,14 @@ remain injected or mechanically reused from their existing owners.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
 from manyselves.application.runtime_services import RuntimeServicesView
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
 from manyselves.capabilities.distribution_reporting.runtime.final_agent_bridge import (
     FinalChapterAgentBridge,
 )
@@ -41,6 +44,7 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
@@ -111,7 +115,13 @@ class FinalProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation)
+        bridge = self._bridge(
+            agent,
+            task,
+            value,
+            conversation,
+            recovery_policy=recovery_policy,
+        )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -127,6 +137,8 @@ class FinalProviderRuntime:
         task: TaskDefinition,
         value: Any,
         conversation: Any,
+        *,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> FinalChapterAgentBridge:
         context = self._context(value)
         envelope = cast(TaskEnvelope, context.envelope)
@@ -138,6 +150,21 @@ class FinalProviderRuntime:
             envelope,
             session_id=session_id,
         )
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
+        if (
+            recovery_driver is not None
+            and dependencies.recovery_event_callback is None
+        ):
+            dependencies = replace(
+                dependencies,
+                recovery_event_callback=build_tool_recovery_callback(
+                    recovery_driver
+                ),
+            )
         tools = build_module_provider_tools(
             self.workspace,
             envelope=envelope,
@@ -181,6 +208,7 @@ class FinalProviderRuntime:
                 if dependencies.task_correlation is not None
                 else ""
             ),
+            recovery_driver=recovery_driver,
         )
 
     def _compose_artifact_dependencies(

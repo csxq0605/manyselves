@@ -14,6 +14,8 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
+    AgentRunStatus,
     FinalChapterLaneFindingSubmission,
     TaskEnvelope,
 )
@@ -26,13 +28,22 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
-from manyselves.interfaces.types import UserMessage
+from manyselves.interfaces.types import (
+    AgentResponse,
+    AgentResultMessage,
+    UserMessage,
+)
 from manyselves.kernel.conversations import (
     ConversationKey,
     ConversationMode,
     ConversationRecord,
 )
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    RecoveryRule,
+    TaskDefinition,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 
 
@@ -73,6 +84,233 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChapterContext:
         input_ref=input_ref,
         envelope=envelope,
     )
+
+
+@pytest.mark.asyncio
+async def test_final_agent_recovery_corrects_in_same_session(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.final_agent_bridge import (
+        FinalChapterAgentBridge,
+    )
+
+    run_id = "final-recovery-run"
+    context = _context(tmp_path, run_id)
+    result_ref = f"Work/runs/{run_id}/results/final-chapter-1.json"
+    ReportingStore(tmp_path).write_json(
+        result_ref,
+        AgentResult(
+            task_id=context.envelope.task_id,
+            run_id=run_id,
+            agent_id=context.envelope.agent_id,
+            session_id="final-chapter-1",
+            status=AgentRunStatus.COMPLETED,
+            payload=FinalChapterLaneFindingSubmission(
+                run_id=run_id,
+                chapter_id="1",
+                checked_section_ids=["1.1", "1.2", "1.3"],
+                findings=[],
+                residual_risks=[],
+            ),
+        ).model_dump(mode="json"),
+    )
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+
+    class Loop:
+        def __init__(self, runtime_id: str) -> None:
+            self.runtime_id = runtime_id
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                if message.turn_kind == "task_initial":
+                    await bus.publish(
+                        AgentResponse(
+                            agent_type=self.runtime_id,
+                            message_id=message.message_id,
+                            content="analysis without typed submission",
+                            workflow_id=message.workflow_id,
+                            run_id=message.run_id,
+                            task_id=message.task_id,
+                            task_attempt_id=message.task_attempt_id,
+                            session_id=message.session_id,
+                        )
+                    )
+                    return
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=context.envelope.agent_id,
+                        workflow_id=message.workflow_id,
+                        task_id=context.envelope.task_id,
+                        run_id=run_id,
+                        result_path=result_ref,
+                        task_attempt_id="",
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    loops: list[Loop] = []
+
+    def session_factory(runtime_id: str) -> Loop:
+        loop = Loop(runtime_id)
+        loops.append(loop)
+        return loop
+
+    execution = AgentExecutionService(bus, timeout=1)
+    bridge = FinalChapterAgentBridge(
+        tmp_path,
+        execution=execution,
+        session_factory=session_factory,
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-recovery-conversation",
+        key=ConversationKey(
+            agent_id="chief-editor-auditor",
+            value="final-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    agent = AgentDefinition(
+        id="chief-editor-auditor",
+        version="1.0.0",
+        description="Final auditor",
+        instructions="Audit the assigned chapter.",
+    )
+    task = TaskDefinition(
+        id="final-chapter-review",
+        version="1.0.0",
+        description="Final review lane",
+        agent=agent.id,
+        objective="Audit one chapter.",
+        input_contract="declarative_final_chapter_context",
+        output_contract="declarative_final_chapter_agent_result",
+    )
+    try:
+        outcome = await bridge.invoke_with_recovery(
+            agent,
+            task,
+            context,
+            conversation,
+            task_id="invoke-final-chapter-1",
+            recovery_policy=RecoveryPolicyDefinition(
+                id="final-natural-recovery",
+                version="1.0.0",
+                description="correct missing typed submission",
+                rules={
+                    "natural_language_without_submission": RecoveryRule(
+                        action="correct"
+                    )
+                },
+            ),
+        )
+    finally:
+        await execution.close_workflow(bridge.workflow_id)
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert [message.turn_kind for message in loops[0].received] == [
+        "task_initial",
+        "submission_correction",
+    ]
+    assert loops[0].received[0].session_id == loops[0].received[1].session_id
+
+
+@pytest.mark.asyncio
+async def test_final_provider_shares_declared_recovery_with_tool_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import final_provider
+    from manyselves.core.tools.registry import ToolRegistry
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured["dependencies"] = kwargs["dependencies"]
+        return ToolRegistry()
+
+    monkeypatch.setattr(final_provider, "build_module_provider_tools", capture_tools)
+    bus = MessageBus()
+    runtime = final_provider.FinalProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        )
+    )
+    agent = AgentDefinition(
+        id="chief-editor-auditor",
+        version="1.0.0",
+        description="Final auditor",
+        instructions="Audit the assigned chapter.",
+        tools=["submit_result"],
+    )
+    task = TaskDefinition(
+        id="final-chapter-review",
+        version="1.0.0",
+        description="Final review lane",
+        agent=agent.id,
+        objective="Audit one chapter.",
+        input_contract="declarative_final_chapter_context",
+        output_contract="declarative_final_chapter_agent_result",
+        tools=["submit_result"],
+    )
+    policy = RecoveryPolicyDefinition(
+        id="final-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="final-chapter-1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id="final-schema-run",
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        _context(tmp_path, "final-schema-run"),
+        conversation,
+        recovery_policy=policy,
+    )
+    dependencies = captured["dependencies"]
+    decision = await dependencies.recovery_event_callback(
+        "invalid_structured_output",
+        {"task_id": task.id},
+    )
+
+    assert decision.action.value == "correct"
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
+    }
 
 
 @pytest.mark.asyncio

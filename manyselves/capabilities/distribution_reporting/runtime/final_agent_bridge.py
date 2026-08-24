@@ -13,6 +13,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    execute_reporting_recovery,
+)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -44,6 +47,7 @@ from manyselves.runtime.agent_execution import (
     AgentSessionLoop,
     AgentTurnRequest,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -60,12 +64,14 @@ class FinalChapterAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
         terminal_task_attempt_id: str = "",
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
+        self.recovery_driver = recovery_driver
 
     async def invoke(
         self,
@@ -94,15 +100,13 @@ class FinalChapterAgentBridge:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Keep the declared recovery port while this slice remains single-turn."""
-
-        del recovery_policy
         return await self._invoke_once(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=recovery_policy,
         )
 
     async def _invoke_once(
@@ -113,6 +117,7 @@ class FinalChapterAgentBridge:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
         raw_contract = (
             value.get("contract")
@@ -140,6 +145,7 @@ class FinalChapterAgentBridge:
                 ),
                 decode_result=self._decode_recheck_result,
                 turn_suffix="recheck",
+                recovery_policy=recovery_policy,
             )
         context = DeclarativeFinalChapterContext.model_validate(value)
         return await self._invoke_typed(
@@ -156,6 +162,7 @@ class FinalChapterAgentBridge:
             ),
             decode_result=self._decode_result,
             turn_suffix="initial",
+            recovery_policy=recovery_policy,
         )
 
     async def _invoke_typed(
@@ -170,6 +177,7 @@ class FinalChapterAgentBridge:
         inline_context: str | None,
         decode_result: Callable[[str], dict[str, Any]],
         turn_suffix: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
@@ -225,15 +233,64 @@ class FinalChapterAgentBridge:
             terminal_task_id=envelope.task_id,
             terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
-        outcome = await typed_turn.dispatch(
+        if recovery_policy is None:
+            outcome = await typed_turn.dispatch(
+                session,
+                request,
+                terminals=(terminal,),
+            )
+            return TypedAgentTurn.map_outcome(
+                outcome,
+                session_id=session.session_id,
+                decode_result=decode_result,
+            )
+        recovered = await execute_reporting_recovery(
+            self.execution,
             session,
             request,
+            recovery_policy=recovery_policy,
             terminals=(terminal,),
+            prompt_builder=lambda event_kind: self._recovery_prompt(
+                agent,
+                task,
+                contract,
+                inline_context=inline_context,
+                event_kind=event_kind,
+            ),
+            result_decoder=decode_result,
+            recovery=self.recovery_driver,
         )
-        return TypedAgentTurn.map_outcome(
-            outcome,
+        if isinstance(recovered, AgentInvocationOutcome):
+            return recovered
+        return AgentInvocationOutcome(
+            status="ok",
+            result=recovered,
             session_id=session.session_id,
-            decode_result=decode_result,
+        )
+
+    def _recovery_prompt(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        contract: FinalChapterLaneInput,
+        *,
+        inline_context: str | None,
+        event_kind: Any,
+    ) -> str:
+        event_name = getattr(event_kind, "value", str(event_kind))
+        return "\n\n".join(
+            (
+                f"<{event_name}>",
+                "继续当前 Final Auditor 会话，复用已完成的分析和工具结果；"
+                "立即调用 submit_result 提交符合 output contract 的类型化结果。",
+                self._prompt(
+                    agent,
+                    task,
+                    contract,
+                    inline_context=inline_context,
+                ),
+                f"</{event_name}>",
+            )
         )
 
     def _prompt(
