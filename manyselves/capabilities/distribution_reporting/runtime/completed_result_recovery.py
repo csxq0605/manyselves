@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     AgentResult,
@@ -229,6 +230,20 @@ class ProviderTaskAttempt:
                 identity_lease=handle.lease,
                 execution_profile_sha256=execution_profile_sha256,
             )
+            store = TaskAttemptStore(workspace, envelope.run_id)
+            previous = store.current(envelope.task_id)
+            if (
+                previous is not None
+                and previous.task_attempt_id == correlation.task_attempt_id
+                and same_recoverable_task(previous, correlation)
+            ):
+                recovered = store.load_verified_result(previous)
+                if recovered is not None and recovered[0].status != "completed":
+                    # Keep the semantic task and session, but give the resumed
+                    # dispatch its own append-only result path.
+                    correlation = correlation.model_copy(
+                        update={"task_attempt_id": f"attempt-{uuid4().hex}"}
+                    )
         except Exception:
             handle.release()
             raise

@@ -1,0 +1,122 @@
+"""Characterization for same-run Provider task attempt recovery."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
+    AgentRunStatus,
+    ModuleRevisionSubmission,
+    TaskEnvelope,
+)
+from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+    TaskAttemptStore,
+)
+
+
+def _result(
+    *,
+    run_id: str,
+    session_id: str,
+    status: AgentRunStatus,
+) -> AgentResult:
+    return AgentResult(
+        task_id="module-revision-r1-2.4",
+        run_id=run_id,
+        agent_id="module-2.4-specialist",
+        session_id=session_id,
+        status=status,
+        payload=(
+            ModuleRevisionSubmission(
+                module_id="2.4",
+                base_revision=0,
+                revision=1,
+                submodule_narratives={"2.4.1.1": "修订后的正文。"},
+                source_ids=[],
+            )
+            if status == AgentRunStatus.COMPLETED
+            else None
+        ),
+        reason="previous attempt failed" if status == AgentRunStatus.FAILED else None,
+    )
+
+
+def test_failed_terminal_resumes_as_new_attempt_in_same_session(tmp_path: Path) -> None:
+    """A failed physical attempt must not own the resumed result path."""
+
+    run_id = "same-run-failed-attempt"
+    session_id = "public-reporting:module-2.4"
+    envelope = TaskEnvelope(
+        task_id="module-revision-r1-2.4",
+        task_attempt_id="attempt-failed",
+        run_id=run_id,
+        agent_id="module-2.4-specialist",
+        objective="Revise module 2.4.",
+    )
+    store = TaskAttemptStore(tmp_path, run_id)
+
+    failed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id="public-reporting",
+        identity_key=envelope.agent_id,
+        session_id=session_id,
+    )
+    try:
+        failed.activate()
+        store.persist_result(
+            failed.correlation,
+            _result(
+                run_id=run_id,
+                session_id=session_id,
+                status=AgentRunStatus.FAILED,
+            ).model_dump(mode="json"),
+            status="failed",
+        )
+    finally:
+        failed.close()
+
+    resumed = ProviderTaskAttempt.acquire(
+        tmp_path,
+        envelope,
+        workflow_id="public-reporting",
+        identity_key=envelope.agent_id,
+        session_id=session_id,
+    )
+    try:
+        assert resumed.correlation.task_attempt_id != failed.correlation.task_attempt_id
+        assert resumed.correlation.run_id == failed.correlation.run_id
+        assert resumed.correlation.task_id == failed.correlation.task_id
+        assert resumed.correlation.agent_id == failed.correlation.agent_id
+        assert resumed.correlation.session_id == failed.correlation.session_id
+        assert resumed.load_completed_or_activate() is None
+        assert store.current(envelope.task_id) == resumed.correlation
+
+        store.persist_result(
+            resumed.correlation,
+            _result(
+                run_id=run_id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        resumed.close()
+
+    old_terminal, old_payload = store.load_verified_result(failed.correlation) or (
+        None,
+        None,
+    )
+    new_terminal, new_payload = store.load_verified_result(resumed.correlation) or (
+        None,
+        None,
+    )
+    assert old_terminal is not None and old_terminal.status == "failed"
+    assert old_payload is not None and old_payload["status"] == "failed"
+    assert new_terminal is not None and new_terminal.status == "completed"
+    assert new_payload is not None and new_payload["status"] == "completed"
