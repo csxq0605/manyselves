@@ -23,7 +23,7 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
 )
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
-from manyselves.kernel.workflow import WorkflowStatus
+from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
 from manyselves.webapi.routes.workflows import _projection
 
 
@@ -207,4 +207,77 @@ async def test_render_start_returns_after_initial_state_is_persisted(
     await asyncio.wait_for(finished.wait(), timeout=1)
     assert binding.get_run(accepted["run_id"])["run"]["status"] == "completed"
     assert binding.get_run(accepted["run_id"])["run"]["active"] is False
+    await binding.close()
+
+
+@pytest.mark.asyncio
+async def test_waiting_input_returns_after_resumed_state_is_persisted(
+    tmp_path: Path,
+) -> None:
+    binding = DistributionReportingRuntimeBinding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
+    runtime = binding._runtimes["render-existing"]
+    run_id = "render-existing-waiting"
+    plan = ResolvedPlan(
+        workflow_id="render-existing",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    waiting = WorkflowState.for_plan(run_id, plan)
+    waiting.status = WorkflowStatus.WAITING
+    waiting.waiting_input = {"input_id": "ask-evidence"}
+    runtime.state_store.save(waiting)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def blocked_provide_input(
+        command_id: UUID,
+        current_run_id: str,
+        *,
+        input_id: str | None,
+        values: object,
+    ) -> dict[str, object]:
+        del command_id, input_id, values
+        current = runtime.state_store.load(current_run_id)
+        runtime.state_store.save(
+            current.model_copy(
+                update={"status": WorkflowStatus.RUNNING, "waiting_input": None}
+            )
+        )
+        started.set()
+        await release.wait()
+        runtime.state_store.save(
+            current.model_copy(
+                update={"status": WorkflowStatus.COMPLETED, "waiting_input": None}
+            )
+        )
+        finished.set()
+        return {"run_id": current_run_id, "task_id": None}
+
+    runtime.provide_input = blocked_provide_input
+    operation = asyncio.create_task(
+        binding.provide_input(
+            UUID("50000000-0000-4000-8000-000000000004"),
+            run_id,
+            input_id="ask-evidence",
+            values={"answer": "continue"},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    accepted = await asyncio.wait_for(operation, timeout=1)
+
+    assert accepted == {"run_id": run_id, "task_id": None}
+    assert binding.get_run(run_id)["run"]["status"] == "running"
+    release.set()
+    await asyncio.wait_for(finished.wait(), timeout=1)
+    assert binding.get_run(run_id)["run"]["status"] == "completed"
     await binding.close()

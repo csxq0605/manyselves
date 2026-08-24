@@ -14,6 +14,7 @@ import pytest
 
 from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
+from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
@@ -34,8 +35,17 @@ from manyselves.kernel.definitions import (
     WorkflowDefinition,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
-from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.kernel.workflow import (
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    resume_waiting_input,
+)
+from manyselves.runtime.capability_binding import RuntimeBindingCatalog
+from manyselves.runtime.run_lifecycle import (
+    DetachedRunTaskOwner,
+    StartAwareFileWorkflowStateStore,
+)
 from manyselves.runtime.workflow_host import (
     FileWorkflowEventSink,
     InMemoryWorkflowEventSink,
@@ -3216,7 +3226,6 @@ async def test_generic_workflow_run_is_visible_only_in_its_active_project(
 @pytest.mark.asyncio
 async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling(
     resources,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, host, workspace, _ = resources
     definitions = DefinitionRegistry()
@@ -3334,7 +3343,7 @@ async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling
         right_calls += 1
         return value * 2
 
-    store = FileWorkflowStateStore(workspace)
+    store = StartAwareFileWorkflowStateStore(workspace)
     events = InMemoryWorkflowEventSink()
     runtime_host = WorkflowRuntimeHost(executors, store, events)
     context = RuntimeContext(
@@ -3349,42 +3358,81 @@ async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling
         WorkflowState.for_plan(run_id, plan),
         context,
     )
-    run_root = workspace / "Work/runs" / run_id
-    (run_root / "request.json").write_text("{}", encoding="utf-8")
-    controller = host.reporting_controller
-    assert controller is not None
+    owner = DetachedRunTaskOwner()
 
-    def resume_run(current_run_id: str, **_values: object) -> dict[str, object]:
-        failures: list[BaseException] = []
+    class _NestedWorkflowBinding:
+        capability_id = "distribution-reporting"
 
-        def execute_resumed() -> None:
-            try:
-                asyncio.run(
-                    runtime_host.execute(
-                        store.load_plan(current_run_id),
-                        store.load(current_run_id),
-                        context,
-                    )
-                )
-            except BaseException as error:
-                failures.append(error)
+        @property
+        def active(self) -> bool:
+            return owner.active
 
-        thread = threading.Thread(target=execute_resumed)
-        thread.start()
-        thread.join()
-        if failures:
-            raise failures[0]
-        return {"run_id": current_run_id, "task_id": "nested-resume"}
+        async def provide_input(
+            self,
+            _command_id: UUID,
+            current_run_id: str,
+            *,
+            input_id: str | None,
+            values: object,
+        ) -> dict[str, object]:
+            if input_id is None:
+                raise ValueError("nested workflow input id is required")
+            current_plan = store.load_plan(current_run_id)
+            resumed = resume_waiting_input(
+                current_plan,
+                store.load(current_run_id),
+                input_id=input_id,
+                values=values,
+                contracts=contracts,
+                subworkflows=current_plan.subworkflow_plans,
+            )
+            return await owner.accept_after_persisted_state(
+                run_id=current_run_id,
+                state_store=store,
+                operation=runtime_host.execute(current_plan, resumed, context),
+            )
 
-    monkeypatch.setattr(controller, "resume_run", resume_run)
+        def get_run(self, current_run_id: str) -> dict[str, object]:
+            state = store.load(current_run_id)
+            return {
+                "run": {
+                    "run_id": current_run_id,
+                    "capability_id": self.capability_id,
+                    "workflow_id": state.workflow_id,
+                    "status": state.status.value,
+                    "active": state.status
+                    in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                    "task_id": None,
+                },
+                "state": state.model_dump(mode="json"),
+                "waiting_input": (
+                    [state.waiting_input] if state.waiting_input is not None else []
+                ),
+            }
 
-    projected_waiting = await client.get(f"/api/v1/runs/{run_id}")
-    submitted = await client.post(
-        f"/api/v1/runs/{run_id}/input",
-        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000014"},
-        json={"inputId": "ask-http-child", "values": "Ada"},
+        async def close(self) -> None:
+            await owner.close()
+
+    bindings = RuntimeBindingCatalog()
+    bindings.register(_NestedWorkflowBinding())
+    projection = WorkflowProjectionFacade(
+        workspace,
+        reporting_adapter=None,
+        runtime_bindings=bindings,
     )
-    projected_completed = await client.get(f"/api/v1/runs/{run_id}")
+    previous_projection = host.app.state.workflow_projection
+    host.app.state.workflow_projection = projection
+    try:
+        projected_waiting = await client.get(f"/api/v1/runs/{run_id}")
+        submitted = await client.post(
+            f"/api/v1/runs/{run_id}/input",
+            headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000014"},
+            json={"inputId": "ask-http-child", "values": "Ada"},
+        )
+        await projection.close()
+        projected_completed = await client.get(f"/api/v1/runs/{run_id}")
+    finally:
+        host.app.state.workflow_projection = previous_projection
     completed = store.load(run_id)
 
     assert waiting.status is WorkflowStatus.WAITING

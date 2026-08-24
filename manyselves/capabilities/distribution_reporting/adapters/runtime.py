@@ -267,7 +267,7 @@ class DistributionReportingRuntimeBinding:
             raise ValueError(f"workflow is not runnable: {workflow_id}") from exc
         store = self._start_stores[workflow_id]
         run_id = runtime.run_id_for(command_id, workflow_id)
-        return await self._detached_runs.start_after_persisted_state(
+        return await self._detached_runs.accept_after_persisted_state(
             run_id=run_id,
             state_store=store,
             operation=runtime.start(command_id, workflow_id, values),
@@ -285,12 +285,18 @@ class DistributionReportingRuntimeBinding:
         input_id: str | None,
         values: Any,
     ) -> dict[str, Any]:
-        runtime = self._runtime_for_run(run_id)
-        return await runtime.provide_input(
-            command_id,
-            run_id,
-            input_id=input_id,
-            values=values,
+        """Accept a continuation after the Host persists its next state."""
+
+        runtime, store = self._runtime_and_store_for_run(run_id)
+        return await self._detached_runs.accept_after_persisted_state(
+            run_id=run_id,
+            state_store=store,
+            operation=runtime.provide_input(
+                command_id,
+                run_id,
+                input_id=input_id,
+                values=values,
+            ),
         )
 
     def get_run(self, run_id: str) -> dict[str, Any]:
@@ -310,9 +316,16 @@ class DistributionReportingRuntimeBinding:
             await provider.close()
 
     def _runtime_for_run(self, run_id: str) -> Any:
+        runtime, _store = self._runtime_and_store_for_run(run_id)
+        return runtime
+
+    def _runtime_and_store_for_run(
+        self,
+        run_id: str,
+    ) -> tuple[DetachedRuntime, StartAwareFileWorkflowStateStore]:
         try:
             state = FileWorkflowStateStore(self.workspace).load(run_id)
-            return self._runtimes[state.workflow_id]
+            return self._runtimes[state.workflow_id], self._start_stores[state.workflow_id]
         except (FileNotFoundError, KeyError) as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
 

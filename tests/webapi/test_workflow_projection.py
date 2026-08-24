@@ -265,6 +265,23 @@ class _DetachedReportingAdapter(_ReportingAdapter):
         self.calls.append(("start_detached", values))
         return {"run_id": "report-detached", "task_id": None}
 
+    async def provide_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        *,
+        input_id: str | None,
+        values: object,
+    ) -> dict:
+        del command_id
+        self.calls.append(
+            (
+                "provide_input",
+                {"run_id": run_id, "input_id": input_id, "values": values},
+            )
+        )
+        return {"run_id": run_id, "task_id": None}
+
 
 @pytest.mark.asyncio
 async def test_start_uses_detached_binding_boundary_for_long_runs(
@@ -290,6 +307,37 @@ async def test_start_uses_detached_binding_boundary_for_long_runs(
         "workflow_id": "full-report",
     }
     assert binding.calls == [("start_detached", {"instruction": "long run"})]
+
+
+@pytest.mark.asyncio
+async def test_waiting_input_uses_binding_acceptance_boundary_for_long_runs(
+    tmp_path: Path,
+) -> None:
+    binding = _DetachedReportingAdapter()
+    facade = _facade(tmp_path, binding)
+    values = {"answer": "continue the same Run"}
+
+    accepted = await asyncio.wait_for(
+        facade.provide_input(
+            UUID("50000000-0000-4000-8000-000000000003"),
+            "report-1",
+            input_id="ask-evidence",
+            values=values,
+        ),
+        timeout=0.2,
+    )
+
+    assert accepted["run_id"] == "report-1"
+    assert binding.calls == [
+        (
+            "provide_input",
+            {
+                "run_id": "report-1",
+                "input_id": "ask-evidence",
+                "values": values,
+            },
+        )
+    ]
 
 
 def test_capability_workflow_and_input_schema_are_generic_projections(

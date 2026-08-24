@@ -63,14 +63,14 @@ class DetachedRunTaskOwner:
     def active(self) -> bool:
         return any(not task.done() for task in self._tasks)
 
-    async def start_after_persisted_state(
+    async def accept_after_persisted_state(
         self,
         *,
         run_id: str,
         state_store: StartAwareFileWorkflowStateStore,
         operation: Awaitable[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Return once state is persisted, while ``operation`` keeps running."""
+        """Return after the operation's next persisted state transition."""
 
         started = asyncio.Event()
         state_store.register_started(run_id, lambda _state: started.set())
