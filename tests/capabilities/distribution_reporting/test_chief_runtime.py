@@ -94,10 +94,14 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
     assert context.envelope.run_id == "chief-runtime-prep"
     assert context.envelope.agent_id == "chief-editor"
     assert context.envelope.input_refs == [
-        "Work/runs/chief-runtime-prep/context/chief-chapter-1-input.json"
+        "Work/runs/chief-runtime-prep/context/chief-chapter-1-input.json",
+        "Work/runs/chief-runtime-prep/reviews/cross-completion.json",
+        "Work/runs/chief-runtime-prep/evidence.jsonl",
     ]
     assert context.envelope.allowed_outputs == ["chief_chapter_lane_submission"]
     assert context.envelope.allowed_tools == [
+        "open_artifact",
+        "search_text",
         "write_result_part",
         "list_result_parts",
         "submit_result",
@@ -107,7 +111,9 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
     assert context.envelope.input_contract_kind == "chief_chapter_lane_input"
     assert context.envelope.input_contract_ref == context.envelope.input_refs[0]
     assert context.envelope.artifact_delivery_modes == {
-        context.envelope.input_refs[0]: "inline"
+        context.envelope.input_refs[0]: "inline",
+        context.envelope.input_refs[1]: "reference",
+        context.envelope.input_refs[2]: "reference",
     }
     assert "Write only the assigned Chapter 1 sections." in (
         context.envelope.inline_context or ""

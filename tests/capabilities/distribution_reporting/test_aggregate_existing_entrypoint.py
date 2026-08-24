@@ -318,6 +318,15 @@ def test_aggregate_existing_tail_enters_final_and_delivery_without_other_cohorts
         DefinitionKind.WORKFLOW,
         "distribution-aggregate-existing-tail",
     )
+    chief_revision_task = registry.require(
+        DefinitionKind.TASK,
+        "final-chief-chapter-revision",
+    )
+    assert chief_revision_task.tools == [
+        "open_artifact",
+        "search_text",
+        "submit_result",
+    ]
     action_ids = [action["id"] for action in workflow.actions]
     referenced_workflows = {
         action["workflow"]
@@ -862,7 +871,6 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         AggregateExistingWorkflowRuntime,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-        CHIEF_SECTION_RESULT_PART_IDS,
         AgentResult,
         ChapterScopedFinalReviewFinding,
         ChapterScopedFinalReviewTargetChange,
@@ -987,22 +995,11 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
                 )
 
             typed = ChiefChapterLaneInput.model_validate(contract)
-            part_refs: dict[str, str] = {}
             bodies = {
                 "1.1": "修订后的背景正文，补充核验说明和结论依据。",
                 "1.2": "保留原有发现概述正文。",
                 "1.3": "保留原有区域摘要正文。",
             }
-            for section_id in typed.section_ids:
-                part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
-                ref = (
-                    f"Work/runs/{typed.run_id}/drafts/chief-chapter-1-r1/r1/"
-                    f"{part_id}.md"
-                )
-                path = tmp_path / ref
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(bodies[section_id], encoding="utf-8")
-                part_refs[part_id] = ref
             assigned = [
                 ChapterScopedFinalReviewFinding.model_validate(item)
                 for item in typed.assigned_findings
@@ -1013,7 +1010,18 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
                 chapter_id=typed.chapter_id,
                 revision=typed.revision,
                 section_ids=list(typed.section_ids),
-                part_refs=part_refs,
+                edits=[
+                    {
+                        "target_section_id": section_id,
+                        "old_text": typed.section_bodies[section_id],
+                        "new_text": (
+                            typed.section_bodies[section_id]
+                            + "\n\n"
+                            + bodies[section_id]
+                        ),
+                    }
+                    for section_id in typed.section_ids
+                ],
                 revision_responses=[
                     RevisionResponse(
                         finding_id=finding.id,
@@ -1250,7 +1258,6 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         FinalChiefAgentBridge,
     )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-        CHIEF_SECTION_RESULT_PART_IDS,
         AgentResult,
         AgentRunStatus,
         ChapterScopedFinalReviewFinding,
@@ -1410,29 +1417,6 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     )
     chief_result_path = tmp_path / chief_result_ref
     chief_result_path.parent.mkdir(parents=True, exist_ok=True)
-    chief_part_refs = {
-        CHIEF_SECTION_RESULT_PART_IDS[section_id]: (
-            f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/r1/"
-            f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"
-        )
-        for section_id in ("1.1", "1.2", "1.3")
-    }
-    chief_part_root = tmp_path / (
-        f"Work/runs/{run_id}/drafts/chief-chapter-1-r1/r1"
-    )
-    chief_part_root.mkdir(parents=True, exist_ok=True)
-    for part_id, body in {
-        CHIEF_SECTION_RESULT_PART_IDS["1.1"]: (
-            "Updated background text with the requested verification detail."
-        ),
-        CHIEF_SECTION_RESULT_PART_IDS["1.2"]: (
-            "Existing findings overview retained for the revision lane."
-        ),
-        CHIEF_SECTION_RESULT_PART_IDS["1.3"]: (
-            "Existing regional summary retained for the revision lane."
-        ),
-    }.items():
-        (chief_part_root / f"{part_id}.md").write_text(body, encoding="utf-8")
     chief_result_path.write_text(
         json.dumps(
             AgentResult(
@@ -1448,8 +1432,17 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
                     ),
                     chapter_id="1",
                     revision=1,
-                    section_ids=["1.1", "1.2", "1.3"],
-                    part_refs=chief_part_refs,
+                    section_ids=["1.1"],
+                    edits=[
+                        {
+                            "target_section_id": "1.1",
+                            "old_text": "背景",
+                            "new_text": (
+                                "背景\n\nUpdated background text with the requested "
+                                "verification detail."
+                            ),
+                        }
+                    ],
                     revision_responses=[
                         RevisionResponse(
                             finding_id="F-final-1",
@@ -1690,7 +1683,11 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
             f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
         )
         assert completed_reporting_state["edited_report"]["assessment_background"] == (
-            "Updated background text with the requested verification detail."
+            "背景\n\nUpdated background text with the requested verification detail."
+        )
+        assert completed_reporting_state["edited_report"]["findings_overview"] == "发现"
+        assert completed_reporting_state["edited_report"]["regional_executive_summary"] == (
+            "区域摘要"
         )
         chief_output_ref = (
             tmp_path
@@ -1705,6 +1702,8 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         chief_input = json.loads(chief_input_ref.read_text(encoding="utf-8"))
         assert chief_input["phase"] == "revision"
         assert chief_input["chapter_id"] == "1"
+        assert chief_input["section_ids"] == ["1.1"]
+        assert set(chief_input["section_bodies"]) == {"1.1"}
         assert [finding["id"] for finding in chief_input["assigned_findings"]] == [
             "F-final-1"
         ]
@@ -1717,16 +1716,8 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         assert set(recheck_input["section_bodies"]) == {"1.1"}
         assert set(recheck_input["unchanged_section_sha256"]) == {"1.2", "1.3"}
         assert recheck_input["unchanged_section_sha256"] == {
-            "1.2": hashlib.sha256(
-                "Existing findings overview retained for the revision lane.".encode(
-                    "utf-8"
-                )
-            ).hexdigest(),
-            "1.3": hashlib.sha256(
-                "Existing regional summary retained for the revision lane.".encode(
-                    "utf-8"
-                )
-            ).hexdigest(),
+            "1.2": hashlib.sha256("发现".encode("utf-8")).hexdigest(),
+            "1.3": hashlib.sha256("区域摘要".encode("utf-8")).hexdigest(),
         }
         assert completed_reporting_state["run_id"] == run_id
         aggregate_ref = tmp_path / f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
@@ -1774,9 +1765,9 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         assert "chief_chapter_lane_input" in chief_loop.received[0].content
         assert (
             '<template_role_skill id="chief-editor-chapter-1"'
-            in chief_loop.received[0].content
+            not in chief_loop.received[0].content
         )
-        assert "Use the assigned finding and preserve the typed lane contract." in (
+        assert "Use the assigned finding and preserve the typed lane contract." not in (
             chief_loop.received[0].content
         )
         assert all(

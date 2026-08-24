@@ -10,14 +10,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    CHIEF_SECTION_RESULT_PART_IDS,
     ChiefChapterLaneRevisionSubmission,
     EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
     ModuleSubmission,
     TaskEnvelope,
-    numbered_markdown_headings,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_chapter import (
     DeclarativeFinalChapterOutcome,
@@ -368,7 +366,18 @@ class FinalReviewTools:
             )
         state = _restore_state(review.state)
         edited = review.current
-        section_ids = _section_ids(edited, chapter_id)
+        chapter_section_ids = _section_ids(edited, chapter_id)
+        target_section_ids = {
+            section_id
+            for finding in findings
+            for section_id in finding.target_section_ids
+        }
+        section_ids = tuple(
+            section_id
+            for section_id in chapter_section_ids
+            if section_id in target_section_ids
+        )
+        current_section_bodies = _section_bodies(edited, chapter_id)
         source_context, source_refs = _source_projection(
             state,
             chapter_id,
@@ -382,7 +391,10 @@ class FinalReviewTools:
             subject_ref=review.subject_ref,
             chapter_id=chapter_id,
             section_ids=list(section_ids),
-            section_bodies=_section_bodies(edited, chapter_id),
+            section_bodies={
+                section_id: current_section_bodies[section_id]
+                for section_id in section_ids
+            },
             source_context=source_context,
             source_refs=source_refs,
             assigned_findings=list(findings),
@@ -396,28 +408,31 @@ class FinalReviewTools:
             run_id=run_id,
             agent_id="chief-editor",
             objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
-            input_refs=[input_ref],
+            input_refs=[input_ref, *contract.source_refs],
             constraints=[
-                "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
-                "part_refs 只能覆盖本章；revision_responses 必须对应本章 findings",
+                "只提交 chief_chapter_lane_revision_submission 精确文本补丁，禁止提交完整报告或完整小节正文",
                 (
-                    "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
-                    if chapter_id != "4"
-                    else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
+                    "edits.target_section_id 和 section_ids 只能覆盖本轮 finding 指定的小节："
+                    + ",".join(section_ids)
                 ),
+                "未列入 section_ids 的原章节正文由 Runtime 原样保留，不得重写或重复提交",
+                "old_text 必须从对应 section_bodies 原样复制且唯一出现；new_text 只实现 assigned finding",
+                "若 old_text 是完整小节正文，new_text 必须逐字包含完整 old_text，只能增补指定内容",
+                "revision_responses 必须对应本章 findings",
             ],
             allowed_outputs=["chief_chapter_lane_revision_submission"],
-            allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+            allowed_tools=["open_artifact", "search_text", "submit_result"],
             revision=revision,
             prior_result_ref=review.subject_ref,
             input_contract_kind="chief_chapter_lane_input",
             input_contract_ref=input_ref,
-            artifact_delivery_modes={input_ref: "inline"},
-            inline_context=_chief_template_skill_context(
-                state,
-                self.workspace,
-                (chapter_id,),
-            ),
+            artifact_delivery_modes={
+                input_ref: "inline",
+                **{
+                    source_ref: "reference"
+                    for source_ref in contract.source_refs
+                },
+            },
         )
         return DeclarativeFinalChiefRevisionContext(
             chapter_id=chapter_id,
@@ -453,6 +468,7 @@ class FinalReviewTools:
                 and submission.base_subject_ref == contract.subject_ref
                 and submission.chapter_id == context.chapter_id
                 and submission.revision == contract.revision
+                and set(submission.section_ids).issubset(set(contract.section_ids))
             )
             if contract.revision == 1:
                 matches_identity = matches_identity and {
@@ -462,13 +478,9 @@ class FinalReviewTools:
                 raise ValueError(
                     f"chief chapter {context.chapter_id} revision identity mismatch"
                 )
-            task_id = f"chief-chapter-{context.chapter_id}-r{contract.revision}"
-            parts = self._read_chief_revision_parts(
-                context.chapter_id,
-                contract.run_id,
+            parts = self._apply_chief_revision_edits(
+                contract,
                 submission,
-                task_id,
-                contract.special_topic_plan,
             )
             output_ref = (
                 f"Work/runs/{contract.run_id}/reviews/chief-chapter-lane-"
@@ -489,67 +501,35 @@ class FinalReviewTools:
             }
         )
 
-    def _read_chief_revision_parts(
-        self,
-        chapter_id: str,
-        run_id: str,
+    @staticmethod
+    def _apply_chief_revision_edits(
+        contract: ChiefChapterLaneInput,
         submission: ChiefChapterLaneRevisionSubmission,
-        task_id: str,
-        special_topic_plan: Any,
     ) -> dict[str, str]:
-        """Read only the submitted lane parts from its declared task directory."""
+        """Apply exact edits without allowing an entire section to be replaced."""
 
-        run_root = (self.workspace / f"Work/runs/{run_id}").resolve()
-        task_root = (run_root / "drafts" / task_id / f"r{submission.revision}").resolve()
-        if not task_root.is_relative_to(run_root):
-            raise ValueError("Chief revision task root escapes the current run")
-        part_to_sections: dict[str, list[str]] = {}
-        if chapter_id == "4":
-            part_to_sections["special_topic_analysis"] = list(submission.section_ids)
-        else:
-            for section_id in submission.section_ids:
-                part_to_sections.setdefault(
-                    CHIEF_SECTION_RESULT_PART_IDS[section_id],
-                    [],
-                ).append(section_id)
-        bodies: dict[str, str] = {}
-        for part_id, ref in submission.part_refs.items():
-            path = (self.workspace / ref).resolve()
-            if (
-                not path.is_relative_to(task_root)
-                or path.suffix != ".md"
-                or not path.is_file()
-            ):
+        bodies = dict(contract.section_bodies)
+        for edit in submission.edits:
+            body = bodies[edit.target_section_id]
+            occurrences = body.count(edit.old_text)
+            if occurrences != 1:
                 raise ValueError(
-                    f"Chief chapter {chapter_id} returned a part outside its lane task: {ref}"
+                    "Chief revision old_text must occur exactly once in its target section"
                 )
-            content = path.read_text(encoding="utf-8")
-            if not content.strip():
+            if edit.old_text == body and edit.old_text not in edit.new_text:
                 raise ValueError(
-                    f"Chief chapter {chapter_id} returned a blank part: {part_id}"
+                    "Chief revision cannot replace an entire section; retain the current "
+                    "body verbatim and add only the assigned change"
                 )
-            if chapter_id == "4" and part_id == "special_topic_analysis":
-                bodies.update(
-                    _split_special_topic_analysis(
-                        content,
-                        special_topic_plan,
-                        allow_single_body=len(submission.section_ids) == 1,
-                    )
-                )
-            else:
-                numbered_headings = numbered_markdown_headings(content)
-                if numbered_headings:
-                    raise ValueError(
-                        f"Chief chapter {chapter_id} part {part_id} must contain section "
-                        f"body only, without numbered Markdown headings: {list(numbered_headings)}"
-                    )
-                for section_id in part_to_sections.get(part_id, []):
-                    bodies[section_id] = content
-        if set(bodies) != set(submission.section_ids):
-            raise ValueError(
-                f"Chief chapter {chapter_id} did not return every assigned section body"
+            bodies[edit.target_section_id] = body.replace(
+                edit.old_text,
+                edit.new_text,
+                1,
             )
-        return bodies
+        return {
+            section_id: bodies[section_id]
+            for section_id in submission.section_ids
+        }
 
     @staticmethod
     def complete_chief_revision(
@@ -622,7 +602,10 @@ class FinalReviewTools:
                 **(
                     {
                         "special_topic_analysis": _render_special_topic_analysis(
-                            parts_by_chapter["4"],
+                            {
+                                **_section_bodies(review.current, "4"),
+                                **parts_by_chapter["4"],
+                            },
                             plan,
                         )
                     }

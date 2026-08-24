@@ -33,9 +33,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
     DeclarativeFinalChiefRevisionContext,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
-    ChiefChapterLaneInput,
-)
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     ModuleProviderDependencies,
     build_module_provider_tools,
@@ -56,23 +53,9 @@ from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
 from .artifact_access import compile_agent_access, scoped_gateway
-from .models.reporting import CHIEF_SECTION_RESULT_PART_IDS
 from .state.parallel import TaskCorrelation
 
 LoopBuilder = Callable[..., AgentSessionLoop]
-
-
-def _revision_result_part_ids(contract: ChiefChapterLaneInput) -> list[str]:
-    """Resolve only the fixed prose parts targeted by this revision lane."""
-
-    section_ids = {
-        section_id
-        for finding in contract.assigned_findings
-        for section_id in finding.target_section_ids
-    }
-    if contract.chapter_id == "4":
-        return ["special_topic_analysis"]
-    return [CHIEF_SECTION_RESULT_PART_IDS[section_id] for section_id in contract.section_ids if section_id in section_ids]
 
 
 class FinalChiefProviderRuntime:
@@ -210,7 +193,6 @@ class FinalChiefProviderRuntime:
         task_attempt: ProviderTaskAttempt | None = None,
     ) -> FinalChiefAgentBridge:
         context = DeclarativeFinalChiefRevisionContext.model_validate(value)
-        contract = ChiefChapterLaneInput.model_validate(context.contract)
         envelope = cast(TaskEnvelope, context.envelope)
         session_id = conversation.external_session_id or conversation.key.value
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
@@ -253,7 +235,7 @@ class FinalChiefProviderRuntime:
             store=self.store,
             global_knowledge_root=self.services.global_knowledge_root,
             tool_names=list(task.tools),
-            expected_part_ids=_revision_result_part_ids(contract),
+            expected_part_ids=[],
             dependencies=dependencies,
         )
         loop_kwargs: dict[str, Any] = {

@@ -16,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
     ChiefChapterLaneRevisionSubmission,
+    ChiefSectionTextEdit,
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
@@ -23,9 +24,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.final_review 
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ChiefChapterLaneInput,
-)
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    CHAPTER1_SECTION_IDS,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.config.schema import AgentDefaults
@@ -47,6 +45,10 @@ from manyselves.runtime.services import RuntimeServicesView
 
 
 def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContext:
+    source_refs = [
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        f"Work/runs/{run_id}/evidence.jsonl",
+    ]
     finding = ChapterScopedFinalReviewFinding(
         id="F-1-001",
         target_section_ids=["1.2"],
@@ -67,8 +69,9 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContex
         run_id=run_id,
         subject_ref=f"Work/runs/{run_id}/edited-r0.json",
         chapter_id="1",
-        section_ids=list(CHAPTER1_SECTION_IDS),
-        section_bodies={section_id: "当前章节正文。" for section_id in CHAPTER1_SECTION_IDS},
+        section_ids=["1.2"],
+        section_bodies={"1.2": "当前章节正文。"},
+        source_refs=source_refs,
         assigned_findings=[finding],
         revision=1,
     )
@@ -76,21 +79,29 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContex
     store = ReportingStore(tmp_path)
     store.write_json(input_ref, contract.model_dump(mode="json"))
     store.write_json(contract.subject_ref, {"kind": "existing-edited-report"})
+    store.write_json(source_refs[0], {"kind": "cross-completion"})
+    evidence_path = tmp_path / source_refs[1]
+    evidence_path.write_text(
+        '{"id":"E-0001","content":"approved fact"}\n',
+        encoding="utf-8",
+    )
     envelope = TaskEnvelope(
         task_id="chief-chapter-1-r1",
         run_id=run_id,
         agent_id="chief-editor",
         objective="只修订 Chapter 1 被 Final 指定的 finding 小节。",
-        input_refs=[input_ref],
+        input_refs=[input_ref, *source_refs],
         constraints=["只提交 chief_chapter_lane_revision_submission。"],
         allowed_outputs=["chief_chapter_lane_revision_submission"],
-        allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+        allowed_tools=["open_artifact", "search_text", "submit_result"],
         revision=1,
         prior_result_ref=contract.subject_ref,
         input_contract_kind="chief_chapter_lane_input",
         input_contract_ref=input_ref,
         artifact_delivery_modes={
             input_ref: "inline",
+            source_refs[0]: "reference",
+            source_refs[1]: "reference",
             contract.subject_ref: "hash_retained",
         },
         inline_context="Final Chief revision skill: keep the patch inside the assigned lane.",
@@ -102,6 +113,34 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContex
         input_ref=input_ref,
         envelope=envelope,
     )
+
+
+def test_final_chief_revision_cannot_replace_a_complete_section_with_new_facts(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
+        FinalReviewTools,
+    )
+
+    context = _context(tmp_path, "final-chief-whole-section-drift")
+    contract = ChiefChapterLaneInput.model_validate(context.contract)
+    submission = ChiefChapterLaneRevisionSubmission(
+        run_id=contract.run_id,
+        base_subject_ref=contract.subject_ref,
+        chapter_id="1",
+        revision=1,
+        section_ids=["1.2"],
+        edits=[
+            ChiefSectionTextEdit(
+                target_section_id="1.2",
+                old_text="当前章节正文。",
+                new_text="XX主中心采用2N UPS，并配置柴油发电机。",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="cannot replace an entire section"):
+        FinalReviewTools._apply_chief_revision_edits(contract, submission)
 
 
 @pytest.mark.asyncio
@@ -120,6 +159,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
     def capture_tools(*args, **kwargs):
         del args
         captured["dependencies"] = kwargs["dependencies"]
+        captured["expected_part_ids"] = kwargs["expected_part_ids"]
         return ToolRegistry()
 
     async def capture_recovery(*args, **kwargs):
@@ -164,7 +204,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
         version="1.0.0",
         description="Chief Editor",
         instructions="Revise the assigned chapter.",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     task = TaskDefinition(
         id="final-chief-chapter-revision",
@@ -174,7 +214,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
         objective="Revise only the assigned chapter finding.",
         input_contract="declarative_final_chief_revision_context",
         output_contract="declarative_final_chief_revision_agent_result",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     policy = RecoveryPolicyDefinition(
         id="final-chief-schema-recovery",
@@ -202,6 +242,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
         recovery_policy=policy,
     )
     dependencies = captured["dependencies"]
+    assert captured["expected_part_ids"] == []
     decision = await dependencies.recovery_event_callback(
         "invalid_structured_output",
         {"task_id": task.id},
@@ -263,13 +304,6 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
                     return
                 self.received.append(message)
                 tools = self.kwargs["tools"]
-                written = await tools.get("write_result_part")(
-                    part_id="findings_overview",
-                    content="已补充事实边界、责任主体与后续动作，便于读者执行。",
-                )
-                listed = await tools.get("list_result_parts")()
-                assert written["persisted"] is True
-                assert listed["complete"] is True
                 await tools.get("submit_result")(
                     kind="chief_chapter_lane_revision_submission",
                     run_id=run_id,
@@ -277,7 +311,16 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
                     chapter_id="1",
                     revision=1,
                     section_ids=["1.2"],
-                    part_refs={"findings_overview": written["artifact_ref"]},
+                    edits=[
+                        {
+                            "target_section_id": "1.2",
+                            "old_text": "当前章节正文。",
+                            "new_text": (
+                                "当前章节正文。\n\n"
+                                "已补充事实边界、责任主体与后续动作，便于读者执行。"
+                            ),
+                        }
+                    ],
                     revision_responses=[
                         {
                             "finding_id": "F-1-001",
@@ -330,7 +373,7 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
         version="1.0.0",
         description="Chief Editor",
         instructions="修订指定章节并提交 typed revision patch。",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     task = TaskDefinition(
         id="final-chief-chapter-revision",
@@ -340,7 +383,7 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
         objective="Revise only the assigned chapter finding.",
         input_contract="declarative_final_chief_revision_context",
         output_contract="declarative_final_chief_revision_agent_result",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     try:
         first = await composition.agent_invokers[agent.id].invoke(
@@ -368,8 +411,8 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
     assert len(built) == 1
     assert built[0]["llm_provider"] is services.active_provider
     assert set(loops[0].kwargs["tools"].get_all()) == {
-        "write_result_part",
-        "list_result_parts",
+        "open_artifact",
+        "search_text",
         "submit_result",
     }
     assert [message.session_id for message in loops[0].received] == [
@@ -407,7 +450,7 @@ async def test_final_chief_provider_reuses_persisted_completed_result_before_pro
         version="1.0.0",
         description="Chief editor",
         instructions="Revise the assigned chapter.",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     task = TaskDefinition(
         id="final-chief-chapter-revision",
@@ -417,7 +460,7 @@ async def test_final_chief_provider_reuses_persisted_completed_result_before_pro
         objective="Revise only the assigned chapter finding.",
         input_contract="declarative_final_chief_revision_context",
         output_contract="declarative_final_chief_revision_agent_result",
-        tools=list(agent.tools),
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     workflow_id = "distribution-aggregate-existing-tail"
     identity_key = "chief-chapter-1"
@@ -440,7 +483,13 @@ async def test_final_chief_provider_reuses_persisted_completed_result_before_pro
         chapter_id="1",
         revision=1,
         section_ids=["1.2"],
-        part_refs={"findings_overview": "Work/runs/final-chief-provider-persisted-reuse/parts/findings_overview.md"},
+        edits=[
+            ChiefSectionTextEdit(
+                target_section_id="1.2",
+                old_text="当前章节正文。",
+                new_text="当前章节正文。\n\n补充核验说明。",
+            )
+        ],
     )
     try:
         store = TaskAttemptStore(tmp_path, run_id)

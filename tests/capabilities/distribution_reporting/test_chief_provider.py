@@ -69,6 +69,17 @@ def _state(run_id: str) -> dict[str, object]:
     }
 
 
+def _write_source_artifacts(workspace: Path, run_id: str) -> None:
+    cross_path = workspace / f"Work/runs/{run_id}/reviews/cross-completion.json"
+    cross_path.parent.mkdir(parents=True, exist_ok=True)
+    cross_path.write_text("{}\n", encoding="utf-8")
+    evidence_path = workspace / f"Work/runs/{run_id}/evidence.jsonl"
+    evidence_path.write_text(
+        '{"id":"E-0001","content":"approved fact"}\n',
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.asyncio
 async def test_chief_provider_shares_declared_recovery_with_tool_callback(
     tmp_path: Path,
@@ -95,6 +106,7 @@ async def test_chief_provider_shares_declared_recovery_with_tool_callback(
             global_knowledge_root=None,
         )
     )
+    _write_source_artifacts(tmp_path, "chief-schema-run")
     chief_runtime = ChiefChapterRuntime(tmp_path, state=_state("chief-schema-run"))
     context = chief_runtime.prepare_lane(
         {"state": chief_runtime.current_state, "chapter_id": "1"}
@@ -104,7 +116,13 @@ async def test_chief_provider_shares_declared_recovery_with_tool_callback(
         version="1.0.0",
         description="Chief",
         instructions="Edit the assigned chapter.",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     task = TaskDefinition(
         id="chief-chapter-edit",
@@ -114,7 +132,13 @@ async def test_chief_provider_shares_declared_recovery_with_tool_callback(
         objective="Edit one chapter.",
         input_contract="declarative_chief_chapter_context",
         output_contract="declarative_chief_chapter_agent_result",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     policy = RecoveryPolicyDefinition(
         id="chief-schema-recovery",
@@ -231,10 +255,7 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         global_knowledge_root=None,
     )
     chief_runtime = ChiefChapterRuntime(tmp_path, state=_state(run_id))
-    chief_runtime.store.write_json(
-        f"Work/runs/{run_id}/reviews/cross-completion.json",
-        {},
-    )
+    _write_source_artifacts(tmp_path, run_id)
     composition = build_chief_provider_composition(
         services,
         chief_runtime=chief_runtime,
@@ -258,7 +279,13 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         version="1.0.0",
         description="Chief",
         instructions="Edit the assigned chapter.",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     task = TaskDefinition(
         id="chief-chapter-edit",
@@ -268,7 +295,13 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         objective="Edit one chapter.",
         input_contract="declarative_chief_chapter_context",
         output_contract="declarative_chief_chapter_agent_result",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     try:
         outcome = await composition.agent_invokers["chief-editor"].invoke(
@@ -295,9 +328,21 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
     assert len(loops) == 1
     assert len(built) == 1
     assert set(loops[0].kwargs["tools"].get_all()) == {
+        "open_artifact",
+        "search_text",
         "write_result_part",
         "list_result_parts",
         "submit_result",
+    }
+    assert set(context.envelope.input_refs) == {
+        context.input_ref,
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        f"Work/runs/{run_id}/evidence.jsonl",
+    }
+    assert context.envelope.artifact_delivery_modes == {
+        context.input_ref: "inline",
+        f"Work/runs/{run_id}/reviews/cross-completion.json": "reference",
+        f"Work/runs/{run_id}/evidence.jsonl": "reference",
     }
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
@@ -330,6 +375,7 @@ async def test_chief_provider_reuses_persisted_completed_result_before_provider(
 
     run_id = "chief-provider-persisted-reuse"
     bus = MessageBus()
+    _write_source_artifacts(tmp_path, run_id)
     chief_runtime = ChiefChapterRuntime(tmp_path, state=_state(run_id))
     chief_runtime.store.write_json(
         f"Work/runs/{run_id}/reviews/cross-completion.json",
@@ -356,7 +402,13 @@ async def test_chief_provider_reuses_persisted_completed_result_before_provider(
         version="1.0.0",
         description="Chief",
         instructions="Edit the assigned chapter.",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     task = TaskDefinition(
         id="chief-chapter-edit",
@@ -366,7 +418,13 @@ async def test_chief_provider_reuses_persisted_completed_result_before_provider(
         objective="Edit one chapter.",
         input_contract="declarative_chief_chapter_context",
         output_contract="declarative_chief_chapter_agent_result",
-        tools=["write_result_part", "list_result_parts", "submit_result"],
+        tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
     )
     identity_key = reporting_identity_key(agent.id, conversation.key.value)
     attempt = ProviderTaskAttempt.acquire(

@@ -1,12 +1,12 @@
 id: final-chief-chapter-revision
-version: 1.0.1
+version: 1.1.0
 description: Revise only the assigned Final chapter findings through the Chief editor
 agent: chief-editor
-objective: Apply the assigned Final findings to the shared current chapter subject and return a lane-local patch.
+objective: Apply the assigned Final findings as exact text edits to the current section bodies and return a lane-local patch.
 input_contract: declarative_final_chief_revision_context
 output_contract: declarative_final_chief_revision_agent_result
 tools:
-- write_result_part
-- list_result_parts
+- open_artifact
+- search_text
 - submit_result
 recovery: current-reporting-recovery

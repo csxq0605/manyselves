@@ -207,7 +207,7 @@ def _build_envelope(
         run_id=contract.run_id,
         agent_id="chief-editor",
         objective=f"仅完成报告第{chapter_id}章的总编正文分段；不得输出其他章节。",
-        input_refs=[input_ref],
+        input_refs=[input_ref, *contract.source_refs],
         constraints=[
             f"只处理 Chapter {chapter_id} 的 section_ids={','.join(contract.section_ids)}",
             "source_context/source_refs 是本 lane 唯一事实边界；不得内联或复述其他章节正文",
@@ -220,12 +220,21 @@ def _build_envelope(
             "submit_result 只提交 chief_chapter_lane_submission，不得提交完整 EditedReportSubmission",
         ],
         allowed_outputs=["chief_chapter_lane_submission"],
-        allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+        allowed_tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
         revision=0,
         target_submodule_ids=[],
         input_contract_kind="chief_chapter_lane_input",
         input_contract_ref=input_ref,
-        artifact_delivery_modes={input_ref: "inline"},
+        artifact_delivery_modes={
+            input_ref: "inline",
+            **{source_ref: "reference" for source_ref in contract.source_refs},
+        },
         inline_context=inline_context,
     )
 
