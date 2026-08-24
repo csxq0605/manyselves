@@ -79,12 +79,14 @@ class TemplateDistillationAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "distill-template-skill",
         completed_result_loader: CompletedResultLoader | None = None,
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
+        self.recovery_driver = recovery_driver
 
     def _runtime_id(
         self,
@@ -182,7 +184,10 @@ class TemplateDistillationAgentBridge:
                     )
 
                 recovered = await self.execution.recover_completed_result(
-                    recovery=AgentRecoveryDriver(recovery_policy),
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
                     detail={
                         "task_id": task.id,
                         "source": "persisted_result",
@@ -365,7 +370,7 @@ class TemplateDistillationAgentBridge:
         recovered = await self.execution.execute_with_recovery(
             session,
             initial_request,
-            recovery=AgentRecoveryDriver(recovery_policy),
+            recovery=(self.recovery_driver or AgentRecoveryDriver(recovery_policy)),
             interpret=interpret,
             build_turn=build_turn,
             stop=stop,

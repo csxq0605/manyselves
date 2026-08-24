@@ -16,6 +16,9 @@ from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
     TemplateDistillationAgentBridge,
 )
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
 )
@@ -41,6 +44,7 @@ from manyselves.runtime.agent_execution import (
     AgentExecutionService,
     AgentSessionLoop,
 )
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 LoopBuilder = Callable[..., AgentSessionLoop]
@@ -97,7 +101,14 @@ class TemplateDistillationProviderRuntime:
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
         input_value = self._input(value)
-        bridge = self._bridge(agent, task, input_value, conversation, task_id=task_id)
+        bridge = self._bridge(
+            agent,
+            task,
+            input_value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
         return await bridge.invoke_with_recovery(
             agent,
             task,
@@ -115,6 +126,7 @@ class TemplateDistillationProviderRuntime:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> TemplateDistillationAgentBridge:
         workspace = self.services.workspace
         input_ref = TEMPLATE_DISTILLATION_INPUT_REF.format(run_id=value.run_id)
@@ -138,6 +150,11 @@ class TemplateDistillationProviderRuntime:
             f"{self.workflow_id}:{conversation.key.value}"
         )
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
         tools = build_template_distillation_provider_tools(
             workspace,
             envelope=envelope,
@@ -147,6 +164,11 @@ class TemplateDistillationProviderRuntime:
             bus=self.services.bus,
             store=self._store(workspace),
             tool_names=task.tools,
+            recovery_event_callback=(
+                build_tool_recovery_callback(recovery_driver)
+                if recovery_driver is not None
+                else None
+            ),
         )
         loop_kwargs = {
             "agent_type": runtime_id,
@@ -172,6 +194,7 @@ class TemplateDistillationProviderRuntime:
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=self.workflow_id,
+            recovery_driver=recovery_driver,
         )
 
     @staticmethod

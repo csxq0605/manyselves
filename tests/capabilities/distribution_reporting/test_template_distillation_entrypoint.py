@@ -343,6 +343,112 @@ def test_template_provider_tool_builder_owns_the_exact_agent_tool_set(
 
 
 @pytest.mark.asyncio
+async def test_template_provider_shares_declared_recovery_with_submit_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting.runtime import template_provider
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.kernel.conversations import (
+        ConversationKey,
+        ConversationMode,
+        ConversationRecord,
+    )
+    from manyselves.kernel.definitions import (
+        AgentDefinition,
+        RecoveryPolicyDefinition,
+        RecoveryRule,
+        TaskDefinition,
+    )
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return ToolRegistry()
+
+    monkeypatch.setattr(
+        template_provider,
+        "build_template_distillation_provider_tools",
+        capture_tools,
+    )
+    bus = MessageBus()
+    runtime = template_provider.TemplateDistillationProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        )
+    )
+    value = TemplateDistillationInput(
+        run_id="template-schema-run",
+        template_ref="Inputs/template.docx",
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    agent = AgentDefinition(
+        id="template-distiller",
+        version="1.0.0",
+        description="Template distiller",
+        instructions="Distill the template.",
+    )
+    task = TaskDefinition(
+        id="template-skill-distillation",
+        version="1.0.0",
+        description="Template distillation",
+        agent=agent.id,
+        objective="Distill one template.",
+        input_contract="template_distillation_input",
+        output_contract="template_skill_submission",
+        tools=["submit_result"],
+    )
+    policy = RecoveryPolicyDefinition(
+        id="template-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="template-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="template-distillation",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=value.run_id,
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        value,
+        conversation,
+        task_id="invoke-template-distiller",
+        recovery_policy=policy,
+    )
+    decision = await captured["recovery_event_callback"](
+        "invalid_structured_output",
+        {"task_id": task.id},
+    )
+
+    assert decision.action.value == "correct"
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
     tmp_path: Path,
 ) -> None:
