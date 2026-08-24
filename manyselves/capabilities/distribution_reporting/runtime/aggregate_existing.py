@@ -54,10 +54,16 @@ from manyselves.kernel.definitions import (
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvoker, ToolInvocationOutcome
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import (
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    restore_plan_definition_registry,
+)
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
     CapabilityRunNotFoundError,
+    CapabilityRunStateError,
 )
 from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -463,6 +469,32 @@ class AggregateExistingWorkflowRuntime:
             self._state_store,
             self._events,
         ).execute(plan, state, context)
+
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Resume the persisted aggregate Plan + State after process restart."""
+
+        del command_id
+        state = self._load_state(run_id)
+        if state.status is WorkflowStatus.COMPLETED:
+            return {"run_id": run_id, "task_id": None}
+        if state.status is WorkflowStatus.WAITING:
+            raise CapabilityRunStateError(
+                "run is waiting for input; resume it through the input endpoint"
+            )
+        if state.status is WorkflowStatus.FAILED:
+            raise CapabilityRunStateError("failed runs require an explicit retry")
+        try:
+            plan = self._state_store.load_plan(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        registry = restore_plan_definition_registry(plan)
+        contracts = self._contracts(registry)
+        await self._execute_public(plan, state, registry, contracts)
+        return {"run_id": run_id, "task_id": None}
 
     def _compiled(
         self,

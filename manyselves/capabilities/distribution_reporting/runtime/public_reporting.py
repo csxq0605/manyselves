@@ -29,7 +29,10 @@ from manyselves.kernel.workflow import (
     restore_plan_definition_registry,
     resume_waiting_input,
 )
-from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.capability_binding import (
+    CapabilityRunNotFoundError,
+    CapabilityRunStateError,
+)
 from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
@@ -225,6 +228,32 @@ class PublicReportingWorkflowRuntime:
             subworkflows=plan.subworkflow_plans,
         )
         await self._execute_state(plan, resumed, definitions, contracts)
+        return {"run_id": run_id, "task_id": None}
+
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Resume the saved Plan + State without recompiling the request."""
+
+        del command_id
+        state = self._load_state(run_id)
+        if state.status is WorkflowStatus.COMPLETED:
+            return {"run_id": run_id, "task_id": None}
+        if state.status is WorkflowStatus.WAITING:
+            raise CapabilityRunStateError(
+                "run is waiting for input; resume it through the input endpoint"
+            )
+        if state.status is WorkflowStatus.FAILED:
+            raise CapabilityRunStateError("failed runs require an explicit retry")
+        try:
+            plan = self.state_store.load_plan(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        definitions = restore_plan_definition_registry(plan)
+        contracts = build_contract_catalog(definitions)
+        await self._execute_state(plan, state, definitions, contracts)
         return {"run_id": run_id, "task_id": None}
 
     def compile_plan(

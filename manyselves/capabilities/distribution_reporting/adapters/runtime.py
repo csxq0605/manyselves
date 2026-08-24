@@ -299,8 +299,28 @@ class DistributionReportingRuntimeBinding:
             ),
         )
 
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Resume a persisted Run after an in-process task disappeared."""
+
+        if self._detached_runs.is_active(run_id):
+            return {"run_id": run_id, "task_id": None}
+        runtime, store = self._runtime_and_store_for_run(run_id)
+        return await self._detached_runs.accept_after_persisted_state(
+            run_id=run_id,
+            state_store=store,
+            operation=runtime.resume(command_id, run_id),
+        )
+
     def get_run(self, run_id: str) -> dict[str, Any]:
-        return self._runtime_for_run(run_id).get_run(run_id)
+        projection = self._runtime_for_run(run_id).get_run(run_id)
+        run = projection.get("run")
+        if isinstance(run, dict):
+            run["active"] = self._detached_runs.is_active(run_id)
+        return projection
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
         return self._runtime_for_run(run_id).get_outputs(run_id)

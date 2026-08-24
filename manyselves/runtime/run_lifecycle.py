@@ -27,6 +27,12 @@ class DetachedRuntime(Protocol):
         values: Any,
     ) -> dict[str, Any]: ...
 
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]: ...
+
 
 class StartAwareFileWorkflowStateStore(FileWorkflowStateStore):
     """File state store that reports the first persisted state for a Run.
@@ -58,10 +64,17 @@ class DetachedRunTaskOwner:
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._tasks_by_run: dict[str, asyncio.Task[Any]] = {}
 
     @property
     def active(self) -> bool:
         return any(not task.done() for task in self._tasks)
+
+    def is_active(self, run_id: str) -> bool:
+        """Return whether this process already owns execution for one Run."""
+
+        task = self._tasks_by_run.get(run_id)
+        return task is not None and not task.done()
 
     async def accept_after_persisted_state(
         self,
@@ -72,11 +85,15 @@ class DetachedRunTaskOwner:
     ) -> dict[str, Any]:
         """Return after the operation's next persisted state transition."""
 
+        if self.is_active(run_id):
+            return {"run_id": run_id, "task_id": None}
+
         started = asyncio.Event()
         state_store.register_started(run_id, lambda _state: started.set())
         task = asyncio.create_task(operation)
         self._tasks.add(task)
-        task.add_done_callback(self._discard_task)
+        self._tasks_by_run[run_id] = task
+        task.add_done_callback(lambda completed: self._discard_task(run_id, completed))
         started_waiter = asyncio.create_task(started.wait())
         try:
             done, _pending = await asyncio.wait(
@@ -101,8 +118,10 @@ class DetachedRunTaskOwner:
             if not started.is_set():
                 state_store.unregister_started(run_id)
 
-    def _discard_task(self, task: asyncio.Task[Any]) -> None:
+    def _discard_task(self, run_id: str, task: asyncio.Task[Any]) -> None:
         self._tasks.discard(task)
+        if self._tasks_by_run.get(run_id) is task:
+            self._tasks_by_run.pop(run_id, None)
         if task.cancelled():
             return
         # Retrieve the exception so a background failure is never reported as

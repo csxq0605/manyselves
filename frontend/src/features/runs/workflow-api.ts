@@ -32,6 +32,7 @@ export interface WorkflowApi {
     input: WorkflowRunInputRequest,
     idempotencyKey: string,
   ): Promise<WorkflowRunAcceptedResponse>;
+  resume(runId: string, idempotencyKey: string): Promise<WorkflowRunAcceptedResponse>;
   start(
     input: WorkflowRunStartRequest,
     idempotencyKey: string,
@@ -67,6 +68,10 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi {
     provideInput: (runId, input, idempotencyKey) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/input`,
       mutationOptions(idempotencyKey, input),
+    ),
+    resume: (runId, idempotencyKey) => gateway.requestJson(
+      `/api/v1/runs/${encodeURIComponent(runId)}/resume`,
+      { headers: { "Idempotency-Key": idempotencyKey }, method: "POST", requireLease: true },
     ),
     start: (input, idempotencyKey) => gateway.requestJson(
       "/api/v1/runs",

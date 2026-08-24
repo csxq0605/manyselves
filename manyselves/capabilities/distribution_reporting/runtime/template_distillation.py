@@ -38,10 +38,16 @@ from manyselves.kernel.executors import (
     RuntimeContext,
     build_builtin_executor_registry,
 )
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import (
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    restore_plan_definition_registry,
+)
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
     CapabilityRunNotFoundError,
+    CapabilityRunStateError,
 )
 from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -386,6 +392,32 @@ class TemplateDistillationWorkflowRuntime:
         self._load_state(run_id)
         raise CapabilityRunInputError("distill-template-skill has no waiting input")
 
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Resume the persisted template Plan + State after process restart."""
+
+        del command_id
+        state = self._load_state(run_id)
+        if state.status is WorkflowStatus.COMPLETED:
+            return {"run_id": run_id, "task_id": None}
+        if state.status is WorkflowStatus.WAITING:
+            raise CapabilityRunStateError(
+                "run is waiting for input; resume it through the input endpoint"
+            )
+        if state.status is WorkflowStatus.FAILED:
+            raise CapabilityRunStateError("failed runs require an explicit retry")
+        try:
+            plan = self._store.load_plan(run_id)
+        except FileNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        registry = restore_plan_definition_registry(plan)
+        contracts = self._contracts(registry)
+        await self._execute(plan, state, registry, contracts)
+        return {"run_id": run_id, "task_id": None}
+
     def get_run(self, run_id: str) -> dict[str, Any]:
         state = self._load_state(run_id)
         waiting_input = [state.waiting_input] if state.waiting_input is not None else []
@@ -444,9 +476,14 @@ class TemplateDistillationWorkflowRuntime:
         contracts: dict[str, ContractAdapter],
     ) -> WorkflowState:
         input_value = state.variables.get(plan.input_variable)
-        if isinstance(input_value, TemplateDistillationInput):
-            self._source_metadata.setdefault("run_id", input_value.run_id)
-            self._source_metadata.setdefault("template_ref", input_value.template_ref)
+        if input_value is not None:
+            restored_input = (
+                input_value
+                if isinstance(input_value, TemplateDistillationInput)
+                else TemplateDistillationInput.model_validate(input_value)
+            )
+            self._source_metadata.setdefault("run_id", restored_input.run_id)
+            self._source_metadata.setdefault("template_ref", restored_input.template_ref)
         tools = self._tools(registry, contracts, plan.tool_ids)
         return await WorkflowRuntimeHost(
             self._executors,

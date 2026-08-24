@@ -338,6 +338,10 @@ function statusClass(status: string): string {
   }
 }
 
+function isRunningStatus(status: string): boolean {
+  return statusClass(status) === "running";
+}
+
 function schemaFieldNames(schema: JsonSchema, required: boolean): string[] {
   const requiredNames = new Set(schema.required ?? []);
   return Object.keys(schema.properties ?? {}).filter((name) => requiredNames.has(name) === required);
@@ -577,6 +581,17 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
       void cost.refetch();
     },
   });
+  const resumeRun = useMutation({
+    mutationFn: () => api.resume(runId, createUuid()),
+    onError: (reason) => setError(reason instanceof Error ? reason.message : "恢复运行失败。"),
+    onSuccess: (accepted) => {
+      setError(null);
+      setRunId(accepted.runId);
+      void run.refetch();
+      void outputs.refetch();
+      void cost.refetch();
+    },
+  });
 
   const totals = objectValue(cost.data?.usage.totals);
   const estimatedCost = totals.estimated_cost;
@@ -587,6 +602,10 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   const optionalInputNames = schemaFieldNames(inputSchema, false);
   const rawRunStatus = run.data?.run.status ?? "";
   const runStatusClass = statusClass(rawRunStatus);
+  const canResumeRun = run.data !== undefined
+    && !run.data.run.active
+    && run.data.waitingInput.length === 0
+    && isRunningStatus(rawRunStatus);
   const runStateError = run.data ? errorFromState(objectValue(run.data.state)) : undefined;
   const eventError = events.data?.events.find((event) => typeof event.error === "string" && event.error.length > 0)?.error;
   const failureError = runStateError ?? eventError;
@@ -721,6 +740,14 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
                 <div><dt>状态</dt><dd>{rawRunStatus}</dd></div>
                 {run.data.run.taskId ? <div><dt>Task</dt><dd>{run.data.run.taskId}</dd></div> : null}
               </dl>
+              {canResumeRun ? <button
+                className="run-workspace__primary-action"
+                disabled={resumeRun.isPending}
+                onClick={() => resumeRun.mutate()}
+                type="button"
+              >
+                {resumeRun.isPending ? "正在恢复…" : "恢复运行"}
+              </button> : null}
             </section>
             {run.isError ? <section className="run-workspace__panel run-workspace__panel--error" aria-label="运行加载错误" role="alert">
               <h3>无法读取运行状态</h3><p>{run.error instanceof Error ? run.error.message : "运行状态加载失败。"}</p>

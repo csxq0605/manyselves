@@ -207,6 +207,22 @@ class WorkflowProjectionFacade:
             current["workflow_id"],
         )
 
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Resume one persisted Run through its Capability-owned runtime."""
+
+        binding, projection = self._locate_run(run_id)
+        accepted = await binding.resume(command_id, run_id)
+        current = projection["run"]
+        return self._accepted(
+            accepted,
+            current["capability_id"],
+            current["workflow_id"],
+        )
+
     def get_run(self, run_id: str) -> dict[str, Any]:
         _binding, projection = self._locate_run(run_id)
         return {

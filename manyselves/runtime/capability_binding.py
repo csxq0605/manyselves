@@ -47,6 +47,12 @@ class CapabilityRuntimeBinding(Protocol):
         values: Any,
     ) -> dict[str, Any]: ...
 
+    async def resume(
+        self,
+        command_id: UUID,
+        run_id: str,
+    ) -> dict[str, Any]: ...
+
     async def provide_input(
         self,
         command_id: UUID,

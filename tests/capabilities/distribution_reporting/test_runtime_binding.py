@@ -24,6 +24,7 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.routes.workflows import _projection
 
 
@@ -39,6 +40,40 @@ class _ModuleRuntimeSpy:
     ) -> dict:
         self.calls.append((command_id, workflow_id, values))
         return {"run_id": "module-run", "task_id": None}
+
+
+class _ResumableRuntime:
+    workflow_id = "render-existing"
+
+    def __init__(self, workspace: Path) -> None:
+        self.store = FileWorkflowStateStore(workspace)
+        self.calls: list[str] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def resume(self, command_id: UUID, run_id: str) -> dict[str, object]:
+        del command_id
+        self.calls.append(run_id)
+        state = self.store.load(run_id)
+        self.store.save(state)
+        self.started.set()
+        await self.release.wait()
+        return {"run_id": run_id, "task_id": None}
+
+    def get_run(self, run_id: str) -> dict[str, object]:
+        state = self.store.load(run_id)
+        return {
+            "run": {
+                "run_id": run_id,
+                "capability_id": "distribution-reporting",
+                "workflow_id": state.workflow_id,
+                "status": state.status.value,
+                "active": state.status in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                "task_id": None,
+            },
+            "state": state.model_dump(mode="json"),
+            "waiting_input": [],
+        }
 
 
 @pytest.mark.asyncio
@@ -281,6 +316,58 @@ async def test_waiting_input_returns_after_resumed_state_is_persisted(
     await asyncio.wait_for(finished.wait(), timeout=1)
     assert binding.get_run(run_id)["run"]["status"] == "completed"
     await binding.close()
+
+
+@pytest.mark.asyncio
+async def test_persisted_run_resume_reuses_one_in_process_task(
+    tmp_path: Path,
+) -> None:
+    binding = DistributionReportingRuntimeBinding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
+    runtime = _ResumableRuntime(tmp_path)
+    runtime.store = binding._start_stores["render-existing"]
+    binding._runtimes["render-existing"] = runtime
+    run_id = "render-existing-process-restart"
+    plan = ResolvedPlan(
+        workflow_id="render-existing",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    state = WorkflowState.for_plan(run_id, plan)
+    state.status = WorkflowStatus.RUNNING
+    runtime.store.save_plan(run_id, plan)
+    runtime.store.save(state)
+    assert binding.get_run(run_id)["run"]["active"] is False
+
+    first = asyncio.create_task(
+        binding.resume(
+            UUID("50000000-0000-4000-8000-000000000005"),
+            run_id,
+        )
+    )
+    await asyncio.wait_for(runtime.started.wait(), timeout=1)
+    accepted = await asyncio.wait_for(first, timeout=1)
+    assert binding.get_run(run_id)["run"]["active"] is True
+    duplicate = await binding.resume(
+        UUID("50000000-0000-4000-8000-000000000006"),
+        run_id,
+    )
+
+    assert accepted == {"run_id": run_id, "task_id": None}
+    assert duplicate == {"run_id": run_id, "task_id": None}
+    assert runtime.calls == [run_id]
+
+    runtime.release.set()
+    await binding.close()
+    assert binding.get_run(run_id)["run"]["active"] is False
 
 
 @pytest.mark.asyncio

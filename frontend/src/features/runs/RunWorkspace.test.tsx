@@ -75,6 +75,7 @@ describe("RunWorkspace", () => {
         runId: "run-1",
       }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "distribution-reporting",
         commandId: "command-1",
@@ -186,6 +187,7 @@ describe("RunWorkspace", () => {
         runId: "parameter-adjustment-command-2",
       }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "parameter-adjustment",
         commandId: "command-2",
@@ -265,6 +267,7 @@ describe("RunWorkspace", () => {
       }),
       outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "primitive-run" }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start,
     };
     const user = userEvent.setup();
@@ -335,6 +338,7 @@ describe("RunWorkspace", () => {
       }),
       outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "run-schema-controls" }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "neutral-controls",
         commandId: "command-schema-controls",
@@ -496,6 +500,7 @@ describe("RunWorkspace", () => {
       }),
       outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "run-report-schema" }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "neutral-report-form",
         commandId: "command-report-schema",
@@ -650,6 +655,7 @@ describe("RunWorkspace", () => {
         runId: "report-declarative-waiting",
       }),
       provideInput,
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "distribution-reporting",
         commandId: "command-start",
@@ -733,6 +739,7 @@ describe("RunWorkspace", () => {
       }),
       outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "primitive-waiting" }),
       provideInput,
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "parameter-adjustment",
         commandId: "command-start",
@@ -805,6 +812,7 @@ describe("RunWorkspace", () => {
       }),
       outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "cost-failure" }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "parameter-adjustment",
         commandId: "cost-failure-command",
@@ -896,6 +904,7 @@ describe("RunWorkspace", () => {
       }),
       outputs,
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn().mockResolvedValue({
         capabilityId: "distribution-reporting",
         commandId: "command-polling",
@@ -912,10 +921,106 @@ describe("RunWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "启动工作流" }));
 
     expect(await screen.findByText("running")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "恢复运行" })).not.toBeInTheDocument();
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2), { timeout: 2500 });
     expect(await screen.findByText("completed")).toBeVisible();
     expect(await screen.findByText("Outputs/Reports/polling.docx")).toBeVisible();
     expect(outputs).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes a persisted running run through the same Run and polling lifecycle", async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        run: {
+          active: false,
+          capabilityId: "neutral-capability",
+          runId: "persisted-running",
+          status: "running",
+          taskId: "task-persisted",
+          workflowId: "neutral-workflow",
+        },
+        state: {},
+        waitingInput: [],
+      })
+      .mockResolvedValueOnce({
+        run: {
+          active: true,
+          capabilityId: "neutral-capability",
+          runId: "persisted-running",
+          status: "running",
+          taskId: "task-persisted",
+          workflowId: "neutral-workflow",
+        },
+        state: {},
+        waitingInput: [],
+      })
+      .mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "neutral-capability",
+          runId: "persisted-running",
+          status: "completed",
+          taskId: "task-persisted",
+          workflowId: "neutral-workflow",
+        },
+        state: {},
+        waitingInput: [],
+      });
+    const resume = vi.fn().mockResolvedValue({
+      capabilityId: "neutral-capability",
+      commandId: "command-resume",
+      runId: "persisted-running",
+      status: "accepted",
+      taskId: "task-persisted",
+      workflowId: "neutral-workflow",
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "persisted-running",
+        usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
+      }),
+      events: vi.fn().mockResolvedValue({ events: [], runId: "persisted-running" }),
+      get,
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "neutral-input",
+        schema: { type: "object" },
+        workflowId: "neutral-workflow",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral capability",
+          id: "neutral-capability",
+          version: "1.0.0",
+          workflowIds: ["neutral-workflow"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "neutral-capability",
+          description: "Neutral workflow",
+          id: "neutral-workflow",
+          inputContract: "neutral-input",
+          outputContract: "neutral-output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "persisted-running" }),
+      provideInput: vi.fn(),
+      resume,
+      start: vi.fn(),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await user.type(await screen.findByRole("textbox", { name: "Run ID" }), "persisted-running");
+    await user.click(screen.getByRole("button", { name: "打开运行" }));
+
+    expect(await screen.findByText("running")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "恢复运行" }));
+    await waitFor(() => expect(resume).toHaveBeenCalledWith("persisted-running", expect.any(String)));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    expect(await screen.findByText("completed")).toBeVisible();
   });
 
   it("opens an existing run by Run ID", async () => {
@@ -967,6 +1072,7 @@ describe("RunWorkspace", () => {
         runId: "existing-run",
       }),
       provideInput: vi.fn(),
+      resume: vi.fn(),
       start: vi.fn(),
     };
     const user = userEvent.setup();

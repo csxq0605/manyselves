@@ -193,6 +193,10 @@ class _ReportingAdapter:
         self.calls.append(("resume", {"run_id": run_id, **values}))
         return {"run_id": run_id, "task_id": "task-resume"}
 
+    async def resume(self, command_id: UUID, run_id: str) -> dict:
+        self.calls.append(("resume_persisted", {"run_id": run_id}))
+        return {"run_id": run_id, "task_id": None}
+
     def resume_workflow_input(
         self,
         command_id: UUID,
@@ -747,6 +751,28 @@ async def test_run_start_and_input_delegate_to_the_capability_binding(
     ]
 
 
+@pytest.mark.asyncio
+async def test_resume_run_delegates_to_generic_binding_boundary(
+    tmp_path: Path,
+) -> None:
+    adapter = _ReportingAdapter()
+    facade = _facade(tmp_path, adapter)
+
+    resumed = await facade.resume(
+        UUID("30000000-0000-4000-8000-000000000005"),
+        "report-1",
+    )
+
+    assert resumed == {
+        "status": "accepted",
+        "run_id": "report-1",
+        "task_id": None,
+        "capability_id": "distribution-reporting",
+        "workflow_id": "distribution-reporting",
+    }
+    assert adapter.calls == [("resume_persisted", {"run_id": "report-1"})]
+
+
 def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -> None:
     paths = create_app(WebSettings(data_root=tmp_path)).openapi()["paths"]
 
@@ -757,6 +783,7 @@ def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -
         "/api/v1/runs",
         "/api/v1/runs/{run_id}",
         "/api/v1/runs/{run_id}/input",
+        "/api/v1/runs/{run_id}/resume",
         "/api/v1/runs/{run_id}/outputs",
         "/api/v1/runs/{run_id}/cost",
         "/api/v1/runs/{run_id}/events",

@@ -202,6 +202,26 @@ async def provide_run_input(
         raise _error(error) from error
 
 
+@router.post(
+    "/runs/{run_id}/resume",
+    response_model=WorkflowRunAcceptedResponse,
+    status_code=202,
+)
+async def resume_run(
+    run_id: str,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    state = request_runtime_state(request)
+    try:
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            payload = await _projection(request).resume(command_id, run_id)
+            return WorkflowRunAcceptedResponse(commandId=command_id, **payload)
+    except Exception as error:
+        raise _error(error) from error
+
+
 @router.get("/runs/{run_id}/outputs", response_model=WorkflowOutputListResponse)
 async def get_run_outputs(run_id: str, request: Request):
     state = request_runtime_state(request)
