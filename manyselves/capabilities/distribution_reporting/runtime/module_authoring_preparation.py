@@ -88,7 +88,7 @@ def _dispatch(value: Any) -> Any:
         return ModuleDispatchPlan.model_validate(value)
     # Compatibility callers historically supplied a structural object with
     # ``module_tasks``.  Preserve that boundary instead of adding a new
-    # validation gate during the mechanical extraction.
+    # validation rule during the mechanical extraction.
     return value
 
 

@@ -22,7 +22,7 @@ def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
     ``LoopManager`` normally exposes the selected provider through its Main
     loop.  During degraded startup no Main loop is created, so the existing
     provider-manager selection is read as a fallback.  A missing active
-    provider remains ``None`` and is not converted into a new runtime gate.
+    provider remains ``None`` and is not converted into a new lifecycle policy.
     """
 
     manager = host.loop_manager

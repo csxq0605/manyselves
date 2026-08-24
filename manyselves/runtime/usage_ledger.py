@@ -22,7 +22,7 @@ class RoundReason(StrEnum):
     """Why a provider round was dispatched.
 
     Lower-case member names intentionally mirror the persisted JSON values and
-    the names used by reporting summaries.  A ``provider_retry`` is valid only
+    the names used by runtime summaries.  A ``provider_retry`` is valid only
     for a physical attempt numbered two or greater; the ledger never derives
     that reason from a status or disposition field.
     """

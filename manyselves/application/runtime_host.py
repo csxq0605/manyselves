@@ -85,7 +85,7 @@ class RuntimeHost:
 
     @property
     def global_knowledge_root(self) -> Path | None:
-        """Optional server-global knowledge root shared by reporting runtimes."""
+        """Optional server-global knowledge root shared by Capability runtimes."""
         return self._global_knowledge_root
 
     def set_global_knowledge_root(self, root: Path | None) -> None:

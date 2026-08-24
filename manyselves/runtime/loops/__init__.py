@@ -8,7 +8,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Keep the reporting-aware loop manager out of neutral imports."""
+    """Keep the fully composed loop manager out of lightweight imports."""
 
     if name == "AgentLoop":
         from .agent_loop import AgentLoop

@@ -1,8 +1,8 @@
 """Provider-facing typed context rebase primitives.
 
-The reporting runtime keeps a lossless conversation trace for forensics, but a
+The Agent runtime keeps a lossless conversation trace for forensics, but a
 Provider request must be assembled from a smaller, typed state.  This module
-contains the protocol-neutral pieces used by both the reporting rebaser and
+contains the protocol-neutral pieces used by both Capability rebasers and
 ``AgentLoop``.  In particular, an assistant tool call and all of its matching
 results are one indivisible :class:`AtomicToolUnit`.
 """

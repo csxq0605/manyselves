@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence`
-- Current slice: `FA-08/M9.42 derive output categories from generic file data`
+- Current slice: `FA-08/M9.43 remove dead pre-send Gate algorithm and finish automatic audit`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `a388afb Architecture: remove residual domain semantics`
+- HEAD at slice start: `8f3b3dc Frontend: derive output categories from files`
 - Program status: `in progress`
 - Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
 - Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `完成最终 Definition/Compiler/Kernel/Runtime/UI 发布图审计并刷新完成矩阵`
+- Next automatic action: `完成剩余发布图与文档一致性扫描；真实 Provider/项目/浏览器验收继续按用户要求暂缓`
 
 ## Why the prior completion claim is reopened
 
@@ -292,6 +292,7 @@
 - FA-08/M9.40 将通用 Run 交互投影到 Main 单一对话：新增只读 `GET /api/v1/runs`，由 Application 从当前 account workspace 的通用 `WorkflowStateStore` 列出根 Run 并复用既有 `get_run` 投影；Main React 只按 `waitingInput + JSON Schema` 渲染 Interaction，枚举标签由 Capability Pydantic Schema 的 `x-enum-labels` 提供，Lane 显示只读取通用 `path.branch_id`，提交继续使用既有 `/runs/{run_id}/input` 恢复同一 Run。inactive `running/failed` 也在 Main 暴露既有 `/resume`，不新建 Run。Characterization First 分别取得缺少 Run feed、缺少三选一 Schema 标签和缺少 Main WAITING 卡片的 RED；GREEN 后后端投影/Schema focused `19 passed`，Conversation/RunWorkspace/AppLayout `22 passed`，架构/发布矩阵 `20 passed`，定向 Ruff/ESLint/TypeScript、OpenAPI 生成一致性与 `git diff --check` 通过。会话路由 Characterization 同时证明 `AppLayout` 始终保留 Sidebar；前端没有 Capability ID、Workflow ID、Reporting 或模块编号分支。未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或 Capability 专属 HTTP 接口。
 - FA-08/M9.41 清除通用发布包中残留的 Distribution Reporting 领域语义：Runtime 默认 Prompt 改为只描述当前 Task definition 与可用 Tools；项目脚手架只创建 `Inputs/Knowledge/Templates/Work/runs/Outputs`，Reporting 的 `Modules/Reviews/Reports` 目录继续由 Capability-owned store 按需创建；通用 Agent label 不再内置 Editor/Auditor/Cross/Chief/Template Distiller 角色映射；专家模板访问政策物理迁到 Capability，并通过 `InspectDocumentTool.path_validator` 这一中立注入点保留原隔离行为，通用 File/Exec/Artifact 工具不再识别领域文件名。Characterization First 分别以 Prompt 业务词、项目领域目录、通用角色 ID 和模板访问规则取得 RED；GREEN 后通用/架构选择 `85 passed`、Capability/Artifact 受影响选择 `59 passed`，定向 Ruff、compileall、业务标识扫描与 `git diff --check` 通过。一个 Module recovery 测试的 Provider envelope 缺少其声明 Tool 所需 artifact ref，已在测试夹具补入真实输入引用；隔离基线证明该失败早于本切片。未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
 - FA-08/M9.42 移除通用 React 输出页对 `Outputs/Modules`、`Outputs/Reports`、`Outputs/Reviews` 的硬编码：OutputTabs 现在只从文件 API 返回的 `Outputs` 第一层目录或根文件动态生成分类，分页、预览、下载和删除继续消费同一通用 `FileEntry`；因此新 Capability 可以使用任意产物目录而无需修改前端。Characterization First 以仅含 `Outputs/Deliverables/result.json` 的项目树取得缺少 Deliverables 且错误显示三个 Reporting tab 的 RED；GREEN 后 ProjectDirectoryPage focused `14 passed`，定向 ESLint、TypeScript 与 `git diff --check` 通过。未跑全量，未新增 Capability/Workflow ID 分支、Gate、Hash/CAS、锁、判断算法、依赖或公共接口。
+- FA-08/M9.43 区分并清理了与 Workflow Gate 无关的 AgentLoop 死代码：Git 全历史复核再次证明 Capability `gates/` 只有 `.gitkeep`、所有生产 Workflow 的 `gates` 都是空列表；同时发现旧 `ContextGateDecision/pre_send_context_gate` 是未被任何生产 composition 注入或调用的 Provider 前重复内容哈希判定，并非 Definition/Compiler/Kernel 控制流。Characterization First 分别以旧符号/指纹函数存在、未使用 `pre_send_context_guard` 注入面存在和通用 Agent 执行源码仍使用 Reporting 所有权词取得 RED；GREEN 后删除整套未使用的 payload/result/evidence 指纹、默认阻断算法、可选 guard 参数和历史 request 缓存，只保留真正使用的 typed context-budget exhaustion、Provider retry、Recovery、Tool-result/Conversation reuse；私有 trim 类型和注释统一为 Capability-neutral 命名。AgentLoop 全受影响文件 `78 passed`，Runtime execution/ledger focused `33 passed`，架构/发布矩阵 `23 passed`，定向 Ruff、compileall 与 `git diff --check` 通过。未跑全量；本片是删除未使用 Gate/Hash 逻辑，没有新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
 - 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留且按用户要求暂不恢复。Main 对话 Run 投影、三种 Lane 选择、原 Run 中断恢复和侧边栏产品化已完成，继续执行剩余自动架构审计。
 
 ## Research decisions
@@ -335,7 +336,7 @@ git diff --check
 | Requirement | Evidence status |
 | --- | --- |
 | Stateless Kernel business-neutral | `achieved by action/definition/import scans and focused architecture Characterization; final combined audit pending` |
-| File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
+| File definitions → complete ResolvedPlan | `achieved; definitions/registry/compiler/control-flow/interaction/host/application projection focused audit 107 passed` |
 | One Generic Runtime Host | `achieved for all five public Reporting entrypoints; alternate packaged Sequential/ControlFlow executors removed` |
 | Generic Agent/Tool/Conversation/Recovery | `Agent Loop/Provider/Tool/Artifact/Recovery are physically Runtime-owned; Capability and Runtime no longer import Core execution substrate` |
 | Capability-owned Reporting Domain Runtime | `achieved; final real Provider execution remains under acceptance` |

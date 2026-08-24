@@ -197,6 +197,36 @@ def test_unused_gate_definition_surface_is_absent() -> None:
     assert "EVALUATE_GATE" not in workflow_source
 
 
+def test_agent_loop_has_no_unused_pre_send_gate_algorithm() -> None:
+    """A dead hash-based Provider guard is not part of Workflow control flow."""
+
+    loop_source = _read_python_source(
+        PACKAGE_ROOT / "runtime" / "loops" / "agent_loop.py"
+    )
+
+    assert "ContextGateDecision" not in loop_source
+    assert "pre_send_context_gate" not in loop_source
+    assert "pre_send_context_guard" not in loop_source
+    assert "_context_payload_fingerprint" not in loop_source
+
+
+def test_generic_agent_execution_uses_capability_neutral_vocabulary() -> None:
+    """Runtime execution names one typed workflow, not Distribution Reporting."""
+
+    source_paths = [
+        *_python_sources(PACKAGE_ROOT / "runtime" / "loops"),
+        PACKAGE_ROOT / "runtime" / "usage_ledger.py",
+        PACKAGE_ROOT / "application" / "runtime_host.py",
+    ]
+    violations = {
+        path.relative_to(REPOSITORY_ROOT).as_posix(): ["reporting"]
+        for path in source_paths
+        if "reporting" in _read_python_source(path).casefold()
+    }
+
+    assert violations == {}
+
+
 def test_generic_host_is_the_only_packaged_workflow_executor() -> None:
     """Historical test executors must not remain in the production package."""
 
