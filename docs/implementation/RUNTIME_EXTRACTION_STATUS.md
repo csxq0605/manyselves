@@ -266,7 +266,8 @@
 - FA-07/M9.20 将同一 Capability 内部 attempt 生命周期接到 Cross Owner 与 Chief Chapter 的生产 Provider 组合和 typed bridges；两类已验证 completed `AgentResult` 都在 Provider/session 创建前由既有 Recovery policy 复用，未命中才激活当前 attempt，且 Submit/Blocked Tools 接收同一 correlation。既有“相同语义任务连续调用两次”的 Characterization 现在明确证明第二次不重放 Provider。Cross/Chief focused `10 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未新增或更改 Hash/CAS、lease、锁、Gate、身份/校验算法或依赖，未跑全量。
 - FA-07/M9.21 将同一 production attempt/result 生命周期接到 Final Chapter、Final Chief Revision 与 Aggregate Editor Provider composition 和 typed bridges。所有七类 Provider 角色（Module、Template、Cross、Chief、Final、FinalChief、Aggregate）现在都会在 session/loop 创建前验证 matching completed `AgentResult`，未命中才激活当前 attempt，并将同一 correlation 交给原 Tool persistence。Final/FinalChief/Aggregate focused `12 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；该切片仍只编排用户批准的既有机制，没有新增或改变 Hash/CAS、lease、锁、Gate、身份/校验算法、依赖或公共接口，未跑全量。
 - FA-07/M9.22 重跑最终自动架构与受影响行为选择：Architecture boundaries、Workflow Host、Typed Agent Turn、Agent Execution、Application Binding/Projection、五个公开 Reporting 入口、Module/Public/Template/Aggregate/Delivery 和全部生产 Provider recovery 共 `135 passed`；通用 React Run Workspace focused `10 passed`，定向 ESLint 与 TypeScript `--noEmit` 通过。生产扫描继续无旧 Runner/Facade/selector/Core Reporting 路径，测试树无 strict xfail。按用户要求未跑全量回归。自动阶段没有已知未完成项，下一步只执行一次真实 Provider/真实项目/浏览器验收。
-- 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
+- FA-07/M9.23 启动最终浏览器验收后，通用 `parameter-adjustment` 真实页面以输入 `4` 完成，输出 `10`、成本 `0 tokens`，证明当前构建的 Definition/Compiler/Generic Host/State/Events/React 投影连通。随后创建的 `full-report-1ab4a64b16ec480483cb4472b65c68ae` 在 Provider 调用前失败：验收服务器误以 `/Users/zzymima0000/Documents/Codex/test` 为 data root，使空的 `e84ec770-0736-4d85-8b7b-247accddfa26` 子目录成为项目；该 Run 的冻结 `input-snapshot.json` 与 manifest 均为 `files: []`，故 Preparation 在 `prepare-report-taxonomy` 正确拒绝缺失 S4-6 workbook。真实资料实际位于 `/Users/zzymima0000/Documents/Codex/test/Inputs`，正确服务器 data root 应为 `/Users/zzymima0000/Documents/Codex`、项目路由为 `/projects/test`。失败 Run 和空快照已保留，未篡改、未重试、Provider 成本为 `0 tokens`；这不是 Definition/Compiler/Provider 接线缺陷，但也不能计为 full-report 通过。最终剩余项是在正确 data root 上重新执行一次真实 Provider/项目/浏览器验收。
+- 本阶段没有运行全量回归；M9.23 调用了本地浏览器/服务器但在 Provider 前停止，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
 
@@ -319,7 +320,7 @@ git diff --check
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
 | Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion achieved across all production Provider roles; final real validation pending` |
 | Focused/affected checks and builds | `final backend architecture/affected selection 135 passed; generic Run Workspace 10 passed; targeted Ruff/ESLint/TypeScript passed` |
-| Final real Provider/project/browser test | `not started` |
+| Final real Provider/project/browser test | `parameter-adjustment passed; full-report attempt invalidated by one-level-wrong server data root; correct-root real run still pending` |
 | Docs/code/tests/release consistent | `automatic evidence aligned; final real-test result pending` |
 
 只要一项仍为 partial、pending、missing 或 indirect，就不得宣称项目完成。
