@@ -178,6 +178,9 @@ class ConversationService:
             self._persist_project_binding(session_id)
             if not self.store.switch_session(session_id, agent_id):
                 raise AssertionError("newly persisted conversation could not be activated")
+            # Record which Agent owns this intentionally empty conversation so a
+            # fresh store can restore it before the first user message exists.
+            self.store._get_session_file_path(agent_id).touch(exist_ok=True)  # noqa: SLF001
             await self._sync(agent_id, clear_pending=True)
             return self._session(session_id, agent_id)
 

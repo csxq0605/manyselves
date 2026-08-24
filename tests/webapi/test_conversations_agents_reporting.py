@@ -343,6 +343,28 @@ async def test_conversation_round_trip_preserves_store_format(resources) -> None
 
 
 @pytest.mark.asyncio
+async def test_explicit_empty_conversation_survives_store_reload(resources) -> None:
+    """An API-created empty Main conversation remains the active listed session after reload."""
+    client, host, workspace, _ = resources
+
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "agentId": "main", "name": "Empty"},
+    )
+    session_id = created.json()["sessionId"]
+    host.app.state.conversation_service.rebind(workspace)
+
+    listed = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["activeSessionId"] == session_id
+    assert any(item["sessionId"] == session_id for item in listed.json()["conversations"])
+
+
+@pytest.mark.asyncio
 async def test_conversation_project_identity_is_persisted_and_returned(resources) -> None:
     """Create/list/read must expose the project binding persisted with the session."""
     client, _, workspace, _ = resources

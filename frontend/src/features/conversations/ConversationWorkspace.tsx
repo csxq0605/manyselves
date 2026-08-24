@@ -11,7 +11,11 @@ import { createFileApi } from "../files/file-api";
 import { RunInteractionFeed } from "../runs/RunInteractionFeed";
 import { createWorkflowApi } from "../runs/workflow-api";
 import { ConversationActions } from "./ConversationActions";
-import { createConversationApi, type ConversationListSnapshot } from "./conversation-api";
+import {
+  createConversationApi,
+  type ConversationListSnapshot,
+  type ConversationSummary,
+} from "./conversation-api";
 import { ConversationList } from "./ConversationList";
 
 export interface ConversationWorkspaceProps {
@@ -154,16 +158,21 @@ export function ConversationWorkspace({
     return () => { cancelled = true; };
   }, [activeSessionId, agentId, api, client, conversations.data, projectId, requestedSessionId]);
 
-  function refresh(activeId?: string) {
+  function refresh(activeId?: string, conversation?: ConversationSummary) {
     if (activeId) {
-      client.setQueryData<ConversationListSnapshot>(["conversations", projectId, agentId], (current) => current ? {
-        ...current,
+      client.setQueryData<ConversationListSnapshot>(["conversations", projectId, agentId], (current) => ({
         activeSessionId: activeId,
-        conversations: current.conversations.map((item) => ({
+        conversations: conversation ? [
+          { ...conversation, active: true },
+          ...(current?.conversations ?? [])
+            .filter((item) => item.sessionId !== conversation.sessionId)
+            .map((item) => ({ ...item, active: false })),
+        ] : (current?.conversations ?? []).map((item) => ({
           ...item,
           active: item.sessionId === activeId,
         })),
-      } : current);
+        projectId,
+      }));
       onSessionChanged?.(activeId);
     }
     void client.invalidateQueries({ queryKey: ["conversations", projectId, agentId] });

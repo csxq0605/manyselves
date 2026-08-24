@@ -341,7 +341,7 @@ describe("project conversation routes", () => {
       </AppProviders></StrictMode>,
     );
 
-    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("link", { name: "新对话" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(
       "/projects/project-1/conversations/s-new",
     ));
@@ -351,6 +351,57 @@ describe("project conversation routes", () => {
       requireLease: true,
     });
     expect(requestJson.mock.calls.filter(([path]) => path === "/api/v1/conversations")).toHaveLength(1);
+  });
+
+  it("publishes a newly created conversation before navigating away from the new route", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(["conversations", "project-1", "main"], {
+      activeSessionId: "s-old",
+      conversations: [{
+        active: true,
+        name: "旧会话",
+        preview: "",
+        projectId: "project-1",
+        sessionId: "s-old",
+        timestamp: "before",
+      }],
+      projectId: "project-1",
+    });
+    const requestJson = vi.fn(async (path: string, init?: { readonly method?: string }) => {
+      if (path === "/api/v1/projects") return {
+        projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
+      };
+      if (path === "/api/v1/conversations" && init?.method === "POST") return {
+        active: true,
+        name: "新会话",
+        preview: "",
+        projectId: "project-1",
+        sessionId: "s-new",
+        timestamp: "now",
+      };
+      if (path === "/api/v1/conversations?projectId=project-1&agentId=main") {
+        return await new Promise(() => undefined);
+      }
+      if (path === "/api/v1/conversations/messages?projectId=project-1&agentId=main") {
+        return { messages: [], projectId: "project-1", sessionId: "s-new" };
+      }
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <AppProviders queryClient={queryClient}>
+        <MemoryRouter initialEntries={["/projects/project-1/conversations/new"]}>
+          <AppRoutes gateway={{ baseUrl: "https://api.example", requestJson } as unknown as ApiGateway} />
+          <LocationProbe />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(
+      "/projects/project-1/conversations/s-new",
+    ));
+    expect(screen.queryByText("该会话不属于当前项目")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "今天要处理什么？" }, { timeout: 1_000 })).toBeVisible();
   });
 
   it("activates an inactive route project before loading its conversation", async () => {

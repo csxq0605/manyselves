@@ -6,7 +6,7 @@ button, a { touch-action: manipulation; }
 .light-app { background: #f7f7f5; display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 100vh; }
 .skip-link { background: #fff; color: #202123; left: 12px; padding: 8px 10px; position: fixed; top: -48px; z-index: 10; }
 .skip-link:focus { top: 12px; }
-.sidebar { background: #f1f1ef; border-right: 1px solid #dcddd9; box-sizing: border-box; display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; padding: 13px 9px 16px; position: sticky; top: 0; }
+.sidebar { background: #f1f1ef; border-right: 1px solid #dcddd9; box-sizing: border-box; display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; padding: 13px 9px 16px; position: sticky; top: 0; z-index: 4; }
 .project-home__eyebrow { color: #6b6f76; font-family: "SFMono-Regular", Cascadia Mono, monospace; font-size: 10px; letter-spacing: .08em; }
 .sidebar__top { display: grid; gap: 12px; margin: 0 3px 46px; }
 .sidebar a { align-items: center; border-radius: 10px; color: #202123; display: flex; gap: 12px; min-height: 38px; padding: 7px 11px; text-decoration: none; }

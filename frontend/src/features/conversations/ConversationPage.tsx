@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import { createProjectApi } from "../projects/project-api";
-import { createConversationApi } from "./conversation-api";
+import { createConversationApi, type ConversationListSnapshot } from "./conversation-api";
 import "./conversation.css";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
@@ -61,11 +61,21 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
     let cancelled = false;
     void createRef.current.promise.then((created) => {
       if (!cancelled) {
-        // 先刷新会话列表缓存，确保新会话可见
-        queryClient.invalidateQueries({ queryKey: ["conversations", projectId, "main"] });
+        const queryKey = ["conversations", projectId, "main"] as const;
+        queryClient.setQueryData<ConversationListSnapshot>(queryKey, (current) => ({
+          activeSessionId: created.sessionId,
+          conversations: [
+            { ...created, active: true },
+            ...(current?.conversations ?? [])
+              .filter((item) => item.sessionId !== created.sessionId)
+              .map((item) => ({ ...item, active: false })),
+          ],
+          projectId,
+        }));
         navigate(`/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(created.sessionId)}`, {
           replace: true,
         });
+        void queryClient.invalidateQueries({ queryKey });
       }
     }).catch(() => {
       if (!cancelled) setError("新建会话失败");

@@ -8,7 +8,7 @@ import type { ApiGateway } from "../../api/gateway";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
 describe("ConversationWorkspace", () => {
-  it("passes runtime snapshot summaries into the floating agent panel", async () => {
+  it("passes runtime snapshot summaries into the inline agent panel", async () => {
     const requestJson = vi.fn(async (path: string) => {
       if (path.startsWith("/api/v1/conversations/messages")) {
         return {

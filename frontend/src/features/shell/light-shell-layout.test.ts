@@ -23,6 +23,10 @@ describe("light shell layout CSS", () => {
     expect(sidebar).toContain("overflow: hidden");
   });
 
+  it("keeps sidebar-owned dialogs above the routed Main content", () => {
+    expect(cssBlock(".sidebar")).toContain("z-index: 4");
+  });
+
   it("keeps compact desktop widths in the two-column shell", () => {
     expect(css).toContain("@media (max-width: 520px)");
     expect(css).not.toContain("@media (max-width: 700px)");
