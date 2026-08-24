@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-07/M9.21 all Provider completed-result recovery`
+- Current slice: `FA-07/M9.22 final automatic architecture audit`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
-- Final real-test status: `not started for the final architecture`
+- Final real-test status: `ready to start after all automatic evidence passed`
 - Blockers: `none；用户已批准机械复用既有 TaskCorrelation/TaskAttemptStore/IdentityLease，仍禁止新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `重跑 focused 自动架构审计并修复发现的问题；全部通过后进入唯一一次真实 Provider/项目/浏览器测试`
+- Next automatic action: `启动当前分支服务，通过 Generic Run Workspace 执行唯一一次真实 Provider/真实项目/浏览器测试并记录 Run ID 与产物`
 
 ## Why the prior completion claim is reopened
 
@@ -265,6 +265,7 @@
 - FA-07/M9.19 收到用户明确批准后，新增 Capability 内部 `ProviderTaskAttempt`，只编排既有 `IdentityLeaseManager → build_task_correlation → load_completed_agent_result/TaskAttemptStore.activate → release` 顺序；未复制或扩展其中的 Hash/CAS、terminal、lease 或身份算法。生产 `ModuleProviderRuntime` 与 `TemplateDistillationProviderRuntime` 现在都在 Provider session 创建前验证并复用 matching completed `AgentResult`，命中时 Provider/session 为 `0`，未命中才激活当前 physical attempt，完整 correlation 同时传给原 Submit/Blocked Tools。Module Binding strict xfail 已转为普通 GREEN；Module/Binding affected `33 passed`，Template focused `16 passed`。Cross/Chief/Final/FinalChief/Aggregate 的同等接线正在并行收敛；未跑全量，未进行真实 Provider/项目/浏览器测试。
 - FA-07/M9.20 将同一 Capability 内部 attempt 生命周期接到 Cross Owner 与 Chief Chapter 的生产 Provider 组合和 typed bridges；两类已验证 completed `AgentResult` 都在 Provider/session 创建前由既有 Recovery policy 复用，未命中才激活当前 attempt，且 Submit/Blocked Tools 接收同一 correlation。既有“相同语义任务连续调用两次”的 Characterization 现在明确证明第二次不重放 Provider。Cross/Chief focused `10 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未新增或更改 Hash/CAS、lease、锁、Gate、身份/校验算法或依赖，未跑全量。
 - FA-07/M9.21 将同一 production attempt/result 生命周期接到 Final Chapter、Final Chief Revision 与 Aggregate Editor Provider composition 和 typed bridges。所有七类 Provider 角色（Module、Template、Cross、Chief、Final、FinalChief、Aggregate）现在都会在 session/loop 创建前验证 matching completed `AgentResult`，未命中才激活当前 attempt，并将同一 correlation 交给原 Tool persistence。Final/FinalChief/Aggregate focused `12 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；该切片仍只编排用户批准的既有机制，没有新增或改变 Hash/CAS、lease、锁、Gate、身份/校验算法、依赖或公共接口，未跑全量。
+- FA-07/M9.22 重跑最终自动架构与受影响行为选择：Architecture boundaries、Workflow Host、Typed Agent Turn、Agent Execution、Application Binding/Projection、五个公开 Reporting 入口、Module/Public/Template/Aggregate/Delivery 和全部生产 Provider recovery 共 `135 passed`；通用 React Run Workspace focused `10 passed`，定向 ESLint 与 TypeScript `--noEmit` 通过。生产扫描继续无旧 Runner/Facade/selector/Core Reporting 路径，测试树无 strict xfail。按用户要求未跑全量回归。自动阶段没有已知未完成项，下一步只执行一次真实 Provider/真实项目/浏览器验收。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
@@ -317,7 +318,7 @@ git diff --check
 | Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
 | Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion achieved across all production Provider roles; final real validation pending` |
-| Focused/affected checks and builds | `latest architecture selection 113 passed; current persistence slices Module/Binding 33, Template 16, Cross/Chief 10, Final/FinalChief/Aggregate 12 passed` |
+| Focused/affected checks and builds | `final backend architecture/affected selection 135 passed; generic Run Workspace 10 passed; targeted Ruff/ESLint/TypeScript passed` |
 | Final real Provider/project/browser test | `not started` |
 | Docs/code/tests/release consistent | `automatic evidence aligned; final real-test result pending` |
 
