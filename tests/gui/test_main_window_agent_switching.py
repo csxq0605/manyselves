@@ -3,7 +3,13 @@ from types import SimpleNamespace
 from manyselves.core.conversations import ConversationStore
 from manyselves.gui.main_window import MainWindow
 from manyselves.gui.widgets.agent_sidebar import AgentSidebar
-from manyselves.interfaces.types import AgentResponse, AgentStatus, StatusChange, ToolCallMessage, UserMessage
+from manyselves.interfaces.types import (
+    AgentResponse,
+    AgentStatus,
+    StatusChange,
+    ToolCallMessage,
+    UserMessage,
+)
 
 
 def test_runtime_agent_events_create_separate_visible_history(qtbot, tmp_path):
@@ -83,15 +89,15 @@ def test_conversation_store_rediscovers_runtime_agent_history(tmp_path):
     assert reopened.load_messages(runtime_id)[0]["content"] == "Audit in progress"
 
 
-def test_new_report_run_replaces_previous_runtime_rows_without_deleting_history(qtbot, tmp_path):
+def test_workflow_status_keeps_existing_runtime_rows_and_history(qtbot, tmp_path):
     old_runtime = "module-2.4-specialist--session-old"
     store = ConversationStore(tmp_path)
     store.append_message(old_runtime, "agent", "old run history")
     sidebar = AgentSidebar()
     qtbot.addWidget(sidebar)
     sidebar.ensure_agent("main")
-    sidebar.ensure_agent("report-workflow")
     sidebar.ensure_agent(old_runtime)
+    workflow_agent = "workflow-coordinator--session-new"
     fake = SimpleNamespace(
         _agent_status_cache={old_runtime: ("thinking", {})},
         _agent_queue_cache={old_runtime: ["old task"]},
@@ -109,18 +115,18 @@ def test_new_report_run_replaces_previous_runtime_rows_without_deleting_history(
     MainWindow._handle_status_change(
         fake,
         StatusChange(
-            agent_type="report-workflow",
+            agent_type=workflow_agent,
             status=AgentStatus.THINKING,
-            extra={"run_id": "report-new", "task": "new report"},
+            extra={"run_id": "workflow-new", "task": "new workflow"},
         ),
     )
 
-    assert sidebar.agent_ids() == ["main", "report-workflow"]
-    assert fake.current_agent_type == "main"
-    assert old_runtime not in fake._agent_status_cache
-    assert old_runtime not in fake._agent_queue_cache
-    assert old_runtime not in fake._turn_state
-    assert old_runtime not in fake._agent_stream_buffers
+    assert sidebar.agent_ids() == ["main", old_runtime, workflow_agent]
+    assert fake.current_agent_type == old_runtime
+    assert old_runtime in fake._agent_status_cache
+    assert old_runtime in fake._agent_queue_cache
+    assert old_runtime in fake._turn_state
+    assert old_runtime in fake._agent_stream_buffers
     assert store.load_messages(old_runtime)[0]["content"] == "old run history"
 
     new_runtime = "module-2.1-specialist--session-new"
@@ -128,4 +134,4 @@ def test_new_report_run_replaces_previous_runtime_rows_without_deleting_history(
         fake,
         StatusChange(agent_type=new_runtime, status=AgentStatus.THINKING),
     )
-    assert sidebar.agent_ids() == ["main", "report-workflow", new_runtime]
+    assert sidebar.agent_ids() == ["main", old_runtime, workflow_agent, new_runtime]

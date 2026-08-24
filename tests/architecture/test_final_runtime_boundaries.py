@@ -215,6 +215,16 @@ def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> No
     assert not (PACKAGE_ROOT / "core" / "tools" / "reporting_tool.py").exists()
 
 
+def test_desktop_agent_ui_does_not_special_case_reporting_workflows() -> None:
+    """Desktop agent history and status handling must remain workflow-neutral."""
+
+    main_window_source = _read_python_source(PACKAGE_ROOT / "gui" / "main_window.py")
+
+    assert '"report-workflow"' not in main_window_source
+    assert "_begin_report_run" not in main_window_source
+    assert "_active_report_run_id" not in main_window_source
+
+
 def test_distribution_contract_models_are_owned_by_the_capability() -> None:
     """File contracts must resolve into the Capability package, never core.reporting."""
 
