@@ -17,6 +17,9 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    execute_reporting_recovery,
+)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -259,10 +262,16 @@ class ChiefChapterAgentInvoker:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        """Retain the declared port while this slice is initial-only."""
+        """Run declared recovery on the same Chief Agent session."""
 
-        del recovery_policy
-        return await self._invoke_once(agent, task, value, conversation, task_id=task_id)
+        return await self._invoke_once(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
 
     async def _invoke_once(
         self,
@@ -272,6 +281,7 @@ class ChiefChapterAgentInvoker:
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
         context = _model(value, DeclarativeChiefChapterContext)
         if context.contract is None or context.envelope is None:
@@ -332,11 +342,35 @@ class ChiefChapterAgentInvoker:
             terminal_task_id=context.envelope.task_id,
             terminal_task_attempt_id=self.terminal_task_attempt_id,
         )
-        outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
-        return TypedAgentTurn.map_outcome(
-            outcome,
+        if recovery_policy is None:
+            outcome = await typed_turn.dispatch(session, request, terminals=(terminal,))
+            return TypedAgentTurn.map_outcome(
+                outcome,
+                session_id=session.session_id,
+                decode_result=self._decode_result,
+            )
+
+        recovered = await execute_reporting_recovery(
+            self.execution,
+            session,
+            request,
+            recovery_policy=recovery_policy,
+            terminals=(terminal,),
+            prompt_builder=lambda event_kind: self._recovery_prompt(
+                agent,
+                task,
+                context.contract,
+                context.envelope,
+                event_kind,
+            ),
+            result_decoder=self._decode_result,
+        )
+        if isinstance(recovered, AgentInvocationOutcome):
+            return recovered
+        return AgentInvocationOutcome(
+            status="ok",
+            result=recovered,
             session_id=session.session_id,
-            decode_result=self._decode_result,
         )
 
     def _prompt(
@@ -365,6 +399,45 @@ class ChiefChapterAgentInvoker:
             status="completed",
             submission=submission,
         ).model_dump(mode="json")
+
+    @staticmethod
+    def _recovery_prompt(
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        contract: ChiefChapterLaneInput,
+        envelope: TaskEnvelope,
+        event_kind: Any,
+    ) -> str:
+        event_name = getattr(event_kind, "value", str(event_kind))
+        if event_name == "max_tokens":
+            instruction = (
+                "继续当前会话中已开始的 Chief chapter 工作；上轮达到 max_tokens，"
+                "不要重做已完成的工具或章节分析。"
+            )
+        elif event_name == "tool_slice_boundary":
+            instruction = (
+                "继续当前会话中的 Chief chapter 工作；复用已有 tool slice 结果，"
+                "不要重放已经完成的工具。"
+            )
+        else:
+            instruction = (
+                "上一轮没有提交结构化结果；在当前会话中立即完成 submission_correction，"
+                "不要重复已完成的章节分析。"
+            )
+        return "\n\n".join(
+            (
+                f"<{event_name}>",
+                instruction,
+                f"你仍是 {agent.id}，当前任务是 {task.id}。",
+                "立即调用 submit_result，提交符合 output contract 的 chief_chapter_lane_submission。",
+                json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
+                f"Output contract: {task.output_contract}",
+                *( [f"Inline context:\n{envelope.inline_context}"]
+                   if envelope.inline_context else [] ),
+                f"</{event_name}>",
+            )
+        )
 
 
 class ChiefChapterRuntime:
