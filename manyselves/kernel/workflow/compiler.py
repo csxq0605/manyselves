@@ -1,4 +1,4 @@
-"""Minimal sequential compiler for the first neutral workflow slice."""
+"""Compile file definitions into complete executable workflow plans."""
 
 from typing import Any, Protocol
 
@@ -94,7 +94,7 @@ _CONTROL_ACTION_KINDS = {
 
 
 class WorkflowCompiler:
-    """Resolve the WP-02 action subset without executing definitions."""
+    """Resolve declared actions and dependencies without executing them."""
 
     def __init__(self, executors: ActionKindRegistry) -> None:
         self._executors = executors

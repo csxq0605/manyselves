@@ -152,7 +152,7 @@ class OutputDefinition(DefinitionBase):
 
 
 class WorkflowDefinition(DefinitionBase):
-    """Uncompiled workflow definition; action models arrive in WP-02."""
+    """Uncompiled file workflow and its declared definition dependencies."""
 
     kind: Literal[DefinitionKind.WORKFLOW] = DefinitionKind.WORKFLOW
     tasks: list[str] = Field(default_factory=list)

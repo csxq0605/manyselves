@@ -69,9 +69,8 @@ CompletedResultLoader = Callable[
 class TemplateDistillationAgentBridge:
     """Adapt the typed template task to the neutral Agent execution port.
 
-    The factory is injected so the first slice can be characterized with a
-    scripted ``AgentSessionLoop``.  It is intentionally not a wrapper around
-    ``ReportingAgentRunner`` or ``ReportWorkflowRunner``.
+    The injected session factory keeps Provider construction outside this
+    typed prompt/result adapter.
     """
 
     def __init__(

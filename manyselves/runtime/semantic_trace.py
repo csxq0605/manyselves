@@ -1,4 +1,4 @@
-"""Stable semantic events for comparing legacy and declarative executions.
+"""Stable semantic events for comparing workflow executions.
 
 The trace deliberately carries logical identities only. It does not persist a
 runtime log, validate workflow behavior, or add scheduling decisions.

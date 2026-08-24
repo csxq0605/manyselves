@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**自动实施进行中；最终真实 Provider 验收按用户要求暂缓**
+> 状态：**自动架构与产品化实施已完成；最终真实 Provider 验收按用户要求暂缓**
 
 ## Program
 
@@ -17,14 +17,14 @@
 
 ## Current position
 
-- Current FA work package: `FA-08 — Post-audit architecture and product convergence`
-- Current slice: `FA-08/M9.43 remove dead pre-send Gate algorithm and finish automatic audit`
+- Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete)`
+- Current slice: `FA-08/M9.44 final automatic architecture and release audit`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `8f3b3dc Frontend: derive output categories from files`
-- Program status: `in progress`
-- Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
+- HEAD at slice start: `0bf26b0 Runtime: remove unused pre-send gate logic`
+- Program status: `automatic scope complete; final real acceptance deferred`
+- Final real-test status: `deferred by user; automatic architecture and product prerequisites are complete`
 - Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `完成剩余发布图与文档一致性扫描；真实 Provider/项目/浏览器验收继续按用户要求暂缓`
+- Next automatic action: `none；等待用户恢复最终真实 Provider/项目/浏览器验收`
 
 ## Why the prior completion claim is reopened
 
@@ -87,7 +87,7 @@
 | FA-04 Generic Capability Runtime Binding | `completed` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口；account Binding 直接构造 Capability Generic Host/Provider composition |
 | FA-05 Ownership convergence and legacy deletion | `completed` | 生产/发布图无旧 Runner/Facade/selector/adapter；`manyselves/core/reporting` 与旧专属测试已物理删除 |
 | FA-06 Generic FastAPI/React surface | `completed` | Schema/WAITING/Output/Event/Cost 由通用 Run Workspace 投影，无 Capability-ID 流程分支或旧 `/api/v1/reporting` 路由 |
-| FA-07 Completion audit and final real test | `in progress` | 所有生产 Provider 的 completed-result correlation 已收敛；正在重跑 focused 自动架构审计，随后执行真实 Provider、真实项目、浏览器测试 |
+| FA-07 Completion audit and final real test | `automatic audit completed; real test deferred` | 所有生产 Provider 的 completed-result correlation 与自动架构证据已收敛；真实 Provider、真实项目、浏览器测试按用户要求暂缓 |
 
 ## Historical evidence retained
 
@@ -293,7 +293,8 @@
 - FA-08/M9.41 清除通用发布包中残留的 Distribution Reporting 领域语义：Runtime 默认 Prompt 改为只描述当前 Task definition 与可用 Tools；项目脚手架只创建 `Inputs/Knowledge/Templates/Work/runs/Outputs`，Reporting 的 `Modules/Reviews/Reports` 目录继续由 Capability-owned store 按需创建；通用 Agent label 不再内置 Editor/Auditor/Cross/Chief/Template Distiller 角色映射；专家模板访问政策物理迁到 Capability，并通过 `InspectDocumentTool.path_validator` 这一中立注入点保留原隔离行为，通用 File/Exec/Artifact 工具不再识别领域文件名。Characterization First 分别以 Prompt 业务词、项目领域目录、通用角色 ID 和模板访问规则取得 RED；GREEN 后通用/架构选择 `85 passed`、Capability/Artifact 受影响选择 `59 passed`，定向 Ruff、compileall、业务标识扫描与 `git diff --check` 通过。一个 Module recovery 测试的 Provider envelope 缺少其声明 Tool 所需 artifact ref，已在测试夹具补入真实输入引用；隔离基线证明该失败早于本切片。未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
 - FA-08/M9.42 移除通用 React 输出页对 `Outputs/Modules`、`Outputs/Reports`、`Outputs/Reviews` 的硬编码：OutputTabs 现在只从文件 API 返回的 `Outputs` 第一层目录或根文件动态生成分类，分页、预览、下载和删除继续消费同一通用 `FileEntry`；因此新 Capability 可以使用任意产物目录而无需修改前端。Characterization First 以仅含 `Outputs/Deliverables/result.json` 的项目树取得缺少 Deliverables 且错误显示三个 Reporting tab 的 RED；GREEN 后 ProjectDirectoryPage focused `14 passed`，定向 ESLint、TypeScript 与 `git diff --check` 通过。未跑全量，未新增 Capability/Workflow ID 分支、Gate、Hash/CAS、锁、判断算法、依赖或公共接口。
 - FA-08/M9.43 区分并清理了与 Workflow Gate 无关的 AgentLoop 死代码：Git 全历史复核再次证明 Capability `gates/` 只有 `.gitkeep`、所有生产 Workflow 的 `gates` 都是空列表；同时发现旧 `ContextGateDecision/pre_send_context_gate` 是未被任何生产 composition 注入或调用的 Provider 前重复内容哈希判定，并非 Definition/Compiler/Kernel 控制流。Characterization First 分别以旧符号/指纹函数存在、未使用 `pre_send_context_guard` 注入面存在和通用 Agent 执行源码仍使用 Reporting 所有权词取得 RED；GREEN 后删除整套未使用的 payload/result/evidence 指纹、默认阻断算法、可选 guard 参数和历史 request 缓存，只保留真正使用的 typed context-budget exhaustion、Provider retry、Recovery、Tool-result/Conversation reuse；私有 trim 类型和注释统一为 Capability-neutral 命名。AgentLoop 全受影响文件 `78 passed`，Runtime execution/ledger focused `33 passed`，架构/发布矩阵 `23 passed`，定向 Ruff、compileall 与 `git diff --check` 通过。未跑全量；本片是删除未使用 Gate/Hash 逻辑，没有新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
-- 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留且按用户要求暂不恢复。Main 对话 Run 投影、三种 Lane 选择、原 Run 中断恢复和侧边栏产品化已完成，继续执行剩余自动架构审计。
+- FA-08/M9.44 完成最终自动发布图审计：五个 Distribution Reporting 公开根均从文件定义编译成功，分别形成 `full-report 14 actions/38 subworkflows/310 snapshots`、`module-report 13/8/169`、`aggregate-existing 3/16/90`、`render-existing 3/0/8`、`distill-template-skill 7/0/24`；Parameter Adjustment 同一 Compiler/Host focused `9 passed`。Definition/Compiler/Kernel/Host/Application/Web focused `107 passed`，Reporting 五根定义与拓扑 `13 passed`，架构/发布矩阵 `23 passed`，最终 Main/Run/File/Sidebar React 选择 `36 passed`，定向 Ruff/ESLint、compileall、TypeScript 与 `git diff --check` 通过。生产扫描确认 Kernel Action 仅有通用变量、Tool、Agent、Conversation、控制流、Contract、Interaction、Output 与终态动作；Generic Python/React 无 Distribution entrypoint、Reporting 输出目录或旧 Runner/Facade/API 引用；Git 发布树无 Gate 文件。Compiler/Definition/semantic trace 及两个 Capability bridge 的过期 WP/Legacy 所有权说明已同步为当前形态。未跑全量，也未执行真实 Provider/项目/浏览器；后者是当前唯一剩余验收项。
+- 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留且按用户要求暂不恢复。Main 对话 Run 投影、三种 Lane 选择、原 Run 中断恢复、侧边栏及通用 Output 产品化与最终自动架构审计均已完成。
 
 ## Research decisions
 
@@ -335,7 +336,7 @@ git diff --check
 
 | Requirement | Evidence status |
 | --- | --- |
-| Stateless Kernel business-neutral | `achieved by action/definition/import scans and focused architecture Characterization; final combined audit pending` |
+| Stateless Kernel business-neutral | `achieved by generic Action list, definition/import scans and focused architecture Characterization` |
 | File definitions → complete ResolvedPlan | `achieved; definitions/registry/compiler/control-flow/interaction/host/application projection focused audit 107 passed` |
 | One Generic Runtime Host | `achieved for all five public Reporting entrypoints; alternate packaged Sequential/ControlFlow executors removed` |
 | Generic Agent/Tool/Conversation/Recovery | `Agent Loop/Provider/Tool/Artifact/Recovery are physically Runtime-owned; Capability and Runtime no longer import Core execution substrate` |
@@ -345,19 +346,19 @@ git diff --check
 | Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
 | Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion and failed physical-attempt rotation achieved across all production Provider roles; final real validation pending` |
-| Focused/affected checks and builds | `final backend architecture/affected selection 135 passed; generic Run Workspace 10 passed; targeted Ruff/ESLint/TypeScript passed` |
+| Focused/affected checks and builds | `final Definition/Compiler/Host 107 passed; public roots 13 passed; AgentLoop 78 passed; Runtime/architecture 56 passed; frontend 36 passed; targeted Ruff/ESLint/TypeScript passed` |
 | Final real Provider/project/browser test | `parameter-adjustment passed; Reviewer terminal/process-restart/nested-checkpoint/revision-envelope/failed-attempt defects fixed; same full-report Run final outputs pending` |
-| Docs/code/tests/release consistent | `automatic evidence aligned; final real-test result pending` |
+| Docs/code/tests/release consistent | `automatic architecture evidence aligned; only final real-test result deferred` |
 
 只要一项仍为 partial、pending、missing 或 indirect，就不得宣称项目完成。
 
 ## Next automatic sequence
 
-1. 收敛 `manyselves/core` 与 `manyselves/runtime` 的通用运行时物理所有权；
-2. 将 Main 单一对话与三种 Lane 恢复选择接入通用 Run/Interaction 投影；
-3. 完成侧边栏、Run Output/Event/Cost 与通用 Schema/WAITING 前端产品化复审；
-4. 执行最终自动架构/发布图审计；
-5. 最终真实测试按用户要求暂缓，待其余自动架构与产品项完成后再恢复同一 Run。
+1. `completed` — `manyselves/core` 与 `manyselves/runtime` 的通用运行时物理所有权已收敛；
+2. `completed` — Main 单一对话与三种 Lane 恢复选择已接入通用 Run/Interaction 投影；
+3. `completed` — 侧边栏、Run Output/Event/Cost、通用 Schema/WAITING 和动态 Output 分类已完成产品化复审；
+4. `completed` — 最终自动架构/发布图审计已完成；
+5. `deferred by user` — 最终真实 Provider/项目/浏览器测试，恢复时继续使用已保留现场或新建明确验收 Run。
 
 ## Resume instruction
 

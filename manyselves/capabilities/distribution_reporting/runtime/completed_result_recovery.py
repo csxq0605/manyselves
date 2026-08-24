@@ -41,12 +41,10 @@ def build_task_correlation(
     identity_lease: "IdentityLease",
     execution_profile_sha256: str = "0" * 64,
 ) -> TaskCorrelation:
-    """Build the existing Reporting task correlation without changing it.
+    """Build the Capability task correlation without changing its protocol.
 
-    The body is the mechanical extraction of the old
-    ``ReportingAgentRunner._task_correlation`` helper.  The Capability caller
-    supplies the resolved execution-profile digest and live identity lease;
-    this function does not invent either one.
+    The Capability caller supplies the resolved execution-profile digest and
+    live identity lease; this function does not invent either one.
     """
 
     workspace = Path(workspace).resolve()
