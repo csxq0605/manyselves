@@ -6,7 +6,6 @@ from uuid import UUID
 
 import pytest
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
@@ -20,6 +19,7 @@ from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 

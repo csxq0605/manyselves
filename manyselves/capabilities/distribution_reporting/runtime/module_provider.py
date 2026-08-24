@@ -21,7 +21,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
     build_tool_recovery_callback,
 )
@@ -100,6 +99,7 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
+from manyselves.runtime.services import RuntimeServicesView
 
 from .artifact_access import compile_agent_access, scoped_gateway
 from .contracts.submissions import submission_schema

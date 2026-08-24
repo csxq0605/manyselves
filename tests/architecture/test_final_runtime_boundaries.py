@@ -157,6 +157,25 @@ def test_distribution_capability_does_not_import_core_reporting() -> None:
     assert _reporting_domain_import_violations(REPORTING_CAPABILITY_ROOT) == {}
 
 
+def test_capability_runtime_does_not_import_application_layer() -> None:
+    """Capability composition depends on Runtime ports, never Application DTOs."""
+
+    violations: dict[str, list[str]] = {}
+    for source_path in _python_sources(PACKAGE_ROOT / "capabilities"):
+        forbidden = sorted(
+            {
+                module
+                for module in _resolved_imports(source_path)
+                if module == "manyselves.application"
+                or module.startswith("manyselves.application.")
+            }
+        )
+        if forbidden:
+            violations[source_path.relative_to(REPOSITORY_ROOT).as_posix()] = forbidden
+
+    assert violations == {}
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 

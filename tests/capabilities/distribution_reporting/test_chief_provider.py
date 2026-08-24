@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
 )
@@ -38,6 +37,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.services import RuntimeServicesView
 
 
 def _state(run_id: str) -> dict[str, object]:

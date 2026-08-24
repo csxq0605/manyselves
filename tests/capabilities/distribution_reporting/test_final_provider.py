@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -45,6 +44,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.services import RuntimeServicesView
 
 
 def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChapterContext:

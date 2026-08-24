@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
     CrossOwnerRuntime,
@@ -54,6 +53,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.services import RuntimeServicesView
 from tests.capabilities.distribution_reporting.test_cross_recheck import (
     _frozen_owner_input,
 )

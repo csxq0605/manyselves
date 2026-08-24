@@ -12,7 +12,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
     TemplateDistillationAgentBridge,
 )
@@ -53,6 +52,7 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
+from manyselves.runtime.services import RuntimeServicesView
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 

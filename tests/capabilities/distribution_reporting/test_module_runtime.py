@@ -405,7 +405,6 @@ def test_module_provider_composition_exposes_real_runtime_ports_and_injected_dep
 ) -> None:
     """Characterize the missing Provider composition before implementation."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
         ModuleProviderDependencies,
         build_module_provider_composition,
@@ -413,6 +412,7 @@ def test_module_provider_composition_exposes_real_runtime_ports_and_injected_dep
     from manyselves.config.schema import AgentDefaults
     from manyselves.core.loops.bus import MessageBus
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     bus = MessageBus()
     execution = AgentExecutionService(bus)
@@ -452,7 +452,6 @@ def test_module_provider_composition_exposes_real_runtime_ports_and_injected_dep
 def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> None:
     """The Host must not replace the Provider runtime with a tool-less bridge."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
         build_module_provider_composition,
     )
@@ -461,6 +460,7 @@ def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> No
     )
     from manyselves.config.schema import AgentDefaults
     from manyselves.core.loops.bus import MessageBus
+    from manyselves.runtime.services import RuntimeServicesView
 
     composition = build_module_provider_composition(
         RuntimeServicesView(
@@ -598,7 +598,6 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
 ) -> None:
     """Provider composition uses the generic service for both Author turns."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -629,6 +628,7 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -826,7 +826,6 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
 ) -> None:
     """The Capability-owned SubmitResultTool reports schema recovery in-session."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -853,6 +852,7 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
     )
     from manyselves.kernel.recovery import RecoveryActionKind, RecoveryController
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -1546,7 +1546,6 @@ def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_tas
 ) -> None:
     """Reviewer composition keeps its typed bridge and full declared tool set."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -1574,6 +1573,7 @@ def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_tas
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "evidence-auditor")
@@ -1858,7 +1858,6 @@ def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
 ) -> None:
     """The Provider bridge derives per-task artifact resources from the envelope."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -1885,6 +1884,7 @@ def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -2011,7 +2011,6 @@ def test_module_revision_provider_uses_file_declared_task_tools(
 ) -> None:
     """A persisted revision envelope cannot hide tools declared by its YAML task."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -2034,6 +2033,7 @@ def test_module_revision_provider_uses_file_declared_task_tools(
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -2397,7 +2397,6 @@ async def test_module_provider_reuses_persisted_completed_result_before_provider
 ) -> None:
     """The real Module Provider reuses a durable typed result before a session."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -2433,6 +2432,7 @@ async def test_module_provider_reuses_persisted_completed_result_before_provider
         RecoveryRule,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")

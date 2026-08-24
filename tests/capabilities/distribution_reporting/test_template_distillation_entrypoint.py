@@ -338,7 +338,6 @@ async def test_template_provider_shares_declared_recovery_with_submit_tool(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting.runtime import template_provider
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
@@ -357,6 +356,7 @@ async def test_template_provider_shares_declared_recovery_with_submit_tool(
         RecoveryRule,
         TaskDefinition,
     )
+    from manyselves.runtime.services import RuntimeServicesView
 
     captured: dict[str, object] = {}
 
@@ -446,7 +446,6 @@ async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
 ) -> None:
     """Runtime composition must inject the account Provider resources once."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -461,6 +460,7 @@ async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     run_id = "template-provider-runtime"
     template_ref = f"Work/runs/{run_id}/templates/template-for-skill.docx"
@@ -618,7 +618,6 @@ async def test_template_provider_reuses_persisted_result_before_session(
 ) -> None:
     """The production Provider composition must recover before loop creation."""
 
-    from manyselves.application.runtime_services import RuntimeServicesView
     from manyselves.capabilities.distribution_reporting import (
         load_distribution_reporting_capability,
     )
@@ -648,6 +647,7 @@ async def test_template_provider_reuses_persisted_result_before_session(
         RecoveryRule,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.services import RuntimeServicesView
 
     run_id = "template-provider-persisted"
     task_id = "invoke-template-distiller"

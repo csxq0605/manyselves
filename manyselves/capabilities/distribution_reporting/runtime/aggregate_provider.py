@@ -14,7 +14,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
     build_tool_recovery_callback,
 )
@@ -53,6 +52,7 @@ from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
+from manyselves.runtime.services import RuntimeServicesView
 
 from .artifact_access import compile_agent_access, scoped_gateway
 from .state.parallel import TaskCorrelation

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
@@ -67,6 +66,7 @@ from manyselves.runtime.run_lifecycle import (
     DetachedRuntime,
     StartAwareFileWorkflowStateStore,
 )
+from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 

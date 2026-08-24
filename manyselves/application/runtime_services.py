@@ -8,27 +8,12 @@ policies.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.schema import AgentDefaults
+from ..runtime.services import RuntimeServicesView
 
 if TYPE_CHECKING:
-    from ..core.loops.bus import MessageBus
-    from ..core.providers.base import LLMProvider
     from .runtime_host import RuntimeHost
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeServicesView:
-    """Read-only view of existing account runtime composition resources."""
-
-    workspace: Path | None
-    bus: MessageBus
-    active_provider: LLMProvider | None
-    agent_defaults: AgentDefaults
-    global_knowledge_root: Path | None
 
 
 def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
@@ -67,4 +52,4 @@ def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
     )
 
 
-__all__ = ["RuntimeServicesView", "build_runtime_services_view"]
+__all__ = ["build_runtime_services_view"]

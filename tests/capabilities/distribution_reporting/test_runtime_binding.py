@@ -7,7 +7,6 @@ from uuid import UUID
 
 import pytest
 
-from manyselves.application.runtime_services import RuntimeServicesView
 from manyselves.capabilities.distribution_reporting.adapters.runtime import (
     DistributionReportingRuntimeBinding,
 )
@@ -24,6 +23,7 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.routes.workflows import _projection
 

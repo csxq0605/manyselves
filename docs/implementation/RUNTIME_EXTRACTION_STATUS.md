@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**自动实施进行中，尚未进入最终真实测试**
+> 状态：**自动实施进行中；最终真实 Provider 验收按用户要求暂缓**
 
 ## Program
 
@@ -17,14 +17,14 @@
 
 ## Current position
 
-- Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-07/M9.22 final automatic architecture audit`
+- Current FA work package: `FA-08 — Post-audit architecture and product convergence`
+- Current slice: `FA-08/M9.35 neutral Runtime services and Gate provenance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
+- HEAD at slice start: `da47f4a Runtime: rotate checkpointed failed attempts`
 - Program status: `in progress`
-- Final real-test status: `ready to start after all automatic evidence passed`
-- Blockers: `none；用户已批准机械复用既有 TaskCorrelation/TaskAttemptStore/IdentityLease，仍禁止新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `启动当前分支服务，通过 Generic Run Workspace 执行唯一一次真实 Provider/真实项目/浏览器测试并记录 Run ID 与产物`
+- Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
+- Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `继续收敛 core/runtime 物理所有权、移除测试专用旧执行器、完成 Main/Lane 恢复和通用前端产品化`
 
 ## Why the prior completion claim is reopened
 
@@ -69,6 +69,12 @@
 | 单一生产入口 | Generic `/runs` + RuntimeBindingCatalog，无 Legacy/declarative selector | 已达到 | 保持 API Characterization |
 | 旧兼容代码不在发布图 | 旧 Reporting Runner/Facade/API/Core 包已删除；Legacy Runtime/Tool adapter 名称和实现已删除 | 已达到 | 最终扫描 |
 | 文档直面最终形态 | 权威规范、状态、Feature matrix 和网页版真实测试交接均指向 Generic Run Workspace | 已达到；最终结果待真实测试回填 | FA-07 回填 |
+
+## Gate provenance
+
+- Git 全历史中的 `manyselves/capabilities/**/gates/` 从未包含生产 Gate 定义，只有用于建立目录的 `.gitkeep`；因此当前 Gate Definition 数量为 `0` 不是迁移时删除了既有 Gate 文件。
+- 旧 Reporting 代码中使用 “gate” 描述的业务语义已按职责迁移：结构校验由 Contract/Pydantic model 表达；Lane all-ready 由 Parallel/Join 表达；review 路由由文件 Workflow 的 `if` 与 Capability Tool 表达；人工异常由 Interaction/`request_input` 表达；恢复动作由 Recovery policy/driver 表达。
+- Kernel 当前仍保留从早期方案预留的通用 `GateDefinition`/`EvaluateGate` 表面，但所有生产 Workflow 均未引用。该空表面将在保持上述业务语义 Characterization 后单独移除，不新增替代门禁。
 
 ## FA work package progress
 
@@ -278,6 +284,7 @@
 - FA-07/M9.32 用 M9.31 构建从可见页面恢复同一真实 Run 后，未进入 Provider 即捕获 `persisted task attempt identity or hash mismatch`：此前旧进程曾在同一 failed `task_attempt_id` 上取得新 lease 并更新 `current.json`，而 append-only terminal 仍正确保存原 lease correlation。Characterization First 精确重现“terminal lease epoch 1、current pointer lease epoch 2”的现场并取得 RED；GREEN 后 `TaskAttemptStore` 将原有 result/payload hash 验证机械抽为按 immutable task/attempt 路径读取，严格 `load_verified_result(later_pointer)` 仍按原行为拒绝 correlation 不相等，Provider 恢复则在验证 terminal 自身及既有 semantic identity 后轮换 physical attempt。没有吞掉损坏、放宽 hash 或改写旧 terminal。两种 failed-attempt 形态与七类 Provider completed reuse focused `9 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未修改 Kernel/Compiler/Host，没有新增 Hash/CAS、锁/lease、Gate、校验算法、恢复 API、依赖或公共接口。下一步提交、重启单一服务并从网页再次恢复同一 Run。
 - FA-07/M9.33 同一真实 Run 的五个 Revision Provider 已使用正确 task/session 和完整声明 Tool scope 写出目标小节正文，但均在 `module part is not ready for commit` 处确定性失败；现场证明所有正文存在而对应 `_evidence/<part>.json` 缺失。根因是 Capability `build_module_provider_tools` 只对 initial `module_submission` 启用既有 evidence-bound result-part contract，revision 的 `module_revision_submission` 被错误当成普通 result part，导致 `write_result_part(..., evidence_ids=...)` 拒绝持久化，而同一个既有 `SubmitResultTool` 又要求 revision prose 与显式 evidence binding 同时存在。Characterization First 使用真实 Capability Tool composition 先取得 `persisted=False` RED；GREEN 后仅让 `module_revision_submission` 复用原 `WriteResultPartTool/ListResultPartsTool/SubmitResultTool` 的 evidence binding 语义，没有新增 validator、判断门禁、Hash/CAS、锁/lease、恢复策略、依赖或公共接口。新 focused 与受影响 Module Provider/Revision 选择 `2 passed, 30 deselected`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量。下一步提交并恢复同一 Run，验证五个 revision attempt 能写出 evidence binding，随后继续 Recheck、Cross、Chief、Final 与 Delivery。
 - FA-07/M9.34 M9.33 构建恢复同一真实 Run 后，五个 Revision Provider 均生成了 15 份 evidence binding，证明 revision result-part 修复进入真实生产路径；但旧 checkpoint 携带的 failed physical attempt A 在 `current.json` 已指向另一个 failed attempt B 时，会跳过 A 自身已有的不可变 terminal/result，重新激活 A，最终以 `immutable task attempt result already exists with different bytes` 确定性失败。服务器已立即停止，Run、旧失败结果、Conversation/Session、15 份 evidence binding 与事件现场全部保留。Characterization First 新增“A failed → B failed/current → 从旧 checkpoint A 恢复”的测试并取得旧实现重新使用 A 的 RED；GREEN 后 `ProviderTaskAttempt.acquire` 直接用既有 `TaskAttemptStore.load_verified_attempt(task_id, task_attempt_id)` 验证 checkpoint 指向的物理 attempt，非 completed terminal 轮换新 physical attempt，semantic run/task/agent/session 不变。没有新增 Hash/CAS/锁/Gate/判断算法，也没有放宽或复制既有 result/hash 完整性验证。failed-attempt 三种形态与七类生产 Provider completed-result reuse focused `10 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量。按用户要求，Main 单一对话、三种 Lane 恢复交互、侧边栏与通用界面产品化继续列为待做，当前优先恢复同一 Run 证明 Recheck → Cross → Chief → Final → Delivery 能完整跑通。
+- FA-08/M9.35 追溯 Plan base 与全 Git 历史确认 Capability `gates/` 从未存在生产 YAML，旧 “gate” 业务语义已分别由 Contract、Parallel/Join、Workflow `if`、Interaction 和 Recovery 承接；当前 `GateDefinition/EvaluateGate` 仅为未使用的早期框架预留。新的架构 Characterization 先捕获 8 个 Capability 文件反向导入 `manyselves.application.runtime_services` 的 RED；GREEN 后只读 `RuntimeServicesView` 物理下沉到 `manyselves.runtime.services`，Application 仅负责从 Account RuntimeHost 构造它，Capability 不再导入 Application。Application/Architecture/Distribution Binding focused `25 passed`，定向 Ruff 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。最终真实 Provider 验收按用户要求暂缓，下一切片继续 core/runtime 物理所有权与旧测试执行器收敛。
 - 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留，等待当前 M9.34 构建重启后从网页继续，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。Main 对话中的 Run 投影、三种 Lane 恢复选择和侧边栏产品化已列为后续待做，按用户要求先以当前通用 Run 页面证明整条真实链能够完成。
 
 ## Research decisions
@@ -326,7 +333,7 @@ git diff --check
 | Generic Agent/Tool/Conversation/Recovery | `achieved for the production execution path; final legacy-adapter removal audit remains in FA-05` |
 | Capability-owned Reporting Domain Runtime | `achieved; final real Provider execution remains under acceptance` |
 | No Declarative→Legacy Runner inheritance/delegation | `achieved; old Runner/Facade/Core package deleted` |
-| Generic Capability Binding/Application | `achieved; account-scoped long-lived RuntimeServicesView catalog` |
+| Generic Capability Binding/Application | `achieved; RuntimeServicesView is Runtime-owned and Capability no longer imports Application` |
 | Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
 | Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion and failed physical-attempt rotation achieved across all production Provider roles; final real validation pending` |
@@ -343,7 +350,7 @@ git diff --check
 3. 执行 FA-05 旧路径删除和物理归属收敛；
 4. 执行 FA-06 产品表面复审；
 5. 执行 FA-07 自动完成审计；
-7. 只在全部自动证据通过后进行最终一次真实测试。
+7. 最终真实测试按用户要求暂缓，待其余自动架构与产品项完成后再恢复同一 Run。
 
 ## Resume instruction
 
