@@ -14,7 +14,10 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
+    AgentRunStatus,
     EditedReportSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     AggregateEditorInput,
@@ -339,17 +342,15 @@ async def test_aggregate_provider_uses_real_submit_tool_wire_and_one_session(
     assert loops[0].kwargs["llm_provider"] is services.active_provider
     assert [message.task_id for message in loops[0].received] == [
         "host-action-aggregate-first",
-        "host-action-aggregate-second",
     ]
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
-        conversation.external_session_id,
     ]
     assert conversation.external_session_id == "aggregate-existing"
-    assert len(terminals) == 2
+    assert len(terminals) == 1
     assert all(message.sender == "aggregate-editor" for message in terminals)
     assert all(message.task_id == "aggregate-existing" for message in terminals)
-    assert all(message.task_attempt_id == "" for message in terminals)
+    assert all(message.task_attempt_id != "" for message in terminals)
     assert all(
         message.workflow_id == "distribution-aggregate-existing"
         for message in terminals
@@ -382,3 +383,129 @@ def test_aggregate_provider_does_not_load_core_reporting() -> None:
         text=True,
     )
     assert completed.stdout.strip() == "[]"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """The account Provider must load a verified aggregate result before a session."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_provider import (
+        AggregateProviderRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        build_task_correlation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        IdentityLeaseManager,
+        TaskAttemptStore,
+    )
+
+    run_id = "aggregate-provider-persisted-reuse"
+    value = _aggregate_input(run_id)
+    input_ref = f"Work/runs/{run_id}/context/aggregate-editor-input.json"
+    ReportingStore(tmp_path).write_json(input_ref, value.model_dump(mode="json"))
+    agent = AgentDefinition(
+        id="aggregate-editor",
+        version="1.0.0",
+        description="Aggregate editor",
+        instructions="Aggregate the approved modules.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="aggregate-existing",
+        version="1.0.0",
+        description="Aggregate existing modules",
+        agent=agent.id,
+        objective="Aggregate approved modules.",
+        input_contract="aggregate_editor_input",
+        output_contract="edited_report_submission",
+        tools=list(agent.tools),
+    )
+    envelope = TaskEnvelope(
+        task_id=task.id,
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        input_refs=[input_ref],
+        allowed_outputs=[task.output_contract],
+        allowed_tools=list(task.tools),
+        input_contract_kind=task.input_contract,
+        input_contract_ref=input_ref,
+    )
+    workflow_id = "distribution-aggregate-existing"
+    identity_key = agent.id
+    session_id = "aggregate-existing"
+    lease_handle = IdentityLeaseManager(tmp_path, run_id).acquire(
+        workflow_id,
+        identity_key,
+    )
+    correlation = build_task_correlation(
+        tmp_path,
+        envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+        identity_lease=lease_handle.lease,
+    )
+    submission = _edited_submission()
+    try:
+        store = TaskAttemptStore(tmp_path, run_id)
+        store.activate(correlation)
+        store.persist_result(
+            correlation,
+            AgentResult(
+                task_id=envelope.task_id,
+                run_id=run_id,
+                agent_id=agent.id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=submission,
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        lease_handle.release()
+
+    provider_calls = 0
+
+    def forbidden_loop_builder(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed aggregate result must be reused before Provider session")
+
+    bus = MessageBus()
+    service = AgentExecutionService(bus)
+    runtime = AggregateProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=forbidden_loop_builder,
+    )
+    conversation = ConversationRecord(
+        conversation_id="aggregate-provider-persisted-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value=session_id,
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    outcome = await runtime.invoke(
+        agent,
+        task,
+        value,
+        conversation,
+        task_id="host-aggregate-provider-persisted",
+    )
+
+    assert outcome.status == "ok", outcome.error
+    assert provider_calls == 0
+    assert service.sessions == {}
+    assert outcome.session_id == session_id

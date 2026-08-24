@@ -62,7 +62,9 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChapterContext:
         },
     )
     input_ref = f"Work/runs/{run_id}/context/final-chapter-1-input-r0.json"
-    ReportingStore(tmp_path).write_json(input_ref, contract.model_dump(mode="json"))
+    store = ReportingStore(tmp_path)
+    store.write_json(input_ref, contract.model_dump(mode="json"))
+    store.write_json(contract.subject_ref, {"kind": "existing-edited-report"})
     envelope = TaskEnvelope(
         task_id="final-chapter-1-r0",
         run_id=run_id,
@@ -441,7 +443,6 @@ async def test_final_provider_uses_real_submit_tool_and_reuses_one_session(
     assert set(loops[0].kwargs["tools"].get_all()) == {"submit_result"}
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
-        conversation.external_session_id,
     ]
     assert conversation.external_session_id == "final-chapter-1"
     result_path = tmp_path / "Work/runs/final-provider-run/results/final-chapter-1-r0.json"
@@ -450,6 +451,125 @@ async def test_final_provider_uses_real_submit_tool_and_reuses_one_session(
     assert loaded.identity.task_id == "final-chapter-1-r0"
     assert loaded.identity.agent_id == "chief-editor-auditor"
     assert loaded.identity.session_id == conversation.external_session_id
+
+
+@pytest.mark.asyncio
+async def test_final_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """The account Provider must load a verified Final result before a session."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        build_task_correlation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.final_provider import (
+        FinalProviderRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        IdentityLeaseManager,
+        TaskAttemptStore,
+    )
+
+    run_id = "final-provider-persisted-reuse"
+    context = _context(tmp_path, run_id)
+    agent = AgentDefinition(
+        id="chief-editor-auditor",
+        version="1.0.0",
+        description="Final auditor",
+        instructions="Audit the assigned chapter.",
+        tools=["submit_result"],
+    )
+    task = TaskDefinition(
+        id="final-chapter-review",
+        version="1.0.0",
+        description="Final review lane",
+        agent=agent.id,
+        objective="Audit one chapter.",
+        input_contract="declarative_final_chapter_context",
+        output_contract="declarative_final_chapter_agent_result",
+        tools=["submit_result"],
+    )
+    workflow_id = "distribution-aggregate-existing-tail"
+    identity_key = "final-chapter-1"
+    session_id = identity_key
+    lease_handle = IdentityLeaseManager(tmp_path, run_id).acquire(
+        workflow_id,
+        identity_key,
+    )
+    correlation = build_task_correlation(
+        tmp_path,
+        context.envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+        identity_lease=lease_handle.lease,
+    )
+    submission = FinalChapterLaneFindingSubmission(
+        run_id=run_id,
+        chapter_id="1",
+        checked_section_ids=["1.1", "1.2", "1.3"],
+        findings=[],
+        residual_risks=[],
+    )
+    try:
+        store = TaskAttemptStore(tmp_path, run_id)
+        store.activate(correlation)
+        store.persist_result(
+            correlation,
+            AgentResult(
+                task_id=context.envelope.task_id,
+                run_id=run_id,
+                agent_id=agent.id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=submission,
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        lease_handle.release()
+
+    provider_calls = 0
+
+    def forbidden_loop_builder(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed Final result must be reused before Provider session")
+
+    bus = MessageBus()
+    service = AgentExecutionService(bus)
+    runtime = FinalProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=forbidden_loop_builder,
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-provider-persisted-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value=identity_key,
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    outcome = await runtime.invoke(
+        agent,
+        task,
+        context,
+        conversation,
+        task_id="host-final-provider-persisted",
+    )
+
+    assert outcome.status == "ok"
+    assert provider_calls == 0
+    assert service.sessions == {}
+    assert outcome.session_id == session_id
 
 
 def test_final_provider_does_not_load_core_reporting() -> None:

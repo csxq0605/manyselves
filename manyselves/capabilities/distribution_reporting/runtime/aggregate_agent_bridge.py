@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
     EditedReportSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
@@ -36,6 +38,7 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
 
 
 class AggregateEditorAgentBridge:
@@ -53,6 +56,7 @@ class AggregateEditorAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        completed_result_loader: CompletedResultLoader | None = None,
         terminal_sender: str | None = None,
         terminal_task_id: str | None = None,
         terminal_task_attempt_id: str | None = None,
@@ -63,6 +67,7 @@ class AggregateEditorAgentBridge:
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.completed_result_loader = completed_result_loader
         self.terminal_sender = terminal_sender
         self.terminal_task_id = terminal_task_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
@@ -120,6 +125,46 @@ class AggregateEditorAgentBridge:
             if isinstance(value, AggregateEditorInput)
             else AggregateEditorInput.model_validate(value)
         )
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=self._decode_payload(persisted.payload),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
         typed_turn = TypedAgentTurn(
@@ -246,6 +291,11 @@ class AggregateEditorAgentBridge:
         submission = EditedReportSubmission.model_validate(
             load_agent_result_payload(self.workspace, result_ref).payload
         )
+        return self._decode_payload(submission)
+
+    @staticmethod
+    def _decode_payload(payload: Any) -> dict[str, Any]:
+        submission = EditedReportSubmission.model_validate(payload)
         return submission.model_dump(mode="json")
 
     def _runtime_id(

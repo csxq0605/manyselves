@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
-- Current slice: `FA-07/M9.20 Cross/Chief production result recovery`
+- Current slice: `FA-07/M9.21 all Provider completed-result recovery`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `5b90190 Docs: align final workflow browser evidence`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none；用户已批准机械复用既有 TaskCorrelation/TaskAttemptStore/IdentityLease，仍禁止新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `完成 Final/FinalChief/Aggregate 的同等 production pre-session reuse，重跑 focused 自动审计，再进入唯一一次真实测试`
+- Next automatic action: `重跑 focused 自动架构审计并修复发现的问题；全部通过后进入唯一一次真实 Provider/项目/浏览器测试`
 
 ## Why the prior completion claim is reopened
 
@@ -64,7 +64,7 @@
 | Declarative Reporting 不依赖 Legacy Runner | 五个公开入口由 Capability Binding 直接构造 Compiler/Generic Host/Capability Runtime；生产扫描无旧 Runner/Facade/selector | 已达到；最终真实 Provider 行为仍待一次验证 | FA-07 真实测试 |
 | Generic Application 不认识 Reporting service | `WorkflowProjectionFacade(runtime_services=...)` 只经 RuntimeBindingCatalog 选择 Capability | 已达到 | 保持架构 Characterization |
 | Reporting Python 归 Capability 所有 | Domain models、lifecycle、Provider composition、Tools、render/delivery 均在 `capabilities/distribution_reporting`；`manyselves/core/reporting` 已删除 | 已达到 | 保持 import/ownership 扫描 |
-| Generic Agent/Recovery 不依赖 Reporting | Runtime 拥有 session/turn/recovery vocabulary；Capability 提供 Prompt/typed decoder/progress；production persisted completed-result 仍缺当前 TaskCorrelation 接线 | 只剩这一项持久化 composition 缺口 | 获许可后机械接回已有 owner，不在 Kernel 复制 |
+| Generic Agent/Recovery 不依赖 Reporting | Runtime 拥有 session/turn/recovery vocabulary；Capability 提供 Prompt/typed decoder/progress，并在 Capability Provider composition 机械复用既有 task-attempt persistence | 已达到；最终真实 Provider 行为仍待一次验证 | 保持 Runtime/Kernel 中立边界与 focused Characterization |
 | 文件 Workflow 是唯一流程所有者 | 五个公开入口均编译文件定义并由 Generic Host 执行，Module/Cross/Chief/Final/Delivery 作为 Capability Tool/Subworkflow | 已达到 | 真实测试确认长流程 |
 | 单一生产入口 | Generic `/runs` + RuntimeBindingCatalog，无 Legacy/declarative selector | 已达到 | 保持 API Characterization |
 | 旧兼容代码不在发布图 | 旧 Reporting Runner/Facade/API/Core 包已删除；Legacy Runtime/Tool adapter 名称和实现已删除 | 已达到 | 最终扫描 |
@@ -77,11 +77,11 @@
 | FA-00 Facts and final specification | `completed` | 六份规范一致；三项生产耦合审计；完成矩阵；diff-check |
 | FA-01 Architecture boundary characterization | `completed` | 5 项生产边界 Characterization 已取得真实 RED；Contract 物理归属现已正式转绿，其余 4 项继续以 strict xfail 逐项收敛；Capability 顶层导入纯度已转绿 |
 | FA-02 Generic Agent/Conversation/Recovery Runtime | `completed` | Session/turn、定义 Tool/Agent、correction/continuation/no-progress、pre-session result reuse 均由中立 Runtime 生产主调；focused/affected 与生产 spy 证据 |
-| FA-03 Distribution Reporting Domain Runtime | `in progress` | 五个公开文件入口已接入 Compiler/Generic Host；Module 异常/恢复 8 个生产 Tool 端口已接齐，completed-result loader 尚未从生产 Binding 获得完整 correlation |
-| FA-04 Generic Capability Runtime Binding | `in progress` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口且不再构造 ReportingFacade；仍需收敛 production completed-result recovery composition |
+| FA-03 Distribution Reporting Domain Runtime | `completed` | 五个公开文件入口、Module/Cross/Chief/Final/FinalChief/Aggregate/Template Provider、typed lifecycle、Tools、recovery 和 delivery 均归 Capability |
+| FA-04 Generic Capability Runtime Binding | `completed` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口；account Binding 直接构造 Capability Generic Host/Provider composition |
 | FA-05 Ownership convergence and legacy deletion | `completed` | 生产/发布图无旧 Runner/Facade/selector/adapter；`manyselves/core/reporting` 与旧专属测试已物理删除 |
 | FA-06 Generic FastAPI/React surface | `completed` | Schema/WAITING/Output/Event/Cost 由通用 Run Workspace 投影，无 Capability-ID 流程分支或旧 `/api/v1/reporting` 路由 |
-| FA-07 Completion audit and final real test | `pending` | 自动架构关键路径此前 `123 passed`；独立审计的 Module lifecycle 缺口已修复，completed-result production correlation 仍待收敛；随后重审并执行真实 Provider、真实项目、浏览器测试 |
+| FA-07 Completion audit and final real test | `in progress` | 所有生产 Provider 的 completed-result correlation 已收敛；正在重跑 focused 自动架构审计，随后执行真实 Provider、真实项目、浏览器测试 |
 
 ## Historical evidence retained
 
@@ -264,6 +264,7 @@
 - FA-07/M9.18 重跑最终架构关键路径 focused 选择：Architecture boundaries、Workflow Host、Typed Agent Turn、Agent Execution、Application Binding/Projection、五个 Reporting 公开入口、Module/Public/Template/Aggregate/Delivery 共 `113 passed, 1 deselected`。唯一缺口是 production Binding persisted completed-result RED：当前 `ModuleProviderRuntime` 能消费完整 `TaskCorrelation`，但 account Binding 没有当前语义 correlation；普通 `Work/runs/<run>/results/<task>.json` 只含 run/task/agent/session，Module 初稿 task id 在同一 Run 内稳定，无法区分用户补充、输入合同或目标变化后的旧结果。用旧 `TaskAttemptStore.current()` 作为 expected 会让旧 identity 自证，直接文件复用则可能错误跳过 Provider，因此两种简化方案都被拒绝。该 Characterization 已固化为 `strict xfail`，Binding focused 为 `6 passed, 1 xfailed`；安全等价路径只能机械复用已有 `TaskCorrelation` 的 envelope/profile/input/subject identity、`TaskAttemptStore` terminal/result integrity 和 `IdentityLeaseManager`。这会启用用户默认禁止的既有 Hash/CAS/lease 机制，故在解释并获明确许可前不实施。没有运行全量回归或真实 Provider。
 - FA-07/M9.19 收到用户明确批准后，新增 Capability 内部 `ProviderTaskAttempt`，只编排既有 `IdentityLeaseManager → build_task_correlation → load_completed_agent_result/TaskAttemptStore.activate → release` 顺序；未复制或扩展其中的 Hash/CAS、terminal、lease 或身份算法。生产 `ModuleProviderRuntime` 与 `TemplateDistillationProviderRuntime` 现在都在 Provider session 创建前验证并复用 matching completed `AgentResult`，命中时 Provider/session 为 `0`，未命中才激活当前 physical attempt，完整 correlation 同时传给原 Submit/Blocked Tools。Module Binding strict xfail 已转为普通 GREEN；Module/Binding affected `33 passed`，Template focused `16 passed`。Cross/Chief/Final/FinalChief/Aggregate 的同等接线正在并行收敛；未跑全量，未进行真实 Provider/项目/浏览器测试。
 - FA-07/M9.20 将同一 Capability 内部 attempt 生命周期接到 Cross Owner 与 Chief Chapter 的生产 Provider 组合和 typed bridges；两类已验证 completed `AgentResult` 都在 Provider/session 创建前由既有 Recovery policy 复用，未命中才激活当前 attempt，且 Submit/Blocked Tools 接收同一 correlation。既有“相同语义任务连续调用两次”的 Characterization 现在明确证明第二次不重放 Provider。Cross/Chief focused `10 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未新增或更改 Hash/CAS、lease、锁、Gate、身份/校验算法或依赖，未跑全量。
+- FA-07/M9.21 将同一 production attempt/result 生命周期接到 Final Chapter、Final Chief Revision 与 Aggregate Editor Provider composition 和 typed bridges。所有七类 Provider 角色（Module、Template、Cross、Chief、Final、FinalChief、Aggregate）现在都会在 session/loop 创建前验证 matching completed `AgentResult`，未命中才激活当前 attempt，并将同一 correlation 交给原 Tool persistence。Final/FinalChief/Aggregate focused `12 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；该切片仍只编排用户批准的既有机制，没有新增或改变 Hash/CAS、lease、锁、Gate、身份/校验算法、依赖或公共接口，未跑全量。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
@@ -315,8 +316,8 @@ git diff --check
 | Generic Capability Binding/Application | `achieved; account-scoped long-lived RuntimeServicesView catalog` |
 | Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
-| Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result achieved; persisted Agent completion Module/Template/Cross/Chief production binding achieved, Final roles in progress` |
-| Focused/affected checks and builds | `latest architecture selection 113 passed; current Module/Binding 33 passed; Template 16 passed; Cross/Chief 10 passed` |
+| Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion achieved across all production Provider roles; final real validation pending` |
+| Focused/affected checks and builds | `latest architecture selection 113 passed; current persistence slices Module/Binding 33, Template 16, Cross/Chief 10, Final/FinalChief/Aggregate 12 passed` |
 | Final real Provider/project/browser test | `not started` |
 | Docs/code/tests/release consistent | `automatic evidence aligned; final real-test result pending` |
 

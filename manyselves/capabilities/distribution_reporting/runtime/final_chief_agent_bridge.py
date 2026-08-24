@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
     ChiefChapterLaneRevisionSubmission,
     TaskEnvelope,
 )
@@ -41,6 +43,7 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
 
 
 class FinalChiefAgentBridge:
@@ -53,6 +56,7 @@ class FinalChiefAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        completed_result_loader: CompletedResultLoader | None = None,
         terminal_task_attempt_id: str = "",
         recovery_driver: AgentRecoveryDriver | None = None,
         progress_observer: ProgressObserver | None = None,
@@ -61,6 +65,7 @@ class FinalChiefAgentBridge:
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.completed_result_loader = completed_result_loader
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
         self.progress_observer = progress_observer
@@ -114,6 +119,46 @@ class FinalChiefAgentBridge:
         context = DeclarativeFinalChiefRevisionContext.model_validate(value)
         contract = ChiefChapterLaneInput.model_validate(context.contract)
         envelope = TaskEnvelope.model_validate(context.envelope)
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=self._decode_payload(persisted.payload),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
         runtime_id = self._runtime_id(agent, conversation)
         session_id = conversation.external_session_id or conversation.key.value
         typed_turn = TypedAgentTurn(
@@ -266,6 +311,13 @@ class FinalChiefAgentBridge:
         return ChiefChapterLaneRevisionSubmission.model_validate(
             load_agent_result_payload(self.workspace, result_ref).payload
         )
+
+    @staticmethod
+    def _decode_payload(payload: Any) -> dict[str, Any]:
+        return DeclarativeFinalChiefRevisionAgentResult(
+            status="completed",
+            submission=ChiefChapterLaneRevisionSubmission.model_validate(payload),
+        ).model_dump(mode="json")
 
     def _runtime_id(
         self,

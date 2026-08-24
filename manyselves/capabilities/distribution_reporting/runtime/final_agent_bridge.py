@@ -8,8 +8,9 @@ Final review rounds, and Delivery belong to later Capability slices.
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
     TaskEnvelope,
@@ -52,6 +54,7 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 SessionFactory = Callable[[str], AgentSessionLoop]
+CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
 
 
 class FinalChapterAgentBridge:
@@ -64,6 +67,7 @@ class FinalChapterAgentBridge:
         execution: AgentExecutionService,
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
+        completed_result_loader: CompletedResultLoader | None = None,
         terminal_task_attempt_id: str = "",
         recovery_driver: AgentRecoveryDriver | None = None,
         progress_observer: ProgressObserver | None = None,
@@ -72,6 +76,7 @@ class FinalChapterAgentBridge:
         self.execution = execution
         self.session_factory = session_factory
         self.workflow_id = workflow_id
+        self.completed_result_loader = completed_result_loader
         self.terminal_task_attempt_id = terminal_task_attempt_id
         self.recovery_driver = recovery_driver
         self.progress_observer = progress_observer
@@ -134,6 +139,54 @@ class FinalChapterAgentBridge:
         )
         if phase == "recheck":
             context = DeclarativeFinalRecheckContext.model_validate(value)
+        else:
+            context = DeclarativeFinalChapterContext.model_validate(value)
+        if self.completed_result_loader is not None:
+            persisted = self.completed_result_loader()
+            if inspect.isawaitable(persisted):
+                persisted = await persisted
+            if persisted is not None:
+                if not isinstance(persisted, AgentResult):
+                    persisted = AgentResult.model_validate(persisted)
+                conversation.external_session_id = persisted.session_id
+                decoder = (
+                    self._decode_recheck_payload
+                    if phase == "recheck"
+                    else self._decode_payload
+                )
+
+                async def reuse_completed(_directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="ok",
+                        result=decoder(persisted.payload),
+                        session_id=persisted.session_id,
+                    )
+
+                async def stop_completed(directive: Any) -> AgentInvocationOutcome:
+                    return AgentInvocationOutcome(
+                        status="incomplete",
+                        session_id=persisted.session_id,
+                        error=(
+                            getattr(directive, "reason", None)
+                            or "completed result recovery stopped"
+                        ),
+                    )
+
+                recovered = await self.execution.recover_completed_result(
+                    recovery=(
+                        self.recovery_driver
+                        or AgentRecoveryDriver(recovery_policy)
+                    ),
+                    detail={
+                        "task_id": task.id,
+                        "source": "persisted_result",
+                    },
+                    reuse_result=reuse_completed,
+                    stop=stop_completed,
+                )
+                if isinstance(recovered, AgentInvocationOutcome):
+                    return recovered
+        if phase == "recheck":
             return await self._invoke_typed(
                 agent,
                 task,
@@ -150,7 +203,6 @@ class FinalChapterAgentBridge:
                 turn_suffix="recheck",
                 recovery_policy=recovery_policy,
             )
-        context = DeclarativeFinalChapterContext.model_validate(value)
         return await self._invoke_typed(
             agent,
             task,
@@ -329,6 +381,11 @@ class FinalChapterAgentBridge:
 
     def _decode_result(self, result_ref: str) -> dict[str, Any]:
         submission = self._read_submission(result_ref)
+        return self._decode_payload(submission)
+
+    @staticmethod
+    def _decode_payload(payload: Any) -> dict[str, Any]:
+        submission = FinalChapterLaneFindingSubmission.model_validate(payload)
         return DeclarativeFinalChapterAgentResult(
             status="completed",
             submission=submission,
@@ -341,6 +398,11 @@ class FinalChapterAgentBridge:
 
     def _decode_recheck_result(self, result_ref: str) -> dict[str, Any]:
         submission = self._read_verdict_submission(result_ref)
+        return self._decode_recheck_payload(submission)
+
+    @staticmethod
+    def _decode_recheck_payload(payload: Any) -> dict[str, Any]:
+        submission = FinalChapterLaneVerdictSubmission.model_validate(payload)
         return DeclarativeFinalRecheckAgentResult(
             status="completed",
             submission=submission,

@@ -12,6 +12,8 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
     load_agent_result_payload,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    AgentResult,
+    AgentRunStatus,
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
     ChiefChapterLaneRevisionSubmission,
@@ -58,7 +60,7 @@ def _context(tmp_path: Path, run_id: str) -> DeclarativeFinalChiefRevisionContex
         category="traceability",
         impact="blocking",
         observation="当前章节没有把行动责任与后续核验方式写清楚，读者无法直接执行。",
-        evidence_refs=["Work/runs/final-chief-provider-run/edited-r0.json"],
+        evidence_refs=[f"Work/runs/{run_id}/edited-r0.json"],
     )
     contract = ChiefChapterLaneInput(
         phase="revision",
@@ -372,7 +374,6 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
     }
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
-        conversation.external_session_id,
     ]
     result_path = tmp_path / f"Work/runs/{run_id}/results/chief-chapter-1-r1.json"
     loaded = load_agent_result_payload(tmp_path, result_path)
@@ -380,3 +381,123 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
     assert loaded.identity.task_id == "chief-chapter-1-r1"
     assert loaded.identity.agent_id == "chief-editor"
     assert loaded.identity.session_id == conversation.external_session_id
+
+
+@pytest.mark.asyncio
+async def test_final_chief_provider_reuses_persisted_completed_result_before_provider(
+    tmp_path: Path,
+) -> None:
+    """The account Provider must load a verified Chief result before a session."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+        build_task_correlation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.final_chief_provider import (
+        FinalChiefProviderRuntime,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
+        IdentityLeaseManager,
+        TaskAttemptStore,
+    )
+
+    run_id = "final-chief-provider-persisted-reuse"
+    context = _context(tmp_path, run_id)
+    agent = AgentDefinition(
+        id="chief-editor",
+        version="1.0.0",
+        description="Chief editor",
+        instructions="Revise the assigned chapter.",
+        tools=["write_result_part", "list_result_parts", "submit_result"],
+    )
+    task = TaskDefinition(
+        id="final-chief-chapter-revision",
+        version="1.0.0",
+        description="Final Chief revision lane",
+        agent=agent.id,
+        objective="Revise only the assigned chapter finding.",
+        input_contract="declarative_final_chief_revision_context",
+        output_contract="declarative_final_chief_revision_agent_result",
+        tools=list(agent.tools),
+    )
+    workflow_id = "distribution-aggregate-existing-tail"
+    identity_key = "chief-chapter-1"
+    session_id = identity_key
+    lease_handle = IdentityLeaseManager(tmp_path, run_id).acquire(
+        workflow_id,
+        identity_key,
+    )
+    correlation = build_task_correlation(
+        tmp_path,
+        context.envelope,
+        workflow_id=workflow_id,
+        identity_key=identity_key,
+        session_id=session_id,
+        identity_lease=lease_handle.lease,
+    )
+    submission = ChiefChapterLaneRevisionSubmission(
+        run_id=run_id,
+        base_subject_ref=context.contract.subject_ref,
+        chapter_id="1",
+        revision=1,
+        section_ids=["1.2"],
+        part_refs={"findings_overview": "Work/runs/final-chief-provider-persisted-reuse/parts/findings_overview.md"},
+    )
+    try:
+        store = TaskAttemptStore(tmp_path, run_id)
+        store.activate(correlation)
+        store.persist_result(
+            correlation,
+            AgentResult(
+                task_id=context.envelope.task_id,
+                run_id=run_id,
+                agent_id=agent.id,
+                session_id=session_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=submission,
+            ).model_dump(mode="json"),
+            status="completed",
+        )
+    finally:
+        lease_handle.release()
+
+    provider_calls = 0
+
+    def forbidden_loop_builder(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed Chief result must be reused before Provider session")
+
+    bus = MessageBus()
+    service = AgentExecutionService(bus)
+    runtime = FinalChiefProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=service,
+        loop_builder=forbidden_loop_builder,
+    )
+    conversation = ConversationRecord(
+        conversation_id="final-chief-provider-persisted-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value=identity_key,
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    outcome = await runtime.invoke(
+        agent,
+        task,
+        context,
+        conversation,
+        task_id="host-final-chief-provider-persisted",
+    )
+
+    assert outcome.status == "ok"
+    assert provider_calls == 0
+    assert service.sessions == {}
+    assert outcome.session_id == session_id

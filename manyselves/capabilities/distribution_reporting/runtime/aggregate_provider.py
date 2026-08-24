@@ -21,6 +21,11 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn 
 from manyselves.capabilities.distribution_reporting.runtime.aggregate_agent_bridge import (
     AggregateEditorAgentBridge,
 )
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
+    load_completed_agent_result,
+    reporting_identity_key,
+)
 from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
     ReportingContinuationProgressObserver,
 )
@@ -50,6 +55,7 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 
 from .artifact_access import compile_agent_access, scoped_gateway
+from .state.parallel import TaskCorrelation
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 
@@ -96,13 +102,13 @@ class AggregateProviderRuntime:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(agent, task, value, conversation)
-        return await bridge.invoke(
+        return await self._invoke(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
         )
 
     async def invoke_with_recovery(
@@ -115,14 +121,7 @@ class AggregateProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome:
-        bridge = self._bridge(
-            agent,
-            task,
-            value,
-            conversation,
-            recovery_policy=recovery_policy,
-        )
-        return await bridge.invoke_with_recovery(
+        return await self._invoke(
             agent,
             task,
             value,
@@ -130,6 +129,69 @@ class AggregateProviderRuntime:
             task_id=task_id,
             recovery_policy=recovery_policy,
         )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        contract = (
+            value
+            if isinstance(value, AggregateEditorInput)
+            else AggregateEditorInput.model_validate(value)
+        )
+        existing_correlation = self.dependencies.task_correlation
+        workflow_id = str(
+            getattr(existing_correlation, "workflow_id", None)
+            or self.workflow_id
+        )
+        envelope = self._envelope(agent, task, contract, existing_correlation)
+        task_attempt: ProviderTaskAttempt | None = None
+        if not isinstance(existing_correlation, TaskCorrelation):
+            session_id = conversation.external_session_id or conversation.key.value
+            task_attempt = ProviderTaskAttempt.acquire(
+                self.workspace,
+                envelope,
+                workflow_id=workflow_id,
+                identity_key=reporting_identity_key(
+                    agent.id,
+                    conversation.key.value,
+                ),
+                session_id=session_id,
+            )
+        try:
+            bridge = self._bridge(
+                agent,
+                task,
+                contract,
+                conversation,
+                recovery_policy=recovery_policy,
+                task_attempt=task_attempt,
+            )
+            if recovery_policy is None:
+                return await bridge.invoke(
+                    agent,
+                    task,
+                    contract,
+                    conversation,
+                    task_id=task_id,
+                )
+            return await bridge.invoke_with_recovery(
+                agent,
+                task,
+                contract,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+            )
+        finally:
+            if task_attempt is not None:
+                task_attempt.close()
 
     def _bridge(
         self,
@@ -139,13 +201,18 @@ class AggregateProviderRuntime:
         conversation: ConversationRecord,
         *,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        task_attempt: ProviderTaskAttempt | None = None,
     ) -> AggregateEditorAgentBridge:
         contract = (
             value
             if isinstance(value, AggregateEditorInput)
             else AggregateEditorInput.model_validate(value)
         )
-        correlation = self.dependencies.task_correlation
+        correlation = (
+            task_attempt.correlation
+            if task_attempt is not None
+            else self.dependencies.task_correlation
+        )
         workflow_id = str(
             getattr(correlation, "workflow_id", None) or self.workflow_id
         )
@@ -155,6 +222,14 @@ class AggregateProviderRuntime:
             agent,
             envelope,
             session_id=session_id,
+            base_dependencies=(
+                replace(
+                    self.dependencies,
+                    task_correlation=task_attempt.correlation,
+                )
+                if task_attempt is not None
+                else self.dependencies
+            ),
         )
         recovery_driver = (
             AgentRecoveryDriver(recovery_policy)
@@ -210,6 +285,10 @@ class AggregateProviderRuntime:
             execution=self.execution,
             session_factory=lambda _runtime_id: session_factory(),
             workflow_id=workflow_id,
+            completed_result_loader=self._completed_result_loader(
+                task_attempt=task_attempt,
+                expected=dependencies.task_correlation,
+            ),
             terminal_sender=envelope.agent_id,
             terminal_task_id=envelope.task_id,
             terminal_task_attempt_id=(
@@ -258,13 +337,15 @@ class AggregateProviderRuntime:
         envelope: TaskEnvelope,
         *,
         session_id: str,
+        base_dependencies: ModuleProviderDependencies | None = None,
     ) -> ModuleProviderDependencies:
+        base = base_dependencies or self.dependencies
         if (
-            self.dependencies.artifact_gateway is not None
-            or self.dependencies.artifact_access is not None
-            or self.dependencies.result_index is not None
+            base.artifact_gateway is not None
+            or base.artifact_access is not None
+            or base.result_index is not None
         ):
-            return self.dependencies
+            return base
         gateway = scoped_gateway(
             self._artifact_root,
             workflow_id=self.workflow_id,
@@ -275,11 +356,23 @@ class AggregateProviderRuntime:
         access = compile_agent_access(agent, envelope, gateway=gateway)
         result_index = RunToolResultIndex(self.workspace, envelope.run_id)
         return replace(
-            self.dependencies,
+            base,
             artifact_gateway=gateway,
             artifact_access=access,
             result_index=result_index,
         )
+
+    def _completed_result_loader(
+        self,
+        *,
+        task_attempt: ProviderTaskAttempt | None,
+        expected: Any,
+    ) -> Callable[[], Any | None] | None:
+        if task_attempt is not None:
+            return task_attempt.load_completed_or_activate
+        if not isinstance(expected, TaskCorrelation):
+            return None
+        return lambda: load_completed_agent_result(self.workspace, expected)
 
 
 @dataclass(frozen=True, slots=True)
