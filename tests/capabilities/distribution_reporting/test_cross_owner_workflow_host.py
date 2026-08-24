@@ -39,6 +39,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
     DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerRecheckAgentResult,
+    DeclarativeMainExceptionUserInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ReviewCompletionRecord,
@@ -68,6 +69,18 @@ _DIMENSIONS = [
     "propagation",
     "joint_verification",
 ]
+
+
+def test_main_exception_input_schema_carries_generic_ui_labels() -> None:
+    schema = DeclarativeMainExceptionUserInput.model_json_schema()
+
+    assert schema["properties"]["decision"]["title"] == "处理方式"
+    assert schema["properties"]["decision"]["x-enum-labels"] == {
+        "accept_dispute": "接受争议并继续",
+        "return_to_author": "退回作者修改",
+        "stop_incomplete": "停止并保留不完整结果",
+    }
+    assert schema["properties"]["rationale"]["title"] == "说明"
 
 
 class _TypedCrossScript:

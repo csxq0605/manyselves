@@ -21,6 +21,7 @@ from manyselves.runtime.capability_binding import (
     RuntimeBindingCatalog,
     load_runtime_bindings,
 )
+from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
 class WorkflowProjectionNotFoundError(LookupError):
@@ -229,6 +230,12 @@ class WorkflowProjectionFacade:
             **projection,
             "state": _bounded_run_state(projection.get("state")),
         }
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        """Project persisted Runs without requiring callers to know their ids."""
+
+        store = FileWorkflowStateStore(self.workspace)
+        return [self.get_run(run_id) for run_id in store.list_run_ids()]
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
         binding, _projection = self._locate_run(run_id)

@@ -8,6 +8,8 @@ import { MessageComposer } from "../chat/MessageComposer";
 import { MessageList, type MessageListRuntimeSummary } from "../chat/MessageList";
 import { createConversationMessageStore } from "../chat/message-store";
 import { createFileApi } from "../files/file-api";
+import { RunInteractionFeed } from "../runs/RunInteractionFeed";
+import { createWorkflowApi } from "../runs/workflow-api";
 import { ConversationActions } from "./ConversationActions";
 import { createConversationApi, type ConversationListSnapshot } from "./conversation-api";
 import { ConversationList } from "./ConversationList";
@@ -38,6 +40,7 @@ export function ConversationWorkspace({
   const client = useQueryClient();
   const api = useMemo(() => createConversationApi(gateway), [gateway]);
   const fileApi = useMemo(() => createFileApi(gateway), [gateway]);
+  const workflowApi = useMemo(() => createWorkflowApi(gateway), [gateway]);
   const [messageStore] = useState(() => createConversationMessageStore());
   const setActiveSession = useConversationStore((state) => state.setActiveSession);
   const activationAttemptRef = useRef<{ readonly key: string; readonly promise: ReturnType<typeof api.activate> } | null>(null);
@@ -175,6 +178,7 @@ export function ConversationWorkspace({
         {requestedSessionId && conversations.data && !requestedSessionMissing && !sessionReady ? <p role="status">正在切换会话…</p> : null}
         {sessionReady && activeSessionId && messages.isPending ? <p role="status">正在加载会话历史…</p> : null}
         {sessionReady && messages.isError ? <p role="alert">会话历史加载失败</p> : null}
+        {agentId === "main" ? <RunInteractionFeed api={workflowApi} /> : null}
         {sessionReady && messages.data && !hasMessages ? <div className="conversation-empty">
           <span aria-hidden="true" className="conversation-empty__spark">✦</span>
           <h1>今天要处理什么？</h1>

@@ -865,7 +865,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Runs */
+        get: operations["get_api_v1_runs"];
         put?: never;
         /** Start Run */
         post: operations["post_api_v1_runs"];
@@ -954,6 +955,23 @@ export interface paths {
         get: operations["get_api_v1_runs_run_id_outputs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Run */
+        post: operations["post_api_v1_runs_run_id_resume"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2418,6 +2436,11 @@ export interface components {
             inputId?: string | null;
             /** Values */
             values?: unknown;
+        };
+        /** WorkflowRunListResponse */
+        WorkflowRunListResponse: {
+            /** Runs */
+            runs: components["schemas"]["WorkflowRunResponse"][];
         };
         /** WorkflowRunResponse */
         WorkflowRunResponse: {
@@ -4810,6 +4833,44 @@ export interface operations {
             };
         };
     };
+    get_api_v1_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     post_api_v1_runs: {
         parameters: {
             query?: never;
@@ -5038,6 +5099,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowOutputListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_runs_run_id_resume: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
                 };
             };
             /** @description Request validation failed */

@@ -75,6 +75,10 @@ class WorkflowRunResponse(_ProjectionModel):
     waiting_input: list[dict[str, Any]] = Field(alias="waitingInput")
 
 
+class WorkflowRunListResponse(_ProjectionModel):
+    runs: list[WorkflowRunResponse]
+
+
 class WorkflowOutput(_ProjectionModel):
     id: str
     kind: Literal["artifact", "value"]

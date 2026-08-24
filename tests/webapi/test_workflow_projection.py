@@ -570,6 +570,46 @@ def test_waiting_declarative_kernel_state_is_projected_as_run_input(
     assert projection["waiting_input"] == [waiting_input]
 
 
+def test_main_run_feed_lists_waiting_interactions_without_known_run_ids(
+    tmp_path: Path,
+) -> None:
+    waiting_input = {
+        "input_id": "request-main-exception-decision",
+        "interaction_id": "module-main-exception-decision",
+        "contract_id": "declarative_main_exception_user_input",
+        "title": "Module exception decision",
+        "description": "Continue, return, or stop this lane.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": [
+                        "accept_dispute",
+                        "return_to_author",
+                        "stop_incomplete",
+                    ],
+                }
+            },
+            "required": ["decision"],
+        },
+        "path": [
+            {
+                "kind": "parallel",
+                "action_id": "run-module-lanes",
+                "branch_id": "2.4",
+            }
+        ],
+    }
+    _save_waiting_kernel_state(tmp_path, "report-main-waiting", waiting_input)
+    facade = _facade(tmp_path, _ReportingAdapter())
+
+    listed = facade.list_runs()
+
+    assert [item["run"]["run_id"] for item in listed] == ["report-main-waiting"]
+    assert listed[0]["waiting_input"] == [waiting_input]
+
+
 def test_run_projection_bounds_large_kernel_state_and_preserves_runtime_fields(
     tmp_path: Path,
 ) -> None:
@@ -788,6 +828,7 @@ def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -
         "/api/v1/runs/{run_id}/cost",
         "/api/v1/runs/{run_id}/events",
     } <= set(paths)
+    assert "get" in paths["/api/v1/runs"]
 
 
 def test_generic_runtime_input_error_maps_without_reporting_exception_types() -> None:

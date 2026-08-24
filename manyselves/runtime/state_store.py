@@ -55,6 +55,17 @@ class FileWorkflowStateStore:
             self._plan_path(run_id).read_text(encoding="utf-8")
         )
 
+    def list_run_ids(self) -> tuple[str, ...]:
+        """Return persisted root Run ids, newest state file first."""
+
+        paths = (self._workspace / "Work" / "runs").glob("*/runtime-state.json")
+        ordered = sorted(
+            paths,
+            key=lambda path: (path.stat().st_mtime_ns, path.parent.name),
+            reverse=True,
+        )
+        return tuple(path.parent.name for path in ordered)
+
     def _state_path(self, run_id: str) -> Path:
         return self._workspace / "Work" / "runs" / run_id / "runtime-state.json"
 

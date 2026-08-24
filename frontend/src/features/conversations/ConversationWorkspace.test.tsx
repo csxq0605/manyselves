@@ -237,4 +237,116 @@ describe("ConversationWorkspace", () => {
       requestJson.mock.calls.filter(([path]) => String(path).includes("/s2/activate")),
     ).toHaveLength(2));
   });
+
+  it("resumes a waiting lane through three schema-defined choices in the Main conversation", async () => {
+    const user = userEvent.setup();
+    let waiting = true;
+    const requestJson = vi.fn(async (path: string, init?: { readonly json?: unknown; readonly method?: string }) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        return { messages: [], projectId: "project-1", sessionId: "s1" };
+      }
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "s1",
+          conversations: [{ active: true, name: "Main", preview: "", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path === "/api/v1/runs") {
+        return {
+          runs: waiting ? [{
+            run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-1", status: "waiting", taskId: null, workflowId: "full-report" },
+            state: { status: "waiting" },
+            waitingInput: [{
+              contract_id: "declarative_main_exception_user_input",
+              description: "请选择如何处理 2.4 模块的审查争议。",
+              input_id: "request-main-exception-decision",
+              path: [{ action_id: "run-module-lanes", branch_id: "2.4", kind: "parallel" }],
+              schema: {
+                properties: {
+                  decision: {
+                    enum: ["accept_dispute", "return_to_author", "stop_incomplete"],
+                    title: "处理方式",
+                    type: "string",
+                    "x-enum-labels": {
+                      accept_dispute: "接受争议并继续",
+                      return_to_author: "退回作者修改",
+                      stop_incomplete: "停止并保留不完整结果",
+                    },
+                  },
+                  rationale: { title: "说明", type: "string" },
+                },
+                required: ["decision", "rationale"],
+                type: "object",
+              },
+              title: "需要你的决定",
+            }],
+          }] : [],
+        };
+      }
+      if (path === "/api/v1/runs/full-report-1/input" && init?.method === "POST") {
+        expect(init.json).toEqual({
+          inputId: "request-main-exception-decision",
+          values: { decision: "return_to_author", rationale: "补充 2.4 的证据说明。" },
+        });
+        waiting = false;
+        return { capabilityId: "distribution-reporting", commandId: "command-1", runId: "full-report-1", status: "accepted", taskId: null, workflowId: "full-report" };
+      }
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
+    </QueryClientProvider>);
+
+    expect(await screen.findByRole("heading", { name: "需要你的决定" })).toBeVisible();
+    expect(screen.getByText("模块 2.4")).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: "退回作者修改" }));
+    await user.type(screen.getByRole("textbox", { name: "说明" }), "补充 2.4 的证据说明。");
+    await user.click(screen.getByRole("button", { name: "提交并继续原运行" }));
+
+    await waitFor(() => expect(
+      requestJson.mock.calls.some(([path]) => path === "/api/v1/runs/full-report-1/input"),
+    ).toBe(true));
+  });
+
+  it("resumes an interrupted original run from the Main conversation", async () => {
+    const user = userEvent.setup();
+    const requestJson = vi.fn(async (path: string, init?: { readonly method?: string }) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        return { messages: [], projectId: "project-1", sessionId: "s1" };
+      }
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "s1",
+          conversations: [{ active: true, name: "Main", preview: "", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path === "/api/v1/runs") return {
+        runs: [{
+          run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-2", status: "failed", taskId: null, workflowId: "full-report" },
+          state: { status: "failed" },
+          waitingInput: [],
+        }],
+      };
+      if (path === "/api/v1/runs/full-report-2/resume" && init?.method === "POST") {
+        return { capabilityId: "distribution-reporting", commandId: "command-2", runId: "full-report-2", status: "accepted", taskId: null, workflowId: "full-report" };
+      }
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
+    </QueryClientProvider>);
+
+    await user.click(await screen.findByRole("button", { name: "恢复原运行" }));
+    await waitFor(() => expect(requestJson.mock.calls.some(
+      ([path]) => path === "/api/v1/runs/full-report-2/resume",
+    )).toBe(true));
+  });
 });

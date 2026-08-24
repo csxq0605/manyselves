@@ -120,8 +120,22 @@ class DeclarativeMainExceptionUserInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    decision: Literal["accept_dispute", "return_to_author", "stop_incomplete"]
-    rationale: str
+    decision: Literal["accept_dispute", "return_to_author", "stop_incomplete"] = Field(
+        title="处理方式",
+        description="选择继续接受争议、退回作者修改，或停止并保留不完整结果。",
+        json_schema_extra={
+            "x-enum-labels": {
+                "accept_dispute": "接受争议并继续",
+                "return_to_author": "退回作者修改",
+                "stop_incomplete": "停止并保留不完整结果",
+            },
+        },
+    )
+    rationale: str = Field(
+        title="说明",
+        description="说明选择此处理方式的原因或需要补充的内容。",
+        min_length=1,
+    )
 
 
 __all__ = [

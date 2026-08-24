@@ -7,6 +7,7 @@ export type WorkflowInputSchemaResponse = components["schemas"]["WorkflowInputSc
 export type WorkflowListResponse = components["schemas"]["WorkflowListResponse"];
 export type WorkflowOutputListResponse = components["schemas"]["WorkflowOutputListResponse"];
 export type WorkflowRunAcceptedResponse = components["schemas"]["WorkflowRunAcceptedResponse"];
+export type WorkflowRunListResponse = components["schemas"]["WorkflowRunListResponse"];
 export type WorkflowEvent = components["schemas"]["WorkflowEvent"];
 export type WorkflowEventsResponse = components["schemas"]["WorkflowEventListResponse"];
 type GeneratedWorkflowRunInputRequest = components["schemas"]["WorkflowRunInputRequest"];
@@ -39,6 +40,10 @@ export interface WorkflowApi {
   ): Promise<WorkflowRunAcceptedResponse>;
 }
 
+export interface WorkflowRunFeedApi {
+  listRuns(): Promise<WorkflowRunListResponse>;
+}
+
 function mutationOptions(idempotencyKey: string, json: unknown) {
   return {
     headers: { "Idempotency-Key": idempotencyKey },
@@ -48,7 +53,7 @@ function mutationOptions(idempotencyKey: string, json: unknown) {
   } as const;
 }
 
-export function createWorkflowApi(gateway: ApiGateway): WorkflowApi {
+export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRunFeedApi {
   return {
     cost: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/cost`,
@@ -61,6 +66,7 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi {
       `/api/v1/workflows/${encodeURIComponent(workflowId)}/input-schema`,
     ),
     listCapabilities: () => gateway.requestJson("/api/v1/capabilities"),
+    listRuns: () => gateway.requestJson("/api/v1/runs"),
     listWorkflows: () => gateway.requestJson("/api/v1/workflows"),
     outputs: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/outputs`,

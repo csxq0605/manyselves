@@ -32,6 +32,7 @@ from ..schemas.workflows import (
     WorkflowOutputListResponse,
     WorkflowRunAcceptedResponse,
     WorkflowRunInputRequest,
+    WorkflowRunListResponse,
     WorkflowRunResponse,
     WorkflowRunStartRequest,
 )
@@ -160,6 +161,16 @@ async def start_run(
                 body.input,
             )
             return WorkflowRunAcceptedResponse(commandId=command_id, **payload)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.get("/runs", response_model=WorkflowRunListResponse)
+async def list_runs(request: Request):
+    state = request_runtime_state(request)
+    try:
+        async with state.runtime_facade.read_transaction():
+            return WorkflowRunListResponse(runs=_projection(request).list_runs())
     except Exception as error:
         raise _error(error) from error
 
