@@ -229,6 +229,30 @@ def test_runtime_and_capabilities_do_not_import_legacy_core_substrate() -> None:
     assert violations == {}
 
 
+def test_generic_python_sources_do_not_embed_reporting_role_ids() -> None:
+    """Friendly domain labels belong to the Capability, not generic utilities."""
+
+    forbidden = (
+        "module-auditor-",
+        "cross-owner-",
+        "chief-editor",
+        "chief-chapter-",
+        "final-chapter-",
+        "template-distiller",
+        "evidence-auditor",
+    )
+    violations = {
+        source_path.relative_to(REPOSITORY_ROOT).as_posix(): sorted(
+            token for token in forbidden if token in _read_python_source(source_path)
+        )
+        for source_path in _python_sources(PACKAGE_ROOT)
+        if REPORTING_CAPABILITY_ROOT not in source_path.parents
+        and any(token in _read_python_source(source_path) for token in forbidden)
+    }
+
+    assert violations == {}
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 

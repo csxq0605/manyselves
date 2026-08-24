@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import TaskEnvelope
-from manyselves.runtime.access_policy import ISOLATED_DISTILLATION_SNAPSHOT_NAME
 from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
 from manyselves.runtime.artifacts.types import ArtifactDescriptor
+
+from .template_access import ISOLATED_DISTILLATION_SNAPSHOT_NAME
 
 
 class ConfigurationError(ValueError):

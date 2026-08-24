@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from docx import Document
 
 from ..artifacts import parse_artifact
-from ..access_policy import reject_forbidden_agent_document
 from .registry import Tool
 
 
@@ -29,14 +29,14 @@ class InspectDocumentTool(Tool):
         workspace: Path,
         *,
         one_shot: bool = False,
-        allow_template_distiller_source: bool = False,
+        path_validator: Callable[[Path], None] | None = None,
         required_path: str | None = None,
         required_max_chars: int | None = None,
         cache_ref: str | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         self.one_shot = one_shot
-        self.allow_template_distiller_source = allow_template_distiller_source
+        self.path_validator = path_validator
         self.required_path = required_path
         self.required_max_chars = required_max_chars
         self.cache_ref = cache_ref
@@ -79,10 +79,8 @@ class InspectDocumentTool(Tool):
                 "TEMPLATE_INSPECTION_LIMIT_MISMATCH: "
                 f"max_chars must equal {self.required_max_chars}; got {max_chars}"
             )
-        reject_forbidden_agent_document(
-            logical_target,
-            allow_template_distiller=self.allow_template_distiller_source,
-        )
+        if self.path_validator is not None:
+            self.path_validator(logical_target)
         if self.one_shot and self._used:
             raise RuntimeError(
                 "TEMPLATE_ALREADY_INSPECTED: reuse the first inspection result and submit the Skill"

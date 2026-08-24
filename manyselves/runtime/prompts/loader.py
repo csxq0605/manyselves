@@ -99,7 +99,10 @@ class PromptLoader:
     def _get_fallback_prompt(self, agent_type: str) -> str:
         if agent_type.lower() == "main":
             return "你是 Manyselves Main Agent。根据当前项目与可用工具协助用户。"
-        return f"You are the {agent_type} role in the power-distribution reporting workflow."
+        return (
+            f"You are the {agent_type} agent. Follow the current task definition "
+            "and use only the available tools."
+        )
 
     def reload(self) -> None:
         """Clear cache — useful when prompts are modified at runtime."""

@@ -8,18 +8,6 @@ from pathlib import Path
 
 from loguru import logger
 
-PROJECT_DIRECTORIES = (
-    "Inputs",
-    "Knowledge",
-    "Templates",
-    "Work",
-    "Work/runs",
-    "Outputs",
-    "Outputs/Modules",
-    "Outputs/Reviews",
-    "Outputs/Reports",
-)
-
 TOP_LEVEL_PROJECT_DIRECTORIES = (
     "Inputs",
     "Knowledge",
@@ -30,7 +18,7 @@ TOP_LEVEL_PROJECT_DIRECTORIES = (
 
 
 def is_project_workspace(path: Path) -> bool:
-    """Return True when path contains the power-distribution project layout."""
+    """Return True when path contains the generic Manyselves project layout."""
     workspace = Path(path)
     return any(
         _find_exact_child(workspace, marker) is not None
@@ -39,7 +27,7 @@ def is_project_workspace(path: Path) -> bool:
 
 
 def ensure_project_structure(workspace: Path) -> None:
-    """Create the canonical power-distribution report project layout."""
+    """Create the Capability-neutral Manyselves project layout."""
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -48,10 +36,7 @@ def ensure_project_structure(workspace: Path) -> None:
     _ensure_child_case(workspace, "Templates")
     work_dir = _ensure_child_case(workspace, "Work")
     _ensure_child_case(work_dir, "runs")
-    outputs_dir = _ensure_child_case(workspace, "Outputs")
-    _ensure_child_case(outputs_dir, "Modules")
-    _ensure_child_case(outputs_dir, "Reviews")
-    _ensure_child_case(outputs_dir, "Reports")
+    _ensure_child_case(workspace, "Outputs")
 
 
 

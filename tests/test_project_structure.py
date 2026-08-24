@@ -1,4 +1,4 @@
-"""Tests for the canonical power-distribution project layout."""
+"""Tests for the Capability-neutral Manyselves project layout."""
 
 from pathlib import Path
 
@@ -23,13 +23,21 @@ def test_ensure_project_structure_creates_canonical_case_only(tmp_path: Path) ->
         "Knowledge",
         "Templates",
         "Work/runs",
-        "Outputs/Modules",
-        "Outputs/Reviews",
-        "Outputs/Reports",
+        "Outputs",
     ):
         assert _has_exact_path(tmp_path, rel)
 
-    for rel in ("Data", "References", "Theory", "Plots", "Outline", "Tex"):
+    for rel in (
+        "Outputs/Modules",
+        "Outputs/Reviews",
+        "Outputs/Reports",
+        "Data",
+        "References",
+        "Theory",
+        "Plots",
+        "Outline",
+        "Tex",
+    ):
         assert not _has_exact_path(tmp_path, rel)
 
 
@@ -41,6 +49,6 @@ def test_ensure_project_structure_normalizes_current_directory_case(tmp_path: Pa
     ensure_project_structure(tmp_path)
 
     assert (tmp_path / "Inputs" / "customer.xlsx").is_file()
-    assert _has_exact_path(tmp_path, "Outputs/Reports")
+    assert _has_exact_path(tmp_path, "Outputs/reports")
     assert not _has_exact_path(tmp_path, "inputs")
     assert not _has_exact_path(tmp_path, "outputs")

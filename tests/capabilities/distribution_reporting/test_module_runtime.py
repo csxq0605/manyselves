@@ -861,6 +861,9 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
     assert isinstance(policy, RecoveryPolicyDefinition)
     run_id = "module-provider-schema-recovery"
     part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    source_ref = "Inputs/source.txt"
+    (tmp_path / source_ref).parent.mkdir(parents=True)
+    (tmp_path / source_ref).write_text("source", encoding="utf-8")
     envelope = TaskEnvelope(
         task_id="module-2.4",
         run_id=run_id,
@@ -868,6 +871,8 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
         objective=task.objective,
         allowed_outputs=["module_submission"],
         allowed_tools=[],
+        input_refs=[source_ref],
+        artifact_delivery_modes={source_ref: "reference"},
         target_submodule_ids=part_ids,
     )
     context = DeclarativeModuleRuntimeLaneContext(

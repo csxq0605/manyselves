@@ -7,15 +7,10 @@ from typing import Any
 
 from loguru import logger
 
-from ..checkpoints import CheckpointManager, FileOperation, _is_binary
 from ..artifacts.gateway import ToolContractError
 from ..artifacts.types import descriptor_for_path
+from ..checkpoints import CheckpointManager, FileOperation, _is_binary
 from ..tools.registry import Tool
-from ..access_policy import (
-    FORBIDDEN_AGENT_DOCUMENT_NAME,
-    ISOLATED_DISTILLATION_SNAPSHOT_NAME,
-    reject_forbidden_agent_document,
-)
 from .file_state import FileStateManager
 from .manifest_tool import ManifestManager
 from .patch_engine import ApplyResult, apply_patch_to_text
@@ -151,7 +146,6 @@ class ReadTool(Tool):
             ValueError: If path is outside workspace or contains path traversal.
         """
         file_path = resolve_and_validate_path(path, self.workspace)
-        reject_forbidden_agent_document(file_path)
         logger.debug("Reading path: {}", file_path)
 
         if is_internal_metadata_path(file_path, self.workspace):
@@ -268,11 +262,6 @@ class ReadTool(Tool):
 
             if recursive:
                 for item in sorted(dir_path.rglob("*")):
-                    if item.name in {
-                        FORBIDDEN_AGENT_DOCUMENT_NAME,
-                        ISOLATED_DISTILLATION_SNAPSHOT_NAME,
-                    }:
-                        continue
                     rel = item.relative_to(dir_path).as_posix()
                     if is_internal_metadata_rel(rel):
                         continue
@@ -282,11 +271,6 @@ class ReadTool(Tool):
                         files.append(rel)
             else:
                 for item in sorted(dir_path.iterdir()):
-                    if item.name in {
-                        FORBIDDEN_AGENT_DOCUMENT_NAME,
-                        ISOLATED_DISTILLATION_SNAPSHOT_NAME,
-                    }:
-                        continue
                     if item.name in {".manyselves", ".checkpoints"}:
                         continue
                     if item.is_dir():

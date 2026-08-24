@@ -7,6 +7,7 @@ import json
 import re
 import unicodedata
 from copy import deepcopy
+from functools import partial
 from html import escape
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -84,6 +85,9 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskCorrelation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_access import (
+    reject_forbidden_agent_document,
+)
 from manyselves.interfaces.types import (
     AgentResultMessage,
     BlockedNoticeMessage,
@@ -2001,6 +2005,10 @@ class SubmitResultTool(_ResultTool):
             cache_ref = f"Work/runs/{contract.run_id}/context/template-inspection.json"
             cached = InspectDocumentTool(
                 self.store.workspace,
+                path_validator=partial(
+                    reject_forbidden_agent_document,
+                    allow_template_distiller=True,
+                ),
                 required_path=contract.template_ref,
                 required_max_chars=contract.inspect_max_chars,
                 cache_ref=cache_ref,

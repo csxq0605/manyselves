@@ -11,7 +11,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..access_policy import reject_forbidden_agent_document
 from .types import ArtifactDescriptor, descriptor_for_path, infer_logical_role
 
 MAX_ARTIFACT_PAGE_CHARS = 160_000
@@ -133,7 +132,6 @@ class ArtifactGateway:
         return ArtifactGateway(self.workspace, grant, secret=self._secret)
 
     def _resolve_public(self, ref: str) -> Path:
-        reject_forbidden_agent_document(ref)
         target = (self.workspace / ref).resolve()
         if not target.is_relative_to(self.workspace):
             raise PermissionError("artifact is outside the project workspace")
@@ -142,7 +140,6 @@ class ArtifactGateway:
             raise PermissionError("raw .manyselves paths are never artifact authority")
         if not target.is_file():
             raise FileNotFoundError(ref)
-        reject_forbidden_agent_document(target)
         return target
 
     def _resolve_with_payload(self, ref: str) -> tuple[Path, dict[str, Any] | None]:

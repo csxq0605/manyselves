@@ -9,6 +9,7 @@ the caller that owns those Runtime concerns.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ from manyselves.capabilities.distribution_reporting.runtime.storage import Repor
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool, ToolRegistry
+
+from .template_access import reject_forbidden_agent_document
 
 TemplateRecoveryEventCallback = Callable[
     [str, dict[str, Any]], Awaitable[Any]
@@ -99,7 +102,10 @@ def build_template_distillation_provider_tools(
         "inspect_document": InspectDocumentTool(
             workspace,
             one_shot=True,
-            allow_template_distiller_source=True,
+            path_validator=partial(
+                reject_forbidden_agent_document,
+                allow_template_distiller=True,
+            ),
             required_path=template_input.template_ref,
             required_max_chars=template_input.inspect_max_chars,
             cache_ref=(

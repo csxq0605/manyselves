@@ -65,22 +65,22 @@ class TestGetAgentName:
     def test_sub_returns_select(self):
         assert get_agent_name("sub") == "Select"
 
-    def test_reporting_lane_runtime_names_show_owned_scope(self):
+    def test_dynamic_runtime_names_are_formatted_without_domain_rules(self):
         assert (
             get_agent_name("cross-module-reviewer--session-2.3--abcdef")
-            == "Cross-module Reviewer 2.3"
+            == "Cross Module Reviewer · cdef"
         )
         assert (
             get_agent_name("evidence-auditor--session-2.4--abcdef")
-            == "Evidence Auditor 2.4"
+            == "Evidence Auditor · cdef"
         )
         assert (
             get_agent_name("chief-editor--session-chapter-3--abcdef")
-            == "Chief Editor Chapter 3"
+            == "Chief Editor · cdef"
         )
         assert (
             get_agent_name("chief-editor-auditor--session-chapter-4--abcdef")
-            == "Final Report Auditor Chapter 4"
+            == "Chief Editor Auditor · cdef"
         )
 
 
@@ -132,7 +132,7 @@ class TestGetAgentTitle:
     def test_runtime_title_keeps_instance_after_agent_label(self):
         assert (
             get_agent_title("report-renderer--session-12345678")
-            == "Render Agent · 5678"
+            == "Report Renderer Agent · 5678"
         )
 
 

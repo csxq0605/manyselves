@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence`
-- Current slice: `FA-08/M9.40 project generic Run interactions into Main`
+- Current slice: `FA-08/M9.41 remove residual domain semantics from generic packages`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `c0e7473 Capability: restore template entrypoint input`
+- HEAD at slice start: `ec82270 Frontend: surface workflow interactions in Main`
 - Program status: `in progress`
 - Final real-test status: `deferred by user until remaining automatic architecture and product work completes`
 - Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `继续最终 Kernel/Runtime/Compiler/Definition/UI 中立性审计并清除剩余业务泄漏`
+- Next automatic action: `完成最终 Definition/Compiler/Kernel/Runtime/UI 发布图审计并刷新完成矩阵`
 
 ## Why the prior completion claim is reopened
 
@@ -290,6 +290,7 @@
 - FA-08/M9.38 为“Runtime 与 Capability 生产代码不得导入旧 Core 执行 substrate”新增架构 Characterization，先得到 25 个违规文件的 RED；GREEN 后将通用 Agent Loop/MessageBus、Provider、Tool、Artifact、Prompt、Checkpoint、Usage、runtime errors 与 access policy 作为完整无环组件物理迁入 `manyselves/runtime`，全仓生产/测试 import 与 monkeypatch target 机械更新，旧 Core 不留 shim 或 convenience re-export。`manyselves/core` 现在只保留 Conversation、项目结构、设置/历史等项目和产品服务；Capability 与 Runtime 对 Core 导入扫描为零。对应 `tests/core/{artifacts,loops,tools}` 也迁到 `tests/runtime`，当前项目指南、团队定义与发布矩阵路径同步更新。架构/发布矩阵 `18 passed`，Runtime substrate focused `196 passed`，Distribution Provider/ownership affected `37 passed`；定向 Ruff（只保留 AgentLoop 两个既有 N818 命名例外）、compileall、import scan 与 `git diff --check` 通过，未跑全量。额外选择发现 Template 文件入口的两个 typed 输入测试在本切片前的干净 `ed76ec2` 也同样失败，已用隔离 worktree 证明不是 import 迁移引入；下一切片按 Characterization 修复，不混入本物理所有权提交。没有新增 Gate、Hash/CAS、锁、判断算法、依赖或公共接口。
 - FA-08/M9.39 修复 Template 文件入口的 typed 根输入恢复偏差：Characterization 已在干净 `ed76ec2` 证明两个 Host 入口因把 `PublicTemplateDistillationRequest` 误按领域 `TemplateDistillationInput` 解码而失败；GREEN 后 Capability Runtime 在文件 Workflow 根变量处按公共 Schema 模型读取 `template_ref`，Host-owned `run_id` 直接来自现有 `WorkflowState.run_id`，已完成领域输入恢复仍保持原分支。Kernel、Compiler、Host、Workflow YAML 与公共接口均未改。Template 入口/Provider/Recovery focused 全文件 `16 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未新增 Gate、Hash/CAS、锁、判断算法或依赖。
 - FA-08/M9.40 将通用 Run 交互投影到 Main 单一对话：新增只读 `GET /api/v1/runs`，由 Application 从当前 account workspace 的通用 `WorkflowStateStore` 列出根 Run 并复用既有 `get_run` 投影；Main React 只按 `waitingInput + JSON Schema` 渲染 Interaction，枚举标签由 Capability Pydantic Schema 的 `x-enum-labels` 提供，Lane 显示只读取通用 `path.branch_id`，提交继续使用既有 `/runs/{run_id}/input` 恢复同一 Run。inactive `running/failed` 也在 Main 暴露既有 `/resume`，不新建 Run。Characterization First 分别取得缺少 Run feed、缺少三选一 Schema 标签和缺少 Main WAITING 卡片的 RED；GREEN 后后端投影/Schema focused `19 passed`，Conversation/RunWorkspace/AppLayout `22 passed`，架构/发布矩阵 `20 passed`，定向 Ruff/ESLint/TypeScript、OpenAPI 生成一致性与 `git diff --check` 通过。会话路由 Characterization 同时证明 `AppLayout` 始终保留 Sidebar；前端没有 Capability ID、Workflow ID、Reporting 或模块编号分支。未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或 Capability 专属 HTTP 接口。
+- FA-08/M9.41 清除通用发布包中残留的 Distribution Reporting 领域语义：Runtime 默认 Prompt 改为只描述当前 Task definition 与可用 Tools；项目脚手架只创建 `Inputs/Knowledge/Templates/Work/runs/Outputs`，Reporting 的 `Modules/Reviews/Reports` 目录继续由 Capability-owned store 按需创建；通用 Agent label 不再内置 Editor/Auditor/Cross/Chief/Template Distiller 角色映射；专家模板访问政策物理迁到 Capability，并通过 `InspectDocumentTool.path_validator` 这一中立注入点保留原隔离行为，通用 File/Exec/Artifact 工具不再识别领域文件名。Characterization First 分别以 Prompt 业务词、项目领域目录、通用角色 ID 和模板访问规则取得 RED；GREEN 后通用/架构选择 `85 passed`、Capability/Artifact 受影响选择 `59 passed`，定向 Ruff、compileall、业务标识扫描与 `git diff --check` 通过。一个 Module recovery 测试的 Provider envelope 缺少其声明 Tool 所需 artifact ref，已在测试夹具补入真实输入引用；隔离基线证明该失败早于本切片。未跑全量，未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
 - 本阶段没有运行全量回归；真实 Provider Run 的失败现场与同一 Run 恢复链均保留且按用户要求暂不恢复。Main 对话 Run 投影、三种 Lane 选择、原 Run 中断恢复和侧边栏产品化已完成，继续执行剩余自动架构审计。
 
 ## Research decisions
@@ -332,7 +333,7 @@ git diff --check
 
 | Requirement | Evidence status |
 | --- | --- |
-| Stateless Kernel business-neutral | `foundation present; final audit pending` |
+| Stateless Kernel business-neutral | `achieved by action/definition/import scans and focused architecture Characterization; final combined audit pending` |
 | File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
 | One Generic Runtime Host | `achieved for all five public Reporting entrypoints; alternate packaged Sequential/ControlFlow executors removed` |
 | Generic Agent/Tool/Conversation/Recovery | `Agent Loop/Provider/Tool/Artifact/Recovery are physically Runtime-owned; Capability and Runtime no longer import Core execution substrate` |

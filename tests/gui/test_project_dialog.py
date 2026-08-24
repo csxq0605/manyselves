@@ -33,11 +33,10 @@ def test_create_project_structure_scaffolds_all_dirs(tmp_path: Path) -> None:
         "Inputs",
         "Knowledge",
         "Work/runs",
-        "Outputs/Modules",
-        "Outputs/Reviews",
-        "Outputs/Reports",
+        "Outputs",
     ):
         assert (proj / sub).is_dir()
+    assert not (proj / "Outputs/Reports").exists()
 
 
 def test_skip_persists_has_seen_onboarding(qtbot, tmp_path: Path, monkeypatch) -> None:

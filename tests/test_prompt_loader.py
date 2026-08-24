@@ -45,6 +45,8 @@ def test_fallback_for_missing_file(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
     result = loader.load_prompt("nonexistent_agent")
     assert "nonexistent_agent" in result
+    assert "reporting" not in result.lower()
+    assert "power-distribution" not in result.lower()
 
 
 def test_fallback_built_in_types(agents_dir):

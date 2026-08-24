@@ -112,6 +112,7 @@ from .module_provider_tools import (
 )
 from .module_runtime import CapabilityModuleRuntime, SessionFactory
 from .state.parallel import TaskCorrelation
+from .template_access import reject_forbidden_agent_document
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 RecoveryCallback = Callable[[str, dict[str, Any]], Any]
@@ -228,7 +229,10 @@ def build_module_provider_tools(
         "open_reference": OpenReferenceTool(library, ledger),
         "web_search": WebSearchTool(web_backend),
         "open_web_source": OpenWebSourceTool(web_backend, ledger),
-        "inspect_document": InspectDocumentTool(workspace),
+        "inspect_document": InspectDocumentTool(
+            workspace,
+            path_validator=reject_forbidden_agent_document,
+        ),
         "calculate": CalculateTool(),
         "publish_research_note": PublishResearchNoteTool(
             workspace,

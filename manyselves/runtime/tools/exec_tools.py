@@ -10,7 +10,6 @@ from typing import Any
 from loguru import logger
 
 from ..tools.registry import Tool
-from ..access_policy import is_isolated_distillation_document, reject_forbidden_agent_document
 from .path_utils import is_internal_metadata_path, is_internal_metadata_rel
 
 
@@ -106,9 +105,6 @@ class ExecTool(Tool):
 
     def _check_blocked_paths_in_command(self, command: str, tokens: list[str]) -> None:
         """Check if command attempts to access internal metadata directories."""
-        for token in tokens:
-            reject_forbidden_agent_document(token)
-        reject_forbidden_agent_document(command)
         # Check each token for blocked directory access
         for token in tokens:
             # Normalize path separators and check
@@ -238,8 +234,6 @@ class ExecTool(Tool):
                 resolved = (workspace / name).resolve()
                 if is_internal_metadata_path(resolved, workspace):
                     continue
-                if is_isolated_distillation_document(name):
-                    continue
             kept.append(line)
         return "\n".join(kept)
 
@@ -257,8 +251,6 @@ class ExecTool(Tool):
                 normalized = normalized[2:]
             normalized = normalized.rstrip("/")
             if normalized and is_internal_metadata_rel(normalized):
-                continue
-            if is_isolated_distillation_document(normalized):
                 continue
             kept.append(line)
         return "\n".join(kept)
