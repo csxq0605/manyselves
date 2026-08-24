@@ -2215,6 +2215,70 @@ async def test_submit_result_partial_arguments_reach_the_submission_gate(
 
 
 @pytest.mark.asyncio
+async def test_streamed_submit_result_without_usage_reaches_submission_gate(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    """The streaming response adapter must not hide SubmitResult correction."""
+
+    bus = MessageBus()
+    received: list[dict] = []
+
+    async def submit_result(**kwargs):
+        received.append(kwargs)
+        return {
+            "status": "correction_required",
+            "accepted": False,
+            "validation_errors": [{"field": "kind", "problem": "Field required"}],
+        }
+
+    tools = MagicMock()
+    tools.get.return_value = submit_result
+    tools.get_definitions.return_value = [
+        {
+            "name": "submit_result",
+            "input_schema": {
+                "type": "object",
+                "properties": {"kind": {"const": "module_revision_submission"}},
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=bus,
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="streamed-empty-submit",
+                    name="submit_result",
+                    arguments={},
+                )
+            ],
+        ),
+        "msg-streamed-empty-submit",
+    )
+
+    assert received == [{}]
+    tool_results = [
+        message for message in bus._queue._queue if isinstance(message, ToolResultMsg)
+    ]
+    assert tool_results[0].error is None
+    assert tool_results[0].result["status"] == "correction_required"
+
+
+@pytest.mark.asyncio
 async def test_truncated_tool_call_error_mentions_apply_patch_not_write_file(
     workspace, config, mock_provider, mock_prompt_loader
 ):

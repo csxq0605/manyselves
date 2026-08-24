@@ -3618,7 +3618,7 @@ class AgentLoop:
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
                     if not execution_tool_call.arguments and required_args:
-                        usage = response.usage or {}
+                        usage = getattr(response, "usage", None) or {}
                         output_tokens = usage.get("output_tokens", 0)
                         required_hint = (
                             f" Required arguments: {', '.join(required_args)}."

@@ -537,6 +537,7 @@ class ModuleProviderRuntime:
             agent,
             envelope,
             session_id=session_id,
+            task_tools=task.tools,
             base_dependencies=base_dependencies,
         )
         recovery_driver = (
@@ -666,6 +667,7 @@ class ModuleProviderRuntime:
         envelope: TaskEnvelope,
         *,
         session_id: str,
+        task_tools: Sequence[str],
         base_dependencies: ModuleProviderDependencies | None = None,
     ) -> ModuleProviderDependencies:
         """Resolve existing artifact resources for one prepared Provider task.
@@ -691,9 +693,12 @@ class ModuleProviderRuntime:
             agent_id=agent.id,
             session_id=session_id,
         )
+        access_envelope = envelope.model_copy(
+            update={"allowed_tools": list(task_tools)}
+        )
         access = compile_agent_access(
             agent,
-            envelope,
+            access_envelope,
             gateway=gateway,
         )
         result_index = RunToolResultIndex(self.workspace, envelope.run_id)

@@ -1933,6 +1933,111 @@ def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
     assert second.artifact_access.readable_refs
 
 
+def test_module_revision_provider_uses_file_declared_task_tools(
+    tmp_path: Path,
+) -> None:
+    """A persisted revision envelope cannot hide tools declared by its YAML task."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleRevisionPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleRevisionPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
+    task = registry.require(DefinitionKind.TASK, "module-2.4-runtime-revision")
+    run_id = "module-provider-revision-task-tools"
+    subject_ref = f"Work/runs/{run_id}/modules/2.4-r0.json"
+    subject_path = tmp_path / subject_ref
+    subject_path.parent.mkdir(parents=True, exist_ok=True)
+    subject_path.write_text("{}", encoding="utf-8")
+    envelope = TaskEnvelope(
+        task_id="module-revision-r1-2.4",
+        run_id=run_id,
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_revision_submission"],
+        allowed_tools=["submit_result"],
+        revision=1,
+        input_refs=[subject_ref],
+        prior_result_ref=subject_ref,
+        artifact_delivery_modes={subject_ref: "reference"},
+        target_submodule_ids=["2.4.1.1"],
+    )
+    context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="revision_ready",
+        revision=DeclarativeModuleRevisionPreparation.model_construct(
+            prepared=ModuleRevisionPreparation.model_construct(
+                envelope=envelope,
+                run_id=run_id,
+                module_id="2.4",
+                workflow_id="public-reporting",
+            )
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def tool_builder(*args: Any, **kwargs: Any) -> ToolRegistry:
+        del args
+        captured.update(kwargs)
+        return ToolRegistry()
+
+    bus = MessageBus()
+    runtime = ModuleProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+        execution=AgentExecutionService(bus),
+        tool_builder=tool_builder,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(agent_id=agent.id, value="module-2.4", mode="run"),
+        run_id=run_id,
+    )
+
+    runtime._bridge(
+        agent,
+        task,
+        context,
+        conversation,
+        task_id="invoke-current-module-revision",
+    )
+
+    compiled_tools = set(captured["dependencies"].artifact_access.tool_names)
+    assert {"write_result_part", "list_result_parts", "submit_result"}.issubset(
+        compiled_tools
+    )
+    assert captured["tool_names"] == list(
+        captured["dependencies"].artifact_access.tool_names
+    )
+
+
 @pytest.mark.parametrize(
     (
         "case_name",
