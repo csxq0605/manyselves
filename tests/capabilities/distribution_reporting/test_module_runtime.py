@@ -1780,6 +1780,79 @@ async def test_module_provider_tools_assemble_artifact_tools_and_reuse_completed
     assert gateway.search_calls == [("artifact-ref", "evidence")]
 
 
+@pytest.mark.asyncio
+async def test_module_revision_result_part_persists_existing_evidence_binding(
+    tmp_path: Path,
+) -> None:
+    """Revision prose uses the same evidence-bound result-part contract as authoring."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderDependencies,
+        build_module_provider_tools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+        SourceLedger,
+    )
+    from manyselves.core.loops.bus import MessageBus
+
+    run_id = "module-provider-revision-result-part"
+    task_id = "module-revision-r1-2.4"
+    part_id = "2.4.1.1"
+    SourceLedger(tmp_path, run_id).register_project(
+        "E-0001",
+        "现场证据",
+        "Knowledge/evidence.txt",
+        "设备状态记录",
+    )
+    envelope = TaskEnvelope(
+        task_id=task_id,
+        run_id=run_id,
+        agent_id="module-2.4-specialist",
+        objective="revise one assigned module part",
+        allowed_outputs=["module_revision_submission"],
+        revision=1,
+        target_submodule_ids=[part_id],
+    )
+    registry = build_module_provider_tools(
+        tmp_path,
+        envelope=envelope,
+        module_id="2.4",
+        session_id="module-session",
+        workflow_id="public-reporting",
+        bus=MessageBus(),
+        store=ReportingStore(tmp_path),
+        global_knowledge_root=None,
+        tool_names=("write_result_part",),
+        expected_part_ids=(part_id,),
+        dependencies=ModuleProviderDependencies(),
+    )
+
+    write_result_part = registry.get("write_result_part")
+    assert write_result_part is not None
+    result = await write_result_part(
+        part_id=part_id,
+        content="修订后的完整小节正文。",
+        evidence_ids=["E-0001"],
+    )
+
+    assert result["persisted"] is True
+    binding_path = (
+        tmp_path
+        / "Work/runs"
+        / run_id
+        / "drafts"
+        / task_id
+        / "r1/_evidence"
+        / f"{part_id}.json"
+    )
+    assert json.loads(binding_path.read_text(encoding="utf-8"))["evidence_ids"] == [
+        "E-0001"
+    ]
+
+
 def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
     tmp_path: Path,
 ) -> None:

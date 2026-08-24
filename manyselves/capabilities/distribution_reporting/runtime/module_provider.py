@@ -206,7 +206,9 @@ def build_module_provider_tools(
     web_backend = dependencies.web_backend or DisabledWebResearchBackend()
 
     allowed_outputs = list(envelope.allowed_outputs)
-    evidence_binding_required = "module_submission" in allowed_outputs
+    evidence_binding_required = bool(
+        {"module_submission", "module_revision_submission"} & set(allowed_outputs)
+    )
     available: dict[str, Tool] = {
         "search_project_evidence": SearchProjectEvidenceTool(
             workspace,
