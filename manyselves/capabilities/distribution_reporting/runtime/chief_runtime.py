@@ -25,6 +25,9 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn 
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
+from manyselves.capabilities.distribution_reporting.runtime.chief_sources import (
+    materialize_chief_module_sources,
+)
 from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
     _chief_template_skill_context,
     _render_special_topic_analysis,
@@ -121,6 +124,8 @@ def _chapter_sections(
 def _source_projection(
     state: Mapping[str, Any],
     chapter_id: ChapterId,
+    *,
+    store: ReportingStore,
 ) -> tuple[dict[str, str], list[str]]:
     """Project only the source context assigned to one Chief chapter lane."""
 
@@ -189,6 +194,7 @@ def _source_projection(
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
+    source_refs.extend(materialize_chief_module_sources(store, state))
     source_refs = list(dict.fromkeys(ref for ref in source_refs if ref))
     if not source_context and not source_refs:
         source_context = {"scope": f"chapter-{chapter_id}"}
@@ -573,7 +579,11 @@ class ChiefChapterRuntime:
             state.get("cross_review_completion_ref")
             or f"Work/runs/{run_id}/reviews/cross-completion.json"
         )
-        source_context, source_refs = _source_projection(state, chapter_id)
+        source_context, source_refs = _source_projection(
+            state,
+            chapter_id,
+            store=self.store,
+        )
         contract = ChiefChapterLaneInput(
             phase="initial",
             run_id=run_id,

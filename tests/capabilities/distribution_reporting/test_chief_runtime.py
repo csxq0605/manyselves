@@ -81,6 +81,10 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
     assert context.contract.source_refs == [
         "Work/runs/chief-runtime-prep/reviews/cross-completion.json",
         "Work/runs/chief-runtime-prep/evidence.jsonl",
+        *[
+            f"Work/runs/chief-runtime-prep/context/chief-source-modules/{module_id}.md"
+            for module_id in REPORT_MODULE_IDS
+        ],
     ]
     assert set(context.contract.source_context) == {
         *(f"module-{module_id}" for module_id in REPORT_MODULE_IDS),
@@ -97,6 +101,10 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
         "Work/runs/chief-runtime-prep/context/chief-chapter-1-input.json",
         "Work/runs/chief-runtime-prep/reviews/cross-completion.json",
         "Work/runs/chief-runtime-prep/evidence.jsonl",
+        *[
+            f"Work/runs/chief-runtime-prep/context/chief-source-modules/{module_id}.md"
+            for module_id in REPORT_MODULE_IDS
+        ],
     ]
     assert context.envelope.allowed_outputs == ["chief_chapter_lane_submission"]
     assert context.envelope.allowed_tools == [
@@ -112,8 +120,10 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
     assert context.envelope.input_contract_ref == context.envelope.input_refs[0]
     assert context.envelope.artifact_delivery_modes == {
         context.envelope.input_refs[0]: "inline",
-        context.envelope.input_refs[1]: "reference",
-        context.envelope.input_refs[2]: "reference",
+        **{
+            ref: "reference"
+            for ref in context.envelope.input_refs[1:]
+        },
     }
     assert "Write only the assigned Chapter 1 sections." in (
         context.envelope.inline_context or ""

@@ -43,6 +43,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
 from .report_validation import validate_final_report_structure
 
@@ -195,6 +196,8 @@ def _source_projection(
     state: Mapping[str, Any],
     chapter_id: Literal["1", "3", "4"],
     plan: Any,
+    *,
+    store: ReportingStore,
 ) -> tuple[dict[str, str], list[str]]:
     source_refs = [
         str(state["cross_review_completion_ref"])
@@ -256,6 +259,7 @@ def _source_projection(
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
+    source_refs.extend(materialize_chief_module_sources(store, state))
     return source_context, list(dict.fromkeys(ref for ref in source_refs if ref))
 
 
@@ -382,6 +386,7 @@ class FinalReviewTools:
             state,
             chapter_id,
             edited.special_topic_plan,
+            store=self.store,
         )
         revision = review.revision_number
         run_id = str(state["run_id"])

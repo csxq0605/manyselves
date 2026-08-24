@@ -1707,6 +1707,10 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         assert [finding["id"] for finding in chief_input["assigned_findings"]] == [
             "F-final-1"
         ]
+        assert chief_input["source_refs"] == [
+            f"Work/runs/{run_id}/context/chief-source-modules/{module_id}.md"
+            for module_id in REPORT_MODULE_IDS
+        ]
         recheck_input_ref = (
             tmp_path / f"Work/runs/{run_id}/context/final-chapter-1-input-r1.json"
         )

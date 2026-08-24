@@ -192,6 +192,8 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
     bus_task = asyncio.create_task(bus.process_queue())
     loops: list[object] = []
     built: list[dict[str, object]] = []
+    opened_sources: list[dict[str, object]] = []
+
     class Loop:
         def __init__(self, kwargs: dict[str, object]) -> None:
             self.kwargs = kwargs
@@ -213,6 +215,11 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
                     return
                 self.received.append(message)
                 tools = self.kwargs["tools"]
+                opened_sources.append(
+                    await tools.get("open_artifact")(
+                        f"Work/runs/{run_id}/context/chief-source-modules/2.1.md"
+                    )
+                )
                 for section_id in ("1.1", "1.2", "1.3"):
                     await tools.get("write_result_part")(
                         CHIEF_SECTION_RESULT_PART_IDS[section_id],
@@ -338,12 +345,24 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         context.input_ref,
         f"Work/runs/{run_id}/reviews/cross-completion.json",
         f"Work/runs/{run_id}/evidence.jsonl",
+        *{
+            f"Work/runs/{run_id}/context/chief-source-modules/{module_id}.md"
+            for module_id in REPORT_MODULE_IDS
+        },
     }
     assert context.envelope.artifact_delivery_modes == {
         context.input_ref: "inline",
         f"Work/runs/{run_id}/reviews/cross-completion.json": "reference",
         f"Work/runs/{run_id}/evidence.jsonl": "reference",
+        **{
+            f"Work/runs/{run_id}/context/chief-source-modules/{module_id}.md": (
+                "reference"
+            )
+            for module_id in REPORT_MODULE_IDS
+        },
     }
+    assert len(opened_sources) == 1
+    assert "approved 2.1" in str(opened_sources[0]["content"])
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]
