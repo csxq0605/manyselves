@@ -8,7 +8,7 @@ lets the Capability provide the next-turn prompt and result decoder.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from manyselves.core.loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
@@ -24,8 +24,10 @@ from manyselves.runtime.agent_execution import (
     AgentRecoveryCompleted,
     AgentRecoveryDirective,
     AgentRecoveryObservation,
+    AgentRecoveryProgress,
     AgentRecoveryRequired,
     AgentRecoveryStopped,
+    AgentSessionLoop,
     AgentTerminalSubscription,
     AgentTurnOutcome,
     AgentTurnRequest,
@@ -35,6 +37,10 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 PromptBuilder = Callable[[RecoveryEventKind], str]
 ResultDecoder = Callable[[str], Any]
 ToolRecoveryCallback = Callable[[str, dict[str, Any]], Awaitable[Any]]
+ProgressObserver = Callable[
+    [AgentSessionLoop, RecoveryEventKind, dict[str, Any]],
+    Awaitable[Literal["progressed", "no_progress"]],
+]
 
 
 def build_tool_recovery_callback(
@@ -58,6 +64,7 @@ async def execute_reporting_recovery(
     prompt_builder: PromptBuilder,
     result_decoder: ResultDecoder,
     recovery: AgentRecoveryDriver | None = None,
+    progress_observer: ProgressObserver | None = None,
 ) -> Any:
     """Run declared Reporting recovery on the existing Agent session.
 
@@ -88,21 +95,34 @@ async def execute_reporting_recovery(
             return AgentRecoveryStopped(reason=str(outcome.message))
         if isinstance(outcome.message, AgentResponse):
             if outcome.message.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED:
-                return AgentRecoveryRequired(
+                required = AgentRecoveryRequired(
                     event_kind=RecoveryEventKind.MAX_TOKENS,
                     fallback_action=RecoveryActionKind.CONTINUE,
                     detail={"task_id": initial.task_id},
                 )
-            if outcome.message.content == AGENT_TURN_CONTINUATION_REQUIRED:
-                return AgentRecoveryRequired(
+            elif outcome.message.content == AGENT_TURN_CONTINUATION_REQUIRED:
+                required = AgentRecoveryRequired(
                     event_kind=RecoveryEventKind.TOOL_SLICE_BOUNDARY,
                     fallback_action=RecoveryActionKind.CONTINUE,
                     detail={"task_id": initial.task_id},
                 )
-            return AgentRecoveryRequired(
-                event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
-                fallback_action=RecoveryActionKind.CORRECT,
-                detail={"task_id": initial.task_id},
+            else:
+                return AgentRecoveryRequired(
+                    event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                    fallback_action=RecoveryActionKind.CORRECT,
+                    detail={"task_id": initial.task_id},
+                )
+            if progress_observer is None:
+                return required
+            progress_detail = dict(required.detail or {})
+            return AgentRecoveryProgress(
+                kind=await progress_observer(
+                    session.loop,
+                    required.event_kind,
+                    progress_detail,
+                ),
+                continuation=required,
+                detail=progress_detail,
             )
         return AgentRecoveryStopped(reason="Agent turn returned an unknown terminal")
 

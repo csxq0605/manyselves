@@ -33,6 +33,10 @@ from manyselves.capabilities.distribution_reporting.runtime.completed_result_rec
     build_task_correlation,
     same_recoverable_task,
 )
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    continuation_conversation_event_digests,
+    continuation_progress_snapshot,
+)
 from manyselves.capabilities.distribution_reporting.runtime.contracts.submissions import (
     submission_schema,
 )
@@ -771,139 +775,18 @@ class ReportingAgentRunner:
 
     @staticmethod
     def _continuation_conversation_event_digests(loop: AgentLoop) -> set[str]:
-        """Hash unique semantic events while ignoring harness-owned prompts.
+        """Delegate the existing snapshot semantics to the Capability owner."""
 
-        Sets intentionally ignore repeated copies of the same tool call/result,
-        so changing call ids or appending an identical transcript is not
-        mistaken for progress.
-        """
-
-        def normalized_content(value: Any) -> str:
-            content = str(value or "")
-            if (
-                "<same_identity_continuation>" in content
-                or "<submission_correction>" in content
-                or "<progress_check>" in content
-                or "<working_memory_checkpoint>" in content
-            ):
-                return ""
-            marker = (
-                "[Provider output reached the per-request max_tokens limit "
-                "before a typed tool submission. The task is not complete.]"
-            )
-            content = content.replace(marker, "").strip()
-            if not content:
-                return ""
-            try:
-                parsed = json.loads(content)
-            except (TypeError, ValueError):
-                return content
-            if isinstance(parsed, dict) and parsed.get("truncated") is True:
-                parsed = dict(parsed)
-                parsed.pop("full_result_ref", None)
-                return json.dumps(
-                    parsed,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                )
-            return content
-
-        digests: set[str] = set()
-        for message in loop._conversation_history:
-            tool_calls = []
-            for call in getattr(message, "tool_calls", None) or ():
-                tool_calls.append(
-                    {
-                        "name": str(getattr(call, "name", "") or ""),
-                        "arguments": dict(getattr(call, "arguments", {}) or {}),
-                    }
-                )
-            event = {
-                "role": str(getattr(message, "role", "") or ""),
-                "content": normalized_content(getattr(message, "content", "")),
-                "is_tool_result": bool(
-                    getattr(message, "is_tool_result", False)
-                ),
-                "tool_calls": tool_calls,
-            }
-            if not event["content"] and not tool_calls:
-                continue
-            serialized = json.dumps(
-                event,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            )
-            digests.add(hashlib.sha256(serialized.encode("utf-8")).hexdigest())
-        return digests
+        return continuation_conversation_event_digests(loop)
 
     async def _continuation_progress_snapshot(
         self,
         loop: AgentLoop,
         envelope: TaskEnvelope,
     ) -> dict[str, Any]:
-        """Return content-free evidence of durable or conversational progress."""
+        """Delegate the existing snapshot semantics to the Capability owner."""
 
-        durable: dict[str, str] = {}
-        run_root = self.workspace / "Work" / "runs" / envelope.run_id
-        durable_roots = (
-            run_root / "drafts" / envelope.task_id / f"r{envelope.revision}",
-            run_root / "results" / "attempts" / envelope.task_id,
-        )
-        for root in durable_roots:
-            if not root.is_dir():
-                continue
-            for path in sorted(item for item in root.rglob("*") if item.is_file()):
-                relative = path.relative_to(self.workspace).as_posix()
-                durable[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-        canonical_result = run_root / "results" / f"{envelope.task_id}.json"
-        if canonical_result.is_file():
-            relative = canonical_result.relative_to(self.workspace).as_posix()
-            durable[relative] = hashlib.sha256(
-                canonical_result.read_bytes()
-            ).hexdigest()
-
-        result_parts: dict[str, Any] | None = None
-        list_parts = loop.tools.get("list_result_parts")
-        if list_parts is not None:
-            try:
-                listed = await list_parts()
-            except Exception as exc:  # pragma: no cover - defensive telemetry
-                result_parts = {"status": "unreadable", "error_type": type(exc).__name__}
-            else:
-                result_parts = {
-                    "complete": bool(listed.get("complete", False)),
-                    "ready_part_ids": sorted(listed.get("ready_part_ids", ())),
-                    "missing_part_ids": sorted(listed.get("missing_part_ids", ())),
-                    "rewrite_part_ids": sorted(listed.get("rewrite_part_ids", ())),
-                    "parts": sorted(
-                        (
-                            str(item.get("part_id", "")),
-                            int(item.get("characters", 0)),
-                            bool(item.get("ready", False)),
-                        )
-                        for item in listed.get("parts", ())
-                    ),
-                }
-
-        durable_payload = json.dumps(
-            {"files": durable, "result_parts": result_parts},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        event_digests = self._continuation_conversation_event_digests(loop)
-        return {
-            "durable_sha256": hashlib.sha256(
-                durable_payload.encode("utf-8")
-            ).hexdigest(),
-            "durable_file_count": len(durable),
-            "result_parts": result_parts,
-            "conversation_event_sha256": sorted(event_digests),
-        }
+        return await continuation_progress_snapshot(self.workspace, loop, envelope)
 
     @staticmethod
     def _claim_hash_occurrence(
