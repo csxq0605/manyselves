@@ -107,7 +107,7 @@ describe("App event projection", () => {
     await waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(2));
   });
 
-  it("refreshes the generic run projection for Capability reporting events", async () => {
+  it("refreshes the generic run projection for workflow events", async () => {
     const bootstrap = vi.fn().mockResolvedValue(bootstrapSnapshot);
     const gateway = { baseUrl: "https://api.example", bootstrap } as unknown as ApiGateway;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -117,7 +117,7 @@ describe("App event projection", () => {
     renderApp(<App gateway={gateway} createEventStream={(options) => { eventStreamOptions = options; return { start: async () => undefined, stop: () => undefined }; }} />, queryClient);
     await waitFor(() => expect(eventStreamOptions).toBeDefined());
     invalidateQueries.mockClear();
-    eventStreamOptions?.onEvent({ eventId: "boot-a:evt-7", payload: { result_path: "Work/runs/run-1/results/module-2.4.json", run_id: "run-1", sender: "module-2.4-specialist", status: "completed", task_id: "module-2.4" }, schemaVersion: 1, sequence: 7, streamId: "boot-a", timestamp: "2026-08-03T08:00:07Z", type: "reporting.agent_result.changed" });
+    eventStreamOptions?.onEvent({ eventId: "boot-a:evt-7", payload: { result_path: "Work/runs/run-1/results/module-2.4.json", run_id: "run-1", sender: "module-2.4-specialist", status: "completed", task_id: "module-2.4" }, schemaVersion: 1, sequence: 7, streamId: "boot-a", timestamp: "2026-08-03T08:00:07Z", type: "workflow.agent_result.changed" });
 
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["runs", "run-1"] }));
   });

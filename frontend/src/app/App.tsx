@@ -37,7 +37,6 @@ const knownEventPrefixes = [
   "project.",
   "queue.",
   "report.",
-  "reporting.",
   "runtime.",
   "system.",
   "task.",
@@ -65,7 +64,7 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   if (prefix === "conversation." || prefix === "user.") {
     return ["conversation-messages"];
   }
-  if (["action.", "output.", "report.", "reporting.", "workflow."].includes(prefix)) {
+  if (["action.", "output.", "report.", "workflow."].includes(prefix)) {
     const runId = eventRunId(event);
     return runId ? ["runs", runId] : ["runs"];
   }
