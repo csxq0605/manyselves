@@ -20,7 +20,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -29,6 +28,7 @@ from manyselves.kernel.conversations import (
 )
 from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 
 
 def _state(run_id: str) -> dict[str, object]:

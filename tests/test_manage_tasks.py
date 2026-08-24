@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.tools.task_board import TaskBoard
-from manyselves.core.tools.task_tools import ManageTasksTool
 from manyselves.interfaces.types import AgentType, ReportMessage, TaskStatus, TaskUpdateMessage
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.tools.task_board import TaskBoard
+from manyselves.runtime.tools.task_tools import ManageTasksTool
 
 
 @pytest.fixture

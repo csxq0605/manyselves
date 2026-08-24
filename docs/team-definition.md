@@ -29,9 +29,9 @@ Extend the runtime only when the team needs a new executable capability, such as
 - generating a new artifact type;
 - validating invariants that cannot safely depend on prompt compliance.
 
-Put reusable tools under `manyselves/core/tools/`. Capability-specific typed
-state and orchestration can live in a dedicated package like the bundled
-`manyselves/core/reporting/` implementation.
+Put reusable execution tools under `manyselves/runtime/tools/`. Capability-specific
+typed state, Python tools, and file workflows belong to a dedicated Capability
+package such as `manyselves/capabilities/distribution_reporting/`.
 
 ## Bundled team as an example
 

@@ -1,9 +1,8 @@
-"""Bounded public tools backed by :mod:`manyselves.core.artifacts`."""
+"""Bounded public tools backed by :mod:`manyselves.runtime.artifacts`."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from ..artifacts.gateway import ArtifactGateway, ToolContractError, contract_error_result
 from .registry import Tool

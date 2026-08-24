@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ..core.conversations import ConversationStore
-from ..core.loops.bus import MessageBus
 from ..interfaces.types import (
     AgentResponse,
     Checkpoint,
@@ -24,6 +23,7 @@ from ..interfaces.types import (
     ToolResult,
     UserMessage,
 )
+from ..runtime.loops.bus import MessageBus
 from .async_ownership import await_owned
 from .errors import RuntimeBusyError, RuntimeConsistencyFailedError
 from .runtime_facade import RuntimeFacade

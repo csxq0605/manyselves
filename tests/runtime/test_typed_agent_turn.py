@@ -6,13 +6,13 @@ import asyncio
 
 import pytest
 
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, Error, UserMessage
 from manyselves.runtime.agent_execution import (
     AgentExecutionService,
     AgentSessionRestore,
     AgentTurnRequest,
 )
+from manyselves.runtime.loops.bus import MessageBus
 
 
 @pytest.mark.asyncio

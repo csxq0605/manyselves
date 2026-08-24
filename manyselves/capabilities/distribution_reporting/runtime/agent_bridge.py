@@ -29,10 +29,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     TemplateDistillationInput,
 )
-from manyselves.core.loops.agent_loop import (
-    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-    AGENT_TURN_CONTINUATION_REQUIRED,
-)
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
@@ -55,6 +51,10 @@ from manyselves.runtime.agent_execution import (
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AGENT_TURN_CONTINUATION_REQUIRED,
+)
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 from .agent_recovery_turn import ProgressObserver

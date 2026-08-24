@@ -31,9 +31,9 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskCorrelation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.tools.document_tool import InspectDocumentTool
-from manyselves.core.tools.registry import Tool, ToolRegistry
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.tools.document_tool import InspectDocumentTool
+from manyselves.runtime.tools.registry import Tool, ToolRegistry
 
 TemplateRecoveryEventCallback = Callable[
     [str, dict[str, Any]], Awaitable[Any]

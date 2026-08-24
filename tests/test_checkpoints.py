@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.checkpoints import (
+from manyselves.runtime.checkpoints import (
     CheckpointData,
     CheckpointManager,
     FileOperation,

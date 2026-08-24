@@ -58,8 +58,8 @@ from manyselves.capabilities.distribution_reporting.runtime.template_distillatio
 from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
     TemplateDistillationProviderRuntime,
 )
-from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,

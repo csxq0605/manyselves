@@ -20,8 +20,8 @@ from ..application.python_run_service import PythonRunService
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_services import build_runtime_services_view
 from ..application.workflow_projection import WorkflowProjectionFacade
-from ..core.loops.bus import MessageBus
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
+from ..runtime.loops.bus import MessageBus
 from .accounts import AccountCatalog
 from .dependencies import resolve_runtime_host
 from .events.broker import EventBroker

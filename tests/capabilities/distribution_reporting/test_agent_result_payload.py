@@ -15,8 +15,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     FinalChapterLaneFindingSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage
+from manyselves.runtime.loops.bus import MessageBus
 
 
 @pytest.mark.asyncio

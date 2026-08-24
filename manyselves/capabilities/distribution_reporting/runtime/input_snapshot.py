@@ -62,7 +62,7 @@ class RunInputSnapshotStore:
         # Import the generic content store only when a snapshot store is
         # constructed. Importing this Capability model must not initialize the
         # historical Reporting package through ``manyselves.core`` side effects.
-        from manyselves.core.artifacts.content_store import ContentAddressedStore
+        from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 
         self.workspace = Path(workspace).resolve()
         self.content_store = ContentAddressedStore(self.workspace)

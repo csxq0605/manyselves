@@ -14,9 +14,9 @@ from manyselves.capabilities.distribution_reporting.runtime.research.project_evi
 )
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.tools.registry import Tool
 from manyselves.interfaces.types import ResearchNotePublishedMessage
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.tools.registry import Tool
 
 from .research.evidence_memory import EvidenceResearchMemory
 from .research.reference_library import ReferenceLibrary

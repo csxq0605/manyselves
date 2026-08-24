@@ -39,7 +39,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRevisionAgentResult,
 )
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import UserMessage
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -53,6 +52,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 from tests.capabilities.distribution_reporting.test_cross_recheck import (
     _frozen_owner_input,
@@ -96,7 +96,7 @@ async def test_cross_provider_shares_declared_recovery_with_tool_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from manyselves.capabilities.distribution_reporting.runtime import cross_provider
-    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     captured: dict[str, object] = {}
 

@@ -10,17 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops import agent_loop as agent_loop_module
-from manyselves.core.loops.agent_loop import (
-    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-    AgentLoop,
-    _LoopLLMResponse,
-)
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
-from manyselves.core.providers.base import Message as LLMMessage
-from manyselves.core.tools.registry import Tool, ToolRegistry
-from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentStatus,
@@ -35,6 +24,17 @@ from manyselves.interfaces.types import (
 from manyselves.interfaces.types import (
     ToolResult as ToolResultMsg,
 )
+from manyselves.runtime.loops import agent_loop as agent_loop_module
+from manyselves.runtime.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AgentLoop,
+    _LoopLLMResponse,
+)
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
+from manyselves.runtime.providers.base import Message as LLMMessage
+from manyselves.runtime.tools.registry import Tool, ToolRegistry
+from manyselves.runtime.usage_ledger import UsageLedger
 
 
 class _ParallelProbeTool(Tool):
@@ -76,7 +76,7 @@ def mock_provider():
 
     # Add streaming support mock (async generator that yields chunks then done)
     async def mock_chat_stream(*args, **kwargs):
-        from manyselves.core.providers.base import LLMStreamChunk
+        from manyselves.runtime.providers.base import LLMStreamChunk
         yield LLMStreamChunk(delta="I will help you.")
         yield LLMStreamChunk(delta=None, done=True)
 
@@ -217,7 +217,7 @@ def test_set_debug_mode_disabled(agent_loop):
 
 
 def test_task_state_section_includes_task_id_for_respond(workspace, config, mock_provider, mock_prompt_loader):
-    from manyselves.core.tools.task_board import TaskBoard
+    from manyselves.runtime.tools.task_board import TaskBoard
 
     board = TaskBoard()
     board.create_task(
@@ -362,7 +362,7 @@ async def test_process_message_includes_dispatch_summary_and_detail(agent_loop, 
     captured_messages = []
 
     async def capture_chat_stream(*args, **kwargs):
-        from manyselves.core.providers.base import LLMStreamChunk
+        from manyselves.runtime.providers.base import LLMStreamChunk
 
         captured_messages.extend(kwargs["messages"])
         yield LLMStreamChunk(delta=None, done=True)
@@ -410,7 +410,7 @@ async def test_process_message_with_tool_calls(agent_loop, mock_provider, mock_g
 
     async def mock_chat_stream_with_tools(*args, **kwargs):
         nonlocal stream_calls
-        from manyselves.core.providers.base import LLMStreamChunk
+        from manyselves.runtime.providers.base import LLMStreamChunk
         stream_calls += 1
         if stream_calls == 1:
             yield LLMStreamChunk(delta="Reading file...")
@@ -2346,7 +2346,7 @@ async def test_loop_ignores_report_from_other_agent(agent_loop):
 async def test_main_loop_enqueues_nonblocking_subagent_report(
     workspace, config, mock_provider, mock_prompt_loader
 ):
-    from manyselves.core.tools.task_board import TaskBoard
+    from manyselves.runtime.tools.task_board import TaskBoard
 
     board = TaskBoard()
     board.create_task(
@@ -2391,7 +2391,7 @@ async def test_main_loop_enqueues_nonblocking_subagent_report(
 
 def _sub_loop(workspace, config, mock_provider, mock_prompt_loader, board):
     """A sub-agent (plotting) loop with a real task board, for guard tests."""
-    from manyselves.core.loops.agent_loop import AgentLoop
+    from manyselves.runtime.loops.agent_loop import AgentLoop
     bus = MessageBus()
     tools = MagicMock()
     tools.get_definitions.return_value = []
@@ -2422,7 +2422,7 @@ async def _drain_bus(bus) -> None:
 @pytest.mark.asyncio
 async def test_sub_guard_reprompts_when_no_report(workspace, config, mock_provider, mock_prompt_loader):
     """A sub-agent ending a Main-dispatched turn without report is re-prompted."""
-    from manyselves.core.tools.task_board import TaskBoard
+    from manyselves.runtime.tools.task_board import TaskBoard
     board = TaskBoard()
     board.create_task(AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1")
     loop = _sub_loop(workspace, config, mock_provider, mock_prompt_loader, board)
@@ -2444,7 +2444,7 @@ async def test_sub_guard_does_not_reprompt_completed_main_task(
     workspace, config, mock_provider, mock_prompt_loader
 ):
     """Completed Main-dispatched tasks should not be forced to respond again."""
-    from manyselves.core.tools.task_board import TaskBoard
+    from manyselves.runtime.tools.task_board import TaskBoard
     board = TaskBoard()
     board.create_task(AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1")
     board.complete_task("tk1", target_agent=AgentType.PLOTTING)
@@ -2468,12 +2468,12 @@ async def test_sub_guard_does_not_reprompt_completed_main_task(
 @pytest.mark.asyncio
 async def test_main_guard_blocks_idle_with_blocked_tasks(workspace, config, mock_provider, mock_prompt_loader):
     """Main may not go IDLE while it has BLOCKED tasks; a SystemNotice is published."""
-    from manyselves.core.tools.task_board import TaskBoard
+    from manyselves.runtime.tools.task_board import TaskBoard
     board = TaskBoard()
     bus = MessageBus()
     tools = MagicMock()
     tools.get_definitions.return_value = []
-    from manyselves.core.loops.agent_loop import AgentLoop
+    from manyselves.runtime.loops.agent_loop import AgentLoop
     loop = AgentLoop(
         agent_type=AgentType.MAIN, workspace=workspace, tools=tools, bus=bus,
         config=config, llm_provider=mock_provider, prompt_loader=mock_prompt_loader,

@@ -6,12 +6,12 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from manyselves.core.tools.outcomes import normalize_tool_outcome
-from manyselves.core.tools.registry import Tool
-from manyselves.core.tools.result_memory import RunToolResultIndex
 from manyselves.kernel.contracts import ContractAdapter
 from manyselves.kernel.definitions import ToolDefinition
 from manyselves.kernel.ports import ToolInvocationOutcome
+from manyselves.runtime.tools.outcomes import normalize_tool_outcome
+from manyselves.runtime.tools.registry import Tool
+from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
 
 class ToolAdapterError(ValueError):

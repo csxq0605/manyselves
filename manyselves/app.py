@@ -26,9 +26,9 @@ from .application.errors import RuntimeStartupError
 from .application.runtime_host import RuntimeHost
 from .branding import APP_ICON_PATH, DESCRIPTOR_ZH, PRODUCT_NAME
 from .config import ConfigManager
-from .core.loops import LoopManager
 from .core.project_structure import ensure_project_structure
 from .gui import MainWindow
+from .runtime.loops import LoopManager
 from .utils import log_exception, setup_exception_handler, setup_logging
 
 console = Console()

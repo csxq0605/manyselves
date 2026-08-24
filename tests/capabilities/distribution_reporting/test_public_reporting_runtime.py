@@ -81,10 +81,10 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
     PublicReportingWorkflowRuntime,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink
 

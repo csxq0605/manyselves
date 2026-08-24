@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.agent_loop import AgentLoop
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.tools.registry import ToolRegistry
 from manyselves.interfaces.types import AgentType, ApiDebugMessage, UserMessage
+from manyselves.runtime.loops.agent_loop import AgentLoop
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.tools.registry import ToolRegistry
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def mock_llm_provider():
 
     # Mock streaming response
     async def mock_stream(*args, **kwargs):
-        from manyselves.core.providers.base import LLMStreamChunk
+        from manyselves.runtime.providers.base import LLMStreamChunk
         chunks = [
             LLMStreamChunk(delta="Hello", tool_calls=None, done=False),
             LLMStreamChunk(delta=" world", tool_calls=None, done=False),
@@ -133,7 +133,7 @@ async def test_api_debug_message_published_on_error(
 
     async def mock_stream_error(*args, **kwargs):
         # Yield one chunk then raise error
-        from manyselves.core.providers.base import LLMStreamChunk
+        from manyselves.runtime.providers.base import LLMStreamChunk
         yield LLMStreamChunk(delta="Hello", tool_calls=None, done=False)
         raise RuntimeError("API rate limit exceeded")
 

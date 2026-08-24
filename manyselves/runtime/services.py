@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from ..config.schema import AgentDefaults
 
 if TYPE_CHECKING:
-    from ..core.loops.bus import MessageBus
-    from ..core.providers.base import LLMProvider
+    from .loops.bus import MessageBus
+    from .providers.base import LLMProvider
 
 
 @dataclass(frozen=True, slots=True)

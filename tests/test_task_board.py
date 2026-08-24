@@ -2,8 +2,8 @@
 
 import pytest
 
-from manyselves.core.tools.task_board import TaskBoard
 from manyselves.interfaces.types import AgentType, TaskStatus
+from manyselves.runtime.tools.task_board import TaskBoard
 
 
 def test_task_board_accepts_registry_agent_ids():

@@ -83,5 +83,6 @@ def test_research_symbols_are_physically_capability_owned() -> None:
         for symbol_name in expected_symbols[alias]:
             assert getattr(module, symbol_name).__module__ == module_name
 
-    assert find_spec("manyselves.core.tools.reporting_research_tools") is None
+    assert find_spec("manyselves.core.tools") is None
+    assert find_spec("manyselves.runtime.tools.reporting_research_tools") is None
     assert find_spec("manyselves.core.reporting") is None

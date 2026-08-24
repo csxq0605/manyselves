@@ -3,7 +3,7 @@ from pathlib import Path
 from docx import Document
 from openpyxl import Workbook
 
-from manyselves.core.artifacts import parse_artifact
+from manyselves.runtime.artifacts import parse_artifact
 
 
 def test_docx_tables_and_xlsx_cells_are_explicit_blocks(tmp_path: Path) -> None:

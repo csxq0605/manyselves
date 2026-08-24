@@ -1,6 +1,6 @@
 import asyncio
 
-from manyselves.core.runtime_errors import classify_runtime_error
+from manyselves.runtime.runtime_errors import classify_runtime_error
 
 
 class HttpFailureError(RuntimeError):

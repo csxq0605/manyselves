@@ -410,8 +410,8 @@ def test_module_provider_composition_exposes_real_runtime_ports_and_injected_dep
         build_module_provider_composition,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
 
     bus = MessageBus()
@@ -459,7 +459,7 @@ def test_public_runtime_keeps_capability_provider_invokers(tmp_path: Path) -> No
         PublicReportingWorkflowRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
 
     composition = build_module_provider_composition(
@@ -622,13 +622,13 @@ async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversa
         TaskCorrelation,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import Tool
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import Tool
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -843,7 +843,6 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
         ModuleProviderRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
@@ -852,6 +851,7 @@ async def test_module_provider_schema_correction_uses_declared_recovery_policy(
     )
     from manyselves.kernel.recovery import RecoveryActionKind, RecoveryController
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
 
     _capability, registry = load_distribution_reporting_capability()
@@ -1020,11 +1020,11 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
     from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
         ModuleReviewerAgentBridge,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     _capability, registry = load_distribution_reporting_capability()
     author = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -1290,7 +1290,6 @@ async def test_module_reviewer_bridge_matches_nonempty_provider_task_attempt_id(
     from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
         ModuleReviewerAgentBridge,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import (
         ConversationKey,
@@ -1299,6 +1298,7 @@ async def test_module_reviewer_bridge_matches_nonempty_provider_task_attempt_id(
     )
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     _capability, registry = load_distribution_reporting_capability()
     reviewer = registry.require(DefinitionKind.AGENT, "evidence-auditor")
@@ -1452,7 +1452,6 @@ async def test_module_reviewer_bridge_reuses_completed_result_before_provider_se
     from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
         ModuleReviewerAgentBridge,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.kernel.conversations import (
         ConversationKey,
         ConversationMode,
@@ -1460,6 +1459,7 @@ async def test_module_reviewer_bridge_reuses_completed_result_before_provider_se
     )
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     _capability, registry = load_distribution_reporting_capability()
     reviewer = registry.require(DefinitionKind.AGENT, "evidence-auditor")
@@ -1568,12 +1568,12 @@ def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_tas
         ModuleReviewerAgentBridge,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import Tool
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import Tool
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "evidence-auditor")
@@ -1668,8 +1668,8 @@ async def test_module_provider_tools_assemble_artifact_tools_and_reuse_completed
         ModuleProviderDependencies,
         build_module_provider_tools,
     )
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.result_memory import RunToolResultIndex
+    from manyselves.runtime.loops.bus import MessageBus
+    from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
     image_path = tmp_path / "image-ref"
     image_path.write_bytes(
@@ -1796,7 +1796,7 @@ async def test_module_revision_result_part_persists_existing_evidence_binding(
     from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
         SourceLedger,
     )
-    from manyselves.core.loops.bus import MessageBus
+    from manyselves.runtime.loops.bus import MessageBus
 
     run_id = "module-provider-revision-result-part"
     task_id = "module-revision-r1-2.4"
@@ -1878,13 +1878,13 @@ def test_module_provider_composes_scoped_artifact_access_per_prepared_task(
         ModuleProviderRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.artifacts.gateway import ArtifactGateway, ArtifactGrant
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -2028,12 +2028,12 @@ def test_module_revision_provider_uses_file_declared_task_tools(
         ModuleProviderRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
@@ -2170,11 +2170,6 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
         ModuleAuthoringAgentBridge,
     )
-    from manyselves.core.loops.agent_loop import (
-        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-        AGENT_TURN_CONTINUATION_REQUIRED,
-    )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
@@ -2184,6 +2179,11 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.agent_loop import (
+        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+        AGENT_TURN_CONTINUATION_REQUIRED,
+    )
+    from manyselves.runtime.loops.bus import MessageBus
 
     run_id = f"module-author-recovery-{case_name}"
     agent = AgentDefinition(
@@ -2423,8 +2423,6 @@ async def test_module_provider_reuses_persisted_completed_result_before_provider
         TaskCorrelation,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
         DefinitionKind,
@@ -2432,7 +2430,9 @@ async def test_module_provider_reuses_persisted_completed_result_before_provider
         RecoveryRule,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")

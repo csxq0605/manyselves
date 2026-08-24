@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.tools import ReadTool, RunToolResultIndex, Tool
 from manyselves.kernel.contracts import (
     ContractValidationError,
     build_contract_adapter,
@@ -27,6 +26,7 @@ from manyselves.runtime.tool_adapter import (
     ToolAdapter,
     ToolAdapterError,
 )
+from manyselves.runtime.tools import ReadTool, RunToolResultIndex, Tool
 from manyselves.runtime.workflow_host import (
     InMemoryWorkflowEventSink,
     WorkflowRuntimeHost,

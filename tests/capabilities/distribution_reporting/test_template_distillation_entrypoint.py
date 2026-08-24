@@ -157,9 +157,9 @@ async def test_distill_template_skill_host_composes_capability_agent_bridge(
     from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
         TemplateDistillationWorkflowRuntime,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     command_id = UUID("60000000-0000-4000-8000-000000000002")
     run_id = f"distill-template-skill-{command_id.hex}"
@@ -284,7 +284,7 @@ def test_template_provider_tool_builder_owns_the_exact_agent_tool_set(
     from manyselves.capabilities.distribution_reporting.runtime.template_tools import (
         build_template_distillation_provider_tools,
     )
-    from manyselves.core.loops.bus import MessageBus
+    from manyselves.runtime.loops.bus import MessageBus
 
     run_id = "template-provider-tools"
     template_input = TemplateDistillationInput(
@@ -343,8 +343,6 @@ async def test_template_provider_shares_declared_recovery_with_submit_tool(
         TemplateDistillationInput,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
-    from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import (
         ConversationKey,
         ConversationMode,
@@ -356,7 +354,9 @@ async def test_template_provider_shares_declared_recovery_with_submit_tool(
         RecoveryRule,
         TaskDefinition,
     )
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     captured: dict[str, object] = {}
 
@@ -456,10 +456,10 @@ async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
         TemplateDistillationProviderRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
 
     run_id = "template-provider-runtime"
@@ -639,7 +639,6 @@ async def test_template_provider_reuses_persisted_result_before_session(
         TemplateDistillationProviderRuntime,
     )
     from manyselves.config.schema import AgentDefaults
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
         DefinitionKind,
@@ -647,6 +646,7 @@ async def test_template_provider_reuses_persisted_result_before_session(
         RecoveryRule,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
     from manyselves.runtime.services import RuntimeServicesView
 
     run_id = "template-provider-persisted"
@@ -769,11 +769,11 @@ async def test_template_distillation_bridge_uses_generic_agent_execution_service
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -915,7 +915,6 @@ async def test_template_distillation_bridge_reuses_completed_result_before_sessi
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
         AgentDefinition,
@@ -924,6 +923,7 @@ async def test_template_distillation_bridge_reuses_completed_result_before_sessi
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     agent = AgentDefinition(
         id="template-distiller",
@@ -1022,7 +1022,6 @@ async def test_template_distillation_bridge_loads_persisted_completed_result(
         TaskAttemptStore,
         TaskCorrelation,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
         AgentDefinition,
@@ -1031,6 +1030,7 @@ async def test_template_distillation_bridge_loads_persisted_completed_result(
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     workflow_id = "distill-template-skill"
     run_id = "run-template-persisted-reuse"
@@ -1150,7 +1150,6 @@ async def test_template_distillation_bridge_corrects_natural_language_in_same_se
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
@@ -1160,6 +1159,7 @@ async def test_template_distillation_bridge_corrects_natural_language_in_same_se
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     result_ref = "Work/runs/run-template-correction/results/template-skill.json"
     result_path = tmp_path / result_ref
@@ -1325,8 +1325,6 @@ async def test_template_distillation_bridge_continues_max_tokens_in_same_session
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.core.loops.agent_loop import AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
@@ -1336,6 +1334,8 @@ async def test_template_distillation_bridge_continues_max_tokens_in_same_session
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.agent_loop import AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+    from manyselves.runtime.loops.bus import MessageBus
 
     result_ref = "Work/runs/run-template-max-tokens/results/template-skill.json"
     result_path = tmp_path / result_ref
@@ -1513,8 +1513,6 @@ async def test_template_distillation_bridge_continues_tool_slice_in_same_session
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         TemplateDistillationInput,
     )
-    from manyselves.core.loops.agent_loop import AGENT_TURN_CONTINUATION_REQUIRED
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
@@ -1524,6 +1522,8 @@ async def test_template_distillation_bridge_continues_tool_slice_in_same_session
         TaskDefinition,
     )
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.agent_loop import AGENT_TURN_CONTINUATION_REQUIRED
+    from manyselves.runtime.loops.bus import MessageBus
 
     result_ref = "Work/runs/run-template-tool-slice/results/template-skill.json"
     result_path = tmp_path / result_ref

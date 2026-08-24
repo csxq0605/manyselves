@@ -13,9 +13,9 @@ import pytest
 
 from manyselves.app import BackendAPIImpl
 from manyselves.config import ConfigManager
-from manyselves.core.loops import MessageBus
 from manyselves.core.project_structure import ensure_project_structure
 from manyselves.interfaces.types import UserMessage
+from manyselves.runtime.loops import MessageBus
 
 CHECKER = Path(__file__).resolve().parents[2] / "scripts" / "check_phase1_core_freeze.py"
 REPO_ROOT = CHECKER.parent.parent

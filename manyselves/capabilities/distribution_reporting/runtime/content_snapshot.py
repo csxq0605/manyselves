@@ -16,7 +16,7 @@ from pathlib import Path
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     validate_bound_project_write_lease,
 )
-from manyselves.core.artifacts.content_store import ContentAddressedStore
+from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 
 
 def snapshot_content(

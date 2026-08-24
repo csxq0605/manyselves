@@ -41,9 +41,6 @@ from manyselves.capabilities.distribution_reporting.runtime.module_provider impo
     build_module_provider_tools,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.core.artifacts.gateway import ArtifactGateway, ArtifactGrant
-from manyselves.core.loops.agent_loop import AgentLoop
-from manyselves.core.tools.result_memory import RunToolResultIndex
 from manyselves.kernel.definitions import (
     AgentDefinition,
     RecoveryPolicyDefinition,
@@ -52,8 +49,11 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
+from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 from manyselves.runtime.services import RuntimeServicesView
+from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
 from .artifact_access import compile_agent_access, scoped_gateway
 from .state.parallel import TaskCorrelation

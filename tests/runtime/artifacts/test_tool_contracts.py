@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.artifacts import (
+from manyselves.runtime.artifacts import (
     ArtifactGateway,
     ArtifactGrant,
     ToolContractError,
     descriptor_for_path,
 )
-from manyselves.core.tools.contracts import normalize_tool_call
-from manyselves.core.tools.result_memory import RunToolResultIndex
+from manyselves.runtime.tools.contracts import normalize_tool_call
+from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
 
 def test_descriptor_routes_known_formats_and_binary_without_text_probe(tmp_path: Path) -> None:

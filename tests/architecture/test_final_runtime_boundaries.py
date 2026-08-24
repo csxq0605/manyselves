@@ -209,6 +209,26 @@ def test_generic_host_is_the_only_packaged_workflow_executor() -> None:
     assert "ControlFlowWorkflowExecutor" not in exports
 
 
+def test_runtime_and_capabilities_do_not_import_legacy_core_substrate() -> None:
+    """Execution infrastructure is Runtime-owned; Core keeps product services."""
+
+    violations: dict[str, list[str]] = {}
+    for root in (PACKAGE_ROOT / "runtime", PACKAGE_ROOT / "capabilities"):
+        for source_path in _python_sources(root):
+            forbidden = sorted(
+                {
+                    module
+                    for module in _resolved_imports(source_path)
+                    if module == "manyselves.core"
+                    or module.startswith("manyselves.core.")
+                }
+            )
+            if forbidden:
+                violations[source_path.relative_to(REPOSITORY_ROOT).as_posix()] = forbidden
+
+    assert violations == {}
+
+
 def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     """Generic Workflow HTTP is the only production reporting run boundary."""
 
@@ -254,8 +274,12 @@ def test_no_compatibility_module_or_script_reenters_core_reporting() -> None:
 def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> None:
     """Conversation runtime must not bypass file workflows through Core Reporting."""
 
-    manager_source = _read_python_source(PACKAGE_ROOT / "core" / "loops" / "manager.py")
-    loop_source = _read_python_source(PACKAGE_ROOT / "core" / "loops" / "agent_loop.py")
+    manager_source = _read_python_source(
+        PACKAGE_ROOT / "runtime" / "loops" / "manager.py"
+    )
+    loop_source = _read_python_source(
+        PACKAGE_ROOT / "runtime" / "loops" / "agent_loop.py"
+    )
     prompt_source = (PACKAGE_ROOT / "templates" / "agents" / "main_agent.md").read_text(
         encoding="utf-8"
     )

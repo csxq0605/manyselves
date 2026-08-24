@@ -6,7 +6,6 @@ from uuid import UUID
 import pytest
 
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
-from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.workflow import (
     ActionExecutionState,
     ResolvedPlan,
@@ -19,6 +18,7 @@ from manyselves.runtime.capability_binding import (
     RuntimeBindingCatalog,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.usage_ledger import UsageLedger
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeEvent
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes.workflows import _error

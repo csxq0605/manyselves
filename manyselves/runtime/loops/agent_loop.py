@@ -19,19 +19,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from ...config.schema import AgentDefaults
-from ...core.prompts import PromptLoader
-from ...core.providers.base import (
-    LLMProvider,
-    LLMToolCall,
-    ProviderRequestDisposition,
-    provider_request_disposition,
-)
-from ...core.providers.base import Message as LLMMessage
-from ...core.runtime_errors import (
-    RuntimeErrorPolicy,
-    classify_runtime_error,
-    runtime_error_details,
-)
 from ...interfaces.types import (
     AgentId,
     AgentResponse,
@@ -55,6 +42,19 @@ from ...interfaces.types import (
 )
 from ...utils.agent_labels import get_agent_badge
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
+from ..prompts import PromptLoader
+from ..providers.base import (
+    LLMProvider,
+    LLMToolCall,
+    ProviderRequestDisposition,
+    provider_request_disposition,
+)
+from ..providers.base import Message as LLMMessage
+from ..runtime_errors import (
+    RuntimeErrorPolicy,
+    classify_runtime_error,
+    runtime_error_details,
+)
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
     ToolOutcome,

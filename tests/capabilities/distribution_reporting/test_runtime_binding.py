@@ -21,8 +21,8 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
     PublicReportingWorkflowRuntime,
 )
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.bus import MessageBus
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.routes.workflows import _projection
@@ -402,13 +402,13 @@ async def test_binding_module_provider_reuses_persisted_completed_result_before_
         IdentityLeaseManager,
         TaskAttemptStore,
     )
-    from manyselves.core.tools.registry import ToolRegistry
     from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
     from manyselves.kernel.definitions import (
         DefinitionKind,
         RecoveryPolicyDefinition,
         RecoveryRule,
     )
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     _capability, registry = load_distribution_reporting_capability()
     agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")

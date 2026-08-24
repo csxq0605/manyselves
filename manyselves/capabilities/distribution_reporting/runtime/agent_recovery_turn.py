@@ -10,10 +10,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
-from manyselves.core.loops.agent_loop import (
-    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-    AGENT_TURN_CONTINUATION_REQUIRED,
-)
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.definitions import RecoveryPolicyDefinition
 from manyselves.kernel.ports import AgentInvocationOutcome
@@ -33,6 +29,10 @@ from manyselves.runtime.agent_execution import (
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AGENT_TURN_CONTINUATION_REQUIRED,
+)
 
 PromptBuilder = Callable[[RecoveryEventKind], str]
 ResultDecoder = Callable[[str], Any]

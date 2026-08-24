@@ -38,7 +38,6 @@ from manyselves.capabilities.distribution_reporting.runtime.template_distillatio
 from manyselves.capabilities.distribution_reporting.runtime.template_tools import (
     build_template_distillation_provider_tools,
 )
-from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -51,6 +50,7 @@ from manyselves.runtime.agent_execution import (
     AgentSessionLoop,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 from manyselves.runtime.services import RuntimeServicesView
 

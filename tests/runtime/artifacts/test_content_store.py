@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.artifacts.content_store import ContentAddressedStore
-from manyselves.core.artifacts.storage_policy import CasPolicy, StorageMode
+from manyselves.runtime.artifacts.content_store import ContentAddressedStore
+from manyselves.runtime.artifacts.storage_policy import CasPolicy, StorageMode
 
 
 def test_content_store_reuses_one_blob_and_exposes_suffix_preserving_view(

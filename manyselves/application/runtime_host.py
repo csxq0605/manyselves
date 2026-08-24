@@ -9,8 +9,8 @@ from pathlib import Path
 from loguru import logger
 
 from ..config import ConfigManager
-from ..core.loops import LoopManager, MessageBus
 from ..core.project_structure import ensure_project_structure
+from ..runtime.loops import LoopManager, MessageBus
 from ..utils import add_project_logging
 from .backend_api import BackendAPIImpl
 from .errors import RuntimeStartupError

@@ -17,11 +17,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
 )
-from manyselves.core.loops.agent_loop import (
-    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-    AGENT_TURN_CONTINUATION_REQUIRED,
-)
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -35,6 +30,11 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AGENT_TURN_CONTINUATION_REQUIRED,
+)
+from manyselves.runtime.loops.bus import MessageBus
 
 
 def _state(run_id: str) -> dict[str, object]:

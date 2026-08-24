@@ -13,7 +13,7 @@ import pytest
 from manyselves.application.preview_service import PreviewService
 from manyselves.application.workspace_files import WorkspaceFiles
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.bus import MessageBus
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import files as file_routes

@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from html import escape
 
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     BlockedNoticeMessage,
     PeerQueryMessage,
@@ -14,6 +13,7 @@ from manyselves.interfaces.types import (
     ResearchNotePublishedMessage,
     UserMessage,
 )
+from manyselves.runtime.loops.bus import MessageBus
 
 _SOURCE_RECORD_ID = re.compile(r"^[ERW]-[A-Za-z0-9][A-Za-z0-9._:-]*$")
 

@@ -24,11 +24,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     ModuleInitialReviewPreparation,
 )
-from manyselves.core.loops.agent_loop import (
-    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-    AGENT_TURN_CONTINUATION_REQUIRED,
-)
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
 from manyselves.kernel.definitions import (
@@ -38,6 +33,11 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AGENT_TURN_CONTINUATION_REQUIRED,
+)
+from manyselves.runtime.loops.bus import MessageBus
 
 
 def _review_context(run_id: str) -> tuple[AgentDefinition, TaskDefinition, DeclarativeModuleRuntimeLaneContext]:

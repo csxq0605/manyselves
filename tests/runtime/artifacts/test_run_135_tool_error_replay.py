@@ -25,11 +25,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.module_provider_tools import (
     InspectImageTool,
 )
-from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant, ToolContractError
-from manyselves.core.tools.artifact_tools import OpenArtifactTool
-from manyselves.core.tools.contracts import normalize_tool_call
-from manyselves.core.tools.outcomes import normalize_tool_outcome
 from manyselves.kernel.definitions import AgentDefinition, DefinitionKind
+from manyselves.runtime.artifacts import ArtifactGateway, ArtifactGrant, ToolContractError
+from manyselves.runtime.tools.artifact_tools import OpenArtifactTool
+from manyselves.runtime.tools.contracts import normalize_tool_call
+from manyselves.runtime.tools.outcomes import normalize_tool_outcome
 
 BASELINE_LOG = Path(
     "/Users/zzymima0000/Documents/Codex/test-improvements/logs/"

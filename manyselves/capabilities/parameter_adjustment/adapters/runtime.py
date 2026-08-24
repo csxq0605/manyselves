@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
 from manyselves.kernel.conversations import ConversationRegistry
 from manyselves.kernel.definitions import (
@@ -38,6 +37,7 @@ from manyselves.runtime.tool_adapter import (
     CapabilityToolAdapter,
     CapabilityToolAdapterFactory,
 )
+from manyselves.runtime.usage_ledger import UsageLedger
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeHost
 
 from .. import load_parameter_adjustment_capability

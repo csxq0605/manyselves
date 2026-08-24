@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from manyselves.gui.main_window import MainWindow
 from manyselves.gui.widgets.agent_panel import AgentPanel
-from manyselves.core.tools.task_board import TaskBoard
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentType,
@@ -12,6 +11,7 @@ from manyselves.interfaces.types import (
     ToolResult,
     UserMessage,
 )
+from manyselves.runtime.tools.task_board import TaskBoard
 
 
 def test_internal_workflow_continuation_is_not_rendered_or_persisted() -> None:

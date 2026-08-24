@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResponse, AgentResultMessage, UserMessage
 from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
 from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
@@ -21,6 +20,7 @@ from manyselves.runtime.agent_execution import (
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.loops.bus import MessageBus
 
 
 @dataclass

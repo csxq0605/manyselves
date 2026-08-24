@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.artifacts import ArtifactGateway, ArtifactGrant
+from manyselves.runtime.artifacts import ArtifactGateway, ArtifactGrant
 
 
 def test_gateway_pages_and_isolates_internal_refs(tmp_path: Path) -> None:

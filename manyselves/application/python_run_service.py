@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from ..core.loops.bus import MessageBus
 from ..interfaces.types import AgentStatus, StatusChange
+from ..runtime.loops.bus import MessageBus
 from .errors import CommandIdConflictError
 
 

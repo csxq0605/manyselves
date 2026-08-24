@@ -18,8 +18,8 @@ from manyselves.application.runtime_host import RuntimeHost
 from manyselves.application.settings_service import SettingsService
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
-from manyselves.core.loops import LoopManager, MessageBus
 from manyselves.interfaces.types import Checkpoint, UserMessage
+from manyselves.runtime.loops import LoopManager, MessageBus
 
 
 class _FakeConfigManager:

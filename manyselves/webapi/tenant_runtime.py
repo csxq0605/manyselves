@@ -21,8 +21,8 @@ from ..application.runtime_host import RuntimeHost
 from ..application.runtime_services import build_runtime_services_view
 from ..application.workflow_projection import WorkflowProjectionFacade
 from ..config import ConfigManager
-from ..core.loops.bus import MessageBus
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
+from ..runtime.loops.bus import MessageBus
 from .accounts import AccountCatalog
 from .events.broker import EventBroker
 from .events.mapper import EventContext

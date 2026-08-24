@@ -7,7 +7,6 @@ from typing import Any, Dict, List
 from loguru import logger
 
 from ...config import ConfigManager
-from ...core.providers import ProviderFactory, ProviderManager
 from ...interfaces.types import (
     AgentId,
     AgentType,
@@ -20,6 +19,7 @@ from ...interfaces.types import (
 from ..artifacts import ArtifactGateway, ArtifactGrant
 from ..checkpoints import CheckpointManager
 from ..prompts.loader import PromptLoader
+from ..providers import ProviderFactory, ProviderManager
 from ..tools import (
     ApplyPatchTool,
     DeleteFileTool,

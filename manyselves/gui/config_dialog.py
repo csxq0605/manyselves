@@ -24,7 +24,7 @@ from ..config.manager import ConfigManager
 from ..config.presets import ProviderPreset, get_presets_by_category, load_presets
 from ..config.schema import ApiConfig
 from ..core.preset_sync import is_cached, sync_presets
-from ..core.providers.defaults import DEFAULT_API_BASES, DEFAULT_MODELS
+from ..runtime.providers.defaults import DEFAULT_API_BASES, DEFAULT_MODELS
 from .dialogs import information_box, question_box, warning_box
 from .theme import get_theme_colors
 from .widgets.ui_utils import (

@@ -18,11 +18,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CrossReviewCoverageEntry,
     ModuleSubmission,
 )
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import ConversationKey, ConversationMode, ConversationRecord
 from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 
 
 def _cross_port_with_all_declared_tools() -> SimpleNamespace:
@@ -564,12 +564,12 @@ async def test_cross_owner_agent_invoker_recovers_in_same_session(
         CrossOwnerAgentInvoker,
         CrossOwnerRuntime,
     )
-    from manyselves.core.loops.agent_loop import (
+    from manyselves.interfaces.types import AgentResponse
+    from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
+    from manyselves.runtime.loops.agent_loop import (
         AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
         AGENT_TURN_CONTINUATION_REQUIRED,
     )
-    from manyselves.interfaces.types import AgentResponse
-    from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
 
     marker_content = {
         "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED": AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,

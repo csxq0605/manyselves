@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.prompts.loader import PromptLoader
+from manyselves.runtime.prompts.loader import PromptLoader
 
 
 @pytest.fixture

@@ -696,7 +696,6 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         AggregateEditorInput,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.conversations import (
         ConversationKey,
@@ -705,6 +704,7 @@ async def test_aggregate_editor_bridge_uses_typed_input_and_result(
     )
     from manyselves.kernel.definitions import DefinitionKind
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     run_id = "aggregate-bridge-typed"
     result_ref = f"Work/runs/{run_id}/reviews/aggregate-editor-result.json"
@@ -883,10 +883,10 @@ async def test_aggregate_existing_runtime_executes_tail_with_agent_map(
         ChiefChapterLaneInput,
         FinalChapterLaneInput,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     class RecordingAgentInvoker:
         def __init__(self, role: str) -> None:
@@ -1261,10 +1261,10 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
         ResolutionVerdict,
         RevisionResponse,
     )
-    from manyselves.core.loops.bus import MessageBus
     from manyselves.interfaces.types import AgentResultMessage, UserMessage
     from manyselves.kernel.ports import AgentInvocationOutcome
     from manyselves.runtime.agent_execution import AgentExecutionService
+    from manyselves.runtime.loops.bus import MessageBus
 
     class RecordingAggregateInvoker:
         async def invoke(

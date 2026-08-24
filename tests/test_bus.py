@@ -6,13 +6,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentResultMessage,
     Message,
     UserMessage,
 )
+from manyselves.runtime.loops.bus import MessageBus
 
 
 @pytest.fixture
@@ -157,7 +157,7 @@ async def test_publish_logs_hot_path_at_trace_and_shutdown_summarizes_once(
     trace = Mock()
     debug = Mock()
     monkeypatch.setattr(
-        "manyselves.core.loops.bus.logger",
+        "manyselves.runtime.loops.bus.logger",
         SimpleNamespace(trace=trace, debug=debug),
     )
     msg = UserMessage(content="Queued")

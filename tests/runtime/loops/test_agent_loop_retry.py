@@ -6,9 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.agent_loop import AgentLoop
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import (
+from manyselves.interfaces.types import SystemNotice
+from manyselves.runtime.loops.agent_loop import AgentLoop
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMStreamChunk,
@@ -16,9 +17,8 @@ from manyselves.core.providers.base import (
     ProviderRequestDisposition,
     annotate_provider_request_failure,
 )
-from manyselves.core.tools.registry import Tool, ToolRegistry
-from manyselves.core.usage_ledger import UsageLedger
-from manyselves.interfaces.types import SystemNotice
+from manyselves.runtime.tools.registry import Tool, ToolRegistry
+from manyselves.runtime.usage_ledger import UsageLedger
 
 
 class HttpFailureError(RuntimeError):

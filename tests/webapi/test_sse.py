@@ -14,7 +14,6 @@ import pytest
 
 from manyselves.application.project_metadata import ProjectMetadata
 from manyselves.config.schema import AppConfig
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
     Error,
@@ -26,6 +25,7 @@ from manyselves.interfaces.types import (
     ToolCallMessage,
     ToolResult,
 )
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi import lifespan as lifespan_module
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.errors import ApiError

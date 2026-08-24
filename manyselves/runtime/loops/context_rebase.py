@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
-from ..providers.base import Message as LLMMessage
 from ..providers.base import LLMToolCall
+from ..providers.base import Message as LLMMessage
 
 
 def _message_tool_calls(message: Any) -> list[Any]:
@@ -211,7 +211,7 @@ class RebasedContext:
 
 @runtime_checkable
 class ContextRebuilder(Protocol):
-    """Protocol accepted by :class:`~manyselves.core.loops.agent_loop.AgentLoop`.
+    """Protocol accepted by :class:`~manyselves.runtime.loops.agent_loop.AgentLoop`.
 
     Implementations may be synchronous or asynchronous.  ``AgentLoop`` passes
     the current typed message list and tool schemas and accepts either a

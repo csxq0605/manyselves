@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from manyselves.config.schema import ApiConfig, AppConfig
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.loops.manager import LoopManager
 from manyselves.interfaces.types import AgentType
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.loops.manager import LoopManager
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def test_create_tools_for_main(manager):
 
 def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
     with patch(
-        "manyselves.core.loops.manager.PDFParseTool.is_available", return_value=False
+        "manyselves.runtime.loops.manager.PDFParseTool.is_available", return_value=False
     ):
         tools = manager._create_tools_for_agent(AgentType.MAIN)
 
@@ -121,7 +121,7 @@ def test_create_tools_write_dirs_main(manager, workspace):
 
 
 @pytest.mark.asyncio
-@patch("manyselves.core.loops.manager.ProviderFactory")
+@patch("manyselves.runtime.loops.manager.ProviderFactory")
 async def test_start_creates_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider
@@ -143,7 +143,7 @@ async def test_start_creates_loops(mock_factory, manager):
 
 
 @pytest.mark.asyncio
-@patch("manyselves.core.loops.manager.ProviderFactory")
+@patch("manyselves.runtime.loops.manager.ProviderFactory")
 async def test_stop_clears_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider

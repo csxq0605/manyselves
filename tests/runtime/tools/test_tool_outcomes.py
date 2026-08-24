@@ -1,4 +1,4 @@
-from manyselves.core.tools.outcomes import normalize_tool_outcome
+from manyselves.runtime.tools.outcomes import normalize_tool_outcome
 
 
 def test_semantic_failure_is_not_success() -> None:

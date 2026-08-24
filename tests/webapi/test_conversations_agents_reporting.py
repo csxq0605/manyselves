@@ -17,7 +17,6 @@ from manyselves.application.models import EditResendCommand
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
-from manyselves.core.loops.bus import MessageBus
 from manyselves.core.preset_sync import SyncError
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -42,6 +41,7 @@ from manyselves.kernel.workflow import (
     resume_waiting_input,
 )
 from manyselves.runtime.capability_binding import RuntimeBindingCatalog
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,
     StartAwareFileWorkflowStateStore,

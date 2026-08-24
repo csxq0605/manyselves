@@ -53,11 +53,11 @@ Manyselves 提供由文档定义 Agent 团队的本地运行时：
 | --- | --- |
 | CLI 与桌面启动 | `manyselves/__main__.py`、`manyselves/app.py` |
 | 配置 | `manyselves/config/schema.py`、`manyselves/config/manager.py` |
-| Main Agent 生命周期 | `manyselves/core/loops/manager.py`、`manyselves/core/loops/agent_loop.py` |
-| 消息总线 | `manyselves/core/loops/bus.py`、`manyselves/interfaces/types.py` |
-| 文件和产物边界 | `manyselves/core/tools/`、`manyselves/core/artifacts/gateway.py` |
+| Main Agent 生命周期 | `manyselves/runtime/loops/manager.py`、`manyselves/runtime/loops/agent_loop.py` |
+| 消息总线 | `manyselves/runtime/loops/bus.py`、`manyselves/interfaces/types.py` |
+| 文件和产物边界 | `manyselves/runtime/tools/`、`manyselves/runtime/artifacts/gateway.py` |
 | 桌面界面 | `manyselves/gui/` |
-| 会话、检查点、用量 | `manyselves/core/conversations.py`、`checkpoints.py`、`usage_ledger.py` |
+| 会话、检查点、用量 | `manyselves/core/conversations.py`、`manyselves/runtime/checkpoints.py`、`manyselves/runtime/usage_ledger.py` |
 
 ### 2.2 当前内置业务能力
 
@@ -729,22 +729,20 @@ uv build
 | --- | --- |
 | CLI 创建 `QApplication` 并运行 GUI | `manyselves/app.py:main` |
 | 后端启动和项目结构创建 | `manyselves/app.py:ManyselvesApp.startup` |
-| 只有常驻 Main AgentLoop | `manyselves/core/loops/manager.py:LoopManager._create_loops` |
-| Main 的工作区和报告工具 | `manyselves/core/loops/manager.py:LoopManager._create_tools_for_agent` |
+| 只有常驻 Main AgentLoop | `manyselves/runtime/loops/manager.py:LoopManager._create_loops` |
+| Main 的工作区通用工具 | `manyselves/runtime/loops/manager.py:LoopManager._create_tools_for_agent` |
 | 配置根目录和环境变量 | `manyselves/config/schema.py:Settings` |
-| Provider 构造与兼容接口 | `manyselves/core/providers/factory.py:ProviderFactory` |
+| Provider 构造与兼容接口 | `manyselves/runtime/providers/factory.py:ProviderFactory` |
 | 标准项目目录 | `manyselves/core/project_structure.py` |
-| 五种报告 operation | `manyselves/core/reporting/models.py:ReportOperation` |
-| 报告顺序和阶段 | `manyselves/core/reporting/workflow.py:ReportWorkflowRunner.run` |
-| run 文件锁 | `manyselves/core/reporting/service.py:ReportingService._acquire_run_lock` |
-| 项目模板优先级 | `manyselves/core/reporting/service.py:resolve_report_template` |
-| 原 run 恢复和已交付修订 | `manyselves/core/reporting/service.py:resume_run`、`revise` |
-| 原子化状态写入 | `manyselves/core/reporting/store.py:ReportingStore` |
-| DOCX 交付和版本发布 | `manyselves/core/reporting/workflow.py:_deliver` |
-| 当前 run 产物校验 | `manyselves/core/reporting/output_verifier.py` |
-| 当前后台任务仅存在进程内 | `manyselves/core/tools/reporting_tool.py:ReportingRunController` |
-| 不同 run 会写共享 Outputs 路径 | `manyselves/core/reporting/workflow.py` 中的 `Outputs/Modules`、`Outputs/Reports` 写入 |
+| 五种报告 operation | `manyselves/capabilities/distribution_reporting/capability.yaml` 与 `workflows/*.yaml` |
+| 报告顺序和阶段 | `manyselves/kernel/workflow/compiler.py`、`manyselves/runtime/workflow_host.py` 与 Capability Workflow 文件 |
+| 同一 Run 恢复 | `manyselves/runtime/state_store.py`、`manyselves/runtime/run_lifecycle.py` |
+| 报告领域状态 | `manyselves/capabilities/distribution_reporting/runtime/storage.py` |
+| DOCX 交付和版本发布 | `manyselves/capabilities/distribution_reporting/runtime/delivery_tools.py` |
+| 当前 run 产物投影 | `manyselves/application/workflow_projection.py` |
+| 后台 Run 生命周期 | `manyselves/runtime/run_lifecycle.py` |
+| 不同 run 的共享 Outputs 视图 | `manyselves/capabilities/distribution_reporting/runtime/delivery_tools.py` 与 `storage.py` |
 | 当前文件、预览、对话来自 Qt 分栏 | `manyselves/gui/main_window.py:MainWindow._setup_ui` |
 | 日志目录、轮转和保留 | `manyselves/utils/logging_config.py` |
-| 路径、写入和内部状态保护 | `manyselves/core/tools/path_utils.py`、`file_tools.py` |
-| 无 Web 服务入口 | `pyproject.toml` 依赖与 `manyselves/app.py` 的唯一应用入口 |
+| 路径、写入和内部状态保护 | `manyselves/runtime/tools/path_utils.py`、`file_tools.py` |
+| Generic Web 服务入口 | `manyselves/webapi/main.py` 与 `/api/v1/runs` |

@@ -2,7 +2,7 @@
 
 These implementations are mechanically shared by the Capability-owned module
 Provider and the legacy Reporting runner.  The bounded artifact readers remain
-the generic ``core.artifacts`` boundary; the only Capability-specific part is
+the generic ``runtime.artifacts`` boundary; the only Capability-specific part is
 the existing run-scoped completed-result wrapper.
 """
 
@@ -13,14 +13,14 @@ import operator
 from pathlib import Path
 from typing import Any
 
-from manyselves.core.artifacts import ArtifactGateway, ToolContractError, parse_artifact
-from manyselves.core.tools.artifact_tools import (
+from manyselves.runtime.artifacts import ArtifactGateway, ToolContractError, parse_artifact
+from manyselves.runtime.tools.artifact_tools import (
     OpenArtifactTool,
     OpenToolResultTool,
     SearchTextTool,
 )
-from manyselves.core.tools.registry import Tool
-from manyselves.core.tools.result_memory import RunToolResultIndex
+from manyselves.runtime.tools.registry import Tool
+from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
 
 class InspectImageTool(Tool):

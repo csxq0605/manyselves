@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from manyselves.core.artifacts.storage_policy import CasPolicy, StorageMode
+from manyselves.runtime.artifacts.storage_policy import CasPolicy, StorageMode
 
 
 def test_role_rules_precede_size_and_suffix_rules() -> None:

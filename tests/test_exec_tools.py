@@ -2,7 +2,7 @@
 
 import pytest
 
-from manyselves.core.tools.exec_tools import ALLOWED_COMMANDS, ExecTool
+from manyselves.runtime.tools.exec_tools import ALLOWED_COMMANDS, ExecTool
 
 
 @pytest.fixture

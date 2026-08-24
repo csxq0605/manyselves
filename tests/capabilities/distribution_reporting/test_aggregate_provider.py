@@ -23,7 +23,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -37,6 +36,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 
 
@@ -81,7 +81,7 @@ async def test_aggregate_provider_shares_declared_tool_and_agent_recovery(
         aggregate_agent_bridge,
         aggregate_provider,
     )
-    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     captured: dict[str, object] = {}
 

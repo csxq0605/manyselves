@@ -23,7 +23,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     REPORT_MODULE_IDS,
 )
 from manyselves.config.schema import AgentDefaults
-from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import UserMessage
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -37,6 +36,7 @@ from manyselves.kernel.definitions import (
     TaskDefinition,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 
 
@@ -75,7 +75,7 @@ async def test_chief_provider_shares_declared_recovery_with_tool_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from manyselves.capabilities.distribution_reporting.runtime import chief_provider
-    from manyselves.core.tools.registry import ToolRegistry
+    from manyselves.runtime.tools.registry import ToolRegistry
 
     captured: dict[str, object] = {}
 
