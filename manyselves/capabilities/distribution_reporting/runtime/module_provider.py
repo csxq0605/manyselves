@@ -597,13 +597,20 @@ class ModuleProviderRuntime:
         if existing is not None:
             session_factory.reconfigure(existing.loop)
         if self._is_reviewer(agent, task):
-            if task_attempt is not None:
-                task_attempt.activate()
             return ModuleReviewerAgentBridge(
                 self.workspace,
                 execution=self.execution,
                 session_factory=lambda _runtime_id: session_factory(),
                 workflow_id=self.workflow_id,
+                completed_result_loader=self._completed_result_loader(
+                    task_attempt=task_attempt,
+                    expected=dependencies.task_correlation,
+                ),
+                terminal_task_attempt_id=(
+                    dependencies.task_correlation.task_attempt_id
+                    if isinstance(dependencies.task_correlation, TaskCorrelation)
+                    else None
+                ),
                 recovery_driver=recovery_driver,
                 progress_observer=ReportingContinuationProgressObserver(
                     self.workspace,

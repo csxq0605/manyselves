@@ -1156,6 +1156,285 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
         await bus_task
 
 
+@pytest.mark.asyncio
+async def test_module_reviewer_bridge_matches_nonempty_provider_task_attempt_id(
+    tmp_path: Path,
+) -> None:
+    """Reviewer terminals use the Provider attempt identity, not an empty sentinel."""
+
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ModuleReviewFindingSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        ModuleReviewInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleReviewPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
+        ModuleReviewerAgentBridge,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import (
+        ConversationKey,
+        ConversationMode,
+        ConversationRegistry,
+    )
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    reviewer = registry.require(DefinitionKind.AGENT, "evidence-auditor")
+    review_task = registry.require(DefinitionKind.TASK, "module-runtime-initial-review")
+    run_id = "module-reviewer-provider-attempt"
+    provider_task_attempt_id = "attempt-module-reviewer-provider"
+    envelope = TaskEnvelope(
+        task_id="module-2.4-initial-review-r0",
+        task_attempt_id=provider_task_attempt_id,
+        run_id=run_id,
+        agent_id=reviewer.id,
+        objective=review_task.objective,
+        allowed_outputs=["module_review_finding_submission"],
+    )
+    context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="review_ready",
+        review=DeclarativeModuleReviewPreparation.model_construct(
+            envelope=envelope,
+            prepared=ModuleInitialReviewPreparation.model_construct(
+                envelope=envelope,
+                review_input=ModuleReviewInput.model_construct(),
+            ),
+        ),
+    )
+    result_ref = f"Work/runs/{run_id}/results/reviewer.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    payload = ModuleReviewFindingSubmission(
+        coverage={"submodule_ids": ["2.4.1.1"]},
+        findings=[],
+    )
+
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    received: list[UserMessage] = []
+
+    class ProviderLoop:
+        def __init__(self, **kwargs: Any) -> None:
+            self.runtime_id = str(kwargs["agent_type"])
+            self.callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                received.append(message)
+                result_path.write_text(
+                    AgentResult(
+                        task_id=envelope.task_id,
+                        run_id=run_id,
+                        agent_id=envelope.agent_id,
+                        session_id=message.session_id,
+                        status=AgentRunStatus.COMPLETED,
+                        payload=payload,
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=envelope.agent_id,
+                        workflow_id=message.workflow_id,
+                        task_id=envelope.task_id,
+                        run_id=run_id,
+                        result_path=result_ref,
+                        task_attempt_id=provider_task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self.callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self.callback is not None:
+                bus.unsubscribe(UserMessage, self.callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    try:
+        bridge = ModuleReviewerAgentBridge(
+            tmp_path,
+            execution=service,
+            session_factory=lambda _runtime_id: ProviderLoop(
+                agent_type=_runtime_id,
+            ),
+            terminal_task_attempt_id=provider_task_attempt_id,
+        )
+        conversation = ConversationRegistry().create_or_resolve(
+            ConversationKey(
+                agent_id=reviewer.id,
+                value="module-reviewer-provider-attempt",
+                mode=ConversationMode.RUN,
+            ),
+            run_id=run_id,
+        )
+        outcome = await bridge.invoke(
+            reviewer,
+            review_task,
+            context,
+            conversation,
+            task_id="host-action-reviewer",
+        )
+    finally:
+        await service.close_workflow("public-reporting")
+        bus.shutdown()
+        await bus_task
+
+    assert outcome.status == "ok"
+    assert received[0].task_attempt_id == provider_task_attempt_id
+
+
+@pytest.mark.asyncio
+async def test_module_reviewer_bridge_reuses_completed_result_before_provider_session(
+    tmp_path: Path,
+) -> None:
+    """A completed Reviewer result is returned without creating a Provider session."""
+
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+        ModuleReviewFindingSubmission,
+        TaskEnvelope,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        ModuleReviewInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleReviewPreparation,
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.review import (
+        ModuleInitialReviewPreparation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
+        ModuleReviewerAgentBridge,
+    )
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.kernel.conversations import (
+        ConversationKey,
+        ConversationMode,
+        ConversationRegistry,
+    )
+    from manyselves.kernel.definitions import DefinitionKind
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    _capability, registry = load_distribution_reporting_capability()
+    reviewer = registry.require(DefinitionKind.AGENT, "evidence-auditor")
+    review_task = registry.require(DefinitionKind.TASK, "module-runtime-initial-review")
+    run_id = "module-reviewer-completed-reuse"
+    envelope = TaskEnvelope(
+        task_id="module-2.4-initial-review-r0",
+        task_attempt_id="attempt-module-reviewer-completed",
+        run_id=run_id,
+        agent_id=reviewer.id,
+        objective=review_task.objective,
+        allowed_outputs=["module_review_finding_submission"],
+    )
+    context = DeclarativeModuleRuntimeLaneContext.model_construct(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="review_ready",
+        review=DeclarativeModuleReviewPreparation.model_construct(
+            envelope=envelope,
+            prepared=ModuleInitialReviewPreparation.model_construct(
+                envelope=envelope,
+                review_input=ModuleReviewInput.model_construct(),
+            ),
+        ),
+    )
+    session_id = "persisted-module-review-session"
+    persisted = AgentResult(
+        task_id=envelope.task_id,
+        run_id=run_id,
+        agent_id=reviewer.id,
+        session_id=session_id,
+        status=AgentRunStatus.COMPLETED,
+        payload=ModuleReviewFindingSubmission(
+            coverage={"submodule_ids": ["2.4.1.1"]},
+            findings=[],
+        ),
+    )
+    bus = MessageBus()
+    service = AgentExecutionService(bus, timeout=1)
+    provider_calls = 0
+
+    def forbidden_session(_runtime_id: str) -> Any:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("completed Reviewer result must not start a Provider session")
+
+    try:
+        bridge = ModuleReviewerAgentBridge(
+            tmp_path,
+            execution=service,
+            session_factory=forbidden_session,
+            completed_result_loader=lambda: persisted,
+        )
+        conversation = ConversationRegistry().create_or_resolve(
+            ConversationKey(
+                agent_id=reviewer.id,
+                value="module-reviewer-completed-reuse",
+                mode=ConversationMode.RUN,
+            ),
+            run_id=run_id,
+        )
+        outcome = await bridge.invoke(
+            reviewer,
+            review_task,
+            context,
+            conversation,
+            task_id="host-action-reviewer-completed",
+        )
+    finally:
+        await service.close_workflow("public-reporting")
+        bus.shutdown()
+
+    assert outcome.status == "ok"
+    assert outcome.session_id == session_id
+    assert outcome.result["status"] == "completed"
+    assert outcome.result["submission"]["kind"] == "module_review_finding_submission"
+    assert provider_calls == 0
+    assert service.sessions == {}
+
+
 def test_module_provider_runtime_selects_reviewer_bridge_for_declared_review_task(
     tmp_path: Path,
 ) -> None:
