@@ -152,6 +152,9 @@ def test_webapi_does_not_mount_or_construct_legacy_reporting_facade() -> None:
     assert "reporting_router" not in main_source
     assert "ReportingFacade" not in lifespan_source
     assert "ReportingFacade" not in tenant_source
+    assert not (PACKAGE_ROOT / "application" / "reporting_facade.py").exists()
+    assert not (PACKAGE_ROOT / "webapi" / "routes" / "reporting.py").exists()
+    assert not (PACKAGE_ROOT / "webapi" / "schemas" / "reporting.py").exists()
 
 
 def test_distribution_contract_models_are_owned_by_the_capability() -> None:
