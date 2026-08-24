@@ -248,9 +248,14 @@ class RenderExistingWorkflowRuntime:
 
     workflow_id = "render-existing"
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        state_store: FileWorkflowStateStore | None = None,
+    ) -> None:
         self.workspace = Path(workspace)
-        self._store = FileWorkflowStateStore(self.workspace)
+        self._store = state_store or FileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
 
     async def start(
@@ -268,7 +273,7 @@ class RenderExistingWorkflowRuntime:
         request = RenderExistingRequest.model_validate(
             public_request.model_dump(mode="python")
         )
-        run_id = f"{workflow_id}-{command_id.hex}"
+        run_id = self.run_id_for(command_id, workflow_id)
         try:
             state = self._store.load(run_id)
         except FileNotFoundError:
@@ -283,6 +288,16 @@ class RenderExistingWorkflowRuntime:
             )
         await self._execute(plan, state, registry, contracts)
         return {"run_id": run_id, "task_id": None}
+
+    @property
+    def state_store(self) -> FileWorkflowStateStore:
+        return self._store
+
+    @staticmethod
+    def run_id_for(command_id: UUID, workflow_id: str) -> str:
+        """Return the Run identity owned by render-existing."""
+
+        return f"{workflow_id}-{command_id.hex}"
 
     async def provide_input(
         self,

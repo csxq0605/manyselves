@@ -237,6 +237,34 @@ async def test_project_activation_requires_idle_runtime(api) -> None:
 
 
 @pytest.mark.asyncio
+async def test_project_activation_keeps_active_generic_run_in_original_workspace(api) -> None:
+    """A detached Generic Host run must not be orphaned by project activation."""
+
+    client, host, _ = api
+    headers = await acquire_controller(client)
+    await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json=project_create_payload("p2"),
+    )
+    binding = host.app.state.workflow_projection._runtime_bindings.require(  # noqa: SLF001
+        "distribution-reporting"
+    )
+    release = asyncio.Event()
+    task = asyncio.create_task(release.wait())
+    binding._detached_runs._tasks.add(task)  # noqa: SLF001
+    try:
+        response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+    finally:
+        release.set()
+        await task
+        binding._detached_runs._tasks.discard(task)  # noqa: SLF001
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+
+
+@pytest.mark.asyncio
 async def test_project_activation_switches_runtime_before_active_project(api) -> None:
     """Successful activation must align subsequent runtime and file operations."""
     client, host, root = api

@@ -62,6 +62,11 @@ from manyselves.capabilities.distribution_reporting.runtime.template_provider im
 from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.run_lifecycle import (
+    DetachedRunTaskOwner,
+    DetachedRuntime,
+    StartAwareFileWorkflowStateStore,
+)
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -110,6 +115,11 @@ class DistributionReportingRuntimeBinding:
         self.workspace = Path(workspace).resolve()
         self.services = services
         self._execution = AgentExecutionService(services.bus)
+        self._detached_runs = DetachedRunTaskOwner()
+        public_state_store = StartAwareFileWorkflowStateStore(self.workspace)
+        aggregate_state_store = StartAwareFileWorkflowStateStore(self.workspace)
+        render_state_store = StartAwareFileWorkflowStateStore(self.workspace)
+        template_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         snapshot_store = RunInputSnapshotStore(self.workspace)
         content_store = ContentAddressedStore(self.workspace)
         module = build_module_provider_composition(
@@ -197,25 +207,38 @@ class DistributionReportingRuntimeBinding:
             workflow_specializers=(tail.workflow_specializer,),
             additional_tool_implementations=tail.tool_implementations(),
             additional_agent_invokers=full_agents,
+            state_store=public_state_store,
         )
         aggregate_invokers = {
             **aggregate.agent_invokers,
             **final.agent_invokers,
             **final_chief.agent_invokers,
         }
-        self._runtimes = {
+        self._runtimes: dict[str, DetachedRuntime] = {
             "full-report": public,
             "module-report": public,
             "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
                 self.workspace,
                 input_snapshot=snapshot_store,
                 agent_invokers=aggregate_invokers,
+                state_store=aggregate_state_store,
             ),
-            "render-existing": RenderExistingWorkflowRuntime(self.workspace),
+            "render-existing": RenderExistingWorkflowRuntime(
+                self.workspace,
+                state_store=render_state_store,
+            ),
             "distill-template-skill": TemplateDistillationWorkflowRuntime(
                 self.workspace,
                 agent_invoker=template,
+                state_store=template_state_store,
             ),
+        }
+        self._start_stores = {
+            "full-report": public_state_store,
+            "module-report": public_state_store,
+            "aggregate-existing": aggregate_state_store,
+            "render-existing": render_state_store,
+            "distill-template-skill": template_state_store,
         }
 
     async def start(
@@ -229,6 +252,30 @@ class DistributionReportingRuntimeBinding:
         except KeyError as exc:
             raise ValueError(f"workflow is not runnable: {workflow_id}") from exc
         return await runtime.start(command_id, workflow_id, values)
+
+    async def start_detached(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: Any,
+    ) -> dict[str, Any]:
+        """Accept a Run after its Host has persisted the initial state."""
+
+        try:
+            runtime = self._runtimes[workflow_id]
+        except KeyError as exc:
+            raise ValueError(f"workflow is not runnable: {workflow_id}") from exc
+        store = self._start_stores[workflow_id]
+        run_id = runtime.run_id_for(command_id, workflow_id)
+        return await self._detached_runs.start_after_persisted_state(
+            run_id=run_id,
+            state_store=store,
+            operation=runtime.start(command_id, workflow_id, values),
+        )
+
+    @property
+    def active(self) -> bool:
+        return self._detached_runs.active
 
     async def provide_input(
         self,
@@ -258,6 +305,7 @@ class DistributionReportingRuntimeBinding:
     async def close(self) -> None:
         """Close the Agent sessions owned by this account binding."""
 
+        await self._detached_runs.close()
         for provider in reversed(self._providers):
             await provider.close()
 

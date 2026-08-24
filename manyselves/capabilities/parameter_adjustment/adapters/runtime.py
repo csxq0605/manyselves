@@ -72,6 +72,10 @@ class ParameterAdjustmentRuntimeBinding:
         self._store = FileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
 
+    @property
+    def active(self) -> bool:
+        return False
+
     async def start(
         self,
         command_id: UUID,
@@ -96,6 +100,16 @@ class ParameterAdjustmentRuntimeBinding:
             self._store.save_plan(run_id, plan)
         await self._execute(plan, state, registry, contracts, tools)
         return {"run_id": run_id, "task_id": None}
+
+    async def start_detached(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: Any,
+    ) -> dict[str, Any]:
+        """Complete the short deterministic workflow before returning."""
+
+        return await self.start(command_id, workflow_id, values)
 
     async def provide_input(
         self,

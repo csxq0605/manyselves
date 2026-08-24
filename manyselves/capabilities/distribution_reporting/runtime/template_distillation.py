@@ -323,10 +323,16 @@ class TemplateDistillationWorkflowRuntime:
 
     workflow_id = "distill-template-skill"
 
-    def __init__(self, workspace: Path, *, agent_invoker: Any) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        agent_invoker: Any,
+        state_store: FileWorkflowStateStore | None = None,
+    ) -> None:
         self.workspace = Path(workspace).resolve()
         self.agent_invoker = agent_invoker
-        self._store = FileWorkflowStateStore(self.workspace)
+        self._store = state_store or FileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
         self._source_metadata: dict[str, Any] = {}
 
@@ -342,7 +348,7 @@ class TemplateDistillationWorkflowRuntime:
         if plan.input_contract is None or plan.input_variable is None:
             raise TypeError("distill-template-skill has no declared input binding")
         request = contracts[plan.input_contract].validate(values)
-        run_id = f"{self.workflow_id}-{command_id.hex}"
+        run_id = self.run_id_for(command_id, workflow_id)
         try:
             state = self._store.load(run_id)
         except FileNotFoundError:
@@ -357,6 +363,16 @@ class TemplateDistillationWorkflowRuntime:
             )
         await self._execute(plan, state, registry, contracts)
         return {"run_id": run_id, "task_id": None}
+
+    @property
+    def state_store(self) -> FileWorkflowStateStore:
+        return self._store
+
+    @staticmethod
+    def run_id_for(command_id: UUID, workflow_id: str) -> str:
+        """Return the Run identity owned by distill-template-skill."""
+
+        return f"{workflow_id}-{command_id.hex}"
 
     async def provide_input(
         self,

@@ -1,5 +1,6 @@
 """Characterization for the public Distribution Reporting runtime binding."""
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -22,6 +23,7 @@ from manyselves.capabilities.distribution_reporting.runtime.public_reporting imp
 )
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
+from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.webapi.routes.workflows import _projection
 
 
@@ -141,3 +143,68 @@ def test_reporting_binding_owns_one_agent_execution_service_per_account(
     assert {id(provider.execution) for provider in binding._providers} == {
         id(binding._execution)
     }
+
+
+@pytest.mark.asyncio
+async def test_render_start_returns_after_initial_state_is_persisted(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Inputs" / "approved.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Approved\n", encoding="utf-8")
+    binding = DistributionReportingRuntimeBinding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
+    runtime = binding._runtimes["render-existing"]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def blocked_execute(plan, state, registry, contracts):
+        del plan, registry, contracts
+        runtime.state_store.save(
+            state.model_copy(update={"status": WorkflowStatus.RUNNING})
+        )
+        started.set()
+        await release.wait()
+        runtime.state_store.save(
+            state.model_copy(update={"status": WorkflowStatus.COMPLETED})
+        )
+        finished.set()
+
+    runtime._execute = blocked_execute
+    command_id = UUID("50000000-0000-4000-8000-000000000002")
+    operation = asyncio.create_task(
+        binding.start_detached(
+            command_id,
+            "render-existing",
+            {
+                "operation": "render_existing",
+                "instruction": "Render the approved Markdown as DOCX.",
+                "source_markdown_ref": "Inputs/approved.md",
+                "output_filename": "approved.docx",
+            },
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    accepted = await asyncio.wait_for(operation, timeout=1)
+
+    assert accepted == {
+        "run_id": f"render-existing-{command_id.hex}",
+        "task_id": None,
+    }
+    assert binding.get_run(accepted["run_id"])["run"]["status"] == "running"
+    assert binding.get_run(accepted["run_id"])["run"]["active"] is True
+
+    release.set()
+    await asyncio.wait_for(finished.wait(), timeout=1)
+    assert binding.get_run(accepted["run_id"])["run"]["status"] == "completed"
+    assert binding.get_run(accepted["run_id"])["run"]["active"] is False
+    await binding.close()

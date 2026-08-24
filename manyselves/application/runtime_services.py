@@ -46,7 +46,7 @@ def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
     provider = getattr(main_loop, "llm_provider", None)
     if provider is None:
         provider_manager = (
-            manager._provider_manager  # noqa: SLF001 - internal composition view
+            getattr(manager, "_provider_manager", None)
             if manager is not None
             else None
         )
@@ -63,7 +63,7 @@ def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
         bus=host.bus,
         active_provider=provider,
         agent_defaults=config.agents.defaults,
-        global_knowledge_root=host.global_knowledge_root,
+        global_knowledge_root=getattr(host, "global_knowledge_root", None),
     )
 
 

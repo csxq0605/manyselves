@@ -107,13 +107,19 @@ class PublicReportingWorkflowRuntime:
     ) -> dict[str, Any]:
         """Start one public file root after projecting its user-only Schema."""
 
-        run_id = f"{workflow_id}-{command_id.hex}"
+        run_id = self.run_id_for(command_id, workflow_id)
         request = project_public_entrypoint_input(workflow_id, run_id, values)
         if not isinstance(request, ReportRequest):
             raise TypeError(f"public root does not project a ReportRequest: {workflow_id}")
         RunInputSnapshotStore(self.workspace).freeze(run_id)
         await self.execute(request, run_id, workflow_id=workflow_id)
         return {"run_id": run_id, "task_id": None}
+
+    @staticmethod
+    def run_id_for(command_id: UUID, workflow_id: str) -> str:
+        """Return the Run identity owned by this public file entrypoint."""
+
+        return f"{workflow_id}-{command_id.hex}"
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         """Project one persisted Host state through the generic Run boundary."""

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from uuid import UUID
@@ -63,6 +64,14 @@ class _ReportingAdapter:
         del command_id, workflow_id
         self.calls.append(("start_declarative", values))
         return {"run_id": "report-declarative-new", "task_id": "task-new"}
+
+    async def start_detached(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: object,
+    ) -> dict:
+        return await self.start(command_id, workflow_id, values)
 
     async def provide_input(
         self,
@@ -232,6 +241,55 @@ def _facade(workspace: Path, binding: _ReportingAdapter) -> WorkflowProjectionFa
         reporting_adapter=None,
         runtime_bindings=bindings,
     )
+
+
+class _DetachedReportingAdapter(_ReportingAdapter):
+    """A binding exposing the persisted-state asynchronous start boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def start(self, command_id: UUID, workflow_id: str, values: object) -> dict:
+        del command_id, workflow_id, values
+        await self.release.wait()
+        raise AssertionError("the blocking start path must not be awaited")
+
+    async def start_detached(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: object,
+    ) -> dict:
+        del command_id, workflow_id
+        self.calls.append(("start_detached", values))
+        return {"run_id": "report-detached", "task_id": None}
+
+
+@pytest.mark.asyncio
+async def test_start_uses_detached_binding_boundary_for_long_runs(
+    tmp_path: Path,
+) -> None:
+    binding = _DetachedReportingAdapter()
+    facade = _facade(tmp_path, binding)
+
+    accepted = await asyncio.wait_for(
+        facade.start(
+            UUID("50000000-0000-4000-8000-000000000001"),
+            "full-report",
+            {"instruction": "long run"},
+        ),
+        timeout=0.2,
+    )
+
+    assert accepted == {
+        "status": "accepted",
+        "run_id": "report-detached",
+        "task_id": None,
+        "capability_id": "distribution-reporting",
+        "workflow_id": "full-report",
+    }
+    assert binding.calls == [("start_detached", {"instruction": "long run"})]
 
 
 def test_capability_workflow_and_input_schema_are_generic_projections(

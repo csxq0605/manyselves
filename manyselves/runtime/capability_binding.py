@@ -30,7 +30,17 @@ class CapabilityRuntimeBinding(Protocol):
 
     capability_id: str
 
+    @property
+    def active(self) -> bool: ...
+
     async def start(
+        self,
+        command_id: UUID,
+        workflow_id: str,
+        values: Any,
+    ) -> dict[str, Any]: ...
+
+    async def start_detached(
         self,
         command_id: UUID,
         workflow_id: str,
@@ -76,6 +86,10 @@ class RuntimeBindingCatalog:
 
     def has(self, capability_id: str) -> bool:
         return capability_id in self._bindings
+
+    @property
+    def active(self) -> bool:
+        return any(binding.active for binding in self._bindings.values())
 
     def locate_run(
         self,

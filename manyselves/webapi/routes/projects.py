@@ -182,6 +182,7 @@ async def activate_project(
             if (
                 state.maintenance_service.pending_work
                 or state.reporting_facade.active
+                or state.workflow_projection.active
                 or state.python_run_service.active
             ):
                 raise RuntimeBusyError()

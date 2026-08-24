@@ -177,12 +177,13 @@ class WorkflowProjectionFacade:
         capability = loaded.definition
         if workflow_id not in capability.entrypoints:
             raise WorkflowNotRunnableError(workflow_id)
-        accepted = await self._runtime_bindings.require(capability.id).start(
-            command_id,
-            workflow_id,
-            values,
-        )
+        binding = self._runtime_bindings.require(capability.id)
+        accepted = await binding.start_detached(command_id, workflow_id, values)
         return self._accepted(accepted, capability.id, workflow_id)
+
+    @property
+    def active(self) -> bool:
+        return self._runtime_bindings.active
 
     async def provide_input(
         self,

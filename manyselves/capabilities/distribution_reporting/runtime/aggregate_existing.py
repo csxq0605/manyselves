@@ -578,7 +578,7 @@ class PublicAggregateExistingWorkflowRuntime(AggregateExistingWorkflowRuntime):
         if plan.input_contract is None or plan.input_variable is None:
             raise TypeError("aggregate-existing has no declared input binding")
         request = contracts[plan.input_contract].validate(values)
-        run_id = f"aggregate-existing-{command_id.hex}"
+        run_id = self.run_id_for(command_id, workflow_id)
         source_refs = getattr(request, "source_module_refs", None)
         extra_refs = tuple(
             source_refs.values()
@@ -604,6 +604,16 @@ class PublicAggregateExistingWorkflowRuntime(AggregateExistingWorkflowRuntime):
             )
         await self._execute_public(plan, state, registry, contracts)
         return {"run_id": run_id, "task_id": None}
+
+    @property
+    def state_store(self) -> FileWorkflowStateStore:
+        return self._state_store
+
+    @staticmethod
+    def run_id_for(command_id: UUID, workflow_id: str) -> str:
+        """Return the Run identity owned by aggregate-existing."""
+
+        return f"{workflow_id}-{command_id.hex}"
 
     async def provide_input(
         self,
