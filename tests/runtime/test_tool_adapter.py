@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.tools import ReadTool, RunToolResultIndex, Tool, ToolRegistry
+from manyselves.core.tools import ReadTool, RunToolResultIndex, Tool
 from manyselves.kernel.contracts import (
     ContractValidationError,
     build_contract_adapter,
@@ -20,12 +20,20 @@ from manyselves.kernel.executors import (
 )
 from manyselves.kernel.ports import ToolInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
+from manyselves.runtime import tool_adapter as tool_adapter_module
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import (
+    CapabilityToolAdapter,
     CapabilityToolAdapterFactory,
-    LegacyToolAdapterFactory,
+    ToolAdapter,
     ToolAdapterError,
 )
+
+
+def test_capability_tool_adapter_has_no_legacy_runtime_base() -> None:
+    assert issubclass(CapabilityToolAdapter, ToolAdapter)
+    assert not hasattr(tool_adapter_module, "LegacyToolAdapter")
+    assert not hasattr(tool_adapter_module, "LegacyToolAdapterFactory")
 
 
 def _contract(contract_id: str) -> ContractDefinition:
@@ -48,7 +56,7 @@ def _definition(*, reuse_result: bool = True) -> ToolDefinition:
         id="increment",
         version="1.0.0",
         description="Adds one",
-        implementation="legacy:increment",
+        implementation="capability:test-runtime:increment",
         input_contract="number-input",
         output_contract="number-output",
         side_effect="pure_read",
@@ -113,13 +121,12 @@ class IncrementTool(Tool):
 def _factory(
     tmp_path: Path,
     tool: Tool,
-) -> LegacyToolAdapterFactory:
-    tools = ToolRegistry()
-    tools.register(tool)
+) -> CapabilityToolAdapterFactory:
     input_contract = _contract("number-input")
     output_contract = _contract("number-output")
-    return LegacyToolAdapterFactory(
-        tools,
+    return CapabilityToolAdapterFactory(
+        "test-runtime",
+        {"increment": lambda arguments: tool(**arguments)},
         {
             input_contract.id: build_contract_adapter(input_contract),
             output_contract.id: build_contract_adapter(output_contract),
@@ -242,8 +249,7 @@ async def test_existing_file_tool_runs_through_declarative_adapter(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "note.txt").write_text("hello\n", encoding="utf-8")
-    tools = ToolRegistry()
-    tools.register(ReadTool(tmp_path))
+    tool = ReadTool(tmp_path)
     input_definition = ContractDefinition(
         id="read-input",
         version="1.0.0",
@@ -271,8 +277,9 @@ async def test_existing_file_tool_runs_through_declarative_adapter(
             "required": ["path", "content", "line_count"],
         },
     )
-    adapter = LegacyToolAdapterFactory(
-        tools,
+    adapter = CapabilityToolAdapterFactory(
+        "test-runtime",
+        {"read": lambda arguments: tool(**arguments)},
         {
             input_definition.id: build_contract_adapter(input_definition),
             output_definition.id: build_contract_adapter(output_definition),
@@ -282,7 +289,7 @@ async def test_existing_file_tool_runs_through_declarative_adapter(
             id="read-text",
             version="1.0.0",
             description="Reads text",
-            implementation="legacy:read",
+            implementation="capability:test-runtime:read",
             input_contract=input_definition.id,
             output_contract=output_definition.id,
             side_effect="pure_read",
