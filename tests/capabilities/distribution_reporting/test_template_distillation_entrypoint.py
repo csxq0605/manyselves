@@ -1798,20 +1798,20 @@ async def test_template_distillation_materializes_fourteen_skills_boundary_and_s
     result = TemplateSkillMaterialization.model_validate(outcome.result)
 
     assert result.skill_refs == tuple(
-        f"Work/report-template-role-skills/{skill_id}/SKILL.md"
+        f"Inputs/report-template-role-skills/{skill_id}/SKILL.md"
         for skill_id in TEMPLATE_ROLE_SKILL_IDS
     )
-    assert result.boundary_ref == "Work/report-template-role-skills/boundary.json"
-    assert result.source_ref == "Work/report-template-role-skills/source.json"
+    assert result.boundary_ref == "Inputs/report-template-role-skills/boundary.json"
+    assert result.source_ref == "Inputs/report-template-role-skills/source.json"
     assert all((tmp_path / ref).is_file() for ref in result.skill_refs)
 
     boundary = json.loads(
-        (tmp_path / "Work/report-template-role-skills/boundary.json").read_text(
+        (tmp_path / "Inputs/report-template-role-skills/boundary.json").read_text(
             encoding="utf-8"
         )
     )
     source = json.loads(
-        (tmp_path / "Work/report-template-role-skills/source.json").read_text(
+        (tmp_path / "Inputs/report-template-role-skills/source.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1826,9 +1826,9 @@ async def test_template_distillation_materializes_fourteen_skills_boundary_and_s
         ),
         "producer": "template-distiller",
         "task_id": "template-skill-distillation",
-        "skill_root": "Work/report-template-role-skills",
+        "skill_root": "Inputs/report-template-role-skills",
         "boundary_policy_version": 1,
-        "boundary_ref": "Work/report-template-role-skills/boundary.json",
+        "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
     }
 
 

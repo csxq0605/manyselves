@@ -18,7 +18,7 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
             "producer": "separate template-distiller action",
             "consumer": "module specialists/auditors, chief editor, and final auditor",
             "input": (
-                "hash-verified Work/report-template-role-skills files selected by exact "
+                "user-managed Inputs/report-template-role-skills files selected by exact "
                 "module/role identity and embedded whole in task inline_context"
             ),
             "output": (

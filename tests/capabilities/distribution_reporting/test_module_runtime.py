@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -328,7 +327,7 @@ def _author_request() -> ReportRequest:
 
 
 def _write_author_skill_fixture(workspace: Path) -> None:
-    root = workspace / "Work/report-template-role-skills"
+    root = workspace / "Inputs/report-template-role-skills"
     root.mkdir(parents=True, exist_ok=True)
     manifest = TemplateSkillBoundaryManifest(
         transferred_categories=[
@@ -353,27 +352,35 @@ def _write_author_skill_fixture(workspace: Path) -> None:
         ),
     )
     skill_text = "可复用的方法说明与无事实示例。" + (" 方法步骤。" * 80)
-    hashes: dict[str, str] = {}
     for skill_id in TEMPLATE_ROLE_SKILL_IDS:
         path = root / skill_id / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(skill_text, encoding="utf-8")
-        hashes[f"{skill_id}/SKILL.md"] = hashlib.sha256(path.read_bytes()).hexdigest()
     boundary_path = root / "boundary.json"
     boundary_path.write_text(
         json.dumps(manifest.model_dump(mode="json")),
         encoding="utf-8",
     )
-    hashes["boundary.json"] = hashlib.sha256(boundary_path.read_bytes()).hexdigest()
-    (root / "source.json").write_text(
-        json.dumps(
-            {
-                "boundary_policy_version": manifest.policy_version,
-                "boundary_ref": "Work/report-template-role-skills/boundary.json",
-                "artifact_sha256": hashes,
-            }
-        ),
-        encoding="utf-8",
+
+
+def test_template_skill_package_can_be_supplied_directly_in_inputs(
+    tmp_path: Path,
+) -> None:
+    """A complete user-supplied package needs no distillation source metadata."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+        load_template_skill,
+    )
+
+    _write_author_skill_fixture(tmp_path)
+    state: dict[str, Any] = {}
+
+    assert load_template_skill(tmp_path, state) is True
+    assert not (
+        tmp_path / "Inputs/report-template-role-skills/source.json"
+    ).exists()
+    assert state["template_skill_refs"]["author-2.1"] == (
+        "Inputs/report-template-role-skills/author-2.1/SKILL.md"
     )
 
 

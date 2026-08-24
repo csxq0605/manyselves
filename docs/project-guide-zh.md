@@ -179,12 +179,12 @@ GROQ_API_KEY
 
 ```text
 项目/
-├── Inputs/                         # 客户事实和原始资料
+├── Inputs/                         # 客户事实、原始资料和可复用输入
+│   └── report-template-role-skills/ # 可手工放入或由模板蒸馏生成的角色 Skill
 ├── Knowledge/                      # 项目参考资料；不能替代客户事实
 ├── Templates/                      # 项目模板和模板蒸馏来源
 ├── Work/                           # 可恢复状态、证据、运行快照和版本
 │   ├── runs/<run-id>/
-│   ├── report-template-role-skills/
 │   └── report-versions/<version-id>/
 ├── Outputs/
 │   ├── Modules/
@@ -399,7 +399,9 @@ uv run manyselves --help
 
 ### 5.5 首次生成完整报告
 
-完整写作只读取已经蒸馏并固定在 `Work/report-template-role-skills/` 的十四份完整 Skill：五份作者 Skill、五份模块 Auditor Skill、三份 Chief Chapter 1/3/4 Skill 和一份共享 Final Auditor Skill。Chief lane 只注入对应章节 Skill；Final lane 共用验收 Skill，并接收不同章节审查焦点。因此，首次使用新模板时分两次向 Main 提出：
+完整写作只读取 `Inputs/report-template-role-skills/` 中的十四份完整 Skill 和 `boundary.json`：五份作者 Skill、五份模块 Auditor Skill、三份 Chief Chapter 1/3/4 Skill 和一份共享 Final Auditor Skill。你可以直接把完整 Skill 包放进这个输入目录，也可以针对新模板执行一次蒸馏；蒸馏结果同样写入该目录，后续报告运行会直接复用，不需要每次重新蒸馏。`source.json` 仅记录自动蒸馏来源，不是手工 Skill 包的必需文件。Chief lane 只注入对应章节 Skill；Final lane 共用验收 Skill，并接收不同章节审查焦点。
+
+只有需要从新模板自动生成或更新 Skill 包时，才分两次向 Main 提出：
 
 1. “只学习并更新 `Templates/配电安全专家咨询报告(专家优化版).docx` 的模板写作能力，不生成报告。”
 2. 蒸馏成功后：“从 `Inputs/` 重新生成 2.1–2.5 完整配电安全咨询报告，缺少证据时先询问我。”

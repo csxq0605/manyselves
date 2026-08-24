@@ -43,13 +43,16 @@ from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_c
     KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
+    TEMPLATE_SKILL_BOUNDARY,
+    TEMPLATE_SKILL_ROOT,
+    TEMPLATE_SKILL_SOURCE,
+    template_skill_ref,
+)
 from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
     request_user_supplements,
     user_supplement_constraints,
 )
-
-TEMPLATE_SKILL_ROOT = Path("Work/report-template-role-skills")
-TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
 
 
 class ModuleAuthoringPreparationError(RuntimeError):
@@ -69,6 +72,12 @@ class ModuleAuthoringPreparation:
     revision: int
     review: bool
     checkpoint: bool
+
+
+def _sha256(path: Path) -> str:
+    """Preserve the existing draft-input fingerprint used for resume identity."""
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _request(state: dict[str, Any]) -> ReportRequest:
@@ -92,22 +101,16 @@ def _dispatch(value: Any) -> Any:
     return value
 
 
-def _sha256(path: Path) -> str:
-    """Use the existing draft-artifact fingerprint semantics unchanged."""
-
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
-    """Load the fixed template Skill and its existing boundary manifest."""
+    """Load a complete user-managed template Skill package from Inputs."""
 
     workspace = Path(workspace).resolve()
     refs = {
-        skill_id: TEMPLATE_SKILL_ROOT / skill_id / "SKILL.md"
+        skill_id: template_skill_ref(skill_id)
         for skill_id in TEMPLATE_ROLE_SKILL_IDS
     }
-    boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
-    required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
+    boundary_ref = TEMPLATE_SKILL_BOUNDARY
+    required = [*refs.values(), boundary_ref]
     missing = [
         path.as_posix()
         for path in required
@@ -115,57 +118,19 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
     ]
     if missing:
         raise ModuleAuthoringPreparationError(
-            "固定模板写作 Skill 与当前边界契约不兼容，缺少文件："
-            f"{', '.join(missing)}；请先单独运行 "
-            "operation=distill_template_skill 更新固定 Skill"
+            "Inputs 中的模板写作 Skill 包不完整，缺少文件："
+            f"{', '.join(missing)}；请补齐 Inputs/report-template-role-skills "
+            "或单独运行 operation=distill_template_skill 生成 Skill 包"
         )
     try:
         boundary = TemplateSkillBoundaryManifest.model_validate_json(
             (workspace / boundary_ref).read_text(encoding="utf-8")
         )
-        source_payload = json.loads(
-            (workspace / TEMPLATE_SKILL_SOURCE).read_text(encoding="utf-8")
-        )
-        if not isinstance(source_payload, dict):
-            raise ValueError("source.json must contain one JSON object")
-        expected_hashes = {
-            path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): _sha256(
-                workspace / path
-            )
-            for path in [*refs.values(), boundary_ref]
-        }
     except (OSError, ValueError, AttributeError) as exc:
         raise ModuleAuthoringPreparationError(
-            "固定模板写作 Skill 的 boundary.json 或 source.json 无法解析；"
-            "请先单独运行 operation=distill_template_skill 更新固定 Skill"
+            "Inputs 中模板写作 Skill 的 boundary.json 无法解析；"
+            "请修正该文件或单独运行 operation=distill_template_skill 重新生成"
         ) from exc
-    mismatched = [
-        field
-        for field, actual, expected in (
-            (
-                "boundary_policy_version",
-                source_payload.get("boundary_policy_version"),
-                boundary.policy_version,
-            ),
-            (
-                "boundary_ref",
-                source_payload.get("boundary_ref"),
-                boundary_ref.as_posix(),
-            ),
-            (
-                "artifact_sha256",
-                source_payload.get("artifact_sha256"),
-                expected_hashes,
-            ),
-        )
-        if actual != expected
-    ]
-    if mismatched:
-        raise ModuleAuthoringPreparationError(
-            "固定模板写作 Skill 的 source.json 与当前边界契约或产物哈希不一致："
-            f"{', '.join(mismatched)}；请先单独运行 "
-            "operation=distill_template_skill 更新固定 Skill"
-        )
     template_skill_text = {
         key: (workspace / path).read_text(encoding="utf-8")
         for key, path in refs.items()

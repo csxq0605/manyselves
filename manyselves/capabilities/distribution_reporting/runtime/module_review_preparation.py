@@ -52,6 +52,9 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
     SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
+    template_skill_ref,
+)
 from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
     request_user_supplements,
     user_supplement_constraints,
@@ -183,7 +186,7 @@ def _template_skill_context(
     texts = state.get("template_skill_text", {})
     content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
     if not content:
-        path = workspace / "Work/report-template-role-skills" / skill_id / "SKILL.md"
+        path = workspace / template_skill_ref(skill_id)
         if path.is_file():
             content = path.read_text(encoding="utf-8")
     if not content:

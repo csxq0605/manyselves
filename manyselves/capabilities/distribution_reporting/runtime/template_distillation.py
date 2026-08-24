@@ -65,6 +65,7 @@ from .agent_bridge import TemplateDistillationAgentBridge
 from .input_snapshot import RunInputSnapshotStore
 from .public_entrypoints import project_public_template_distillation_input
 from .storage import ReportingStore
+from .template_skill_paths import TEMPLATE_SKILL_ROOT as TEMPLATE_SKILL_ROOT_PATH
 
 TEMPLATE_DISTILLATION_TASK_ID = "template-skill-distillation"
 TEMPLATE_DISTILLER_AGENT_ID = "template-distiller"
@@ -78,7 +79,7 @@ TEMPLATE_DISTILLATION_INSPECTION_REF = (
 TEMPLATE_DISTILLATION_SNAPSHOT_REF = (
     "Work/runs/{run_id}/templates/template-for-skill.docx"
 )
-TEMPLATE_SKILL_ROOT = "Work/report-template-role-skills"
+TEMPLATE_SKILL_ROOT = TEMPLATE_SKILL_ROOT_PATH.as_posix()
 TEMPLATE_DISTILLATION_ALLOWED_TOOLS = (
     "inspect_document",
     "write_result_part",
@@ -253,12 +254,12 @@ def materialize_template_skill_submission(
 
     for skill_id in TEMPLATE_ROLE_SKILL_IDS:
         store.write_text(
-            f"{TEMPLATE_SKILL_ROOT}/{skill_id}/SKILL.md",
+            (TEMPLATE_SKILL_ROOT_PATH / skill_id / "SKILL.md").as_posix(),
             submission.skills[skill_id],
         )
 
-    boundary_ref = f"{TEMPLATE_SKILL_ROOT}/boundary.json"
-    source_ref = f"{TEMPLATE_SKILL_ROOT}/source.json"
+    boundary_ref = (TEMPLATE_SKILL_ROOT_PATH / "boundary.json").as_posix()
+    source_ref = (TEMPLATE_SKILL_ROOT_PATH / "source.json").as_posix()
     store.write_json(
         boundary_ref,
         submission.boundary_manifest.model_dump(mode="json"),
@@ -276,7 +277,7 @@ def materialize_template_skill_submission(
     store.write_json(source_ref, source)
     return TemplateSkillMaterialization(
         skill_refs=tuple(
-            f"{TEMPLATE_SKILL_ROOT}/{skill_id}/SKILL.md"
+            (TEMPLATE_SKILL_ROOT_PATH / skill_id / "SKILL.md").as_posix()
             for skill_id in TEMPLATE_ROLE_SKILL_IDS
         ),
         boundary_ref=boundary_ref,

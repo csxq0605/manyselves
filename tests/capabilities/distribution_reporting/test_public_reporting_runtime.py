@@ -1,7 +1,6 @@
 """Characterization for the production public Reporting runtime binding."""
 
 import asyncio
-import hashlib
 import json
 from importlib.util import find_spec
 from pathlib import Path
@@ -648,7 +647,7 @@ def _patch_minimal_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _write_complete_template_skill_fixture(workspace: Path) -> None:
-    root = workspace / "Work/report-template-role-skills"
+    root = workspace / "Inputs/report-template-role-skills"
     boundary = TemplateSkillBoundaryManifest(
         transferred_categories=[
             "analysis_method",
@@ -671,7 +670,6 @@ def _write_complete_template_skill_fixture(workspace: Path) -> None:
             "must remain scoped to the current run inputs."
         ),
     )
-    artifact_sha256: dict[str, str] = {}
     for skill_id in TEMPLATE_ROLE_SKILL_IDS:
         path = root / skill_id / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -681,24 +679,8 @@ def _write_complete_template_skill_fixture(workspace: Path) -> None:
             else f"{skill_id}: preserve typed evidence boundaries.\n"
         )
         path.write_text(content, encoding="utf-8")
-        artifact_sha256[f"{skill_id}/SKILL.md"] = hashlib.sha256(
-            path.read_bytes()
-        ).hexdigest()
     boundary_path = root / "boundary.json"
     boundary_path.write_text(boundary.model_dump_json(), encoding="utf-8")
-    artifact_sha256["boundary.json"] = hashlib.sha256(
-        boundary_path.read_bytes()
-    ).hexdigest()
-    (root / "source.json").write_text(
-        json.dumps(
-            {
-                "boundary_policy_version": boundary.policy_version,
-                "boundary_ref": "Work/report-template-role-skills/boundary.json",
-                "artifact_sha256": artifact_sha256,
-            }
-        ),
-        encoding="utf-8",
-    )
 
 
 @pytest.mark.asyncio
@@ -1073,7 +1055,7 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
         ),
         encoding="utf-8",
     )
-    auditor_skill = tmp_path / "Work/report-template-role-skills/auditor-2.4/SKILL.md"
+    auditor_skill = tmp_path / "Inputs/report-template-role-skills/auditor-2.4/SKILL.md"
     auditor_skill.parent.mkdir(parents=True)
     auditor_skill.write_text("auditor-skill: preserve the review envelope", encoding="utf-8")
     bus = MessageBus()

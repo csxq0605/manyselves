@@ -1317,7 +1317,7 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     )
     chief_skill_path = (
         tmp_path
-        / "Work/report-template-role-skills/chief-editor-chapter-1/SKILL.md"
+        / "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md"
     )
     chief_skill_path.parent.mkdir(parents=True, exist_ok=True)
     chief_skill_path.write_text(
@@ -1326,7 +1326,7 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     )
     final_skill_path = (
         tmp_path
-        / "Work/report-template-role-skills/final-auditor/SKILL.md"
+        / "Inputs/report-template-role-skills/final-auditor/SKILL.md"
     )
     final_skill_path.parent.mkdir(parents=True, exist_ok=True)
     final_skill_path.write_text(
