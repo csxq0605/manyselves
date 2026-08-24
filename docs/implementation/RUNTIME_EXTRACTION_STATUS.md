@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**重新开放，尚未完成**
+> 状态：**自动实施进行中，尚未进入最终真实测试**
 
 ## Program
 
@@ -17,14 +17,14 @@
 
 ## Current position
 
-- Current FA work package: `FA-03 — 建立 Distribution Reporting Domain Runtime`
-- Current slice: `FA-03/M8 五个真实文件入口；module-report finding/recheck、aggregate-existing 完整 Tail 与 Template Provider composition 已完成，正在补 Module author preparation、full-report Tail 与生产 Binding`
+- Current FA work package: `FA-03 — Distribution Reporting Domain Runtime 收尾`
+- Current slice: `FA-03/M9.13 Module 异常/恢复端口与 production completed-result 接线`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `e023be9 Runtime: own completed agent result reuse`
+- HEAD at slice start: `7978858 Tests: align SSE lifecycle with workflow runtime`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `Characterization First 完成 Module author preparation 与 full-report Tail composition；随后接齐 Agent recovery/persistence 并把五个文件入口接入生产 Generic Binding`
+- Next automatic action: `补齐真实 Binding 暴露的 8 个 Module lifecycle Tool 端口，并从现有编排边界接通完整 TaskCorrelation 的 completed-result reuse；随后重做自动架构审计`
 
 ## Why the prior completion claim is reopened
 
@@ -77,11 +77,11 @@
 | FA-00 Facts and final specification | `completed` | 六份规范一致；三项生产耦合审计；完成矩阵；diff-check |
 | FA-01 Architecture boundary characterization | `completed` | 5 项生产边界 Characterization 已取得真实 RED；Contract 物理归属现已正式转绿，其余 4 项继续以 strict xfail 逐项收敛；Capability 顶层导入纯度已转绿 |
 | FA-02 Generic Agent/Conversation/Recovery Runtime | `completed` | Session/turn、定义 Tool/Agent、correction/continuation/no-progress、pre-session result reuse 均由中立 Runtime 生产主调；focused/affected 与生产 spy 证据 |
-| FA-03 Distribution Reporting Domain Runtime | `in progress` | M8.1 `render-existing` 已由文件 Workflow + Compiler + Host 全链执行；其余四入口与统一 Binding 继续迁移 |
-| FA-04 Generic Capability Runtime Binding | `pending` | 两个 Capability 同一 start/query/input/output/events/cost 接口 |
-| FA-05 Ownership convergence and legacy deletion | `pending` | 生产/发布图无旧 Runner/Facade/selector/adapter；领域代码归 Capability |
-| FA-06 Generic FastAPI/React surface | `pending` | Schema/WAITING/Output/Event/Cost，无 Capability-ID 流程分支 |
-| FA-07 Completion audit and final real test | `pending` | focused/affected checks、build、发布物审计、一次真实测试 |
+| FA-03 Distribution Reporting Domain Runtime | `in progress` | 五个公开文件入口已接入 Compiler/Generic Host；Module 异常/恢复仍缺 8 个生产 Tool 端口，completed-result loader 尚未从生产 Binding 获得完整 correlation |
+| FA-04 Generic Capability Runtime Binding | `in progress` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口且不再构造 ReportingFacade；仍需补齐上述 production recovery composition |
+| FA-05 Ownership convergence and legacy deletion | `completed` | 生产/发布图无旧 Runner/Facade/selector/adapter；`manyselves/core/reporting` 与旧专属测试已物理删除 |
+| FA-06 Generic FastAPI/React surface | `completed` | Schema/WAITING/Output/Event/Cost 由通用 Run Workspace 投影，无 Capability-ID 流程分支或旧 `/api/v1/reporting` 路由 |
+| FA-07 Completion audit and final real test | `pending` | 自动架构关键路径当前 `123 passed`，但独立审计发现两项生产缺口；修复后重审，再执行真实 Provider、真实项目、浏览器测试 |
 
 ## Historical evidence retained
 
@@ -246,6 +246,7 @@
 - FA-05/M9.10 物理删除已无生产入口的 `manyselves/core/reporting` 全部 44 个 Python 源文件及 `tests/reporting` 89 个 Legacy 专属测试文件，并删除混合了大量旧 Runner 兼容比较的 `test_definition_package.py`；Capability 测试改为直接验证 `DeliveryTools`、Module revision、Reporting tail specializer、typed Agent bridges 与 Capability Tool，不再实例化或 monkeypatch 已不存在的 Runner。Characterization First 先以“Core Reporting Python 包必须为空”和“声明式 Runner 不得继承 Legacy”得到 `2 failed`；删除后架构 `12 passed`，关键 Definition/Compiler/Generic Host/Capability/Provider/Delivery 受影响选择 `103 passed`，物理 ownership 与 run-135 Tool contract 选择 `62 passed`，Capability 测试目录 `256 tests collected` 无收集错误。只清除了三个精确的可再生 `__pycache__` 目录以消除 namespace package 假象；没有删除用户数据，也未新增 Gate、Hash/CAS、锁/lease、validator、重试、依赖或公共接口，未跑全量。下一步清理旧 Web 测试/Release 清单与历史产品矩阵中的失效 Reporting 路径，再做最终自动架构审计。
 - FA-05/M9.11 清理混合 Web 合同文件中已经随生产路由删除的 `_ReportingController`、`ReportingFacade` 生命周期支撑和 `/api/v1/reporting/*` 快照/启动/取消测试；保留 Conversation、Agent、Checkpoint、Python、Settings 以及 `/api/v1/runs` 通用 Workflow HTTP 测试，并将项目切换断言对齐当前 `WorkflowProjectionFacade.workspace`。Release 的 runtime-shutdown 证据改指现有 Application RuntimeHost 的 orderly-drain Characterization，不以删除的旧 Facade 测试维持假覆盖。Luna 只读审计先按函数边界区分 Legacy 专属与通用合同；修改后目标文件 `96 tests collected` 无收集错误，项目重绑、两个生产 Capability、项目隔离、嵌套 WAITING 同 Run 恢复和 release 证据 focused `14 passed`，定向 Ruff 与 `git diff --check` 通过，未跑全量。没有恢复兼容路由，也未新增 Gate、Hash/CAS、锁/lease、validator、重试、依赖或公共接口；下一步清理 SSE 测试和当前实施/发布文档的旧引用。
 - FA-05/M9.12 将 SSE/Application lifespan 的通用资源所有权 Characterization 从已删除的 `ReportingFacade` 机械对齐到 `WorkflowProjectionFacade`：清理顺序现在验证 producers→Capability runtime→Python→Conversation→broker→bus，启动失败、清理失败、原始异常保留、secret-safe diagnostics、pending cleanup retry 和 single-stop Host 兼容语义均继续保留。测试 double 只补齐当前业务中立 `RuntimeServicesView` 已要求的 `get_loop/config_manager` 端口，Peer query/reply session 测试也移除误导性的 Reporting 命名。旧测试先得到 `ReportingFacade` AttributeError 与缺失 runtime view port 的 RED；GREEN 后相关 lifecycle/peer focused `14 passed`，定向 Ruff 与 `git diff --check` 通过，未跑全量。生产代码未改，没有新增 Gate、Hash/CAS、锁/lease、validator、重试、依赖或公共接口；下一步按只读审计更新当前实施/发布文档引用并执行最终自动架构审计。
+- FA-07/M9.13a 对齐当前网页交接与发布矩阵：最终真实入口从已不存在的 `distribution-reporting` 更正为 Capability 声明的 `full-report`，表单不再要求由 Workflow ID 固定并从公共 Schema 隐藏的 `operation`；REPORT-001～010 的证据改为 Generic Workflow API/RunWorkspace，并新增一条 Playwright 浏览器 Characterization，实际从 `full-report` Schema 表单启动，经通用 `/runs` 投影 completed 状态、事件、DOCX Output 与 token/cost。Feature matrix 先因 Reporting 行标为 tested 却缺 browser evidence 得到 RED；浏览器首次安装运行时后又以严格 locator 歧义 RED，修正为 heading role 后 focused Playwright `1 passed`，matrix `3 passed`，定向 ESLint、TypeScript 与 `git diff --check` 通过。该浏览器测试使用受控 API fixture，不是最终真实 Provider 验收；独立架构审计同时发现 Module 8 个生命周期端口和 production completed-result correlation 尚未闭环，因此 Program 继续保持 in progress。未新增生产依赖、Gate、Hash/CAS、锁/lease、validator、重试或公共接口。
 - FA-04/A6 让 `PublicReportingWorkflowRuntime.start` 在执行 full/module 文件 Workflow 前创建真实 Run 输入快照：直接复用既有 `RunInputSnapshotStore.freeze(run_id)` 固化 `Inputs/Knowledge/Templates`，再进入同 Run Generic Host；Preparation 收到的 loader 随后可读取同一个 manifest，不再依赖测试预先注入快照。Characterization First 在旧实现以 manifest 不存在得到 `2 failed`，GREEN 后 full/module 均证明 freeze 先于 execute、同 Run load 可恢复；主线程交叉选择 `3 passed`，定向 Ruff、compileall 与 `git diff --check` 通过。审计时删除了用 `model_construct` 绕过 `ReportRequest` 校验的非法 source-ref case；render/aggregate 的显式 refs 仍由各自 runtime 负责。本片只调用既有 snapshot/CAS/lock 机制，未新增或修改 Hash/CAS、锁/lease、Gate、validator、重试、依赖、Action Kind 或公共接口。
 - FA-04/A7 新增 application-facing `PublicAggregateExistingWorkflowRuntime`：以 `aggregate-existing-{command_id.hex}` 分配 Run，验证公开 user Schema，把 `request + run-id` 注入文件 root，在 Generic Host 前用原 `RunInputSnapshotStore.freeze(extra_refs=...)` 固化五个显式 `source_module_refs` 或默认 `Outputs/Modules/2.1～2.5.md`，并复用现有 Aggregate/Final/Delivery Tool factory、subworkflow Plan、注入的 Agent invokers与通用 state/event store。该 runtime 还提供与其他文件入口一致的 async input 和 run/output/cost 投影；无 WAITING 时使用既有 `CapabilityRunInputError`。Characterization First 先因类不存在取得 RED；GREEN 后合法五模块输入已推进到第一个 `missing agent adapter` 真实边界，snapshot、root/subworkflow 持久状态和查询接口均可检查；Luna focused `3 passed`，主线程新入口选择 `1 passed`，定向 Ruff、compileall 与 `git diff --check` 通过。Aggregate Provider composition 仍待接线，本片无 Legacy fallback，未复制或新增 Hash/CAS、锁/lease、Gate、validator、重试、依赖、Action Kind 或公共接口。
 - FA-02 新增 `runtime/agent_execution.py`：服务直接管理 `(workflow_id, conversation_key)` session registry、AgentLoop 创建/恢复/启动/复用、单轮消息发布与 terminal 等待、turn completion 和 workflow close；该模块只依赖中立 `AgentSessionLoop`/`AgentMessageBus` 结构协议，不导入历史 `core` 具体类。Reporting 生产路径已改用 `start_or_restore`、`dispatch_turn`、`wait_until_turn_complete` 和 `close_workflow`，不再直接 `loop.start/stop`、`bus.wait_for` 或构造 `UserMessage`。

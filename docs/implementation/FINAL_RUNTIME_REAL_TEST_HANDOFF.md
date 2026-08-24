@@ -54,11 +54,10 @@ uv run python run_web.py \
 可将数值改为 `12` 再启动一次；预期输出为 `12`，同样不产生 Provider
 调用；tokens 仍为 `0`，金额显示规则与上面相同。
 
-### 3. 测试 `distribution-reporting`
+### 3. 测试 `full-report`
 
-1. 仍在 **工作流** 页面选择 Workflow `distribution-reporting`。
+1. 仍在 **工作流** 页面选择 Workflow `full-report`。
 2. 使用页面根据 Schema 生成的通用表单填写：
-   - **operation**：`full_report`
    - **instruction**：针对当前项目生成完整供配电评估报告，并保持事实可追溯、明确不确定性
    - **missing_evidence_policy**：`draft`
    - **cost_control_mode**：`observe`
@@ -91,7 +90,7 @@ uv run python run_web.py \
 
 - `parameter-adjustment` 能通过通用表单完成并得到预期输出，没有 Provider 调用且
   tokens 为 `0`；未配置定价时允许金额显示“成本未知”；
-- `distribution-reporting` 能通过通用 Schema 表单启动；
+- `full-report` 能通过通用 Schema 表单启动；
 - Reporting Run 的状态、事件、输出、成本能够在页面中持续投影；
 - 若出现 WAITING，可以在同一页面继续并保留同一个 Run；
 - 完成结果对应当前页面显示的 Run，而不是用户手动选择的旧结果。
