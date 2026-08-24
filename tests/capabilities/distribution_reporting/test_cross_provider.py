@@ -47,7 +47,12 @@ from manyselves.kernel.conversations import (
     ConversationMode,
     ConversationRecord,
 )
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    RecoveryRule,
+    TaskDefinition,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 from tests.capabilities.distribution_reporting.test_cross_recheck import (
     _frozen_owner_input,
@@ -82,6 +87,89 @@ def _state(run_id: str) -> dict[str, object]:
             }
             for module_id in REPORT_TAXONOMY
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_shares_declared_recovery_with_tool_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import cross_provider
+    from manyselves.core.tools.registry import ToolRegistry
+
+    captured: dict[str, object] = {}
+
+    def capture_tools(*args, **kwargs):
+        del args
+        captured["dependencies"] = kwargs["dependencies"]
+        return ToolRegistry()
+
+    monkeypatch.setattr(cross_provider, "build_module_provider_tools", capture_tools)
+    bus = MessageBus()
+    runtime = cross_provider.CrossProviderRuntime(
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=bus,
+            active_provider=object(),
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        )
+    )
+    context = CrossOwnerRuntime(tmp_path).prepare_initial(
+        {
+            "state": CrossOwnerRuntime(tmp_path).prepare(_state("cross-schema-run")),
+            "owner_module_id": "2.1",
+        }
+    )
+    agent = AgentDefinition(
+        id="cross-module-reviewer",
+        version="1.0.0",
+        description="Cross owner reviewer",
+        instructions="Review cross-module consistency.",
+        tools=["submit_result"],
+    )
+    task = TaskDefinition(
+        id="cross-owner-runtime-initial-review",
+        version="1.0.0",
+        description="Cross owner initial",
+        agent=agent.id,
+        objective="review cross-module interfaces",
+        input_contract="cross_owner_input",
+        output_contract="declarative_cross_owner_initial_agent_result",
+    )
+    policy = RecoveryPolicyDefinition(
+        id="cross-schema-recovery",
+        version="1.0.0",
+        description="correct invalid structured output",
+        rules={
+            "invalid_structured_output": RecoveryRule(action="correct"),
+        },
+    )
+    conversation = ConversationRecord(
+        conversation_id="cross-schema-conversation",
+        key=ConversationKey(
+            agent_id=agent.id,
+            value="cross-owner-2.1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id="cross-schema-run",
+    )
+
+    bridge = runtime._bridge(
+        agent,
+        task,
+        context,
+        conversation,
+        recovery_policy=policy,
+    )
+    dependencies = captured["dependencies"]
+    callback = dependencies.recovery_event_callback
+    decision = await callback("invalid_structured_output", {"task_id": task.id})
+
+    assert decision.action.value == "correct"
+    assert bridge.recovery_driver.snapshot_attempts() == {
+        "invalid_structured_output": 1,
     }
 
 
