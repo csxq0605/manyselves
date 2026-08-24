@@ -1,6 +1,7 @@
 """Effect execution, state persistence, and event logging around the Kernel."""
 
 import asyncio
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -155,6 +156,7 @@ class WorkflowRuntimeHost:
                     state,
                     context,
                     plan_bundle=plan.subworkflow_plans,
+                    checkpoint=self._state_store.save,
                 )
             except Exception as exc:
                 failure_result = None
@@ -188,6 +190,7 @@ class WorkflowRuntimeHost:
         context: RuntimeContext,
         *,
         plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
     ) -> ActionResult:
         if isinstance(action, ParallelAction):
             return await self._execute_parallel(
@@ -196,6 +199,7 @@ class WorkflowRuntimeHost:
                 state,
                 context,
                 plan_bundle=plan_bundle,
+                checkpoint=checkpoint,
             )
         if isinstance(action, JoinAction):
             try:
@@ -218,6 +222,7 @@ class WorkflowRuntimeHost:
                 state,
                 context,
                 plan_bundle=plan_bundle,
+                checkpoint=checkpoint,
             )
         return await self._executors.require(action.kind).execute(
             action,
@@ -233,14 +238,17 @@ class WorkflowRuntimeHost:
         context: RuntimeContext,
         *,
         plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
     ) -> ActionResult:
         concurrency = plan.parallel_concurrency.get(
             action.id,
             action.max_concurrency or len(action.branches),
         )
         semaphore = asyncio.Semaphore(concurrency)
-        existing_results = state.parallel_results.get(action.id, {})
-        existing_states = state.parallel_states.get(action.id, {})
+        existing_results = deepcopy(state.parallel_results.get(action.id, {}))
+        existing_states = deepcopy(state.parallel_states.get(action.id, {}))
+        checkpoint_results = deepcopy(existing_results)
+        checkpoint_states = deepcopy(existing_states)
         join_action = next(
             candidate for candidate in plan.actions if candidate.id == action.join
         )
@@ -264,13 +272,32 @@ class WorkflowRuntimeHost:
                     branch_state.next_action_id = start_action_id
                 else:
                     branch_state = WorkflowState.model_validate(saved_branch)
+
+                def checkpoint_branch(current: WorkflowState) -> None:
+                    checkpoint_states[branch_id] = current.model_dump(mode="json")
+                    if current.status is WorkflowStatus.COMPLETED:
+                        variable = join_action.inputs[branch_id]
+                        checkpoint_results[branch_id] = {
+                            variable: deepcopy(current.variables[variable])
+                        }
+                    parallel_state = state.model_copy(deep=True)
+                    parallel_state.parallel_states[action.id] = deepcopy(
+                        checkpoint_states
+                    )
+                    parallel_state.parallel_results[action.id] = deepcopy(
+                        checkpoint_results
+                    )
+                    checkpoint(parallel_state)
+
                 completed = await self._execute_nested(
                     plan,
                     branch_state,
                     context,
                     stop_at=action.join,
                     plan_bundle=plan_bundle,
+                    checkpoint=checkpoint_branch,
                 )
+                checkpoint_branch(completed)
                 return branch_id, completed
 
         branch_ids = tuple(action.branches)
@@ -355,6 +382,7 @@ class WorkflowRuntimeHost:
         context: RuntimeContext,
         *,
         plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
     ) -> ActionResult:
         try:
             child_plan = plan_bundle[action.workflow]
@@ -382,12 +410,20 @@ class WorkflowRuntimeHost:
                         for child_variable, parent_variable in action.input_variables.items()
                     }
                 )
+        def checkpoint_child(current: WorkflowState) -> None:
+            parent_state = state.model_copy(deep=True)
+            parent_state.subworkflow_states[action.id] = current.model_dump(
+                mode="json"
+            )
+            checkpoint(parent_state)
+
         completed = await self._execute_nested(
             child_plan,
             child_state,
             context,
             emit_workflow_events=True,
             plan_bundle=plan_bundle,
+            checkpoint=checkpoint_child,
         )
         if completed.status is WorkflowStatus.WAITING:
             return ActionResult(
@@ -427,6 +463,7 @@ class WorkflowRuntimeHost:
         stop_at: str | None = None,
         emit_workflow_events: bool = False,
         plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
     ) -> WorkflowState:
         actions = {action.id: action for action in plan.actions}
         if emit_workflow_events:
@@ -435,6 +472,7 @@ class WorkflowRuntimeHost:
         while True:
             transition = self._kernel.transition(plan, state, event)
             state = transition.state
+            checkpoint(state)
             if isinstance(event, ActionSucceeded):
                 action = actions[event.action_id]
                 self._emit_action_events(state, action.id, event.result)
@@ -470,6 +508,7 @@ class WorkflowRuntimeHost:
                     state,
                     context,
                     plan_bundle=plan_bundle,
+                    checkpoint=checkpoint,
                 )
             except Exception as exc:
                 failure_result = None

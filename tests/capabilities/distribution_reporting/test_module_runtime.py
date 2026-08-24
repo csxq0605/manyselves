@@ -2304,6 +2304,48 @@ def _runtime_module_submission(
     )
 
 
+def test_module_runtime_restores_promoted_author_result_on_same_run_resume(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        AgentResult,
+        AgentRunStatus,
+    )
+
+    runtime, _execution, _session_factory, _agent_invokers = _build_runtime(tmp_path)
+    run_id = "module-author-promoted-resume"
+    submission = _runtime_module_submission(revision=0)
+    result_path = tmp_path / f"Work/runs/{run_id}/results/module-2.4.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        AgentResult(
+            task_id="module-2.4",
+            run_id=run_id,
+            agent_id="module-2.4-specialist",
+            session_id="public-reporting:specialist-2.4",
+            status=AgentRunStatus.COMPLETED,
+            payload=submission,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    reporting_state = {
+        "run_id": run_id,
+        "resume": True,
+        "request": ReportRequest(
+            operation="module_report",
+            instruction="resume module 2.4",
+            target_modules=["2.4"],
+            missing_evidence_policy="draft",
+            preparation_mode="serial",
+        ),
+        "module_dispatch": {"already": "prepared"},
+    }
+
+    restored = runtime.prepare_lanes(reporting_state)
+
+    assert restored["specialist_submissions"] == {"2.4": submission}
+
+
 @pytest.mark.parametrize(
     ("next_action", "expected_status"),
     (("completed", "reviewed"), ("revise", "revision_pending")),

@@ -831,6 +831,139 @@ async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
 
 
 @pytest.mark.asyncio
+async def test_runtime_host_checkpoints_completed_parallel_sibling_before_join(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    child = WorkflowDefinition(
+        id="checkpointed-parallel-child",
+        version="1.0.0",
+        description="One branch completes while its sibling remains active",
+        state={"left-input": 1, "right-input": 2},
+        actions=[
+            {
+                "id": "parallel",
+                "kind": "parallel",
+                "branches": {"left": "left", "right": "right"},
+                "join": "join",
+            },
+            {
+                "id": "left",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "left-input",
+                "output_variable": "left-output",
+            },
+            {"id": "left-done", "kind": "goto", "target": "join"},
+            {
+                "id": "right",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "right-done", "kind": "goto", "target": "join"},
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="checkpointed-parallel-parent",
+        version="1.0.0",
+        description="Persist active parallel child progress in the root Run",
+        state={"child-input": {}},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "child-input",
+                "child_input_variable": "unused",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "parent-finish",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    left_completed = asyncio.Event()
+    right_entered = asyncio.Event()
+    release_right = asyncio.Event()
+    calls = {1: 0, 2: 0}
+
+    async def controlled_double(value: int) -> int:
+        calls[value] += 1
+        if value == 1:
+            left_completed.set()
+            return 2
+        await left_completed.wait()
+        right_entered.set()
+        await release_right.wait()
+        return 4
+
+    context = RuntimeContext(
+        tools={"double": controlled_double},
+        contracts=contracts,
+        definitions=registry,
+    )
+    execution = asyncio.create_task(
+        WorkflowRuntimeHost(
+            executors,
+            store,
+            InMemoryWorkflowEventSink(),
+        ).execute(
+            parent_plan,
+            WorkflowState.for_plan("checkpointed-parallel-run", parent_plan),
+            context,
+        )
+    )
+    await asyncio.wait_for(right_entered.wait(), timeout=1)
+    await asyncio.sleep(0)
+    interrupted = store.load("checkpointed-parallel-run")
+    execution.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+
+    child_checkpoint = interrupted.subworkflow_states["call-child"]
+    assert child_checkpoint["parallel_states"]["parallel"]["left"][
+        "status"
+    ] == "completed"
+    assert child_checkpoint["parallel_results"]["parallel"]["left"] == {
+        "left-output": 2
+    }
+    assert child_checkpoint["parallel_states"]["parallel"]["right"][
+        "status"
+    ] == "running"
+
+    release_right.set()
+    completed = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(parent_plan, interrupted, context)
+
+    assert completed.outputs == {"result": {"left": 2, "right": 4}}
+    assert calls == {1: 1, 2: 2}
+
+
+@pytest.mark.asyncio
 async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
     tmp_path: Path,
 ) -> None:
@@ -923,6 +1056,128 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         "subworkflow-host-run"
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_checkpoints_active_nested_progress_for_process_resume(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    registry.register(
+        ToolDefinition(
+            id="pause-after-first",
+            version="1.0.0",
+            description="Pause the second child action until the test resumes it",
+            implementation="fixture:pause-after-first",
+            input_contract="number",
+            output_contract="number",
+            side_effect="pure_read",
+        )
+    )
+    child = WorkflowDefinition(
+        id="checkpointed-child",
+        version="1.0.0",
+        description="Child whose completed first action must survive interruption",
+        state={"input": 4},
+        actions=[
+            {
+                "id": "child-double",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "input",
+                "output_variable": "doubled",
+            },
+            {
+                "id": "child-pause",
+                "kind": "invoke_tool",
+                "tool": "pause-after-first",
+                "input_variable": "doubled",
+                "output_variable": "paused",
+            },
+            {
+                "id": "child-finish",
+                "kind": "end_workflow",
+                "output_variable": "paused",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="checkpointed-parent",
+        version="1.0.0",
+        description="Parent that persists its active child state",
+        state={"value": 4},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "value",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "parent-finish",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    entered_pause = asyncio.Event()
+    release_pause = asyncio.Event()
+    double_calls = 0
+
+    def double(value: int) -> int:
+        nonlocal double_calls
+        double_calls += 1
+        return value * 2
+
+    async def pause_after_first(value: int) -> int:
+        entered_pause.set()
+        await release_pause.wait()
+        return value
+
+    context = RuntimeContext(
+        tools={
+            "double": double,
+            "pause-after-first": pause_after_first,
+        },
+        contracts=contracts,
+        definitions=registry,
+        subworkflows={child.id: child_plan},
+    )
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    execution = asyncio.create_task(
+        host.execute(
+            parent_plan,
+            WorkflowState.for_plan("checkpointed-nested-run", parent_plan),
+            context,
+        )
+    )
+    await asyncio.wait_for(entered_pause.wait(), timeout=1)
+    interrupted = store.load("checkpointed-nested-run")
+    execution.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+
+    child_checkpoint = interrupted.subworkflow_states["call-child"]
+    assert child_checkpoint["actions"]["child-double"]["status"] == "completed"
+    assert child_checkpoint["actions"]["child-pause"]["status"] == "running"
+
+    release_pause.set()
+    completed = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(parent_plan, interrupted, context)
+
+    assert completed.outputs == {"result": 8}
+    assert double_calls == 1
 
 
 @pytest.mark.asyncio

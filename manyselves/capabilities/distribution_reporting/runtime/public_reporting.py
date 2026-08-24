@@ -217,6 +217,11 @@ class PublicReportingWorkflowRuntime:
             plan = self.state_store.load_plan(run_id)
         except FileNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
+        state = state.model_copy(deep=True)
+        reporting_state = state.variables.get("reporting-state")
+        if isinstance(reporting_state, dict):
+            reporting_state["resume"] = True
+            self.state_store.save(state)
         definitions = restore_plan_definition_registry(plan)
         contracts = build_contract_catalog(definitions)
         resumed = resume_waiting_input(
@@ -251,6 +256,11 @@ class PublicReportingWorkflowRuntime:
             plan = self.state_store.load_plan(run_id)
         except FileNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
+        state = state.model_copy(deep=True)
+        reporting_state = state.variables.get("reporting-state")
+        if isinstance(reporting_state, dict):
+            reporting_state["resume"] = True
+            self.state_store.save(state)
         definitions = restore_plan_definition_registry(plan)
         contracts = build_contract_catalog(definitions)
         await self._execute_state(plan, state, definitions, contracts)

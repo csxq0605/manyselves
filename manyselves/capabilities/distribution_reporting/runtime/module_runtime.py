@@ -17,7 +17,12 @@ from manyselves.kernel.ports import AgentInvoker
 from manyselves.runtime.agent_execution import AgentExecutionService, AgentSessionLoop
 
 from .main_exception import accept_main_exception_decision, prepare_main_exception_decision
-from .models.agentic import WorkflowDecisionSubmission
+from .models.agentic import (
+    AgentResult,
+    AgentRunStatus,
+    ModuleSubmission,
+    WorkflowDecisionSubmission,
+)
 from .models.cross_owner import (
     DeclarativeMainExceptionAgentResult,
     DeclarativeMainExceptionUserInput,
@@ -27,6 +32,7 @@ from .models.module_lane import (
     DeclarativeModuleRecheckAgentResult,
     DeclarativeModuleRuntimeLaneContext,
 )
+from .models.reporting import ReportRequest
 from .models.review import ModuleInitialReviewAcceptance, ModuleRecheckAcceptance
 from .module_authoring_preparation import (
     build_module_dispatch,
@@ -81,6 +87,8 @@ def _prepare_module_lanes(
     if not isinstance(value, Mapping):
         return value
     state = deepcopy(dict(value))
+    if state.get("resume"):
+        _restore_promoted_module_submissions(state, workspace=workspace)
     if "module_dispatch" not in state:
         build_module_dispatch(
             state,
@@ -89,6 +97,43 @@ def _prepare_module_lanes(
             global_root=global_root,
         )
     return state
+
+
+def _restore_promoted_module_submissions(
+    state: dict[str, Any],
+    *,
+    workspace: Path,
+) -> None:
+    """Restore completed typed Author outputs before a same-Run lane replay."""
+
+    request = state.get("request")
+    if request is None:
+        return
+    run_id = str(state["run_id"])
+    module_ids = ReportRequest.model_validate(request).target_modules
+    submissions = state.setdefault("specialist_submissions", {})
+    for module_id in module_ids:
+        if module_id in submissions:
+            continue
+        result_path = (
+            Path(workspace)
+            / "Work"
+            / "runs"
+            / run_id
+            / "results"
+            / f"module-{module_id}.json"
+        )
+        if not result_path.is_file():
+            continue
+        result = AgentResult.model_validate_json(
+            result_path.read_text(encoding="utf-8")
+        )
+        if result.status is not AgentRunStatus.COMPLETED:
+            continue
+        submission = ModuleSubmission.model_validate(result.payload)
+        if submission.module_id != module_id:
+            raise ValueError("promoted module result belongs to another module")
+        submissions[module_id] = submission
 
 
 def _start_module_lane(

@@ -319,6 +319,54 @@ async def test_public_runtime_resumes_waiting_input_through_generic_host(
     assert observed["executed"][1].run_id == state.run_id
 
 
+@pytest.mark.asyncio
+async def test_public_runtime_marks_persisted_reporting_state_as_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryWorkflowStateStore()
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path,
+        input_snapshot=object(),
+        snapshot_content=lambda source, target: (target, "", source),
+        runtime_photo_ids=lambda _evidence, _photos: [],
+        state_store=store,
+    )
+    plan = ResolvedPlan(
+        workflow_id="full-report",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    state = WorkflowState.for_plan("full-report-resume", plan)
+    state.status = WorkflowStatus.RUNNING
+    state.variables["reporting-state"] = {
+        "run_id": state.run_id,
+        "resume": False,
+    }
+    store.save_plan(state.run_id, plan)
+    store.save(state)
+    observed: dict[str, Any] = {}
+
+    async def execute_state(plan, state, definitions, contracts):
+        observed.update(
+            plan=plan,
+            state=state,
+            definitions=definitions,
+            contracts=contracts,
+        )
+        return state
+
+    monkeypatch.setattr(runtime, "_execute_state", execute_state)
+
+    accepted = await runtime.resume(
+        UUID("61000000-0000-4000-8000-000000000003"),
+        state.run_id,
+    )
+
+    assert accepted == {"run_id": state.run_id, "task_id": None}
+    assert observed["state"].variables["reporting-state"]["resume"] is True
+
+
 def test_author_accept_projects_typed_submission_to_lane_and_reporting_state(
     tmp_path: Path,
 ) -> None:
