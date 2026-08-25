@@ -946,6 +946,18 @@ describe("RunWorkspace", () => {
       })
       .mockResolvedValueOnce({
         run: {
+          active: false,
+          capabilityId: "neutral-capability",
+          runId: "persisted-running",
+          status: persistedStatus,
+          taskId: "task-persisted",
+          workflowId: "neutral-workflow",
+        },
+        state: {},
+        waitingInput: [],
+      })
+      .mockResolvedValueOnce({
+        run: {
           active: true,
           capabilityId: "neutral-capability",
           runId: "persisted-running",
@@ -1020,7 +1032,7 @@ describe("RunWorkspace", () => {
 
     await user.click(await screen.findByRole("button", { name: "恢复运行" }));
     await waitFor(() => expect(resume).toHaveBeenCalledWith("persisted-running", expect.any(String)));
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(4), { timeout: 5000 });
     expect(await screen.findByText("completed")).toBeVisible();
     },
   );

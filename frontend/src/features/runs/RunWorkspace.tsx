@@ -479,6 +479,7 @@ function SchemaFields({ onChange, names, schema, values }: SchemaFieldsProps) {
 export function RunWorkspace({ api }: RunWorkspaceProps) {
   const [workflowId, setWorkflowId] = useState("");
   const [runId, setRunId] = useState("");
+  const [acceptedRunId, setAcceptedRunId] = useState("");
   const [runLookupId, setRunLookupId] = useState("");
   const [inputText, setInputText] = useState("{}");
   const [inputValues, setInputValues] = useState<FormValues>({});
@@ -506,9 +507,17 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   });
   const run = useQuery({
     enabled: Boolean(runId),
-    queryFn: () => api.get(runId),
+    queryFn: async () => {
+      const projection = await api.get(runId);
+      if (acceptedRunId === runId && projection.run.active) {
+        setAcceptedRunId("");
+      }
+      return projection;
+    },
     queryKey: ["runs", runId],
-    refetchInterval: (query) => query.state.data?.run.active ? 1000 : false,
+    refetchInterval: (query) => (
+      query.state.data?.run.active || acceptedRunId === runId ? 1000 : false
+    ),
   });
   const waiting = run.data?.waitingInput[0];
   const waitingSchemaRaw = waiting?.schema;
@@ -538,7 +547,9 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     enabled: Boolean(runId && api.events),
     queryFn: () => api.events!(runId),
     queryKey: ["runs", runId, "events"],
-    refetchInterval: () => run.data?.run.active ? 1000 : false,
+    refetchInterval: () => (
+      run.data?.run.active || acceptedRunId === runId ? 1000 : false
+    ),
   });
   const refetchOutputs = outputs.refetch;
   const refetchCost = cost.refetch;
@@ -576,7 +587,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     onSuccess: (accepted) => {
       setError(null);
       setRunId(accepted.runId);
-      void run.refetch();
+      setAcceptedRunId(accepted.runId);
       void outputs.refetch();
       void cost.refetch();
     },
@@ -587,7 +598,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     onSuccess: (accepted) => {
       setError(null);
       setRunId(accepted.runId);
-      void run.refetch();
+      setAcceptedRunId(accepted.runId);
       void outputs.refetch();
       void cost.refetch();
     },
