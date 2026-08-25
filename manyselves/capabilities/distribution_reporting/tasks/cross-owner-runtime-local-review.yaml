@@ -3,7 +3,7 @@ version: 1.0.0
 description: Run the prepared Cross-triggered local regression through the original module Auditor
 agent: evidence-auditor
 objective: Review the prepared Cross revision from its exact Reporting envelope.
-input_contract: declarative_cross_owner_runtime_context
+input_contract: declarative_module_runtime_lane_context
 output_contract: declarative_module_review_agent_result
 tools:
 - search_project_evidence

@@ -85,8 +85,13 @@ actions:
   condition:
     variable: should-invoke-cross-owner-local-review
     operator: truthy
-  then: create-cross-owner-local-review-conversation
+  then: project-current-cross-owner-local-review-agent-input
   otherwise: cross-owner-local-review-needs-revision
+- id: project-current-cross-owner-local-review-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-local-module-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-review-agent-input
 - id: create-cross-owner-local-review-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -98,7 +103,7 @@ actions:
   agent: evidence-auditor
   task: cross-owner-runtime-local-review
   conversation_variable: cross-owner-local-review-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-local-review-agent-input
   output_variable: cross-owner-local-review-result
 - id: accept-current-cross-owner-local-review
   kind: invoke_tool
@@ -224,8 +229,13 @@ actions:
   condition:
     variable: should-invoke-cross-owner-local-recheck
     operator: truthy
-  then: create-cross-owner-local-recheck-conversation
+  then: project-current-cross-owner-local-recheck-agent-input
   otherwise: cross-owner-local-recheck-needs-revision
+- id: project-current-cross-owner-local-recheck-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-local-module-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-recheck-agent-input
 - id: create-cross-owner-local-recheck-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -237,7 +247,7 @@ actions:
   agent: evidence-auditor
   task: cross-owner-runtime-local-recheck
   conversation_variable: cross-owner-local-recheck-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-local-recheck-agent-input
   output_variable: cross-owner-local-recheck-result
 - id: accept-current-cross-owner-local-module-recheck
   kind: invoke_tool

@@ -1,0 +1,10 @@
+id: project-current-cross-owner-local-module-agent-input
+version: 1.0.0
+description: Project the prepared Cross-local module lifecycle into the original Auditor input
+implementation: capability:distribution-reporting:project-current-cross-owner-local-module-agent-input
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: true
+model_visible: false

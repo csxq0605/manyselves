@@ -27,6 +27,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     CrossOwnerRevisionAcceptance,
 )
 from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.definitions.models import TaskDefinition
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import SubworkflowAction, WorkflowCompiler
 from tests.capabilities.distribution_reporting.test_cross_owner_local_review import (
@@ -106,6 +107,40 @@ async def test_cross_local_preflight_revision_is_projected_into_module_lane(
     assert prepared.local_module_context.status == "preflight_revision_pending"
 
 
+@pytest.mark.asyncio
+async def test_saved_cross_local_review_task_projects_prepared_module_lane(
+    tmp_path: Path,
+) -> None:
+    """A saved pre-migration reviewer Task still receives its typed lane input."""
+
+    runtime, context, _ = _revision_context(
+        tmp_path,
+        run_id="cross-local-review-saved-plan",
+    )
+    prepared = await runtime.prepare_local_review(context)
+    assert prepared.local_module_context is not None
+    assert prepared.local_module_context.status == "review_ready"
+
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+
+    saved_task = TaskDefinition(
+        id="cross-owner-runtime-local-review",
+        version="1.0.0",
+        description="Persisted Cross local review task",
+        agent="evidence-auditor",
+        objective="Review the prepared Cross revision.",
+        input_contract="declarative_cross_owner_runtime_context",
+        output_contract="declarative_module_review_agent_result",
+        tools=["submit_result"],
+    )
+
+    projected = ModuleProviderRuntime._context(prepared, saved_task)
+
+    assert projected == prepared.local_module_context
+
+
 def test_cross_pipeline_requires_local_module_subworkflow_before_recheck() -> None:
     """The file-defined Cross pipeline currently jumps directly to Cross recheck."""
 
@@ -148,10 +183,25 @@ def test_cross_pipeline_requires_local_module_subworkflow_before_recheck() -> No
     child = plan.subworkflow_plans[
         "distribution-cross-owner-local-2.1-module-review-lane"
     ]
+    child_action_ids = [action.id for action in child.actions]
+    assert child_action_ids.index(
+        "project-current-cross-owner-local-review-agent-input"
+    ) < child_action_ids.index("invoke-current-cross-owner-local-review")
+    assert child_action_ids.index(
+        "project-current-cross-owner-local-recheck-agent-input"
+    ) < child_action_ids.index("invoke-current-cross-owner-local-module-recheck")
     assert any(
         action.id == "accept-current-cross-owner-local-review"
         for action in child.actions
     )
+    assert definitions.require(
+        DefinitionKind.TASK,
+        "cross-owner-runtime-local-review",
+    ).input_contract == "declarative_module_runtime_lane_context"
+    assert definitions.require(
+        DefinitionKind.TASK,
+        "cross-owner-runtime-local-recheck",
+    ).input_contract == "declarative_module_runtime_lane_context"
 
 
 @pytest.mark.asyncio

@@ -42,6 +42,7 @@ from manyselves.capabilities.distribution_reporting.runtime.continuation_progres
     ReportingContinuationProgressObserver,
 )
 from manyselves.capabilities.distribution_reporting.runtime.cross_module_revision_input import (
+    project_cross_owner_local_module_agent_input,
     project_cross_owner_module_revision_agent_input,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
@@ -463,6 +464,11 @@ class ModuleProviderRuntime:
         if isinstance(value, DeclarativeModuleRuntimeLaneContext):
             return value
         if task.input_contract == "declarative_cross_owner_runtime_context":
+            if task.output_contract in {
+                "declarative_module_review_agent_result",
+                "declarative_module_recheck_agent_result",
+            }:
+                return project_cross_owner_local_module_agent_input(value)
             return project_cross_owner_module_revision_agent_input(value)
         return DeclarativeModuleRuntimeLaneContext.model_validate(value)
 

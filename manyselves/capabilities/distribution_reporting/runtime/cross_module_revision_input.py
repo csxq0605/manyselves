@@ -40,3 +40,14 @@ def project_cross_owner_module_revision_agent_input(
         if local.status == "revision_ready" and local.revision is not None:
             return local
     raise ValueError("Cross owner module revision Agent input is not prepared")
+
+
+def project_cross_owner_local_module_agent_input(
+    value: Any,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Return the prepared local Module review/recheck lane owned by Cross."""
+
+    context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+    if context.local_module_context is None:
+        raise ValueError("Cross owner local Module Agent input is not prepared")
+    return context.local_module_context
