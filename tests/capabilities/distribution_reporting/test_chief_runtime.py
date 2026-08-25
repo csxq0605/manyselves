@@ -19,6 +19,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
+    SourceLocation,
 )
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.conversations import (
@@ -168,7 +171,29 @@ def test_chief_runtime_accepts_lanes_and_reduces_initial_candidate(
     )
 
     run_id = "chief-runtime-reduce"
-    runtime = ChiefChapterRuntime(tmp_path, state=_state(run_id))
+    state = _state(run_id)
+    state["evidence_items"] = [
+        EvidenceItem(
+            id="E-CHIEF-PHOTO",
+            subject="Chief photo evidence",
+            fact="One project photo belongs to the current report evidence.",
+            source=SourceLocation(file_id="input-1", path="Inputs/source.xlsx"),
+            module_id="2.1",
+            submodule_id="2.1.1",
+            photo_refs=["P-CHIEF"],
+        ).model_dump(mode="json")
+    ]
+    state["photo_assets"] = [
+        PhotoAsset(
+            id="P-CHIEF",
+            path=f"Work/runs/{run_id}/assets/P-CHIEF.png",
+            sha256="photo-source-digest",
+            media_type="image/png",
+            source_member="xl/media/image1.png",
+            primary_evidence_id="E-CHIEF-PHOTO",
+        ).model_dump(mode="json")
+    ]
+    runtime = ChiefChapterRuntime(tmp_path, state=state)
     outcomes: dict[str, object] = {}
     for chapter_id, section_ids in {
         "1": ("1.1", "1.2", "1.3"),
@@ -242,6 +267,7 @@ def test_chief_runtime_accepts_lanes_and_reduces_initial_candidate(
     }
     assert reduced["edited_report"].assessment_background == "Chief body for 1.1"
     assert reduced["edited_report"].risk_panorama == "Chief body for 3.1.1"
+    assert reduced["edited_report"].photo_ids == ["P-CHIEF"]
     assert (tmp_path / reduced["chief_candidate_ref"]).is_file()
 
 

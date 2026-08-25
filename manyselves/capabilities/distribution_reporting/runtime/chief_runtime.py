@@ -54,6 +54,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
     REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
     SpecialTopicPlan,
     chapter_section_ids,
 )
@@ -794,7 +796,14 @@ class ChiefChapterRuntime:
             protected_claim_ids=sorted(claim.id for claim in claims),
             tables=[],
             photo_ids=runtime_photo_ids(
-                state.get("evidence_items", []), state.get("photo_assets", [])
+                [
+                    _model(item, EvidenceItem)
+                    for item in state.get("evidence_items", [])
+                ],
+                [
+                    _model(photo, PhotoAsset)
+                    for photo in state.get("photo_assets", [])
+                ],
             ),
             unresolved_editorial_issues=[],
             revision_responses=[],
