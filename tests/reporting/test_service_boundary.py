@@ -1,6 +1,5 @@
 import asyncio
 import fcntl
-import hashlib
 import json
 from pathlib import Path
 
@@ -538,7 +537,7 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
     )
 
     async def distill(_self, state: dict) -> None:
-        path = Path("Work/report-template-role-skills/author-2.1/SKILL.md")
+        path = Path("Inputs/report-template-role-skills/author-2.1/SKILL.md")
         service.store.write_text(path.as_posix(), "---\nname: report-template-author-2.1\n---\n")
         state["output_artifacts"] = [OutputArtifact(kind="skill", path=path)]
 
@@ -558,7 +557,7 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
 
     assert result.status == "completed"
     assert result.output_paths == [
-        tmp_path / "Work/report-template-role-skills/author-2.1/SKILL.md"
+        tmp_path / "Inputs/report-template-role-skills/author-2.1/SKILL.md"
     ]
 
 
@@ -571,15 +570,72 @@ def test_template_role_skills_report_missing_identity_artifacts(
         task_board=TaskBoard(),
         llm_provider=TemplateResolutionProvider(),
     )
-    root = tmp_path / "Work/report-template-role-skills"
     runner = object.__new__(ReportWorkflowRunner)
     runner.service = service
 
     with pytest.raises(
         AgentWorkflowError,
-        match=r"缺少文件：Work/report-template-role-skills/author-2\.1/SKILL\.md",
+        match=r"缺少文件：Inputs/report-template-role-skills/author-2\.1/SKILL\.md",
     ):
         runner._require_template_skill({})
+
+
+def test_template_role_skills_can_be_supplied_in_inputs_without_source_metadata(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    root = tmp_path / "Inputs/report-template-role-skills"
+    for skill_id in TEMPLATE_ROLE_SKILL_IDS:
+        target = root / skill_id / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"---\nname: report-template-{skill_id}\n---\n# {skill_id}\n",
+            encoding="utf-8",
+        )
+    (root / "boundary.json").write_text(
+        json.dumps(
+            {
+                "policy_version": 1,
+                "transferred_categories": [
+                    "analysis_method",
+                    "synthesis_method",
+                    "visual_method",
+                    "quality_check",
+                ],
+                "excluded_categories": [
+                    "domain_knowledge",
+                    "domain_standard_or_threshold",
+                    "project_fact_or_number",
+                    "customer_identity",
+                    "project_finding_or_risk",
+                    "project_conclusion_or_recommendation",
+                    "evidence_or_claim_identifier",
+                ],
+                "boundary_statement": (
+                    "本测试 Skill 仅迁移可跨项目复用的分析、综合、视觉组织与质量检查方法，"
+                    "不迁移客户身份、项目事实、具体数值、风险结论、行动建议、专业机理、"
+                    "标准阈值或证据标识。"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    state: dict = {}
+
+    runner._require_template_skill(state)
+
+    assert not (root / "source.json").exists()
+    assert state["template_skill_refs"]["author-2.1"] == (
+        "Inputs/report-template-role-skills/author-2.1/SKILL.md"
+    )
 
 
 def test_template_skill_loader_rejects_persisted_result_part_marker(
@@ -591,7 +647,7 @@ def test_template_skill_loader_rejects_persisted_result_part_marker(
         task_board=TaskBoard(),
         llm_provider=TemplateResolutionProvider(),
     )
-    root = tmp_path / "Work/report-template-role-skills"
+    root = tmp_path / "Inputs/report-template-role-skills"
     files = {
         f"{skill_id}/SKILL.md": (
             "<persisted_result_part sha256=" + "a" * 64 + " characters=100>\n"
@@ -629,23 +685,6 @@ def test_template_skill_loader_rejects_persisted_result_part_marker(
     }
     (root / "boundary.json").write_text(
         json.dumps(boundary, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    artifact_paths = [root / relative for relative in files]
-    artifact_paths.append(root / "boundary.json")
-    (root / "source.json").write_text(
-        json.dumps(
-            {
-                "boundary_policy_version": 1,
-                "boundary_ref": "Work/report-template-role-skills/boundary.json",
-                "artifact_sha256": {
-                    path.relative_to(root).as_posix(): hashlib.sha256(
-                        path.read_bytes()
-                    ).hexdigest()
-                    for path in artifact_paths
-                },
-            }
-        ),
         encoding="utf-8",
     )
     runner = object.__new__(ReportWorkflowRunner)

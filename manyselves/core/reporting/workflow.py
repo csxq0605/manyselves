@@ -152,7 +152,7 @@ if TYPE_CHECKING:
     from .service import ReportingService
 
 
-TEMPLATE_SKILL_ROOT = Path("Work/report-template-role-skills")
+TEMPLATE_SKILL_ROOT = Path("Inputs/report-template-role-skills")
 TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
 FINAL_REVIEW_COMPLETION_SESSION_KEYS = frozenset(
     {"chief-editor-auditor", "final-chapter-wave"}
@@ -839,7 +839,7 @@ class ReportWorkflowRunner:
             for skill_id in TEMPLATE_ROLE_SKILL_IDS
         }
         boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
-        required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
+        required = [*refs.values(), boundary_ref]
         missing = [
             path.as_posix()
             for path in required
@@ -847,59 +847,19 @@ class ReportWorkflowRunner:
         ]
         if missing:
             raise AgentWorkflowError(
-                "固定模板写作 Skill 与当前边界契约不兼容，缺少文件："
-                f"{', '.join(missing)}；请先单独运行 "
-                "operation=distill_template_skill 更新固定 Skill"
+                "Inputs 中的模板写作 Skill 包不完整，缺少文件："
+                f"{', '.join(missing)}；请补齐 Inputs/report-template-role-skills "
+                "或单独运行 operation=distill_template_skill 生成 Skill 包"
             )
         try:
             boundary = TemplateSkillBoundaryManifest.model_validate_json(
                 (self.service.workspace / boundary_ref).read_text(encoding="utf-8")
             )
-            source_payload = json.loads(
-                (self.service.workspace / TEMPLATE_SKILL_SOURCE).read_text(
-                    encoding="utf-8"
-                )
-            )
-            if not isinstance(source_payload, dict):
-                raise ValueError("source.json must contain one JSON object")
-            expected_hashes = {
-                path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): self._sha256(
-                    self.service.workspace / path
-                )
-                for path in [*refs.values(), boundary_ref]
-            }
         except (OSError, ValueError, AttributeError) as exc:
             raise AgentWorkflowError(
-                "固定模板写作 Skill 的 boundary.json 或 source.json 无法解析；"
-                "请先单独运行 operation=distill_template_skill 更新固定 Skill"
+                "Inputs 中模板写作 Skill 的 boundary.json 无法解析；"
+                "请修正该文件或单独运行 operation=distill_template_skill 重新生成"
             ) from exc
-        mismatched = [
-            field
-            for field, actual, expected in (
-                (
-                    "boundary_policy_version",
-                    source_payload.get("boundary_policy_version"),
-                    boundary.policy_version,
-                ),
-                (
-                    "boundary_ref",
-                    source_payload.get("boundary_ref"),
-                    boundary_ref.as_posix(),
-                ),
-                (
-                    "artifact_sha256",
-                    source_payload.get("artifact_sha256"),
-                    expected_hashes,
-                ),
-            )
-            if actual != expected
-        ]
-        if mismatched:
-            raise AgentWorkflowError(
-                "固定模板写作 Skill 的 source.json 与当前边界契约或产物哈希不一致："
-                f"{', '.join(mismatched)}；请先单独运行 "
-                "operation=distill_template_skill 更新固定 Skill"
-            )
         template_skill_text = {
             key: (self.service.workspace / path).read_text(encoding="utf-8")
             for key, path in refs.items()
@@ -1107,7 +1067,7 @@ class ReportWorkflowRunner:
                 )
             ]
             await self.service._notice(
-                "模板职责 Skill 已更新至固定路径 Work/report-template-role-skills。"
+                "模板职责 Skill 已更新至 Inputs/report-template-role-skills。"
             )
         except asyncio.CancelledError:
             if not recovering_cost_boundary:
@@ -1281,7 +1241,7 @@ class ReportWorkflowRunner:
             activity = "dispatch"
             requested_modules = tuple(state["request"].target_modules)
             await self.service._notice(
-                "正在从固定路径 Work/report-template-role-skills 读取模板职责 Skill。"
+                "正在从 Inputs/report-template-role-skills 读取模板职责 Skill。"
             )
             self._require_template_skill(state)
             if "module_dispatch" in state:
@@ -4634,7 +4594,7 @@ class ReportWorkflowRunner:
                     "module specialists/auditors, chief editor, and final auditor"
                 ),
                 "input": (
-                    "hash-verified Work/report-template-role-skills files selected by exact "
+                    "user-managed Inputs/report-template-role-skills files selected by exact "
                     "module/role identity and embedded whole in task inline_context"
                 ),
                 "output": (
