@@ -235,7 +235,13 @@ class WorkflowProjectionFacade:
         """Project persisted Runs without requiring callers to know their ids."""
 
         store = FileWorkflowStateStore(self.workspace)
-        return [self.get_run(run_id) for run_id in store.list_run_ids()]
+        projections: list[dict[str, Any]] = []
+        for run_id in store.list_run_ids():
+            try:
+                projections.append(self.get_run(run_id))
+            except WorkflowProjectionNotFoundError:
+                continue
+        return projections
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
         binding, _projection = self._locate_run(run_id)

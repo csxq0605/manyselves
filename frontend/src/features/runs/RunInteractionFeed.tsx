@@ -211,9 +211,16 @@ export interface RunInteractionFeedProps {
 export function RunInteractionFeed({ api, projectId }: RunInteractionFeedProps) {
   const client = useQueryClient();
   const setCurrentRun = useRunStore((state) => state.setCurrentRun);
+  const currentRunId = useRunStore((state) => state.currentRunIds[projectId] ?? null);
   const runs = useQuery({
     queryFn: () => api.listRuns(),
     queryKey: ["runs", "interaction-feed"],
+    refetchInterval: 5_000,
+  });
+  const currentRun = useQuery({
+    enabled: currentRunId !== null,
+    queryFn: () => api.get(currentRunId!),
+    queryKey: ["runs", "interaction-feed", "current", currentRunId],
     refetchInterval: 5_000,
   });
   const resume = useMutation({
@@ -223,12 +230,16 @@ export function RunInteractionFeed({ api, projectId }: RunInteractionFeedProps) 
       void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
     },
   });
-  const waiting = runs.data?.runs.flatMap((run) => run.waitingInput.map((item) => ({
+  const listedRuns = runs.data?.runs ?? [];
+  const feedRuns = currentRun.data && !listedRuns.some(
+    (run) => run.run.runId === currentRun.data?.run.runId,
+  ) ? [currentRun.data, ...listedRuns] : listedRuns;
+  const waiting = feedRuns.flatMap((run) => run.waitingInput.map((item) => ({
     run,
     waiting: item as WaitingInput,
-  }))) ?? [];
-  const interrupted = runs.data?.runs.filter(isInterrupted) ?? [];
-  const active = runs.data?.runs.filter((run) => run.run.active) ?? [];
+  })));
+  const interrupted = feedRuns.filter(isInterrupted);
+  const active = feedRuns.filter((run) => run.run.active);
   const workflowHref = `/projects/${encodeURIComponent(projectId)}/workflows`;
 
   if (waiting.length === 0 && interrupted.length === 0 && active.length === 0) return null;

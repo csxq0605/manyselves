@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ApiGateway } from "../../api/gateway";
+import { useRunStore } from "../../store/run-store";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
 describe("ConversationWorkspace", () => {
@@ -384,5 +385,38 @@ describe("ConversationWorkspace", () => {
       "href",
       "/projects/project-1/workflows",
     );
+  });
+
+  it("shows the remembered active run when a historical unbound run breaks listing", async () => {
+    useRunStore.getState().setCurrentRun("project-1", "full-report-current");
+    const requestJson = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        return { messages: [], projectId: "project-1", sessionId: "s1" };
+      }
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "s1",
+          conversations: [{ active: true, name: "Main", preview: "", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path === "/api/v1/runs") throw new Error("historical run is unbound");
+      if (path === "/api/v1/runs/full-report-current") return {
+        run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-current", status: "running", taskId: null, workflowId: "full-report" },
+        state: { status: "running" },
+        waitingInput: [],
+      };
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
+    </QueryClientProvider>);
+
+    expect(await screen.findByText("运行中")).toBeVisible();
+    expect(screen.getByText("full-report · full-report-current")).toBeVisible();
+    useRunStore.getState().setCurrentRun("project-1", null);
   });
 });

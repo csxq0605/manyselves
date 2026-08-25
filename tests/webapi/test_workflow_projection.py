@@ -14,6 +14,7 @@ from manyselves.kernel.workflow import (
 )
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
+    CapabilityRunNotFoundError,
     CapabilityRunStateError,
     RuntimeBindingCatalog,
 )
@@ -285,6 +286,17 @@ class _DetachedReportingAdapter(_ReportingAdapter):
             )
         )
         return {"run_id": run_id, "task_id": None}
+
+
+class _SelectiveReportingAdapter(_ReportingAdapter):
+    def __init__(self, owned_run_ids: set[str]) -> None:
+        super().__init__()
+        self.owned_run_ids = owned_run_ids
+
+    def get_run(self, run_id: str) -> dict:
+        if run_id not in self.owned_run_ids:
+            raise CapabilityRunNotFoundError(run_id)
+        return super().get_run(run_id)
 
 
 @pytest.mark.asyncio
@@ -608,6 +620,18 @@ def test_main_run_feed_lists_waiting_interactions_without_known_run_ids(
 
     assert [item["run"]["run_id"] for item in listed] == ["report-main-waiting"]
     assert listed[0]["waiting_input"] == [waiting_input]
+
+
+def test_run_list_keeps_owned_runs_when_a_historical_state_has_no_binding(
+    tmp_path: Path,
+) -> None:
+    _save_waiting_kernel_state(tmp_path, "current-run", {"input_id": "current"})
+    _save_waiting_kernel_state(tmp_path, "historical-unbound-run", {"input_id": "old"})
+    facade = _facade(tmp_path, _SelectiveReportingAdapter({"current-run"}))
+
+    listed = facade.list_runs()
+
+    assert [item["run"]["run_id"] for item in listed] == ["current-run"]
 
 
 def test_run_projection_bounds_large_kernel_state_and_preserves_runtime_fields(
