@@ -188,6 +188,8 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
         findings=[finding],
         verdicts=list(verdict.verdicts),
     ).model_dump(mode="json")
+    exception_ref = f"Work/runs/{run_id}/exceptions/cross-reviewer.json"
+    revised_pipeline["review_exception_refs"] = [exception_ref]
     outcomes: dict[str, object] = {
         "2.1": DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id="2.1",
@@ -219,6 +221,7 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
 
     assert reduced["module_submissions"]["2.1"] == revised
     assert reduced["specialist_submissions"]["2.1"] == revised
+    assert reduced["review_exception_refs"] == [exception_ref]
     completion = ReviewCompletionRecord.model_validate_json(
         (tmp_path / reduced["cross_review_completion_ref"]).read_text(
             encoding="utf-8"

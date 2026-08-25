@@ -240,6 +240,7 @@ class _CrossOwnerPipelineResult(StrictModel):
     verdict: CrossOwnerVerdictSubmission | None = None
     finding_refs: list[str] = Field(default_factory=list)
     verdict_refs: list[str] = Field(default_factory=list)
+    review_exception_refs: list[str] = Field(default_factory=list)
     findings: list[CrossReviewFinding] = Field(default_factory=list)
     verdicts: list[ResolutionVerdict] = Field(default_factory=list)
 

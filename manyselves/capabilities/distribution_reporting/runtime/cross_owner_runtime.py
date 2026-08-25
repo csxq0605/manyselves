@@ -1880,10 +1880,10 @@ class CrossOwnerRuntime:
             verdict=progress.verdict,
             finding_refs=progress.finding_refs,
             verdict_refs=progress.verdict_refs,
+            review_exception_refs=context.review_exception_refs,
             findings=progress.findings,
             verdicts=progress.verdicts,
         ).model_dump(mode="json")
-        pipeline["review_exception_refs"] = list(context.review_exception_refs)
         return DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id=context.owner_module_id,
             status="completed",
@@ -1958,6 +1958,7 @@ class CrossOwnerRuntime:
         synthesis_by_id: dict[str, CrossSynthesisInput] = {}
         verdicts = []
         subject_refs: dict[str, str] = {}
+        review_exception_refs = state.setdefault("review_exception_refs", [])
         for owner_module_id, outcome in parsed.items():
             if outcome.status != "completed" or not outcome.pipeline:
                 raise ValueError(
@@ -1988,6 +1989,7 @@ class CrossOwnerRuntime:
                     subject_refs[owner_module_id]
                 )
                 verdicts.extend(completed.verdicts)
+                review_exception_refs.extend(completed.review_exception_refs)
                 finding_ids.extend(finding.id for finding in completed.findings)
                 findings_by_owner[owner_module_id] = list(completed.findings)
             else:
