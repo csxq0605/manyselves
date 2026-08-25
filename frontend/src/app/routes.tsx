@@ -159,7 +159,7 @@ function WorkflowRoutePage({ gateway, projectApi }: { readonly gateway: ApiGatew
   if (projects.isPending) return <p role="status">正在加载项目…</p>;
   if (projects.isError || !routeProject) return <p role="alert">项目不可用</p>;
   if (!projectReady) return activation.isError ? <p role="alert">项目切换失败</p> : <p role="status">正在切换项目…</p>;
-  return <RunWorkspace api={createWorkflowApi(gateway)} />;
+  return <RunWorkspace api={createWorkflowApi(gateway)} key={projectId} projectId={projectId} />;
 }
 
 function NotFound() {

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../app/providers";
+import { useRunStore } from "../../store/run-store";
 import { RunWorkspace } from "./RunWorkspace";
 import type { WorkflowApi } from "./workflow-api";
 
@@ -1098,5 +1099,39 @@ describe("RunWorkspace", () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith("existing-run"));
     expect(await screen.findByRole("heading", { name: "existing-run" })).toBeVisible();
     expect(await screen.findByText("restored")).toBeVisible();
+  });
+
+  it("reopens the project run persisted across page navigation", async () => {
+    useRunStore.getState().setCurrentRun("project-1", "persisted-run");
+    const get = vi.fn().mockResolvedValue({
+      run: {
+        active: true,
+        capabilityId: "neutral-capability",
+        runId: "persisted-run",
+        status: "running",
+        taskId: null,
+        workflowId: "neutral-workflow",
+      },
+      state: { status: "running" },
+      waitingInput: [],
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({ runId: "persisted-run", usage: { totals: {} } }),
+      events: vi.fn().mockResolvedValue({ events: [], runId: "persisted-run" }),
+      get,
+      inputSchema: vi.fn().mockResolvedValue({ contractId: "neutral-input", schema: { type: "object" }, workflowId: "neutral-workflow" }),
+      listCapabilities: vi.fn().mockResolvedValue({ capabilities: [] }),
+      listWorkflows: vi.fn().mockResolvedValue({ workflows: [] }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "persisted-run" }),
+      provideInput: vi.fn(),
+      resume: vi.fn(),
+      start: vi.fn(),
+    };
+
+    render(<AppProviders><RunWorkspace api={api} projectId="project-1" /></AppProviders>);
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith("persisted-run"));
+    expect(await screen.findByRole("heading", { name: "persisted-run" })).toBeVisible();
+    useRunStore.getState().setCurrentRun("project-1", null);
   });
 });

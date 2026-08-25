@@ -349,4 +349,40 @@ describe("ConversationWorkspace", () => {
       ([path]) => path === "/api/v1/runs/full-report-2/resume",
     )).toBe(true));
   });
+
+  it("shows an active original run in the Main conversation", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        return { messages: [], projectId: "project-1", sessionId: "s1" };
+      }
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "s1",
+          conversations: [{ active: true, name: "Main", preview: "", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path === "/api/v1/runs") return {
+        runs: [{
+          run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-3", status: "running", taskId: null, workflowId: "full-report" },
+          state: { status: "running" },
+          waitingInput: [],
+        }],
+      };
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
+    </QueryClientProvider>);
+
+    expect(await screen.findByText("运行中")).toBeVisible();
+    expect(screen.getByText("full-report · full-report-3")).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看运行" })).toHaveAttribute(
+      "href",
+      "/projects/project-1/workflows",
+    );
+  });
 });

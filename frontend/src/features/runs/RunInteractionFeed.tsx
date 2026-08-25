@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { createUuid } from "../../app/uuid";
+import { useRunStore } from "../../store/run-store";
 import type { WorkflowApi, WorkflowRunFeedApi, WorkflowRunResponse } from "./workflow-api";
 import "./run-interaction-feed.css";
 
@@ -204,10 +205,12 @@ function isInterrupted(run: WorkflowRunResponse): boolean {
 
 export interface RunInteractionFeedProps {
   readonly api: WorkflowApi & WorkflowRunFeedApi;
+  readonly projectId: string;
 }
 
-export function RunInteractionFeed({ api }: RunInteractionFeedProps) {
+export function RunInteractionFeed({ api, projectId }: RunInteractionFeedProps) {
   const client = useQueryClient();
+  const setCurrentRun = useRunStore((state) => state.setCurrentRun);
   const runs = useQuery({
     queryFn: () => api.listRuns(),
     queryKey: ["runs", "interaction-feed"],
@@ -215,17 +218,29 @@ export function RunInteractionFeed({ api }: RunInteractionFeedProps) {
   });
   const resume = useMutation({
     mutationFn: (runId: string) => api.resume(runId, createUuid()),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] }),
+    onSuccess: (accepted) => {
+      setCurrentRun(projectId, accepted.runId);
+      void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
+    },
   });
   const waiting = runs.data?.runs.flatMap((run) => run.waitingInput.map((item) => ({
     run,
     waiting: item as WaitingInput,
   }))) ?? [];
   const interrupted = runs.data?.runs.filter(isInterrupted) ?? [];
+  const active = runs.data?.runs.filter((run) => run.run.active) ?? [];
+  const workflowHref = `/projects/${encodeURIComponent(projectId)}/workflows`;
 
-  if (waiting.length === 0 && interrupted.length === 0) return null;
+  if (waiting.length === 0 && interrupted.length === 0 && active.length === 0) return null;
   return (
     <section aria-label="运行交互" className="run-interaction-feed">
+      {active.map((run) => <article className="run-interaction-card run-interaction-card--status" key={run.run.runId}>
+        <div>
+          <strong>运行中</strong>
+          <span>{run.run.workflowId} · {run.run.runId}</span>
+        </div>
+        <a href={workflowHref} onClick={() => setCurrentRun(projectId, run.run.runId)}>查看运行</a>
+      </article>)}
       {waiting.map(({ run, waiting: item }) => (
         <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
       ))}
@@ -234,7 +249,10 @@ export function RunInteractionFeed({ api }: RunInteractionFeedProps) {
           <strong>运行已中断</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
         </div>
-        <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原运行</button>
+        <div className="run-interaction-card__actions">
+          <a href={workflowHref} onClick={() => setCurrentRun(projectId, run.run.runId)}>查看运行</a>
+          <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原运行</button>
+        </div>
       </article>)}
     </section>
   );

@@ -2,11 +2,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { createUuid } from "../../app/uuid";
+import { useRunStore } from "../../store/run-store";
 import type { WorkflowApi } from "./workflow-api";
 import "./run-workspace.css";
 
 export interface RunWorkspaceProps {
   readonly api: WorkflowApi;
+  readonly projectId?: string | undefined;
 }
 
 type JsonSchema = {
@@ -476,11 +478,15 @@ function SchemaFields({ onChange, names, schema, values }: SchemaFieldsProps) {
   });
 }
 
-export function RunWorkspace({ api }: RunWorkspaceProps) {
+export function RunWorkspace({ api, projectId }: RunWorkspaceProps) {
+  const getCurrentRun = useRunStore((state) => state.getCurrentRun);
+  const setCurrentRun = useRunStore((state) => state.setCurrentRun);
   const [workflowId, setWorkflowId] = useState("");
-  const [runId, setRunId] = useState("");
+  const [runId, setRunIdState] = useState(() => (
+    projectId ? getCurrentRun(projectId) ?? "" : ""
+  ));
   const [acceptedRunId, setAcceptedRunId] = useState("");
-  const [runLookupId, setRunLookupId] = useState("");
+  const [runLookupId, setRunLookupId] = useState(runId);
   const [inputText, setInputText] = useState("{}");
   const [inputValues, setInputValues] = useState<FormValues>({});
   const [continuationState, setContinuationState] = useState<ContinuationState>({
@@ -489,6 +495,10 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     values: {},
   });
   const [error, setError] = useState<string | null>(null);
+  function setRunId(nextRunId: string) {
+    setRunIdState(nextRunId);
+    if (projectId) setCurrentRun(projectId, nextRunId || null);
+  }
   const capabilities = useQuery({
     queryFn: () => api.listCapabilities(),
     queryKey: ["capabilities"],
@@ -588,6 +598,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
       setError(null);
       setRunId(accepted.runId);
       setAcceptedRunId(accepted.runId);
+      void run.refetch();
       void outputs.refetch();
       void cost.refetch();
     },
@@ -599,6 +610,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
       setError(null);
       setRunId(accepted.runId);
       setAcceptedRunId(accepted.runId);
+      void run.refetch();
       void outputs.refetch();
       void cost.refetch();
     },
