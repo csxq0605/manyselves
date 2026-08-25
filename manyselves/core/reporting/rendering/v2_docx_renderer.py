@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
-import hashlib
 import re
 import tempfile
 from contextvars import ContextVar
@@ -17,6 +17,27 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+from manyselves.core.reporting.rendering.markdown_content import (
+    clean_bullet_item_text as shared_clean_bullet_item_text,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    clean_numbered_item_text as shared_clean_numbered_item_text,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    is_bullet_line as shared_is_bullet_line,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    is_numbered_list_line as shared_is_numbered_list_line,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    is_report_title as shared_is_report_title,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    is_table_line as shared_is_table_line,
+)
+from manyselves.core.reporting.rendering.markdown_content import (
+    parse_markdown_blocks,
+)
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 try:
@@ -691,7 +712,6 @@ def write_report_into_paragraphs(
     model: dict[str, Any] | None = None,
 ) -> None:
     paragraph_index = 0
-    table_buffer: list[str] = []
     last_written_paragraph = None
 
     def next_paragraph():
@@ -705,30 +725,18 @@ def write_report_into_paragraphs(
         paragraph_index += 1
         return paragraph
 
-    for raw_line in report_text.splitlines():
-        line = raw_line.strip()
-        if not line or line in {"---", "***", "___"}:
+    for block in parse_markdown_blocks(report_text):
+        if block.kind == "title":
             continue
-        if is_report_title(line):
-            continue
-        if is_table_line(line):
-            table_buffer.append(line)
-            continue
-
-        if table_buffer:
+        if block.kind == "table":
             if last_written_paragraph is not None:
                 format_table_title_paragraph(last_written_paragraph)
-            write_markdown_table(document, next_paragraph(), table_buffer, model)
-            table_buffer.clear()
+            write_markdown_table(document, next_paragraph(), list(block.raw_lines), model)
+            continue
 
-        written = write_line_or_expanded(next_paragraph, line)
+        written = write_line_or_expanded(next_paragraph, block.text)
         if written:
             last_written_paragraph = written[-1]
-
-    if table_buffer:
-        if last_written_paragraph is not None:
-            format_table_title_paragraph(last_written_paragraph)
-        write_markdown_table(document, next_paragraph(), table_buffer, model)
 
     remove_unused_template_paragraphs(paragraphs[paragraph_index:])
 
@@ -2497,21 +2505,19 @@ def is_flow_sensitive_paragraph(text: str) -> bool:
 
 def add_report_content(document: Document, report_text: str, model: dict[str, Any] | None = None) -> None:
     configure_styles(document)
-    table_buffer: list[str] = []
-    for raw_line in report_text.splitlines():
-        line = raw_line.strip()
-        if not line or is_report_title(line):
+    for block in parse_markdown_blocks(report_text):
+        if block.kind == "title":
             continue
-        if is_table_line(line):
-            table_buffer.append(line)
+        if block.kind == "table":
+            write_markdown_table(
+                document,
+                document.add_paragraph(),
+                list(block.raw_lines),
+                model,
+            )
             continue
-        if table_buffer:
-            write_markdown_table(document, document.add_paragraph(), table_buffer, model)
-            table_buffer.clear()
         paragraph = document.add_paragraph()
-        write_line_to_paragraph(paragraph, line)
-    if table_buffer:
-        write_markdown_table(document, document.add_paragraph(), table_buffer, model)
+        write_line_to_paragraph(paragraph, block.text)
 
 
 def normalize_report_text(report_text: str) -> str:
@@ -3250,15 +3256,15 @@ def risk_label(value: Any) -> str:
 
 
 def is_table_line(line: str) -> bool:
-    return "|" in line and line.count("|") >= 2
+    return shared_is_table_line(line)
 
 
 def is_bullet_line(line: str) -> bool:
-    return bool(re.match(r"^[-*•➢]\s+", line))
+    return shared_is_bullet_line(line)
 
 
 def is_numbered_list_line(line: str) -> bool:
-    return bool(re.match(r"^\d+\s*[.．、）)]\s+", clean_inline_marks(line)))
+    return shared_is_numbered_list_line(line)
 
 
 def numbered_list_start(line: str) -> int:
@@ -3267,15 +3273,11 @@ def numbered_list_start(line: str) -> int:
 
 
 def clean_numbered_item_text(value: Any) -> str:
-    text = clean_inline_marks(value)
-    return re.sub(r"^\d+\s*[.．、）)]\s*", "", text).strip()
+    return shared_clean_numbered_item_text(value)
 
 
 def is_report_title(line: str) -> bool:
-    clean = normalize_heading_title(clean_markdown_heading(line))
-    if clean in {"配电安全专家咨询报告", "配电安全评估报告", "配电系统安全评估报告"}:
-        return True
-    return bool(re.match(r"^#\s+.+报告\s*$", str(line).strip()))
+    return shared_is_report_title(line)
 
 
 def clean_markdown_heading(line: str) -> str:
@@ -3289,13 +3291,7 @@ def clean_inline_marks(line: Any) -> str:
 
 
 def clean_bullet_item_text(value: Any) -> str:
-    text = clean_inline_marks(value)
-    text = re.sub(r"^[-*•➢]\s*", "", text).strip()
-    # Only remove a real numbered-list marker.  Requiring whitespace after the
-    # delimiter preserves dotted section references such as ``2.2.2.1节`` at
-    # the start of a bullet instead of corrupting them to ``2.2.1节``.
-    text = re.sub(r"^\d+\s*[.．、）)]\s+", "", text).strip()
-    return text
+    return shared_clean_bullet_item_text(value)
 
 
 def clean_text(value: Any) -> str:

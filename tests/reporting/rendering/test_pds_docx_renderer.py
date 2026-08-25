@@ -13,15 +13,15 @@ from docx.shared import Cm
 from manyselves.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
 from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.rendering.handoff_docx import PackagedV2DocxCore
-from manyselves.core.reporting.rendering.packaged_docx import (
-    PackagedDocxCore,
-    verify_rendered_markdown,
-)
+from manyselves.core.reporting.rendering.packaged_docx import PackagedDocxCore
 from manyselves.core.reporting.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
     ReportPhoto,
     ReportTable,
+)
+from manyselves.core.reporting.rendering.rendered_docx_validator import (
+    validate_rendered_markdown_docx,
 )
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
@@ -44,7 +44,7 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "b14c98dbef7a2057117baec03e5143a1a8134cee3e563ac0cf8d569397467faa"
+        "41a4e09573d347ff3f795feccd831a364e7d447f9a0986a56d423019937438c4"
     )
 
 
@@ -235,6 +235,90 @@ def test_packaged_v2_core_uses_real_word_numbering_for_lists(tmp_path: Path) -> 
     assert 'w:startOverride w:val="3"' in numbering_xml
 
 
+def test_shared_validator_accepts_arrow_bullet_rendered_as_native_word_list(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    markdown = """# 配电安全评估报告
+
+## 3. 结论与建议
+
+➢ 总体评价：整改措施应按风险等级闭环验证。
+"""
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+    output = tmp_path / "arrow-bullet.docx"
+    output.write_bytes(data)
+
+    validate_rendered_markdown_docx(
+        output,
+        "➢ 总体评价：整改措施应按风险等级闭环验证。",
+    )
+
+    paragraph = next(
+        item
+        for item in Document(output).paragraphs
+        if item.text == "总体评价：整改措施应按风险等级闭环验证。"
+    )
+    assert paragraph._p.pPr.numPr is not None
+
+
+def test_shared_validator_warns_for_reordered_approved_prose(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    output = tmp_path / "reordered.docx"
+    document = Document()
+    document.add_paragraph("第二项必须随后出现。")
+    document.add_paragraph("第一项必须先出现。")
+    document.save(output)
+
+    warnings = validate_rendered_markdown_docx(
+        output,
+        "第一项必须先出现。\n\n第二项必须随后出现。",
+    )
+
+    assert any("omitted approved Markdown content" in item for item in warnings)
+    assert "DOCX post-render validation warning" in caplog.text
+
+
+def test_shared_validator_warns_for_collapsed_duplicate_prose(tmp_path: Path) -> None:
+    output = tmp_path / "collapsed-duplicate.docx"
+    document = Document()
+    document.add_paragraph("同一句批准正文必须保留两次。")
+    document.save(output)
+
+    warnings = validate_rendered_markdown_docx(
+        output,
+        "同一句批准正文必须保留两次。\n\n同一句批准正文必须保留两次。",
+    )
+
+    assert any("omitted approved Markdown content" in item for item in warnings)
+
+
+def test_shared_validator_warns_for_unresolved_delivery_tokens(tmp_path: Path) -> None:
+    output = tmp_path / "unresolved-token.docx"
+    document = Document()
+    document.add_paragraph("批准正文。[[CITE:1]]")
+    document.save(output)
+
+    warnings = validate_rendered_markdown_docx(
+        output,
+        "批准正文。[[CITE:1]]",
+        reject_unresolved_tokens=True,
+    )
+
+    assert any("unresolved content tokens" in item for item in warnings)
+
+
+def test_shared_validator_still_blocks_an_unopenable_docx(tmp_path: Path) -> None:
+    output = tmp_path / "not-a-docx.docx"
+    output.write_bytes(b"not a zip archive")
+
+    with pytest.raises(ValueError, match="not Word/WPS-openable"):
+        validate_rendered_markdown_docx(output, "批准正文。")
+
+
 def test_packaged_v2_core_preserves_dotted_section_references_in_bullets(
     tmp_path: Path,
 ) -> None:
@@ -403,6 +487,7 @@ def test_renderer_preserves_prose_and_keeps_source_index_outside_docx(
     assert result.output_path == output
     assert result.handoff_core_used is True
     assert result.protected_prose_verified is True
+    assert result.validation_warnings == []
     rendered = Document(output)
     all_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
     assert "模块 2.4 的专家自然分析保留原样。" in all_text
@@ -505,6 +590,36 @@ def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
         run.font.superscript and run.text == "1"
         for paragraph in rendered.paragraphs
         for run in paragraph.runs
+    )
+
+
+def test_renderer_warns_but_publishes_missing_regional_executive_summary(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    report = _approved_report(photo)
+    packaged_core = PackagedDocxCore(template)
+
+    class DropRegionalSummaryCore:
+        def render_approved_prose(self, report_text: str, **kwargs):
+            return packaged_core.render_approved_prose(
+                report_text.replace(report.regional_executive_summary, ""),
+                **kwargs,
+            )
+
+    output = tmp_path / "published-with-warning.docx"
+    result = PdsDocxRenderer(DropRegionalSummaryCore()).render(report, output)
+
+    assert output.is_file()
+    assert result.protected_prose_verified is False
+    assert any(
+        "omitted approved Markdown content" in item
+        for item in result.validation_warnings
     )
 
 
@@ -697,7 +812,7 @@ def test_title_insertion_falls_back_when_handoff_template_has_no_title_style() -
     assert document.paragraphs[0].text == "配电安全专家咨询报告"
 
 
-def test_failed_post_render_validation_does_not_publish_output(tmp_path: Path) -> None:
+def test_post_render_content_warning_does_not_block_output(tmp_path: Path) -> None:
     class CorruptCore:
         def render_approved_prose(self, *args, **kwargs):
             buffer = io.BytesIO()
@@ -708,11 +823,13 @@ def test_failed_post_render_validation_does_not_publish_output(tmp_path: Path) -
     from PIL import Image
 
     Image.new("RGB", (20, 20), color="blue").save(photo)
-    output = tmp_path / "must-not-exist.docx"
+    output = tmp_path / "published-with-warning.docx"
 
-    with pytest.raises(ValueError, match="changed or omitted protected"):
-        PdsDocxRenderer(CorruptCore()).render(_approved_report(photo), output)
-    assert not output.exists()
+    result = PdsDocxRenderer(CorruptCore()).render(_approved_report(photo), output)
+
+    assert output.is_file()
+    assert result.protected_prose_verified is False
+    assert result.validation_warnings
 
 
 def test_stale_fence_before_publish_never_exposes_rendered_output(
@@ -759,7 +876,7 @@ def test_render_verifier_accepts_bold_numbered_markdown_labels(tmp_path: Path) -
     )
     document.save(output)
 
-    verify_rendered_markdown(
+    validate_rendered_markdown_docx(
         output,
         "\n\n".join(
             [

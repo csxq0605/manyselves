@@ -10,8 +10,8 @@ from openpyxl import Workbook
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.decisions import EvidenceDecisionStore
 from manyselves.core.reporting.agentic_models import TEMPLATE_ROLE_SKILL_IDS
+from manyselves.core.reporting.decisions import EvidenceDecisionStore
 from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.models import (
     EvidenceDecisionRequest,
@@ -30,8 +30,8 @@ from manyselves.core.reporting.service import ReportingRunResult, ReportingServi
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import (
-    AgentWorkflowError,
     AgentWorkflowBlocked,
+    AgentWorkflowError,
     ReportingNeedsDecisionError,
     ReportWorkflowRunner,
 )
@@ -418,6 +418,56 @@ async def test_render_existing_bypasses_all_analysis_agents(tmp_path: Path, monk
         f"Work/runs/{result.run_id}/frozen-project/Work/drafts/approved.md"
     )
     assert render_request["output_ref"] == "Outputs/Reports/approved.docx"
+    render_result = json.loads(
+        (tmp_path / f"Work/runs/{result.run_id}/render-result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert render_result["protected_prose_verified"] is True
+    assert render_result["validation_warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_render_existing_persists_validation_warning_without_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "Work/drafts/approved-warning.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# 配电安全专家咨询报告\n\n批准正文。\n",
+        encoding="utf-8",
+    )
+    warning = "rendered DOCX may have omitted approved Markdown content: line 3"
+    monkeypatch.setattr(
+        "manyselves.core.reporting.service.validate_rendered_markdown_docx",
+        lambda *args, **kwargs: [warning],
+    )
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="render_existing",
+            instruction="带告警渲染批准正文",
+            source_markdown_ref=Path("Work/drafts/approved-warning.md"),
+            output_filename="approved-warning.docx",
+        )
+    )
+
+    assert result.status == "completed", result.error
+    assert result.output_paths[0].is_file()
+    render_result = json.loads(
+        (tmp_path / f"Work/runs/{result.run_id}/render-result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert render_result["protected_prose_verified"] is False
+    assert render_result["validation_warnings"] == [warning]
 
 
 @pytest.mark.asyncio

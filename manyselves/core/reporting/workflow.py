@@ -8075,7 +8075,8 @@ class ReportWorkflowRunner:
                 source_markdown_ref=markdown_path.relative_to(self.service.workspace),
                 output_ref=output.relative_to(self.service.workspace),
                 render_log_ref=render_log_ref,
-                protected_prose_verified=True,
+                protected_prose_verified=render.protected_prose_verified,
+                validation_warnings=render.validation_warnings,
             ).model_dump(mode="json"),
         )
         public_markdown = self.service.store.write_text(

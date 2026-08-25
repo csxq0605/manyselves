@@ -10,6 +10,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
+
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -29,7 +30,7 @@ from ..report_markdown import (
 )
 from ..taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .handoff_docx import HandoffDocxCore
-from .packaged_docx import _expected_markdown_fragments
+from .rendered_docx_validator import validate_rendered_markdown_docx
 
 _CITATION_TOKEN = re.compile(r"\[\[CITE:(\d+)\]\]")
 _PHOTO_TOKEN = re.compile(r"^\[\[PHOTO:([^]]+)\]\]$")
@@ -147,6 +148,7 @@ class PdsRenderResult(StrictModel):
     photo_count: int
     handoff_core_used: bool
     protected_prose_verified: bool
+    validation_warnings: list[str] = Field(default_factory=list)
 
 
 class PdsDocxRenderer:
@@ -195,7 +197,12 @@ class PdsDocxRenderer:
             ) as temporary:
                 temporary.write(self._canonical_docx(buffer.getvalue()))
                 temporary_path = Path(temporary.name)
-            self._verify_output(temporary_path, report)
+            validation_warnings = validate_rendered_markdown_docx(
+                temporary_path,
+                cited_markdown,
+                expected_title=report.title,
+                reject_unresolved_tokens=True,
+            )
             if before_publish is not None:
                 before_publish()
             temporary_path.replace(output_path)
@@ -210,7 +217,8 @@ class PdsDocxRenderer:
             table_count=len(report.tables),
             photo_count=len(report.photos),
             handoff_core_used=True,
-            protected_prose_verified=True,
+            protected_prose_verified=not validation_warnings,
+            validation_warnings=validation_warnings,
         )
 
     @staticmethod
@@ -461,69 +469,3 @@ class PdsDocxRenderer:
                 info.external_attr = input_zip.getinfo(name).external_attr
                 output_zip.writestr(info, input_zip.read(name))
         return target.getvalue()
-
-    @staticmethod
-    def _verify_output(output_path: Path, report: ApprovedReport) -> None:
-        try:
-            rendered = Document(output_path)
-        except Exception as exc:
-            raise ValueError("rendered file is not Word/WPS-openable") from exc
-        def semantic_text(value: str) -> str:
-            value = value.strip()
-            # Remove inline Markdown before recognizing numbered/list prefixes.
-            # A protected line such as ``**1. 风险标题**`` is rendered as a
-            # numbered paragraph without the literal ``1.``.  Stripping the
-            # Markdown later leaves the source-side number behind and produces
-            # a false omission.
-            value = value.replace("**", "").replace("__", "").replace("`", "")
-            value = re.sub(r"^#{1,6}\s*", "", value)
-            value = re.sub(r"^>\s*", "", value)
-            value = re.sub(r"^[•·]\s*", "", value)
-            value = re.sub(r"^\d+\.\s+", "", value)
-            value = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", value)
-            value = re.sub(r"\[\[CLAIM:C-[^\]\s]+\]\]", "", value)
-            value = re.sub(r"【([^】]+)】[:：]?", r"\1：", value)
-            value = re.sub(r"\s*([：:])\s*", r"\1", value)
-            return re.sub(r"\s+", "", value)
-
-        visible = [
-            "".join(run.text for run in paragraph.runs if run.font.superscript is not True)
-            for paragraph in rendered.paragraphs
-        ]
-        visible.extend(
-            cell.text
-            for table in rendered.tables
-            for row in table.rows
-            for cell in row.cells
-        )
-        semantic_visible = semantic_text("\n".join(visible))
-        text = "\n".join(visible)
-        protected = [
-            report.assessment_background,
-            report.findings_overview,
-            report.risk_panorama,
-            report.dimension_risk_analysis,
-            report.data_gap_analysis,
-            report.improvement_action_plan,
-            *report.module_narratives.values(),
-        ]
-        if report.special_topic_analysis is not None:
-            protected.append(report.special_topic_analysis)
-        missing = [
-            fragment
-            for value in protected
-            for fragment in _expected_markdown_fragments(value)
-            if semantic_text(fragment) not in semantic_visible
-        ]
-        if missing:
-            preview = ", ".join(repr(fragment[:120]) for fragment in missing[:8])
-            raise ValueError(
-                "rendered DOCX changed or omitted protected Agent/Chief Editor prose: "
-                + preview
-            )
-        if report.title not in text:
-            raise ValueError("rendered DOCX is missing the approved title")
-        if _CITATION_TOKEN.search(text):
-            raise ValueError("rendered DOCX contains unresolved citation tokens")
-        if any(_PHOTO_TOKEN.match(paragraph.text.strip()) for paragraph in rendered.paragraphs):
-            raise ValueError("rendered DOCX contains unresolved photo tokens")
