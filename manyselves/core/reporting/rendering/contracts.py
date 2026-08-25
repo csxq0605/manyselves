@@ -26,4 +26,5 @@ class RenderResult(ReportingModel):
     template_sha256: str | None = None
     output_sha256: str | None = None
     protected_prose_verified: bool = False
+    validation_warnings: list[str] = Field(default_factory=list)
     error: str | None = None

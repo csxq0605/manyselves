@@ -12,8 +12,8 @@ import stat
 import tempfile
 import time
 import uuid
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from docx import Document
@@ -36,9 +36,10 @@ from .execution_runtime import ProviderRouter
 from .input_snapshot import RunInputSnapshotStore
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
-from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .locks import exclusive_reporting_writer_lock
+from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
+    REPORT_MODULE_IDS,
     CostControlMode,
     EvidenceDecisionAction,
     EvidenceDecisionRequest,
@@ -46,7 +47,6 @@ from .models import (
     OutputArtifact,
     PhotoAsset,
     ProjectManifest,
-    REPORT_MODULE_IDS,
     ReportRequest,
     RevisionRequest,
     UserSupplement,
@@ -61,7 +61,7 @@ from .parallel_runtime import (
 from .preparation import FilePreparationResult, prepare_manifest_file
 from .provider_admission import ProviderAdmissionController
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
-from .rendering.packaged_docx import verify_rendered_markdown
+from .rendering.rendered_docx_validator import validate_rendered_markdown_docx
 from .store import ReportingStore
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
 
@@ -903,7 +903,11 @@ class ReportingService:
             ) as temporary:
                 temporary.write(raw_docx)
                 temporary_path = Path(temporary.name)
-            verify_rendered_markdown(temporary_path, markdown)
+            validation_warnings = validate_rendered_markdown_docx(
+                temporary_path,
+                markdown,
+                expected_title=title,
+            )
             validate_bound_project_write_lease(self.workspace)
             temporary_path.replace(output)
             temporary_path = None
@@ -922,7 +926,8 @@ class ReportingService:
             render_log_ref=render_log_ref,
             template_sha256=template_sha256,
             output_sha256=output_sha256,
-            protected_prose_verified=True,
+            protected_prose_verified=not validation_warnings,
+            validation_warnings=validation_warnings,
         )
         self.store.write_json(render_log_ref.as_posix(), render_result.model_dump(mode="json"))
         self.store.write_json(
