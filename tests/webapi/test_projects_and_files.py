@@ -689,6 +689,29 @@ async def test_upload_is_bounded_and_download_supports_byte_ranges(api) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_creates_missing_parent_directories_for_browser_folder_import(
+    api,
+) -> None:
+    """Nested browser-relative paths must materialize one imported directory tree."""
+
+    client, _, root = api
+    headers = await acquire_controller(client)
+
+    uploaded = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": ("Inputs/report-template-role-skills/author-2.1/SKILL.md")},
+        headers={**headers, "Content-Type": "text/markdown"},
+        content=b"# Author 2.1\n",
+    )
+
+    assert uploaded.status_code == 201
+    assert uploaded.json()["path"] == ("Inputs/report-template-role-skills/author-2.1/SKILL.md")
+    assert (
+        root / "p1/Inputs/report-template-role-skills/author-2.1/SKILL.md"
+    ).read_bytes() == b"# Author 2.1\n"
+
+
+@pytest.mark.asyncio
 async def test_upload_conflict_modes_are_revision_safe_and_path_sanitized(api) -> None:
     """Reject, keep-both, and replace must expose only logical paths and honor revisions."""
     client, _, root = api

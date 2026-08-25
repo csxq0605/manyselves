@@ -99,6 +99,54 @@ const paginatedInputEntries: FileEntry[] = Array.from({ length: 21 }, (_, index)
   size: index + 1,
 }));
 
+const templateSkillEntries: FileEntry[] = [
+  {
+    kind: "directory",
+    modifiedAt: "2026-08-25T00:00:00Z",
+    name: "report-template-role-skills",
+    path: "Inputs/report-template-role-skills",
+    revision: "2".repeat(64),
+    size: null,
+  },
+  ...["S2-1.xlsx", "S4-4.xlsx", "S4-6.xlsx", "专项问题分析.md"].map((name, index): FileEntry => ({
+    kind: "file",
+    modifiedAt: "2026-08-25T00:00:00Z",
+    name,
+    path: `Inputs/${name}`,
+    revision: `${index}`.repeat(64),
+    size: index + 1,
+  })),
+  ...[
+    "auditor-2.1", "auditor-2.2", "auditor-2.3", "auditor-2.4", "auditor-2.5",
+    "author-2.1", "author-2.2", "author-2.3", "author-2.4", "author-2.5",
+    "chief-editor-chapter-1", "chief-editor-chapter-3", "chief-editor-chapter-4",
+    "final-auditor",
+  ].map((name, index): FileEntry => ({
+    kind: "directory",
+    modifiedAt: "2026-08-25T00:00:00Z",
+    name,
+    path: `Inputs/report-template-role-skills/${name}`,
+    revision: `${index + 4}`.repeat(64),
+    size: null,
+  })),
+  ...["boundary.json", "source.json"].map((name, index): FileEntry => ({
+    kind: "file",
+    modifiedAt: "2026-08-25T00:00:00Z",
+    name,
+    path: `Inputs/report-template-role-skills/${name}`,
+    revision: `${index + 18}`.repeat(64),
+    size: index + 20,
+  })),
+  {
+    kind: "file",
+    modifiedAt: "2026-08-25T00:00:00Z",
+    name: "SKILL.md",
+    path: "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+    revision: "8".repeat(64),
+    size: 128,
+  },
+];
+
 function platform(): PlatformBridge {
   return {
     kind: "browser",
@@ -194,7 +242,7 @@ describe("ProjectDirectoryPage", () => {
 
     expect(await screen.findByRole("region", { name: "Inputs file scroll area" })).toHaveClass("file-list__viewport");
     expect(screen.getByText("input-01.md")).toBeVisible();
-    expect(screen.getByText("input-01.md").closest("li")).toHaveStyle({ paddingInlineStart: "24px" });
+    expect(screen.getByText("input-01.md").closest("li")).toHaveStyle({ paddingInlineStart: "18px" });
     expect(screen.queryByText("input-21.md")).not.toBeInTheDocument();
     expect(screen.getByText("Page 1 / 2")).toBeVisible();
 
@@ -225,6 +273,64 @@ describe("ProjectDirectoryPage", () => {
       expect.any(AbortSignal),
     ));
     expect(screen.getByLabelText("选择本地文件")).toHaveAttribute("multiple");
+  });
+
+  it("uploads a selected directory while preserving its browser relative paths", async () => {
+    const upload = vi.fn().mockResolvedValue(entries[1]!);
+    const user = userEvent.setup();
+    renderDirectory("inputs", fileApi({ upload }));
+    const skill = new File(["skill"], "SKILL.md", { type: "text/markdown" });
+    const boundary = new File(["{}"], "boundary.json", { type: "application/json" });
+    Object.defineProperty(skill, "webkitRelativePath", {
+      value: "report-template-role-skills/author-2.1/SKILL.md",
+    });
+    Object.defineProperty(boundary, "webkitRelativePath", {
+      value: "report-template-role-skills/boundary.json",
+    });
+
+    await user.click(await screen.findByRole("button", { name: "上传文件夹" }));
+    const directoryInput = screen.getByLabelText("选择本地文件夹");
+    await user.upload(directoryInput, [skill, boundary]);
+
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(
+      "project-1",
+      "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+      skill,
+      "reject",
+      undefined,
+      expect.any(AbortSignal),
+    ));
+    expect(upload).toHaveBeenCalledWith(
+      "project-1",
+      "Inputs/report-template-role-skills/boundary.json",
+      boundary,
+      "reject",
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(directoryInput).toHaveAttribute("webkitdirectory");
+  });
+
+  it("keeps an expanded directory subtree together and directly below its parent", async () => {
+    const user = userEvent.setup();
+    renderDirectory("inputs", fileApi({ listTree: async () => templateSkillEntries }));
+
+    await user.click(await screen.findByRole("button", { name: "展开 report-template-role-skills" }));
+
+    const child = screen.getByRole("button", { name: "展开 auditor-2.1" });
+    const rootFile = screen.getByText("S2-1.xlsx");
+    const rootDirectory = screen.getByRole("button", { name: "收起 report-template-role-skills" });
+    expect(screen.getByText("Page 1 / 1")).toBeVisible();
+    expect(child.compareDocumentPosition(rootFile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rootDirectory.closest("li")).toHaveStyle({ paddingInlineStart: "18px" });
+    expect(child.closest("li")).toHaveStyle({ paddingInlineStart: "42px" });
+    expect(screen.getByText("source.json")).toBeVisible();
+
+    await user.click(child);
+    const skill = screen.getByText("SKILL.md");
+    const nextRole = screen.getByRole("button", { name: "展开 auditor-2.2" });
+    expect(skill.compareDocumentPosition(nextRole) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(skill.closest("li")).toHaveStyle({ paddingInlineStart: "66px" });
   });
 
   it("uses the selected server revision when replacing a duplicate upload", async () => {
