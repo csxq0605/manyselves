@@ -5,11 +5,10 @@ boundary that prepares those lanes, invokes the shared Cross reviewer through
 the neutral Agent runtime, accepts a typed initial submission, and reduces the
 no-finding path into the current-run Cross completion and decision pack.
 
-The runtime deliberately consumes module artifact metadata supplied by the
-upstream module cohort.  ``CrossOwnerInput`` already requires relation
-``sha256`` fields for the Provider contract; this module does not calculate a
-new digest or recreate the legacy recovery/CAS machinery when that metadata is
-absent.
+The runtime consumes module refs supplied by the upstream module cohort when
+available.  For persisted same-run module submissions it can reconstruct the
+existing current-run ref from the run id, module id, and revision.  Cross input
+does not calculate or require digests.
 """
 
 from __future__ import annotations
@@ -195,9 +194,9 @@ def _module_submissions(state: Mapping[str, Any]) -> dict[str, ModuleSubmission]
 
 def _metadata_map(state: Mapping[str, Any]) -> Mapping[str, Any]:
     for key in (
+        "module_subject_refs",
         "module_artifact_refs",
         "module_artifacts",
-        "module_subject_refs",
         "module_refs",
     ):
         candidate = state.get(key)
@@ -206,31 +205,38 @@ def _metadata_map(state: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
-def _metadata_entry(metadata: Mapping[str, Any], module_id: str) -> tuple[Any, Any]:
+def _metadata_ref(metadata: Mapping[str, Any], module_id: str) -> str | None:
     entry = metadata.get(module_id, {})
     if isinstance(entry, Mapping):
         ref = entry.get("ref") or entry.get("subject_ref") or entry.get("path")
-        digest = entry.get("sha256") or entry.get("subject_sha256")
     else:
         ref = getattr(entry, "ref", None) or getattr(entry, "subject_ref", None)
-        digest = getattr(entry, "sha256", None) or getattr(entry, "subject_sha256", None)
         if ref is None and isinstance(entry, str):
             ref = entry
-    return ref, digest
+    return str(ref) if ref else None
+
+
+def _module_subject_ref(
+    state: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    module: ModuleSubmission,
+) -> str:
+    return _metadata_ref(metadata, module.module_id) or (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module.module_id}-r{module.revision}.json"
+    )
 
 
 def _related_view(
     module: ModuleSubmission,
     *,
     subject_ref: str,
-    subject_sha256: str,
 ) -> CrossOwnerRelatedModuleView:
     content = module_content_view(module)
     return CrossOwnerRelatedModuleView(
         module_id=module.module_id,
         revision=module.revision,
         subject_ref=subject_ref,
-        subject_sha256=subject_sha256,
         submodule_ids=list(content.submodule_narratives),
         claims=module.claims,
         evidence_ids_by_submodule=content.evidence_ids_by_submodule,
@@ -247,23 +253,20 @@ def _build_owner_input(
     review_round: int,
 ) -> tuple[CrossOwnerInput, str]:
     owner = modules[owner_module_id]
-    owner_ref, _owner_digest = _metadata_entry(metadata, owner_module_id)
+    owner_ref = _module_subject_ref(state, metadata, owner)
     related_refs: dict[str, str] = {}
     related_revisions: dict[str, int] = {}
-    related_hashes: dict[str, str] = {}
     related_views: dict[str, CrossOwnerRelatedModuleView] = {}
     for module_id in REPORT_MODULE_IDS:
         if module_id == owner_module_id:
             continue
         related = modules[module_id]
-        related_ref, related_digest = _metadata_entry(metadata, module_id)
+        related_ref = _module_subject_ref(state, metadata, related)
         related_refs[module_id] = related_ref
         related_revisions[module_id] = related.revision
-        related_hashes[module_id] = related_digest
         related_views[module_id] = _related_view(
             related,
             subject_ref=related_ref,
-            subject_sha256=related_digest,
         )
 
     owner_view: ModuleContentView = module_content_view(owner)
@@ -279,7 +282,6 @@ def _build_owner_input(
         owner_scope_submodule_ids=list(owner_view.submodule_narratives),
         related_module_refs=related_refs,
         related_module_revisions=related_revisions,
-        related_module_sha256=related_hashes,
         related_module_views=related_views,
     )
     ref = (
@@ -1962,19 +1964,19 @@ class CrossOwnerRuntime:
                     else f"Work/runs/{state['run_id']}/modules/"
                     f"{owner_module_id}-r{completed.lane.module.revision}.json"
                 )
-                if hasattr(subject, "model_dump"):
-                    state.setdefault("module_artifact_refs", {})[owner_module_id] = (
-                        subject.model_dump(mode="json")
-                    )
+                state.setdefault("module_subject_refs", {})[owner_module_id] = (
+                    subject_refs[owner_module_id]
+                )
                 verdicts.extend(completed.verdicts)
                 finding_ids.extend(finding.id for finding in completed.findings)
                 findings_by_owner[owner_module_id] = list(completed.findings)
             else:
                 metadata = _metadata_map(state)
-                subject_refs[owner_module_id] = _metadata_entry(
+                subject_refs[owner_module_id] = _module_subject_ref(
+                    state,
                     metadata,
-                    owner_module_id,
-                )[0]
+                    _model(state["module_submissions"][owner_module_id], ModuleSubmission),
+                )
                 finding_ids.extend(finding.id for finding in result.findings)
                 findings_by_owner[owner_module_id] = list(result.findings)
             for item in result.synthesis_inputs:

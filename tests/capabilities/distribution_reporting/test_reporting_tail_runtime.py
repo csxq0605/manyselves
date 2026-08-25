@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
@@ -314,7 +313,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     )
 
 
-def test_cross_owner_runtime_requires_existing_relation_digest_metadata(
+def test_cross_owner_runtime_uses_current_run_module_refs_without_digest_metadata(
     tmp_path: Path,
 ) -> None:
     from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
@@ -323,8 +322,21 @@ def test_cross_owner_runtime_requires_existing_relation_digest_metadata(
 
     state = _cross_state()
     state.pop("module_artifact_refs")
-    with pytest.raises(ValidationError):
-        CrossOwnerRuntime(tmp_path).prepare(state)
+    prepared = CrossOwnerRuntime(tmp_path).prepare(state)
+
+    owner_input = prepared["cross_owner_inputs"]["2.1"]
+    assert owner_input.owner_subject_ref == (
+        "Work/runs/cross-runtime-run/modules/2.1-r0.json"
+    )
+    assert owner_input.related_module_refs["2.2"] == (
+        "Work/runs/cross-runtime-run/modules/2.2-r0.json"
+    )
+    dumped = owner_input.model_dump(mode="json")
+    assert "related_module_sha256" not in dumped
+    assert all(
+        "subject_sha256" not in related
+        for related in dumped["related_module_views"].values()
+    )
 
 
 def test_cross_owner_runtime_prepares_and_reduces_five_no_finding_owners(

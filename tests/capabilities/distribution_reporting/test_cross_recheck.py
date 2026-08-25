@@ -56,7 +56,6 @@ def _frozen_owner_input(
     )
     related_refs: dict[str, str] = {}
     related_revisions: dict[str, int] = {}
-    related_hashes: dict[str, str] = {}
     related_views: dict[str, CrossOwnerRelatedModuleView] = {}
     for module_id in REPORT_TAXONOMY:
         if module_id == OWNER_ID:
@@ -73,15 +72,12 @@ def _frozen_owner_input(
             revision=0,
         )
         ref = f"Work/runs/{RUN_ID}/modules/{module_id}-r0.json"
-        digest = "0" * 64
         related_refs[module_id] = ref
         related_revisions[module_id] = related.revision
-        related_hashes[module_id] = digest
         related_views[module_id] = CrossOwnerRelatedModuleView(
             module_id=module_id,
             revision=related.revision,
             subject_ref=ref,
-            subject_sha256=digest,
             submodule_ids=list(related.submodule_narratives),
             claims=[],
             evidence_ids_by_submodule={
@@ -101,7 +97,6 @@ def _frozen_owner_input(
         owner_scope_submodule_ids=list(owner.submodule_narratives),
         related_module_refs=related_refs,
         related_module_revisions=related_revisions,
-        related_module_sha256=related_hashes,
         related_module_views=related_views,
         required_findings=[finding],
         revision_responses=[

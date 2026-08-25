@@ -1011,13 +1011,6 @@ class CrossReviewInput(StrictModel):
     changed_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
         description="Initial: all five modules. Recheck: only current-wave revised owners."
     )
-    unchanged_module_sha256: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
-        default_factory=dict,
-        description=(
-            "Recheck fingerprints for unchanged subjects retained in the same reviewer "
-            "session without resending their full prose."
-        ),
-    )
     required_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
         description="Immutable prior Cross findings requiring one verdict each on recheck.",
@@ -1056,7 +1049,6 @@ class CrossReviewInput(StrictModel):
             self.required_findings
             or self.revision_responses_by_module
             or self.local_regression_review_refs
-            or self.unchanged_module_sha256
         ):
             raise ValueError("initial cross review cannot contain recheck state")
         if self.phase == "initial" and (set(self.modules) != expected or changed != expected):
@@ -1071,16 +1063,6 @@ class CrossReviewInput(StrictModel):
                 )
             if not changed or set(self.modules) != changed:
                 raise ValueError("cross recheck full subjects must equal changed_module_ids")
-            unchanged = expected - changed
-            if set(self.unchanged_module_sha256) != unchanged:
-                raise ValueError(
-                    "cross recheck must fingerprint every unchanged module exactly once"
-                )
-            if any(
-                not re.fullmatch(r"[0-9a-f]{64}", value)
-                for value in self.unchanged_module_sha256.values()
-            ):
-                raise ValueError("unchanged module fingerprints must be SHA-256 hex")
             required = {finding.id for finding in self.required_findings}
             responses = {
                 response.finding_id
@@ -1105,10 +1087,6 @@ class CrossOwnerRelatedModuleView(StrictModel):
     subject_ref: str = Field(
         min_length=1,
         description="Immutable artifact ref for the related module subject."
-    )
-    subject_sha256: str = Field(
-        pattern=r"^[0-9a-f]{64}$",
-        description="SHA-256 hash binding the related module subject artifact."
     )
     submodule_ids: list[str] = Field(
         min_length=1,
@@ -1143,7 +1121,7 @@ class CrossOwnerInput(StrictModel):
     """Typed input for one fixed Cross-owner reviewer.
 
     The owner receives its complete module view.  Every other module is present
-    only as a compact, hash-bound relation view; those modules are read-only and
+    only as a compact, revision-bound relation view; those modules are read-only and
     cannot become revision targets for this lane.
     """
 
@@ -1189,12 +1167,9 @@ class CrossOwnerInput(StrictModel):
     related_module_revisions: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], int
     ] = Field(description="Revisions for the other four read-only module subjects.")
-    related_module_sha256: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(description="SHA-256 hashes for the other four read-only module subjects.")
     related_module_views: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], CrossOwnerRelatedModuleView
-    ] = Field(description="Compact, hash-bound views for the other four modules.")
+    ] = Field(description="Compact, revision-bound views for the other four modules.")
     required_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
         description="Owner-scoped findings that the recheck must resolve."
@@ -1231,8 +1206,6 @@ class CrossOwnerInput(StrictModel):
             raise ValueError("Cross owner input must include exactly the other four modules")
         if set(self.related_module_revisions) != expected_related:
             raise ValueError("Cross owner relation revisions must cover the other four modules")
-        if set(self.related_module_sha256) != expected_related:
-            raise ValueError("Cross owner relation hashes must cover the other four modules")
         if set(self.related_module_views) != expected_related:
             raise ValueError("Cross owner compact relation views must cover the other four modules")
         for module_id in expected_related:
@@ -1241,9 +1214,8 @@ class CrossOwnerInput(StrictModel):
                 view.module_id != module_id
                 or view.revision != self.related_module_revisions[module_id]
                 or view.subject_ref != self.related_module_refs[module_id]
-                or view.subject_sha256 != self.related_module_sha256[module_id]
             ):
-                raise ValueError("Cross owner relation view/hash binding is inconsistent")
+                raise ValueError("Cross owner relation view binding is inconsistent")
         for finding in self.required_findings:
             if finding.owner_module_id != self.owner_module_id:
                 raise ValueError("Cross owner required finding lies outside owner scope")
@@ -2262,7 +2234,6 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "module_revisions": {module_id: 0 for module_id in REPORT_TAXONOMY},
         "modules": _EXAMPLE_MODULES,
         "changed_module_ids": list(REPORT_TAXONOMY),
-        "unchanged_module_sha256": {},
         "required_findings": [],
         "revision_responses_by_module": {},
         "local_regression_review_refs": {},
@@ -2286,17 +2257,11 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "related_module_revisions": {
             module_id: 0 for module_id in REPORT_TAXONOMY if module_id != "2.1"
         },
-        "related_module_sha256": {
-            module_id: "0" * 64
-            for module_id in REPORT_TAXONOMY
-            if module_id != "2.1"
-        },
         "related_module_views": {
             module_id: {
                 "module_id": module_id,
                 "revision": 0,
                 "subject_ref": _EXAMPLE_MODULE_REFS[module_id],
-                "subject_sha256": "0" * 64,
                 "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
                 "claims": [],
                 "evidence_ids_by_submodule": {},
