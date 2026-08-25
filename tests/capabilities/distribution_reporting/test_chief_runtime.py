@@ -61,6 +61,33 @@ def _state(run_id: str) -> dict[str, object]:
     }
 
 
+def test_chief_submission_normalizes_static_section_keyed_part_refs() -> None:
+    """A corrected Provider payload may key refs by its assigned section ids."""
+
+    submission = ChiefChapterLaneSubmission.model_validate(
+        {
+            "kind": "chief_chapter_lane_submission",
+            "run_id": "chief-section-keyed-refs",
+            "chapter_id": "3",
+            "section_ids": ["3.1.1", "3.1.2", "3.1.3", "3.2"],
+            "part_refs": {
+                "3.1.1": "drafts/risk_panorama.md",
+                "3.1.2": "drafts/dimension_risk_analysis.md",
+                "3.1.3": "drafts/data_gap_analysis.md",
+                "3.2": "drafts/improvement_action_plan.md",
+            },
+            "revision": 0,
+        }
+    )
+
+    assert submission.part_refs == {
+        "risk_panorama": "drafts/risk_panorama.md",
+        "dimension_risk_analysis": "drafts/dimension_risk_analysis.md",
+        "data_gap_analysis": "drafts/data_gap_analysis.md",
+        "improvement_action_plan": "drafts/improvement_action_plan.md",
+    }
+
+
 def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill(
     tmp_path: Path,
 ) -> None:

@@ -1379,6 +1379,27 @@ class ChiefChapterLaneSubmission(StrictModel):
     part_refs: dict[str, str] = Field(min_length=1)
     revision: int = Field(default=0, ge=0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_static_section_keyed_part_refs(cls, value: object) -> object:
+        """Map the equivalent static section-keyed wire shape to result part ids."""
+
+        if not isinstance(value, dict) or value.get("chapter_id") not in {"1", "3"}:
+            return value
+        section_ids = value.get("section_ids")
+        part_refs = value.get("part_refs")
+        if not isinstance(section_ids, list) or not isinstance(part_refs, dict):
+            return value
+        if set(part_refs) != set(section_ids):
+            return value
+        mapped_refs: dict[str, object] = {}
+        for section_id in section_ids:
+            part_id = CHIEF_SECTION_RESULT_PART_IDS.get(section_id)
+            if part_id is None:
+                return value
+            mapped_refs[part_id] = part_refs[section_id]
+        return {**value, "part_refs": mapped_refs}
+
     @model_validator(mode="after")
     def section_maps_match(self) -> "ChiefChapterLaneSubmission":
         if len(self.section_ids) != len(set(self.section_ids)):
