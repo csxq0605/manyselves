@@ -3,7 +3,7 @@ version: 1.0.0
 description: Run the prepared module 2.5 Cross revision through the generic Agent port
 agent: module-2.5-specialist
 objective: Apply the prepared Cross owner findings through the exact Reporting envelope.
-input_contract: declarative_cross_owner_runtime_context
+input_contract: declarative_module_runtime_lane_context
 output_contract: declarative_module_revision_agent_result
 tools:
 - search_project_evidence

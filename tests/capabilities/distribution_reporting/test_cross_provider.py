@@ -576,6 +576,22 @@ async def test_cross_owner_finding_revises_locally_rechecks_and_completes(
     assert revision_context.revision_preparation is not None
     prepared = revision_context.revision_preparation.prepared
     assert prepared is not None
+    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
+        ModuleProviderRuntime,
+    )
+
+    saved_task = TaskDefinition(
+        id="cross-owner-module-2.1-revision-r1",
+        version="1.0.0",
+        description="Persisted Cross owner module revision",
+        agent="module-2.1-specialist",
+        objective="Apply the prepared Cross finding.",
+        input_contract="declarative_cross_owner_runtime_context",
+        output_contract="declarative_module_revision_agent_result",
+    )
+    projected = ModuleProviderRuntime._context(revision_context, saved_task)
+    assert projected.revision is not None
+    assert projected.revision.prepared == prepared
     revised = ModuleRevisionSubmission(
         module_id=owner_module_id,
         base_revision=0,

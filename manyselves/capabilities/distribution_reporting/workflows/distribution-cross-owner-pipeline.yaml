@@ -98,8 +98,13 @@ actions:
   condition:
     variable: should-invoke-cross-owner-revision
     operator: truthy
-  then: create-cross-owner-revision-conversation
+  then: project-current-cross-owner-module-revision-agent-input
   otherwise: prepare-current-cross-owner-author-exception
+- id: project-current-cross-owner-module-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-revision-agent-input
 - id: create-cross-owner-revision-conversation
   kind: create_conversation
   agent: "{revision_agent_id}"
@@ -111,7 +116,7 @@ actions:
   agent: "{revision_agent_id}"
   task: "{revision_task_id}"
   conversation_variable: cross-owner-revision-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-revision-agent-input
   output_variable: cross-owner-revision-agent-result
 - id: accept-current-cross-owner-revision
   kind: invoke_tool

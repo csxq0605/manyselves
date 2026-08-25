@@ -38,6 +38,9 @@ from manyselves.capabilities.distribution_reporting.runtime.cross_completion imp
 from manyselves.capabilities.distribution_reporting.runtime.cross_local_regression import (
     build_cross_owner_local_regression_context,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_module_revision_input import (
+    project_cross_owner_module_revision_agent_input,
+)
 from manyselves.capabilities.distribution_reporting.runtime.cross_recheck import (
     accept_cross_owner_recheck,
     prepare_cross_owner_recheck,
@@ -995,6 +998,14 @@ class CrossOwnerRuntime:
             and preparation is not None
             and preparation.mode == "invoke_agent"
         )
+
+    @staticmethod
+    def module_revision_agent_input(
+        value: Any,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        """Project a Cross-owned revision into the original Author boundary."""
+
+        return project_cross_owner_module_revision_agent_input(value)
 
     def accept_revision(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
         """Accept one typed Author revision or its same-run candidate."""

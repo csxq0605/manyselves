@@ -39,6 +39,11 @@ actions:
   tool: prepare-current-cross-owner-local-preflight-revision
   input_variable: owner-context
   output_variable: owner-context
+- id: project-current-cross-owner-local-preflight-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-preflight-revision-agent-input
 - id: create-cross-owner-local-preflight-author-conversation
   kind: create_conversation
   agent: "{revision_agent_id}"
@@ -50,7 +55,7 @@ actions:
   agent: "{revision_agent_id}"
   task: "{revision_task_id}"
   conversation_variable: cross-owner-local-preflight-author-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-local-preflight-revision-agent-input
   output_variable: cross-owner-local-preflight-revision-result
 - id: accept-current-cross-owner-local-preflight-revision
   kind: invoke_tool
@@ -129,8 +134,13 @@ actions:
   condition:
     variable: should-invoke-cross-owner-local-revision
     operator: truthy
-  then: create-cross-owner-local-revision-conversation
+  then: project-current-cross-owner-local-revision-agent-input
   otherwise: prepare-current-cross-owner-local-module-recheck
+- id: project-current-cross-owner-local-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-revision-agent-input
 - id: create-cross-owner-local-revision-conversation
   kind: create_conversation
   agent: "{revision_agent_id}"
@@ -142,7 +152,7 @@ actions:
   agent: "{revision_agent_id}"
   task: "{revision_task_id}"
   conversation_variable: cross-owner-local-revision-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-local-revision-agent-input
   output_variable: cross-owner-local-revision-result
 - id: accept-current-cross-owner-local-module-revision
   kind: invoke_tool
@@ -176,6 +186,11 @@ actions:
   tool: prepare-current-cross-owner-local-preflight-revision
   input_variable: owner-context
   output_variable: owner-context
+- id: project-current-cross-owner-local-recheck-preflight-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-recheck-preflight-revision-agent-input
 - id: create-cross-owner-local-recheck-preflight-author-conversation
   kind: create_conversation
   agent: "{revision_agent_id}"
@@ -187,7 +202,7 @@ actions:
   agent: "{revision_agent_id}"
   task: "{revision_task_id}"
   conversation_variable: cross-owner-local-recheck-preflight-author-conversation
-  input_variable: owner-context
+  input_variable: cross-owner-local-recheck-preflight-revision-agent-input
   output_variable: cross-owner-local-recheck-preflight-revision-result
 - id: accept-current-cross-owner-local-recheck-preflight-revision
   kind: invoke_tool

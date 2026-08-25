@@ -48,6 +48,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRecheckAgentResult,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
+    DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.kernel.conversations import ConversationRegistry
 from manyselves.kernel.definitions import AgentDefinition, DefinitionKind, TaskDefinition
@@ -90,6 +91,7 @@ class _TypedCrossScript:
         self.run_id = run_id
         self.local_finding = local_finding
         self.calls: list[tuple[str, str, str, Any]] = []
+        self.inputs: list[tuple[str, Any]] = []
         self.task_calls: dict[str, int] = {}
 
     async def invoke(
@@ -101,9 +103,9 @@ class _TypedCrossScript:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        del value
         occurrence = self.task_calls.get(task.id, 0) + 1
         self.task_calls[task.id] = occurrence
+        self.inputs.append((task.id, value))
         result = self._result(task.id, occurrence=occurrence)
         self.calls.append((agent.id, task.id, conversation.conversation_id, result))
         return AgentInvocationOutcome(
@@ -388,6 +390,15 @@ async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_com
         "cross-owner-runtime-local-review",
         "cross-owner-runtime-recheck",
     ]
+    revision_inputs = [
+        value
+        for task_id, value in script.inputs
+        if task_id == "cross-owner-module-2.1-revision-r1"
+    ]
+    assert len(revision_inputs) == 1
+    assert isinstance(revision_inputs[0], DeclarativeModuleRuntimeLaneContext)
+    assert revision_inputs[0].revision is not None
+    assert revision_inputs[0].revision.prepared.module_id == _OWNER
     reviewer_calls = [
         conversation_id
         for agent_id, _task_id, conversation_id, _result in script.calls
@@ -451,6 +462,17 @@ async def test_cross_owner_file_workflow_host_local_finding_revision_recheck_com
         "cross-owner-runtime-recheck",
     ]
     assert script.task_calls["cross-owner-module-2.1-revision-r1"] == 2
+    revision_inputs = [
+        value
+        for task_id, value in script.inputs
+        if task_id == "cross-owner-module-2.1-revision-r1"
+    ]
+    assert len(revision_inputs) == 2
+    assert all(
+        isinstance(value, DeclarativeModuleRuntimeLaneContext)
+        and value.revision is not None
+        for value in revision_inputs
+    )
     module_revision_conversations = [
         conversation
         for agent_id, task_id, conversation, _result in script.calls

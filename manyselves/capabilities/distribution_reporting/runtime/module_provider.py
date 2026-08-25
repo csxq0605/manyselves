@@ -41,6 +41,9 @@ from manyselves.capabilities.distribution_reporting.runtime.completed_result_rec
 from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
     ReportingContinuationProgressObserver,
 )
+from manyselves.capabilities.distribution_reporting.runtime.cross_module_revision_input import (
+    project_cross_owner_module_revision_agent_input,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     TaskEnvelope,
 )
@@ -452,6 +455,17 @@ class ModuleProviderRuntime:
             recovery_policy=recovery_policy,
         )
 
+    @staticmethod
+    def _context(
+        value: Any,
+        task: TaskDefinition,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if isinstance(value, DeclarativeModuleRuntimeLaneContext):
+            return value
+        if task.input_contract == "declarative_cross_owner_runtime_context":
+            return project_cross_owner_module_revision_agent_input(value)
+        return DeclarativeModuleRuntimeLaneContext.model_validate(value)
+
     async def _invoke(
         self,
         agent: AgentDefinition,
@@ -462,7 +476,7 @@ class ModuleProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        context = self._context(value, task)
         envelope = self._envelope(context, task)
         if envelope is None:
             raise ValueError("module Provider turn requires a prepared TaskEnvelope")
@@ -523,7 +537,7 @@ class ModuleProviderRuntime:
         recovery_policy: RecoveryPolicyDefinition | None = None,
         task_attempt: ProviderTaskAttempt | None = None,
     ) -> ModuleAuthoringAgentBridge | ModuleReviewerAgentBridge:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        context = self._context(value, task)
         envelope = self._envelope(context, task)
         if envelope is None:
             raise ValueError("module Provider turn requires a prepared TaskEnvelope")

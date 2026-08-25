@@ -35,6 +35,10 @@ _CROSS_TOOL_ATTRIBUTES: tuple[tuple[str, str], ...] = (
     ("cross-owner-initial-has-findings", "initial_has_findings"),
     ("prepare-current-cross-owner-revision", "prepare_revision"),
     ("cross-owner-revision-requires-agent", "revision_requires_agent"),
+    (
+        "project-current-cross-owner-module-revision-agent-input",
+        "module_revision_agent_input",
+    ),
     ("accept-current-cross-owner-revision", "accept_revision"),
     ("prepare-current-cross-owner-author-exception", "prepare_author_exception"),
     ("prepare-current-cross-owner-reviewer-exception", "prepare_reviewer_exception"),

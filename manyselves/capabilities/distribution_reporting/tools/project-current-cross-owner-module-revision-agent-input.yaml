@@ -1,0 +1,10 @@
+id: project-current-cross-owner-module-revision-agent-input
+version: 1.0.0
+description: Project the prepared Cross owner revision into the original module Author input
+implementation: capability:distribution-reporting:project-current-cross-owner-module-revision-agent-input
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: true
+model_visible: false
