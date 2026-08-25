@@ -15,8 +15,6 @@ tools:
 - inspect_document
 - inspect_image
 - calculate
-- open_artifact
-- search_text
 - publish_research_note
 - query_peer
 - reply_peer

@@ -588,10 +588,19 @@ async def test_cross_owner_finding_revises_locally_rechecks_and_completes(
         objective="Apply the prepared Cross finding.",
         input_contract="declarative_cross_owner_runtime_context",
         output_contract="declarative_module_revision_agent_result",
+        tools=["open_artifact", "search_text", "submit_result"],
     )
     projected = ModuleProviderRuntime._context(revision_context, saved_task)
     assert projected.revision is not None
     assert projected.revision.prepared == prepared
+    assert ModuleProviderRuntime._task_tools(saved_task) == [
+        "submit_result"
+    ]
+    revision_input = json.loads(
+        (tmp_path / prepared.envelope.input_contract_ref).read_text(encoding="utf-8")
+    )
+    assert revision_input["subject"]["submodule_narratives"]["2.1.1"]
+    assert revision_input["cross_findings"][0]["id"] == finding.id
     revised = ModuleRevisionSubmission(
         module_id=owner_module_id,
         base_revision=0,

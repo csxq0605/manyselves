@@ -466,6 +466,18 @@ class ModuleProviderRuntime:
             return project_cross_owner_module_revision_agent_input(value)
         return DeclarativeModuleRuntimeLaneContext.model_validate(value)
 
+    @staticmethod
+    def _task_tools(
+        task: TaskDefinition,
+    ) -> list[str]:
+        if task.input_contract != "declarative_cross_owner_runtime_context":
+            return list(task.tools)
+        return [
+            tool
+            for tool in task.tools
+            if tool not in {"open_artifact", "search_text"}
+        ]
+
     async def _invoke(
         self,
         agent: AgentDefinition,
@@ -553,11 +565,12 @@ class ModuleProviderRuntime:
             if task_attempt is not None
             else self.dependencies
         )
+        task_tools = self._task_tools(task)
         dependencies = self._compose_artifact_dependencies(
             agent,
             envelope,
             session_id=session_id,
-            task_tools=task.tools,
+            task_tools=task_tools,
             base_dependencies=base_dependencies,
         )
         recovery_driver = (
@@ -575,7 +588,7 @@ class ModuleProviderRuntime:
                     recovery_driver
                 ),
             )
-        tool_names = list(task.tools)
+        tool_names = task_tools
         if dependencies.artifact_access is not None and (
             dependencies.artifact_gateway is not None
             and dependencies.result_index is not None
