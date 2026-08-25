@@ -20,6 +20,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
+    ClaimRecord,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleRevisionSubmission,
@@ -78,6 +79,9 @@ from manyselves.capabilities.distribution_reporting.runtime.module_runtime impor
 )
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+    SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
@@ -1445,6 +1449,157 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
     assert restored_progress["next_action"] == "review"
     assert restored_progress["phase"] == "recheck"
     assert restored_progress["review_round"] == 1
+
+
+def test_module_recheck_projects_prior_current_and_finding_evidence(
+    tmp_path: Path,
+) -> None:
+    """A paid recheck receives every E-* ref active in its compact delta."""
+
+    run_id = "run-module-recheck-evidence-delta"
+    target = "2.4.1.1"
+    prior_evidence = "E-0001"
+    current_evidence = "E-0002"
+    finding_evidence = "E-0003"
+    ledger = SourceLedger(tmp_path, run_id)
+    for evidence_id in (prior_evidence, current_evidence, finding_evidence):
+        ledger.register_project(
+            evidence_id,
+            f"Evidence {evidence_id}",
+            f"Inputs/{evidence_id}.txt",
+            f"content for {evidence_id}",
+        )
+    claim_id = "C-2.4-recheck-evidence"
+    baseline = _module_submission().model_copy(
+        deep=True,
+        update={
+            "submodule_narratives": {
+                **_module_submission().submodule_narratives,
+                target: f"修订前结论 [[CLAIM:{claim_id}]]",
+            },
+            "claims": [
+                ClaimRecord(
+                    id=claim_id,
+                    module_id="2.4",
+                    submodule_id=target,
+                    text="修订前结论",
+                    claim_type="project_fact",
+                    source_ids=[prior_evidence],
+                )
+            ],
+            "source_ids": [prior_evidence],
+        },
+    )
+    revised = baseline.model_copy(
+        deep=True,
+        update={
+            "revision": 1,
+            "submodule_narratives": {
+                **baseline.submodule_narratives,
+                target: f"修订后结论 [[CLAIM:{claim_id}]]",
+            },
+            "claims": [
+                baseline.claims[0].model_copy(
+                    update={
+                        "text": "修订后结论",
+                        "source_ids": [current_evidence],
+                    }
+                )
+            ],
+            "source_ids": [current_evidence],
+            "revision_responses": [
+                RevisionResponse(
+                    finding_id="M-2.4-initial-r0-001",
+                    action="implemented",
+                    summary="已按审查意见更新完整结论及证据引用，并保留修订前后的复核边界。",
+                    changed_target_ids=[target],
+                )
+            ],
+        },
+    )
+    finding = ModuleReviewFinding(
+        id="M-2.4-initial-r0-001",
+        target_submodule_id=target,
+        category="evidence_boundary",
+        impact="blocking",
+        observation="当前修订将结论证据引用从旧证据替换为新证据，但复审仍需核对两侧语义。",
+        evidence_refs=[finding_evidence],
+        required_change="向原审查员同时提供修订前、修订后以及 finding 引用的完整证据内容。",
+        reviewer_checks=["逐项核对修订前后 Claim 与 finding 证据是否支持当前结论。"],
+    )
+    review_root = f"Work/runs/{run_id}/reviews/module/initial/2.4"
+    progress_ref = f"{review_root}/progress.json"
+    baseline_ref = f"Work/runs/{run_id}/modules/2.4-r0.json"
+    store = ReportingStore(tmp_path)
+    store.write_json(baseline_ref, baseline.model_dump(mode="json"))
+    store.write_json(
+        f"Work/runs/{run_id}/modules/2.4-r1.json",
+        revised.model_dump(mode="json"),
+    )
+    store.write_json(
+        progress_ref,
+        ModuleReviewProgress(
+            run_id=run_id,
+            module_id="2.4",
+            next_action="revise",
+            current=baseline,
+            pending=[finding],
+            finding_refs=[f"{review_root}/findings-r0.json"],
+            review_round=0,
+            phase="initial",
+            scope=[target],
+            reviewer_session_key="module-auditor-2.4",
+            last_reviewed_subject_ref=baseline_ref,
+            review_protocol_version=2,
+        ).model_dump(mode="json"),
+    )
+    initial_preparation = ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id="2.4",
+        lifecycle_id="initial",
+        workflow_id="public-reporting",
+        reviewer_session_key="module-auditor-2.4",
+        review_root=review_root,
+        progress_ref=progress_ref,
+        review_round=0,
+        scope=[target],
+        current=baseline,
+        subject_ref=baseline_ref,
+    )
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4",
+        workflow_id="public-reporting",
+        reporting_state={"run_id": run_id},
+        status="reviewed",
+        module=revised,
+        review=DeclarativeModuleReviewPreparation(
+            envelope=None,
+            reviewer_session_key="module-auditor-2.4",
+            prepared=initial_preparation,
+            acceptance=ModuleInitialReviewAcceptance(
+                run_id=run_id,
+                module_id="2.4",
+                lifecycle_id="initial",
+                reviewer_session_key="module-auditor-2.4",
+                subject_ref=baseline_ref,
+                current=baseline,
+                findings=[finding],
+                finding_refs=[f"{review_root}/findings-r0.json"],
+                next_action="revise",
+                progress_ref=progress_ref,
+            ),
+        ),
+    )
+
+    prepared = prepare_current_module_recheck(context, store=store)
+
+    assert prepared.recheck is not None
+    assert prepared.recheck.prepared.review_input is not None
+    assert {
+        item.evidence_id
+        for item in prepared.recheck.prepared.review_input.evidence
+    } == {prior_evidence, current_evidence, finding_evidence}
 
 
 @pytest.mark.asyncio

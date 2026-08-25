@@ -43,7 +43,7 @@ from manyselves.capabilities.distribution_reporting.runtime.module_review_delta 
     build_module_recheck_delta,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
-    _review_evidence,
+    _review_evidence_by_ids,
     _structure_report,
 )
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
@@ -201,6 +201,13 @@ def prepare_current_module_recheck(
                 "error": None,
             },
         )
+    active_evidence_ids = set(delta["relevant_evidence_ids"])
+    active_evidence_ids.update(
+        evidence_ref
+        for finding in pending
+        for evidence_ref in finding.evidence_refs
+        if evidence_ref.startswith("E-")
+    )
     review_input = ModuleReviewInput(
         phase="recheck",
         run_id=run_id,
@@ -214,7 +221,11 @@ def prepare_current_module_recheck(
         prior_claim_statements=delta["prior_claim_statements"],
         unchanged_submodule_sha256=delta["unchanged_submodule_sha256"],
         unchanged_statement_sha256=delta["unchanged_statement_sha256"],
-        evidence=_review_evidence(store.workspace, current, run_id, scope),
+        evidence=_review_evidence_by_ids(
+            store.workspace,
+            run_id,
+            active_evidence_ids,
+        ),
         required_submodule_ids=sorted(scope),
         required_findings=pending,
         revision_responses=list(current.revision_responses),

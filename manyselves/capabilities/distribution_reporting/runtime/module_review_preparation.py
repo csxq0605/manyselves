@@ -128,19 +128,25 @@ def _review_evidence(
     run_id: str,
     scope: set[str],
 ) -> list[ReviewEvidenceExcerpt]:
+    selected_ids = {
+        source_id
+        for claim in subject.claims
+        if claim.submodule_id in scope
+        for source_id in claim.source_ids
+        if source_id.startswith("E-")
+    }
+    return _review_evidence_by_ids(workspace, run_id, selected_ids)
+
+
+def _review_evidence_by_ids(
+    workspace: Path,
+    run_id: str,
+    selected_ids: set[str],
+) -> list[ReviewEvidenceExcerpt]:
     ledger = SourceLedger(workspace, run_id)
     records = {record.id: record for record in ledger.records}
-    selected_ids = sorted(
-        {
-            source_id
-            for claim in subject.claims
-            if claim.submodule_id in scope
-            for source_id in claim.source_ids
-            if source_id.startswith("E-")
-        }
-    )
     packet: list[ReviewEvidenceExcerpt] = []
-    for evidence_id in selected_ids:
+    for evidence_id in sorted(selected_ids):
         record = records.get(evidence_id)
         content_ref = ledger.content_ref(evidence_id)
         if record is None or content_ref is None:
