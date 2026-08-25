@@ -53,7 +53,9 @@ services:
       - ${MANYSELVES_HTTP_BIND:-0.0.0.0}:${MANYSELVES_HTTP_PORT:-9090}:9090
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
+      # nginx-unprivileged buffers client request bodies under /tmp/client_temp.
+      # Keep enough headroom above the 100 MiB upload limit for concurrent uploads.
+      - /tmp:rw,noexec,nosuid,size=256m
       - /var/cache/nginx:rw,noexec,nosuid,size=32m
       - /var/run:rw,noexec,nosuid,size=4m
     restart: unless-stopped
