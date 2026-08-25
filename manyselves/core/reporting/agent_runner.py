@@ -1784,6 +1784,17 @@ class ReportingAgentRunner:
                 example["revision"] = contract.revision
                 if kind == "chief_chapter_lane_revision_submission":
                     example["base_subject_ref"] = contract.subject_ref
+                    example["edits"] = [
+                        {
+                            "target_section_id": section_id,
+                            "old_text": contract.section_bodies[section_id],
+                            "new_text": (
+                                contract.section_bodies[section_id]
+                                + "\n\n补充本轮 finding 指定的核验说明。"
+                            ),
+                        }
+                        for section_id in contract.section_ids
+                    ]
             elif isinstance(contract, FinalChapterLaneInput):
                 example["run_id"] = contract.run_id
                 example["chapter_id"] = contract.chapter_id
@@ -3914,14 +3925,26 @@ class ReportingAgentRunner:
                         "</submission_correction>"
                     )
                 elif definition.id == "chief-editor":
+                    exact_lane_revision = (
+                        envelope.input_contract_kind == "chief_chapter_lane_input"
+                        and "chief_chapter_lane_revision_submission"
+                        in envelope.allowed_outputs
+                    )
                     part_instruction = (
+                        "不得调用 write_result_part/list_result_parts；直接从 section_bodies 选择唯一 old_text 并提交 edits"
+                        if exact_lane_revision
+                        else
                         "只补齐 list_result_parts 列出的目标修订章节"
                         if envelope.input_contract_kind == "chief_revision_input"
                         else "只补齐 list_result_parts 列出的本章固定小节"
-                        if envelope.input_contract_kind == "chief_chapter_input"
+                        if envelope.input_contract_kind
+                        in {"chief_chapter_input", "chief_chapter_lane_input"}
                         else "补齐 list_result_parts 列出的十二个固定章节"
                     )
                     submission_instruction = (
+                        "提交 chief_chapter_lane_revision_submission；只包含指定 section_ids 的精确 old_text/new_text edits 与 revision_responses"
+                        if exact_lane_revision
+                        else
                         "提交小型 chief_revision_submission；不得重复父版本全文、"
                         "Cross dispositions、表格、图片或未决问题"
                         if envelope.input_contract_kind == "chief_revision_input"
@@ -3938,7 +3961,11 @@ class ReportingAgentRunner:
                     module_instruction = (
                         "不得提交 module_narratives 或任何第二章内容。"
                         if envelope.input_contract_kind
-                        in {"chief_revision_input", "chief_chapter_input"}
+                        in {
+                            "chief_revision_input",
+                            "chief_chapter_input",
+                            "chief_chapter_lane_input",
+                        }
                         else (
                             "module_narratives 必须只提交五个精确标记 "
                             "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]。"
@@ -3947,12 +3974,16 @@ class ReportingAgentRunner:
                     correction = (
                         "<submission_correction>\n"
                         "你刚才未完成总编提交。批准的五模块正文绝对不得压缩、"
-                        f"摘要、改写或重新输出。先调用 list_result_parts；{part_instruction}，"
-                        "分别用同名 part_id 调用 write_result_part。"
-                        f"{module_instruction}"
-                        f"随后立即调用 submit_result {submission_instruction}。"
-                        "不得重新读取或搜索输入。\n"
-                        "</submission_correction>"
+                        f"摘要、改写或重新输出。{part_instruction}。"
+                        + (
+                            ""
+                            if exact_lane_revision
+                            else "分别用同名 part_id 调用 write_result_part。"
+                        )
+                        + f"{module_instruction}"
+                        + f"随后立即调用 submit_result {submission_instruction}。"
+                        + "不得重新读取或搜索输入。\n"
+                        + "</submission_correction>"
                     )
                 elif definition.id.startswith("module-") and definition.id.endswith("-specialist"):
                     correction = (

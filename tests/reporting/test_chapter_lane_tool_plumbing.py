@@ -9,11 +9,7 @@ from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider, LLMResponse
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.agentic_models import (
-    ChiefChapterLaneRevisionSubmission,
-    ChiefChapterLaneSubmission,
-    FinalChapterLaneFindingSubmission,
-)
+from manyselves.core.reporting.agentic_models import TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
     ChiefChapterLaneInput,
@@ -26,7 +22,6 @@ from manyselves.core.tools.reporting_collaboration_tools import (
     SubmitResultTool,
     WriteResultPartTool,
 )
-
 
 RUN = "run-chapter-tools"
 CHIEF_SUBJECT = f"Work/runs/{RUN}/edited-revisions/chief-r0.json"
@@ -188,19 +183,13 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
         run_id=RUN,
         subject_ref=CHIEF_SUBJECT,
         chapter_id="3",
-        section_ids=list(CHAPTER3_SECTION_IDS),
-        section_bodies={section_id: "当前章节正文。" for section_id in CHAPTER3_SECTION_IDS},
+        section_ids=["3.2"],
+        section_bodies={"3.2": "当前章节正文。"},
         assigned_findings=[finding],
         revision=1,
     )
     revision_ref = _write_contract(tmp_path, revision_contract)
     revision_task = "chief-ch3-revision"
-    revision_refs = await _write_chief_parts(
-        tmp_path,
-        task_id=revision_task,
-        revision=1,
-        part_ids=["improvement_action_plan"],
-    )
     revision_tool = _submit_tool(
         tmp_path,
         task_id=revision_task,
@@ -217,7 +206,13 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
             "chapter_id": "3",
             "revision": 1,
             "section_ids": ["3.2"],
-            "part_refs": revision_refs,
+            "edits": [
+                {
+                    "target_section_id": "3.2",
+                    "old_text": "当前章节正文。",
+                    "new_text": "当前章节正文。\n\n补充整改顺序、责任边界和验收条件。",
+                }
+            ],
             "revision_responses": [
                 {
                     "finding_id": "F-3-001",
@@ -234,7 +229,13 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
             encoding="utf-8"
         )
     )
-    assert revision_result["payload"]["part_refs"] == revision_refs
+    assert revision_result["payload"]["edits"] == [
+        {
+            "target_section_id": "3.2",
+            "old_text": "当前章节正文。",
+            "new_text": "当前章节正文。\n\n补充整改顺序、责任边界和验收条件。",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -472,10 +473,6 @@ def test_runner_chief_lane_exposes_exact_parts_and_one_output_schema(tmp_path: P
     # Chapter 1 has static sections and therefore the three corresponding
     # CHIEF_SECTION_RESULT_PART_IDS are the only writable parts.
     contract_ref = _write_contract(tmp_path, contract)
-    from manyselves.core.reporting.agentic_models import TaskEnvelope
-    from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-    from manyselves.core.reporting.config import load_packaged_agents
-
     envelope = TaskEnvelope(
         task_id="chief-ch1-schema",
         run_id=RUN,
@@ -512,6 +509,83 @@ def test_runner_chief_lane_exposes_exact_parts_and_one_output_schema(tmp_path: P
     assert "oneOf" not in submission_schema
     assert submission_schema["properties"]["chapter_id"]["const"] == "1"
     assert submission_schema["properties"]["section_ids"]["const"] == ["1.1", "1.2", "1.3"]
+
+
+def test_runner_final_chief_revision_exposes_only_exact_edit_tools(
+    tmp_path: Path,
+) -> None:
+    source_ref = f"Work/runs/{RUN}/context/chief-source-modules/2.1.md"
+    ReportingStore(tmp_path).write_text(source_ref, "批准模块正文。\n")
+    contract = ChiefChapterLaneInput(
+        phase="revision",
+        run_id=RUN,
+        subject_ref=CHIEF_SUBJECT,
+        chapter_id="3",
+        section_ids=["3.2"],
+        section_bodies={"3.2": "当前行动计划正文。"},
+        source_refs=[source_ref],
+        assigned_findings=[
+            {
+                "id": "F-3.2",
+                "target_section_ids": ["3.2"],
+                "target_changes": [
+                    {
+                        "target_section_id": "3.2",
+                        "required_change": "补充当前行动对应的责任主体、核验方法和验收条件。",
+                        "reviewer_checks": ["保留原正文并补充指定的行动核验信息。"],
+                    }
+                ],
+                "category": "traceability",
+                "impact": "blocking",
+                "observation": "当前行动计划缺少可核验的责任边界和验收条件，无法直接执行。",
+                "evidence_refs": [CHIEF_SUBJECT],
+            }
+        ],
+        revision=1,
+    )
+    contract_ref = _write_contract(tmp_path, contract)
+    envelope = TaskEnvelope(
+        task_id="chief-ch3-revision-schema",
+        run_id=RUN,
+        agent_id="chief-editor",
+        objective="只修订 Final 命中的 Chapter 3 小节",
+        input_refs=[contract_ref, source_ref],
+        allowed_tools=["open_artifact", "search_text", "submit_result"],
+        allowed_outputs=["chief_chapter_lane_revision_submission"],
+        revision=1,
+        input_contract_kind=contract.kind,
+        input_contract_ref=contract_ref,
+        artifact_delivery_modes={contract_ref: "inline", source_ref: "reference"},
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        _Provider(),
+        AgentDefaults(),
+    )
+    registry = runner._tools(
+        load_packaged_agents()["chief-editor"],
+        envelope,
+        "session-chief-revision-schema",
+        "workflow-chief-revision-schema",
+    )
+
+    assert set(registry.get_all()) == {
+        "open_artifact",
+        "open_tool_result",
+        "search_text",
+        "submit_result",
+    }
+    submission_schema = registry._schema_cache["submit_result"]
+    assert "part_refs" not in submission_schema["properties"]
+    assert submission_schema["properties"]["section_ids"]["items"]["enum"] == [
+        "3.2"
+    ]
+    assert submission_schema["examples"][0]["edits"][0] == {
+        "target_section_id": "3.2",
+        "old_text": "当前行动计划正文。",
+        "new_text": "当前行动计划正文。\n\n补充本轮 finding 指定的核验说明。",
+    }
 
 
 def test_chief_chapter_four_tool_schema_allows_nested_planned_headings(
