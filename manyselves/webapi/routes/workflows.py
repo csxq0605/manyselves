@@ -2,10 +2,11 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import ValidationError
 
 from ...application.control import ControlLeaseRequired
+from ...application.conversation_service import ConversationNotFoundError
 from ...application.errors import (
     CommandIdConflictError,
     MaintenanceQuiescedError,
@@ -47,7 +48,14 @@ def _projection(request: Request) -> WorkflowProjectionFacade:
 
 
 def _error(error: Exception) -> ApiError:
-    if isinstance(error, (WorkflowProjectionNotFoundError, CapabilityRunNotFoundError)):
+    if isinstance(
+        error,
+        (
+            WorkflowProjectionNotFoundError,
+            CapabilityRunNotFoundError,
+            ConversationNotFoundError,
+        ),
+    ):
         return ApiError(
             status_code=404,
             code="WORKFLOW_RESOURCE_NOT_FOUND",
@@ -160,17 +168,34 @@ async def start_run(
                 body.workflow_id,
                 body.input,
             )
+            state.conversation_service.bind_run_to_active_conversation(
+                payload["run_id"]
+            )
             return WorkflowRunAcceptedResponse(commandId=command_id, **payload)
     except Exception as error:
         raise _error(error) from error
 
 
 @router.get("/runs", response_model=WorkflowRunListResponse)
-async def list_runs(request: Request):
+async def list_runs(
+    request: Request,
+    conversation_id: str | None = Query(
+        default=None,
+        alias="conversationId",
+        min_length=1,
+    ),
+):
     state = request_runtime_state(request)
     try:
         async with state.runtime_facade.read_transaction():
-            return WorkflowRunListResponse(runs=_projection(request).list_runs())
+            runs = _projection(request).list_runs()
+            if conversation_id is not None:
+                owned_run_ids = state.conversation_service.run_ids_for_conversation(
+                    conversation_id,
+                    project_id=state.conversation_service.project_id,
+                )
+                runs = [run for run in runs if run["run"]["run_id"] in owned_run_ids]
+            return WorkflowRunListResponse(runs=runs)
     except Exception as error:
         raise _error(error) from error
 

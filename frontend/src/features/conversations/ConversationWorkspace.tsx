@@ -187,7 +187,9 @@ export function ConversationWorkspace({
         {requestedSessionId && conversations.data && !requestedSessionMissing && !sessionReady ? <p role="status">正在切换会话…</p> : null}
         {sessionReady && activeSessionId && messages.isPending ? <p role="status">正在加载会话历史…</p> : null}
         {sessionReady && messages.isError ? <p role="alert">会话历史加载失败</p> : null}
-        {agentId === "main" ? <RunInteractionFeed api={workflowApi} projectId={projectId} /> : null}
+        {agentId === "main" && sessionReady && activeSessionId
+          ? <RunInteractionFeed api={workflowApi} conversationId={activeSessionId} projectId={projectId} />
+          : null}
         {sessionReady && messages.data && !hasMessages ? <div className="conversation-empty">
           <span aria-hidden="true" className="conversation-empty__spark">✦</span>
           <h1>今天要处理什么？</h1>

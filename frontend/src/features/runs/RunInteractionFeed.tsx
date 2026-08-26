@@ -205,22 +205,16 @@ function isInterrupted(run: WorkflowRunResponse): boolean {
 
 export interface RunInteractionFeedProps {
   readonly api: WorkflowApi & WorkflowRunFeedApi;
+  readonly conversationId: string;
   readonly projectId: string;
 }
 
-export function RunInteractionFeed({ api, projectId }: RunInteractionFeedProps) {
+export function RunInteractionFeed({ api, conversationId, projectId }: RunInteractionFeedProps) {
   const client = useQueryClient();
   const setCurrentRun = useRunStore((state) => state.setCurrentRun);
-  const currentRunId = useRunStore((state) => state.currentRunIds[projectId] ?? null);
   const runs = useQuery({
-    queryFn: () => api.listRuns(),
-    queryKey: ["runs", "interaction-feed"],
-    refetchInterval: 5_000,
-  });
-  const currentRun = useQuery({
-    enabled: currentRunId !== null,
-    queryFn: () => api.get(currentRunId!),
-    queryKey: ["runs", "interaction-feed", "current", currentRunId],
+    queryFn: () => api.listRuns(conversationId),
+    queryKey: ["runs", "interaction-feed", conversationId],
     refetchInterval: 5_000,
   });
   const resume = useMutation({
@@ -230,10 +224,7 @@ export function RunInteractionFeed({ api, projectId }: RunInteractionFeedProps) 
       void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
     },
   });
-  const listedRuns = runs.data?.runs ?? [];
-  const feedRuns = currentRun.data && !listedRuns.some(
-    (run) => run.run.runId === currentRun.data?.run.runId,
-  ) ? [currentRun.data, ...listedRuns] : listedRuns;
+  const feedRuns = runs.data?.runs ?? [];
   const waiting = feedRuns.flatMap((run) => run.waitingInput.map((item) => ({
     run,
     waiting: item as WaitingInput,

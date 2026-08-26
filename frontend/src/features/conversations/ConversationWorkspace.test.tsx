@@ -253,7 +253,7 @@ describe("ConversationWorkspace", () => {
           projectId: "project-1",
         };
       }
-      if (path === "/api/v1/runs") {
+      if (path === "/api/v1/runs?conversationId=s1") {
         return {
           runs: waiting ? [{
             run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-1", status: "waiting", taskId: null, workflowId: "full-report" },
@@ -326,7 +326,7 @@ describe("ConversationWorkspace", () => {
           projectId: "project-1",
         };
       }
-      if (path === "/api/v1/runs") return {
+      if (path === "/api/v1/runs?conversationId=s1") return {
         runs: [{
           run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-2", status: "failed", taskId: null, workflowId: "full-report" },
           state: { status: "failed" },
@@ -363,7 +363,7 @@ describe("ConversationWorkspace", () => {
           projectId: "project-1",
         };
       }
-      if (path === "/api/v1/runs") return {
+      if (path === "/api/v1/runs?conversationId=s1") return {
         runs: [{
           run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-3", status: "running", taskId: null, workflowId: "full-report" },
           state: { status: "running" },
@@ -387,7 +387,7 @@ describe("ConversationWorkspace", () => {
     );
   });
 
-  it("shows the remembered active run when a historical unbound run breaks listing", async () => {
+  it("does not inject a remembered project run into an unrelated Main conversation", async () => {
     useRunStore.getState().setCurrentRun("project-1", "full-report-current");
     const requestJson = vi.fn(async (path: string) => {
       if (path.startsWith("/api/v1/conversations/messages")) {
@@ -400,12 +400,7 @@ describe("ConversationWorkspace", () => {
           projectId: "project-1",
         };
       }
-      if (path === "/api/v1/runs") throw new Error("historical run is unbound");
-      if (path === "/api/v1/runs/full-report-current") return {
-        run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-current", status: "running", taskId: null, workflowId: "full-report" },
-        state: { status: "running" },
-        waitingInput: [],
-      };
+      if (path === "/api/v1/runs?conversationId=s1") throw new Error("historical run is unbound");
       if (path.includes("/files/tree")) return { entries: [] };
       throw new Error(`unexpected path: ${path}`);
     });
@@ -415,8 +410,12 @@ describe("ConversationWorkspace", () => {
       <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
     </QueryClientProvider>);
 
-    expect(await screen.findByText("运行中")).toBeVisible();
-    expect(screen.getByText("full-report · full-report-current")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "今天要处理什么？" })).toBeVisible();
+    await waitFor(() => expect(requestJson).toHaveBeenCalledWith(
+      "/api/v1/runs?conversationId=s1",
+    ));
+    expect(screen.queryByText("运行中")).not.toBeInTheDocument();
+    expect(requestJson).not.toHaveBeenCalledWith("/api/v1/runs/full-report-current");
     useRunStore.getState().setCurrentRun("project-1", null);
   });
 });

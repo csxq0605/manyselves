@@ -1955,6 +1955,48 @@ async def test_generic_workflow_routes_project_the_file_defined_reporting_run(
 
 
 @pytest.mark.asyncio
+async def test_generic_runs_are_scoped_to_the_main_conversation_that_started_them(
+    resources,
+) -> None:
+    client, _, _, _ = resources
+    first = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "First"},
+    )
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
+        json={
+            "workflowId": "parameter-adjustment",
+            "input": {"value": 4},
+        },
+    )
+    second = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "Second"},
+    )
+
+    first_runs = await client.get(
+        "/api/v1/runs",
+        params={"conversationId": first.json()["sessionId"]},
+    )
+    second_runs = await client.get(
+        "/api/v1/runs",
+        params={"conversationId": second.json()["sessionId"]},
+    )
+    project_runs = await client.get("/api/v1/runs")
+
+    assert started.status_code == 202
+    assert [item["run"]["runId"] for item in first_runs.json()["runs"]] == [
+        started.json()["runId"]
+    ]
+    assert second_runs.json()["runs"] == []
+    assert started.json()["runId"] in {
+        item["run"]["runId"] for item in project_runs.json()["runs"]
+    }
+
+
+@pytest.mark.asyncio
 async def test_generic_workflow_routes_execute_the_second_production_capability(
     resources,
 ) -> None:

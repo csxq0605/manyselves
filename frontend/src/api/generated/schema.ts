@@ -4835,7 +4835,9 @@ export interface operations {
     };
     get_api_v1_runs: {
         parameters: {
-            query?: never;
+            query?: {
+                conversationId?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;

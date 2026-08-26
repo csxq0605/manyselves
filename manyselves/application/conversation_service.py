@@ -130,6 +130,43 @@ class ConversationService:
         if metadata is not None:
             self._bound_metadata(metadata)
 
+    def bind_run_to_active_conversation(
+        self,
+        run_id: str,
+        agent_id: str = "main",
+    ) -> str | None:
+        """Persist which durable Main conversation owns a newly started Run."""
+        session_id = self.store.get_current_session_id(agent_id)
+        sessions = self.store._load_sessions_metadata()  # noqa: SLF001
+        for item in sessions:
+            if item.get("id") != session_id:
+                continue
+            self._bound_metadata(item)
+            run_ids = list(item.get("runIds", []))
+            if run_id not in run_ids:
+                run_ids.append(run_id)
+                item["runIds"] = run_ids
+                item.setdefault("projectId", self.project_id)
+                self.store._save_sessions_metadata(sessions)  # noqa: SLF001
+            self._project_bound_sessions.add(session_id)
+            return session_id
+        return None
+
+    def run_ids_for_conversation(
+        self,
+        session_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> frozenset[str]:
+        """Return the Runs explicitly owned by one durable Main conversation."""
+        self._require_session_project(session_id, project_id)
+        metadata = next(
+            item
+            for item in self.store._load_sessions_metadata()  # noqa: SLF001
+            if item.get("id") == session_id
+        )
+        return frozenset(metadata.get("runIds", []))
+
     def list(
         self,
         agent_id: str = "main",

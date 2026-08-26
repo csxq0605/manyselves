@@ -41,7 +41,7 @@ export interface WorkflowApi {
 }
 
 export interface WorkflowRunFeedApi {
-  listRuns(): Promise<WorkflowRunListResponse>;
+  listRuns(conversationId?: string): Promise<WorkflowRunListResponse>;
 }
 
 function mutationOptions(idempotencyKey: string, json: unknown) {
@@ -66,7 +66,11 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRu
       `/api/v1/workflows/${encodeURIComponent(workflowId)}/input-schema`,
     ),
     listCapabilities: () => gateway.requestJson("/api/v1/capabilities"),
-    listRuns: () => gateway.requestJson("/api/v1/runs"),
+    listRuns: (conversationId) => gateway.requestJson(
+      conversationId
+        ? `/api/v1/runs?conversationId=${encodeURIComponent(conversationId)}`
+        : "/api/v1/runs",
+    ),
     listWorkflows: () => gateway.requestJson("/api/v1/workflows"),
     outputs: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/outputs`,

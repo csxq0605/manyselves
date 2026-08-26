@@ -20,6 +20,7 @@ describe("WorkflowApi", () => {
     await api.outputs("run 1");
     await api.cost("run 1");
     await api.events!("run 1");
+    await api.listRuns("conversation 1");
 
     expect(requestJson).toHaveBeenNthCalledWith(1, "/api/v1/capabilities");
     expect(requestJson).toHaveBeenNthCalledWith(2, "/api/v1/workflows");
@@ -43,5 +44,9 @@ describe("WorkflowApi", () => {
     expect(requestJson).toHaveBeenNthCalledWith(7, "/api/v1/runs/run%201/outputs");
     expect(requestJson).toHaveBeenNthCalledWith(8, "/api/v1/runs/run%201/cost");
     expect(requestJson).toHaveBeenNthCalledWith(9, "/api/v1/runs/run%201/events");
+    expect(requestJson).toHaveBeenNthCalledWith(
+      10,
+      "/api/v1/runs?conversationId=conversation%201",
+    );
   });
 });

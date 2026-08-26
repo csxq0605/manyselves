@@ -6997,6 +6997,25 @@
     "/api/v1/runs": {
       "get": {
         "operationId": "get_api_v1_runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "conversationId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Conversationid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
