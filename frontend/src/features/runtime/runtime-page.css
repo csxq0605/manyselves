@@ -54,13 +54,26 @@
 .operations-list li:first-child { border-top: 0; padding-top: 0; }
 .operations-list li:last-child { padding-bottom: 0; }
 .operations-list span, .operations-list small { color: #6b6f76; font-size: 12px; }
+.operations-list strong, .operations-list span { min-width: 0; overflow-wrap: anywhere; }
 .operations-list small { grid-column: 1 / -1; }
 .operations-list--compact li { grid-template-columns: auto minmax(0, 1fr) auto; }
+.operations-card--tools .operations-list li { grid-template-columns: minmax(0, 1fr); }
+.operations-card--tools .operations-list small { grid-column: 1; }
+.runtime-page__errors .operations-list li { grid-template-columns: minmax(0, 1fr); }
+.runtime-page__runs { margin-bottom: 14px; max-height: none; }
+.runtime-run-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); list-style: none; margin: 0; padding: 0; }
+.runtime-run-list li { background: #f7f7f4; border: 1px solid #e4e4df; border-radius: 10px; display: grid; gap: 7px; min-width: 0; padding: 13px; }
+.runtime-run-list__heading { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.runtime-run-list__stage { font-size: 14px; font-weight: 650; }
+.runtime-run-list small, .runtime-run-list code { color: #6b6f76; font-size: 11px; overflow-wrap: anywhere; }
+.runtime-run-list__status { background: #ecece7; border-radius: 999px; color: #5f625f; font-size: 10px; padding: 4px 7px; text-transform: uppercase; }
+.runtime-run-list__status--running { background: #e7f5eb; color: #24723b; }
+.runtime-run-list__status--failed { background: #fdecea; color: #a8332a; }
 .runtime-page__signal { background: #a5a7a4; border-radius: 50%; height: 8px; width: 8px; }
 .runtime-page__signal--running, .runtime-page__signal--thinking { background: #2f7ee6; }
 .runtime-page__signal--waiting { background: #c88a1d; }
 .runtime-page__signal--error { background: #c53b3b; }
 .runtime-page__errors { margin-top: 14px; max-height: min(220px, 28dvh); }
-@media (max-width: 900px) { .runtime-page__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .runtime-page__grid { grid-template-columns: 1fr; } .operations-header { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 900px) { .runtime-page__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .runtime-page__grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .operations-header { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 520px) { .runtime-page__summary { grid-template-columns: 1fr; } }

@@ -94,3 +94,23 @@
   overflow-wrap: anywhere;
 }
 .run-interaction-card__actions { align-items: center; display: flex !important; gap: 8px !important; grid-auto-flow: column; }
+.run-interaction-card__status-copy { min-width: 0; }
+.run-interaction-card--status > a { flex: 0 0 auto; white-space: nowrap; }
+.run-interaction-card__status-heading { align-items: center; display: flex !important; gap: 10px !important; }
+.run-interaction-card__status-heading small { font-size: 11px; }
+.run-interaction-card__live {
+  align-items: center;
+  color: #24723b !important;
+  display: inline-flex;
+  font-size: 11px !important;
+  font-weight: 700;
+  gap: 6px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.run-interaction-card__live i { background: #2e9a4f; border-radius: 50%; height: 7px; width: 7px; }
+.run-interaction-card__stage { color: #292927 !important; font-size: 15px !important; font-weight: 650; }
+
+@media (max-width: 620px) {
+  .run-interaction-card--status { align-items: flex-start; flex-direction: column; gap: 12px; }
+}

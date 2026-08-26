@@ -3,6 +3,12 @@ import { useState } from "react";
 
 import { createUuid } from "../../app/uuid";
 import { useRunStore } from "../../store/run-store";
+import {
+  reportingActionLabel,
+  reportingRunStage,
+  reportingRunStepSummary,
+  reportingWorkflowLabel,
+} from "../reporting/reporting-run-presentation";
 import type { WorkflowApi, WorkflowRunFeedApi, WorkflowRunResponse } from "./workflow-api";
 import "./run-interaction-feed.css";
 
@@ -250,24 +256,31 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
   return (
     <section aria-label="运行交互" className="run-interaction-feed">
       {active.map((run) => <article className="run-interaction-card run-interaction-card--status" key={run.run.runId}>
-        <div>
-          <strong>配电安全报告运行中</strong>
+        <div className="run-interaction-card__status-copy">
+          <div className="run-interaction-card__status-heading">
+            <span className="run-interaction-card__live"><i aria-hidden="true" />运行中</span>
+            {reportingRunStepSummary(run) ? <small>{reportingRunStepSummary(run)}</small> : null}
+          </div>
+          <strong>{reportingWorkflowLabel(run.run.workflowId)}运行中</strong>
+          <span className="run-interaction-card__stage">{reportingRunStage(run)}</span>
           <span>{run.run.workflowId} · {run.run.runId}</span>
         </div>
+        <a aria-label="查看运行态" href={`/projects/${encodeURIComponent(projectId)}/runtime`}>详情</a>
       </article>)}
       {waiting.map(({ run, waiting: item }) => (
         <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
       ))}
       {interrupted.map((run) => <article aria-live="assertive" className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
         <div className="run-interaction-card__failure">
-          <strong>配电安全报告失败</strong>
+          <strong>{reportingWorkflowLabel(run.run.workflowId)}失败</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
           {stateString(run, "error_action_id")
-            ? <span>失败阶段 · {stateString(run, "error_action_id")}</span>
+            ? <span>失败阶段 · {reportingActionLabel(stateString(run, "error_action_id")!)}</span>
             : null}
           {failureMessage(run) ? <p role="alert">{failureMessage(run)}</p> : null}
         </div>
         <div className="run-interaction-card__actions">
+          <a aria-label="查看运行态" href={`/projects/${encodeURIComponent(projectId)}/runtime`}>详情</a>
           <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原报告</button>
         </div>
       </article>)}

@@ -350,9 +350,13 @@ describe("ConversationWorkspace", () => {
     </QueryClientProvider>);
 
     expect(await screen.findByText("配电安全报告失败")).toBeVisible();
-    expect(screen.getByText("失败阶段 · run-module-cohort")).toBeVisible();
+    expect(screen.getByText("失败阶段 · 模块协同与写作")).toBeVisible();
     expect(screen.getByText("网络连接失败，已自动重试2次仍失败；服务端接收状态未确认：Connection error.")).toBeVisible();
     expect(screen.queryByText("配电安全报告运行中")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看运行态" })).toHaveAttribute(
+      "href",
+      "/projects/project-1/runtime",
+    );
     await user.click(screen.getByRole("button", { name: "恢复原报告" }));
     await waitFor(() => expect(requestJson.mock.calls.some(
       ([path]) => path === "/api/v1/runs/full-report-2/resume",
@@ -374,7 +378,11 @@ describe("ConversationWorkspace", () => {
       if (path === "/api/v1/runs?conversationId=s1") return {
         runs: [{
           run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-3", status: "running", taskId: null, workflowId: "full-report" },
-          state: { status: "running" },
+          state: {
+            next_action_id: "run-module-cohort",
+            next_action_index: 9,
+            status: "running",
+          },
           waitingInput: [],
         }],
       };
@@ -391,7 +399,12 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("region", { name: "运行交互" }).parentElement)
       .toHaveClass("conversation-workspace__run");
     expect(screen.getByText("full-report · full-report-3")).toBeVisible();
-    expect(screen.queryByRole("link", { name: "查看运行" })).not.toBeInTheDocument();
+    expect(screen.getByText("模块协同与写作")).toBeVisible();
+    expect(screen.getByText("已完成 9 个顶层步骤")).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看运行态" })).toHaveAttribute(
+      "href",
+      "/projects/project-1/runtime",
+    );
   });
 
   it("does not inject a remembered project run into an unrelated Main conversation", async () => {

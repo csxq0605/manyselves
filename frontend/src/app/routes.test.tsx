@@ -190,10 +190,12 @@ describe("project operations routes", () => {
       if (path === "/api/v1/projects") return {
         projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
       };
-      if (path === "/api/v1/events/logs?projectId=project-1&limit=200") return {
+      if (path === "/api/v1/events/logs?projectId=project-1&limit=50&offset=0") return {
         entries: [{ agentId: "main", eventId: "stream-1:evt-1", level: "info", message: "任务开始", sessionId: "session-1", timestamp: "2026-08-04T08:00:00Z", type: "task.status.changed" }],
         projectId: "project-1",
+        total: 1,
       };
+      if (path === "/api/v1/runs") return { runs: [] };
       throw new Error(`unexpected request: ${path}`);
     });
     return {
@@ -221,7 +223,7 @@ describe("project operations routes", () => {
     render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/logs"]}><AppRoutes gateway={api} /></MemoryRouter></AppProviders>);
 
     expect(await screen.findByText("任务开始", {}, { timeout: 10_000 })).toBeVisible();
-    expect(api.requestJson).toHaveBeenCalledWith("/api/v1/events/logs?projectId=project-1&limit=200");
+    expect(api.requestJson).toHaveBeenCalledWith("/api/v1/events/logs?projectId=project-1&limit=50&offset=0");
   }, 15_000);
 });
 
