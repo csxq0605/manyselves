@@ -18,7 +18,7 @@ import "./knowledge.css";
 
 const GLOBAL_SCOPE_ID = "global-knowledge";
 const capabilities: SectionCapabilities = {
-  delete: true, download: true, edit: true, label: "全局知识库",
+  delete: true, download: true, downloadDirectory: false, edit: true, label: "全局知识库",
   preview: true, root: "", upload: true,
 };
 

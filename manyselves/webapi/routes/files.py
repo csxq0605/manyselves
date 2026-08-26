@@ -386,13 +386,13 @@ async def download_file(
     try:
         _require_visible_path(files, path)
         async with request_runtime_state(request).runtime_facade.read_transaction():
-            opened = files.open_download(path)
+            opened = await _to_thread_non_abandoning(files.open_download, path)
             byte_range = _parse_range(request.headers.get("Range"), opened.size)
     except WorkspaceFileError as error:
         raise _file_error(error) from error
     except BaseException:
         if opened is not None:
-            opened.stream.close()
+            opened.close()
         raise
     assert opened is not None
     if byte_range is None:
@@ -410,7 +410,7 @@ async def download_file(
     if response_status == status.HTTP_206_PARTIAL_CONTENT:
         headers["Content-Range"] = f"bytes {start}-{end}/{opened.size}"
     return StreamingResponse(
-        _stream_range(opened.stream, start, length),
+        _stream_download(opened, start, length),
         status_code=response_status,
         media_type=mimetypes.guess_type(opened.name)[0] or "application/octet-stream",
         headers=headers,
@@ -490,6 +490,15 @@ async def _stream_range(
             yield chunk
     finally:
         stream.close()
+
+
+async def _stream_download(opened, start: int, length: int) -> AsyncIterator[bytes]:
+    """Stream a download and remove a temporary directory archive afterwards."""
+    try:
+        async for chunk in _stream_range(opened.stream, start, length):
+            yield chunk
+    finally:
+        opened.close()
 
 
 def _range_error(size: int) -> ApiError:
