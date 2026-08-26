@@ -81,8 +81,16 @@
 .run-interaction-card [role="alert"] { color: #b42318; font-size: 13px; margin: 0; }
 .run-interaction-card--resume,
 .run-interaction-card--status { align-items: center; display: flex; justify-content: space-between; }
+.run-interaction-card--resume { align-items: flex-start; gap: 18px; }
 .run-interaction-card--resume > div,
 .run-interaction-card--status > div { display: grid; gap: 4px; }
 .run-interaction-card--resume span,
 .run-interaction-card--status span { color: #777773; font-size: 12px; }
+.run-interaction-card__failure { min-width: 0; }
+.run-interaction-card__failure [role="alert"] {
+  line-height: 1.45;
+  margin: 8px 0 0;
+  max-width: 580px;
+  overflow-wrap: anywhere;
+}
 .run-interaction-card__actions { align-items: center; display: flex !important; gap: 8px !important; grid-auto-flow: column; }

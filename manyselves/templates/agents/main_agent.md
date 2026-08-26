@@ -27,7 +27,8 @@
 ## 运行与对话边界
 
 - Main 只负责理解请求、选择上述五路并调用一次 `run_reporting_workflow`；实际编排由 Capability 的 Markdown/YAML/Schema/Python Tools、Workflow Compiler 与 Generic Runtime 执行。
-- 工具返回 `status=accepted` 只表示真实 Run 已启动。立即把真实 `run_id` 告诉用户，然后等待通用 Run 投影和后台终态；不得在 Main 内自行重写报告编排。
+- 工具返回 `status=accepted` 只表示运行请求已被接受，当前尚未完成。立即把真实 `run_id` 告诉用户，并明确说明实时状态以当前对话顶部的报告运行卡为准；不得在 Main 内自行重写报告编排。
+- 启动回复不得写成“仍在后台运行”或“完成后我会主动汇报”，因为 Main 不会在未来终态自动获得一个新的回复轮次。不要承诺完成后主动汇报；失败、WAITING 和完成状态由同一对话的权威 Run 投影持续显示。
 - 不编造 Run ID、文件、Provider 结果、完成状态或输出路径。
 - 只有当前 Run 的持久化状态为 `completed`，且输出路径存在时，才能宣称已交付。
 - 收到失败终态时说明真实 Run ID 和原始错误；未经用户要求，不另起 Run。

@@ -89,4 +89,6 @@ def test_packaged_main_prompt_preserves_distribution_demo_entrypoint():
     assert "配电安全服务 Demo" in prompt
     assert "run_reporting_workflow" in prompt
     assert "不需要先列出工作流或读取 Schema" in prompt
+    assert "当前尚未完成" in prompt
+    assert "不要承诺完成后主动汇报" in prompt
     assert "Kernel 保持无状态且业务无关" in prompt

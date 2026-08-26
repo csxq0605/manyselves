@@ -329,7 +329,11 @@ describe("ConversationWorkspace", () => {
       if (path === "/api/v1/runs?conversationId=s1") return {
         runs: [{
           run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-2", status: "failed", taskId: null, workflowId: "full-report" },
-          state: { status: "failed" },
+          state: {
+            error: "source='public-reporting:module-2.1-specialist' message='网络连接失败，已自动重试2次仍失败；服务端接收状态未确认：Connection error.' details={'attempt_disposition': 'accepted_or_unknown'}",
+            error_action_id: "run-module-cohort",
+            status: "failed",
+          },
           waitingInput: [],
         }],
       };
@@ -345,7 +349,11 @@ describe("ConversationWorkspace", () => {
       <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
     </QueryClientProvider>);
 
-    await user.click(await screen.findByRole("button", { name: "恢复原报告" }));
+    expect(await screen.findByText("配电安全报告失败")).toBeVisible();
+    expect(screen.getByText("失败阶段 · run-module-cohort")).toBeVisible();
+    expect(screen.getByText("网络连接失败，已自动重试2次仍失败；服务端接收状态未确认：Connection error.")).toBeVisible();
+    expect(screen.queryByText("配电安全报告运行中")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "恢复原报告" }));
     await waitFor(() => expect(requestJson.mock.calls.some(
       ([path]) => path === "/api/v1/runs/full-report-2/resume",
     )).toBe(true));

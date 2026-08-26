@@ -203,6 +203,20 @@ function isInterrupted(run: WorkflowRunResponse): boolean {
     && ["failed", "running"].includes(run.run.status.toLowerCase());
 }
 
+function stateString(run: WorkflowRunResponse, key: string): string | null {
+  const value = run.state[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function failureMessage(run: WorkflowRunResponse): string | null {
+  const error = stateString(run, "error")
+    ?? stateString(run, "error_message")
+    ?? stateString(run, "message");
+  if (!error) return null;
+  const embeddedMessage = /\bmessage='([^']+)'\s+details=/.exec(error)?.[1];
+  return embeddedMessage ?? error;
+}
+
 export interface RunInteractionFeedProps {
   readonly api: WorkflowApi & WorkflowRunFeedApi;
   readonly conversationId: string;
@@ -244,10 +258,14 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
       {waiting.map(({ run, waiting: item }) => (
         <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
       ))}
-      {interrupted.map((run) => <article className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
-        <div>
-          <strong>配电安全报告运行已中断</strong>
+      {interrupted.map((run) => <article aria-live="assertive" className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
+        <div className="run-interaction-card__failure">
+          <strong>配电安全报告失败</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
+          {stateString(run, "error_action_id")
+            ? <span>失败阶段 · {stateString(run, "error_action_id")}</span>
+            : null}
+          {failureMessage(run) ? <p role="alert">{failureMessage(run)}</p> : null}
         </div>
         <div className="run-interaction-card__actions">
           <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原报告</button>
