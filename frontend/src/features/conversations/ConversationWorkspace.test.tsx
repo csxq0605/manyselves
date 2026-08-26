@@ -345,7 +345,7 @@ describe("ConversationWorkspace", () => {
       <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
     </QueryClientProvider>);
 
-    await user.click(await screen.findByRole("button", { name: "恢复原运行" }));
+    await user.click(await screen.findByRole("button", { name: "恢复原报告" }));
     await waitFor(() => expect(requestJson.mock.calls.some(
       ([path]) => path === "/api/v1/runs/full-report-2/resume",
     )).toBe(true));
@@ -379,12 +379,9 @@ describe("ConversationWorkspace", () => {
       <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" />
     </QueryClientProvider>);
 
-    expect(await screen.findByText("运行中")).toBeVisible();
+    expect(await screen.findByText("配电安全报告运行中")).toBeVisible();
     expect(screen.getByText("full-report · full-report-3")).toBeVisible();
-    expect(screen.getByRole("link", { name: "查看运行" })).toHaveAttribute(
-      "href",
-      "/projects/project-1/workflows",
-    );
+    expect(screen.queryByRole("link", { name: "查看运行" })).not.toBeInTheDocument();
   });
 
   it("does not inject a remembered project run into an unrelated Main conversation", async () => {

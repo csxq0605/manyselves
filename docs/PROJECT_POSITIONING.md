@@ -12,7 +12,7 @@
 
 > **A file-defined, recoverable, extensible multi-agent application runtime.**
 
-它由一个业务无关的无状态 Kernel、一个通用 Workflow Compiler/Runtime、多个 Capability-owned Python Domain Runtime，以及一个通用 FastAPI/React 产品外壳组成。
+它由一个业务无关的无状态 Kernel、一个通用 Workflow Compiler/Runtime、多个 Capability-owned Python Domain Runtime、一个通用 FastAPI 运行接口，以及按 Capability 独立组合的产品前端组成。
 
 ## 2. 最终系统形态
 
@@ -40,7 +40,7 @@ Markdown / YAML / JSON Schema / Python Tool references
               State / Recovery / Events
                          │
                          ▼
-               FastAPI / React / Outputs
+       FastAPI / Capability Frontend / Outputs
 ```
 
 Manyselves 不是把所有功能塞进“Kernel”，也不是让每个业务复制一套 Runner。系统只有一套通用编译和执行语义；每个 Capability 只提供自身定义和领域实现。
@@ -143,7 +143,7 @@ manyselves/
 │   └── parameter_adjustment/
 ├── application/
 ├── webapi/
-└── frontend/
+└── frontend/                 # 当前 distribution-reporting 配电安全产品前端
 ```
 
 如果多个 Reporting Capability 以后共享证据、审查或渲染机制，可以在出现第二个真实使用者后提取 `domains/reporting/`。该层仍是 Reporting 领域框架，不是 Kernel。
@@ -162,7 +162,7 @@ manyselves/
 
 最终声明式 Reporting 不得继承、包装或把执行委托给 Legacy `ReportWorkflowRunner`。旧流程可作为迁移时的 Characterization 来源，但不是公共接口或完成条件。
 
-## 7. 通用应用和产品界面
+## 7. 通用应用接口与 Capability 产品前端
 
 FastAPI 只提供通用资源：
 
@@ -174,7 +174,11 @@ FastAPI 只提供通用资源：
 
 Capability 通过 Registry/Binding 接入，不由路由硬编码具体服务。
 
-React 根据以下数据渲染：
+每个可交付 Capability 拥有自己的产品前端。当前仓库的 `frontend/` 是
+`distribution-reporting` 配电安全服务 Demo 的前端：用户通过 Main 对话启动五类报告操作，
+并在同一产品界面查看运行、WAITING、产物和成本。它不是用于选择所有 Capability 的平台控制台。
+
+产品前端仍消费通用运行投影：
 
 - JSON Schema；
 - Run 状态；
@@ -183,7 +187,7 @@ React 根据以下数据渲染：
 - Value/Artifact Output；
 - Cost/Usage。
 
-不得以 `capabilityId === "distribution-reporting"` 控制通用运行表单、恢复按钮或结果投影。Capability 可以提供可选的专属结果视图，但通用工作区必须完整可用。
+其它 Capability 若成为产品，需要建立自己的前端应用、路由和交互设计；不能把它追加到配电安全前端的 Capability 选择器中。多个前端可以共享 Schema 表单、WAITING、Output、Event、Cost 等无业务语义的 UI 基础组件，也可以共同调用同一 FastAPI Run API，但共享组件不得通过 Capability ID 承载业务流程分支。通用 Run Workspace 只可作为开发/诊断 Harness，不是统一产品入口。
 
 ## 8. Recovery 是 Runtime 能力，不是旧 Runner 特权
 
@@ -231,7 +235,7 @@ Legacy Runner 默认、双路径开关、旧 Reporting API、旧 Run 恢复和 L
 3. **业务无关 Kernel**：领域语义永不成为 Kernel 原语。
 4. **Capability-owned Python**：领域代码留在对应 Capability。
 5. **通用恢复**：恢复能力通过 Runtime 端口供所有 Capability 使用。
-6. **同一产品外壳**：所有 Capability 走相同 Run API 和通用 React 工作区。
+6. **共享运行接口、独立产品前端**：所有 Capability 走相同 Run API；每个产品 Capability 独立组合自己的 React 前端。
 7. **可观测且可接续**：权威 State、Event、Output 和 Cost 可以投影和恢复。
 8. **最小生产依赖**：不为架构外观引入第二套编排运行时。
 
@@ -255,7 +259,8 @@ Manyselves 不是：
 - 通用 Runtime 执行 Agent/Tool/Interaction，并持久化 State/Recovery/Events；
 - Distribution Reporting 的 Python 领域代码归 Capability 所有，且不继承 Legacy 整流程 Runner；
 - 至少一个中立 Capability 通过同一链路执行；
-- Application/FastAPI/React 不含 Capability-ID 业务分支；
+- Application/FastAPI 不含 Capability-ID 业务分支；共享 React 基础组件不含业务分支，Capability 产品前端可直接组合自己的交互；
+- 当前 `frontend/` 只暴露 Distribution Reporting 产品能力，不把中立测试 Capability 混入产品导航；
 - Recovery 和 Same-run 恢复只依赖最终路径；
 - 未使用的旧 Runner、Facade 和兼容入口不在生产调用图；
 - 自动验证、构建和最终真实 Provider/项目/浏览器测试通过；
@@ -267,8 +272,8 @@ Manyselves 不是：
 
 ### 中文
 
-> Manyselves 是一个文件定义驱动、可恢复、可扩展的多 Agent 应用运行时。它把 Markdown、YAML、JSON Schema 和 Capability Python Tools 编译为业务无关的执行计划，通过一个无状态 Kernel 和通用 Agent/Tool/Interaction Runtime 运行，并以统一的 FastAPI、React、Events 和 Outputs 提供完整应用体验。
+> Manyselves 是一个文件定义驱动、可恢复、可扩展的多 Agent 应用运行时。它把 Markdown、YAML、JSON Schema 和 Capability Python Tools 编译为业务无关的执行计划，通过一个无状态 Kernel 和通用 Agent/Tool/Interaction Runtime 运行，并以统一的 FastAPI、Events 和 Outputs 支撑按 Capability 独立设计的产品前端。
 
 ### English
 
-> Manyselves is a file-defined, recoverable, extensible multi-agent application runtime. It compiles Markdown, YAML, JSON Schema, and capability-owned Python tools into business-neutral execution plans, runs them through a stateless kernel and a generic agent/tool/interaction runtime, and exposes the result through a unified FastAPI, React, events, and outputs surface.
+> Manyselves is a file-defined, recoverable, extensible multi-agent application runtime. It compiles Markdown, YAML, JSON Schema, and capability-owned Python tools into business-neutral execution plans, runs them through a stateless kernel and a generic agent/tool/interaction runtime, and exposes a common FastAPI, events, and outputs surface to capability-specific product frontends.

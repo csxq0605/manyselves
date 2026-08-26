@@ -231,29 +231,26 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
   })));
   const interrupted = feedRuns.filter(isInterrupted);
   const active = feedRuns.filter((run) => run.run.active);
-  const workflowHref = `/projects/${encodeURIComponent(projectId)}/workflows`;
 
   if (waiting.length === 0 && interrupted.length === 0 && active.length === 0) return null;
   return (
     <section aria-label="运行交互" className="run-interaction-feed">
       {active.map((run) => <article className="run-interaction-card run-interaction-card--status" key={run.run.runId}>
         <div>
-          <strong>运行中</strong>
+          <strong>配电安全报告运行中</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
         </div>
-        <a href={workflowHref} onClick={() => setCurrentRun(projectId, run.run.runId)}>查看运行</a>
       </article>)}
       {waiting.map(({ run, waiting: item }) => (
         <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
       ))}
       {interrupted.map((run) => <article className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
         <div>
-          <strong>运行已中断</strong>
+          <strong>配电安全报告运行已中断</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
         </div>
         <div className="run-interaction-card__actions">
-          <a href={workflowHref} onClick={() => setCurrentRun(projectId, run.run.runId)}>查看运行</a>
-          <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原运行</button>
+          <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原报告</button>
         </div>
       </article>)}
     </section>

@@ -5,13 +5,13 @@ import { ApiError } from "../../api/gateway";
 import { useConversationStore } from "../../store/conversation-store";
 import type { Project, ProjectCreateInput, ProjectUpdateInput } from "../projects/project-api";
 
-export type ProjectSection = "inputs" | "knowledge" | "templates" | "outputs" | "workflows" | "runtime" | "logs" | "history";
+export type ProjectSection = "inputs" | "knowledge" | "templates" | "outputs" | "runtime" | "logs" | "history";
 
 type IconName = "archive" | "book" | "edit" | "file-out" | "folder" | "history" | "knowledge" | "logs" | "more" | "output" | "plus" | "runtime" | "settings";
 
 const sections: readonly (readonly [ProjectSection, string, IconName])[] = [
   ["inputs", "输入", "archive"], ["knowledge", "知识库", "book"], ["templates", "输出模板", "file-out"],
-  ["outputs", "输出", "output"], ["workflows", "工作流", "runtime"], ["runtime", "运行态", "runtime"], ["logs", "日志", "logs"],
+  ["outputs", "输出", "output"], ["runtime", "运行态", "runtime"], ["logs", "日志", "logs"],
   ["history", "历史会话", "history"],
 ];
 

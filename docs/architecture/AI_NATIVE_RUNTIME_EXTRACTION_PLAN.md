@@ -2,7 +2,7 @@
 
 > 文档性质：规范性架构与主实施方案
 >
-> 目标：把现有实现收敛为一个 Stateless Kernel、一个通用 Compiler/Runtime、一个文件定义系统、多个 Capability-owned Domain Runtime，以及一个通用 FastAPI/React 产品外壳
+> 目标：把现有实现收敛为一个 Stateless Kernel、一个通用 Compiler/Runtime、一个文件定义系统、多个 Capability-owned Domain Runtime、一个通用 FastAPI 运行接口，以及按 Capability 独立组合的产品前端
 >
 > 当前状态：重新开放，尚未完成；见 [`../implementation/RUNTIME_EXTRACTION_STATUS.md`](../implementation/RUNTIME_EXTRACTION_STATUS.md)
 >
@@ -31,7 +31,8 @@ Capability files
 → Generic Workflow Runtime Host
 → Capability-owned Agent/Tool/Interaction implementations
 → State / Recovery / Events
-→ Generic Application / FastAPI / React / Outputs
+→ Generic Application / FastAPI / Outputs
+→ Capability-specific Product Frontend
 ```
 
 旧代码只作为 Characterization 来源和迁移中的临时实现，不再是公共边界或产品承诺。
@@ -107,7 +108,7 @@ manyselves/
 │   └── parameter_adjustment/
 ├── application/              # generic catalog/run/projection services
 ├── webapi/                   # generic HTTP transport
-└── frontend/                 # generic Schema/Run/Event/Output UI
+└── frontend/                 # current distribution-reporting product UI
 ```
 
 目录可以分切片迁移，但生产依赖必须逐步收敛到该结构。禁止用“物理移动风险”作为永久保留语义混杂的理由。
@@ -141,7 +142,8 @@ manyselves/
 - 通过 Catalog/Registry 发现 Capability；
 - 通过通用 Runtime Binding 启动、查询和恢复 Run；
 - 不把 ReportingFacade 作为通用 Host；
-- 不因 Capability ID 分支展示表单、WAITING、Events、Outputs 或 Cost。
+- 通用 API 和共享 UI primitive 不因 Capability ID 分支改变 Run/WAITING/Event/Output/Cost 语义；
+- 产品前端按 Capability 独立组合，不提供跨 Capability 的统一产品选择页。
 
 ## 5. 定义系统
 
@@ -231,7 +233,7 @@ Reporting 是复杂领域实现，不是平台内核。它应拥有：
 - 声明式 Runner 对 Legacy `ReportWorkflowRunner` 的继承；
 - 由 Python `run()` 决定完整模块/Cross/Chief/Final/Delivery 顺序；
 - 通用 Application 的 Host 身份；
-- 通用 FastAPI/React 分支。
+- 通用 FastAPI 或共享 React primitive 中的 Reporting 业务分支。
 
 现有 `manyselves/core/reporting` 必须分类迁移：
 
@@ -242,7 +244,7 @@ Reporting 是复杂领域实现，不是平台内核。它应拥有：
 | 旧整流程编排、双路径选择和仅兼容入口 | 删除 |
 | 暂时仍被最终路径使用的实现 | 先补 Characterization，再拆分；状态中明确债务 |
 
-## 8. Generic Application / FastAPI / React
+## 8. Generic Application / FastAPI 与 Capability Frontend
 
 通用应用表面必须覆盖：
 
@@ -261,7 +263,7 @@ GET  /runs/{id}/cost
 
 具体 URL 可维持当前已发布形式，但语义不得依赖 ReportingFacade 或 Capability-ID 分支。
 
-React 通用 Run Workspace 根据 JSON Schema 生成输入，根据 waitingInput 生成继续表单，根据 Outputs 显示值/Artifact，根据 Events 和 Cost 投影状态。专属 View 是可选扩展，不能替代通用页面。
+通用 FastAPI Run surface 是多个 Capability 的共享边界，但产品 React 不是统一控制台。当前 `frontend/` 只服务 `distribution-reporting`：Main 对话负责五类报告操作的产品交互，Schema/WAITING/Outputs/Events/Cost 组件继续读取通用投影。其它 Capability 产品必须拥有独立前端应用；通用 Run Workspace 若保留，仅作为开发/诊断 Harness。可提取共享 UI primitive，但不得在共享组件中加入 Capability-ID 业务分支。
 
 ## 9. 最终架构收敛工作包
 
@@ -289,7 +291,7 @@ React 通用 Run Workspace 根据 JSON Schema 生成输入，根据 waitingInput
 - Generic Application/WebAPI 不得以 ReportingFacade 作为 Capability Host；
 - Runtime 不得导入具体 Capability；
 - Capability 定义不得调用整流程兼容 Tool；
-- React/Projection 不得出现 Capability-ID 流程分支。
+- 通用 Projection 与共享 React primitive 不得出现 Capability-ID 流程分支；产品 React composition 明确归属单一 Capability。
 
 测试必须检查生产接线，而不是只扫描类名。
 
@@ -350,16 +352,16 @@ React 通用 Run Workspace 根据 JSON Schema 生成输入，根据 waitingInput
 
 这不授权删除真实 Run 数据或用户产物。
 
-### FA-06：通用产品表面收敛
+### FA-06：通用 API 与产品前端边界收敛
 
-目标：FastAPI/React 仅由定义与通用投影驱动。
+目标：FastAPI 仅由定义与通用投影驱动；产品前端按 Capability 隔离。
 
 任务：
 
-- 重新审计所有 routes、facades、frontend branches；
+- 重新审计所有 routes、facades、frontend composition 与共享 primitives；
 - 移除 Reporting 特殊启动/恢复/输出分支；
 - 验证复杂 Schema、WAITING、Events、Artifacts、Cost；
-- 两个 Capability 通过同一 UI 流程可操作。
+- 两个 Capability 通过同一 API/Runtime 链路可操作；Distribution Reporting 产品前端不暴露中立测试 Capability。
 
 ### FA-07：完成审计和最终真实测试
 
@@ -402,7 +404,7 @@ Characterization 固定的是语义，不是旧类：
 - YAML 是否仍调用整流程 Tool；
 - Capability 是否拥有自己的领域实现；
 - Kernel/Runtime 是否无领域词汇和导入；
-- 两个 Capability 是否走同一 API/UI；
+- 两个 Capability 是否走同一 API/Runtime，产品前端是否保持 Capability 隔离；
 - 文档完成声明是否有足够当前证据。
 
 发现偏差时先补 Characterization，再修复并更新后续顺序；不得等到最终审计才处理。
@@ -417,7 +419,7 @@ Characterization 固定的是语义，不是旧类：
 - Runtime：Agent/Tool/Conversation/Recovery/WAITING/State/Event；
 - Capability：文件定义、Python binding、领域结果、Reporting 全流程；
 - Application/API：catalog、run lifecycle、input、output、events、cost；
-- Frontend：Schema forms、WAITING、outputs、events、cost、Capability neutrality；
+- Frontend：Capability-owned composition、共享 Schema/WAITING/outputs/events/cost primitives、无跨 Capability 产品选择器；
 - Packaging：wheel/frontend build、包内定义和 Python Runtime。
 
 测试通过只证明覆盖到的行和行为。最终完成声明还需要生产调用链和发布物审计。

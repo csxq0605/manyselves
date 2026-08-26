@@ -225,68 +225,24 @@ describe("project operations routes", () => {
   }, 15_000);
 });
 
-describe("generic workflow route", () => {
-  it("mounts the project-scoped Capability and Workflow projection", async () => {
+describe("distribution-reporting product boundary", () => {
+  it("redirects the removed generic workflow page back to the project Main", async () => {
     const requestJson = vi.fn(async (path: string) => {
       if (path === "/api/v1/projects") return {
         projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
       };
-      if (path === "/api/v1/capabilities") return {
-        capabilities: [{ description: "Distribution Reporting", id: "distribution-reporting", version: "1.0.0", workflowIds: ["distribution-reporting"] }],
-      };
-      if (path === "/api/v1/workflows") return {
-        workflows: [{ capabilityId: "distribution-reporting", description: "Full report", id: "distribution-reporting", inputContract: "distribution_reporting_input", outputContract: "distribution_reporting_output", runnable: true, version: "1.0.0" }],
-      };
-      if (path === "/api/v1/workflows/distribution-reporting/input-schema") return {
-        contractId: "distribution_reporting_input", schema: { type: "object" }, workflowId: "distribution-reporting",
+      if (path === "/api/v1/conversations?projectId=project-1&agentId=main") return {
+        activeSessionId: null, conversations: [], projectId: "project-1",
       };
       throw new Error(`unexpected request: ${path}`);
     });
 
     render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/workflows"]}><AppRoutes gateway={{ requestJson } as unknown as ApiGateway} /></MemoryRouter></AppProviders>);
 
-    expect(await screen.findByRole("heading", { name: "通用工作流" }, { timeout: 10_000 })).toBeVisible();
-    expect(await screen.findByText("Distribution Reporting")).toBeVisible();
-    await waitFor(() => expect(requestJson).toHaveBeenCalledWith(
-      "/api/v1/workflows/distribution-reporting/input-schema",
-    ));
-  }, 15_000);
-
-  it("activates an inactive route project before loading workflow definitions", async () => {
-    let projectActive = false;
-    const requestJson = vi.fn(async (path: string, init?: { readonly method?: string }) => {
-      if (path === "/api/v1/projects") return {
-        projects: [{ active: projectActive, description: "", displayName: "Project 2", id: "project-2", revision: "r1" }],
-      };
-      if (path === "/api/v1/projects/project-2/activate" && init?.method === "POST") {
-        projectActive = true;
-        return { active: true, description: "", displayName: "Project 2", id: "project-2", revision: "r2" };
-      }
-      if (!projectActive) throw new Error(`workflow definitions loaded before activation: ${path}`);
-      if (path === "/api/v1/capabilities") return {
-        capabilities: [{ description: "Neutral Parameter Adjustment", id: "parameter-adjustment", version: "1.0.0", workflowIds: ["parameter-adjustment"] }],
-      };
-      if (path === "/api/v1/workflows") return {
-        workflows: [{ capabilityId: "parameter-adjustment", description: "Parameter adjustment", id: "parameter-adjustment", inputContract: "parameter-input", outputContract: "parameter-value", runnable: true, version: "1.0.0" }],
-      };
-      if (path === "/api/v1/workflows/parameter-adjustment/input-schema") return {
-        contractId: "parameter-input", schema: { type: "object" }, workflowId: "parameter-adjustment",
-      };
-      throw new Error(`unexpected request: ${path}`);
-    });
-
-    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-2/workflows"]}><AppRoutes gateway={{ requestJson } as unknown as ApiGateway} /></MemoryRouter></AppProviders>);
-
-    expect(await screen.findByRole("heading", { name: "通用工作流" }, { timeout: 10_000 })).toBeVisible();
-    expect(await screen.findByText("Neutral Parameter Adjustment")).toBeVisible();
-    expect(requestJson).toHaveBeenCalledWith("/api/v1/projects/project-2/activate", {
-      method: "POST",
-      requireLease: true,
-    });
-    const paths = requestJson.mock.calls.map(([path]) => path);
-    expect(paths.indexOf("/api/v1/projects/project-2/activate")).toBeLessThan(
-      paths.indexOf("/api/v1/capabilities"),
-    );
+    expect(await screen.findByRole("heading", { name: "最近对话" }, { timeout: 10_000 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "通用工作流" })).not.toBeInTheDocument();
+    expect(requestJson).not.toHaveBeenCalledWith("/api/v1/capabilities");
+    expect(requestJson).not.toHaveBeenCalledWith("/api/v1/workflows");
   }, 15_000);
 });
 

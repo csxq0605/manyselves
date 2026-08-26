@@ -38,7 +38,7 @@
 - `manyselves/core/reporting` 可以继续混合通用 Agent 机制、Reporting 领域逻辑和旧流程；
 - 旧 API/旧 Run/双路径行为等价被视为最终完成条件。
 
-用户已经明确：不需要继续以旧流程兼容为目标。最终项目必须形成一个 Stateless Kernel、一个 Generic Compiler/Runtime、Capability-owned Domain Runtime/Tools、文件定义系统和 Generic FastAPI/React。因此旧的兼容式真实 Run 成功不能证明新的最终架构完成。
+用户已经明确：不需要继续以旧流程兼容为目标。最终项目必须形成一个 Stateless Kernel、一个 Generic Compiler/Runtime、Capability-owned Domain Runtime/Tools、文件定义系统、Generic FastAPI，以及按 Capability 独立组合的产品前端。因此旧的兼容式真实 Run 成功不能证明新的最终架构完成。
 
 ## Confirmed implemented foundation
 
@@ -86,7 +86,7 @@
 | FA-03 Distribution Reporting Domain Runtime | `completed` | 五个公开文件入口、Module/Cross/Chief/Final/FinalChief/Aggregate/Template Provider、typed lifecycle、Tools、recovery 和 delivery 均归 Capability |
 | FA-04 Generic Capability Runtime Binding | `completed` | `parameter-adjustment` 与 Distribution Reporting 共用通用接口；account Binding 直接构造 Capability Generic Host/Provider composition |
 | FA-05 Ownership convergence and legacy deletion | `completed` | 生产/发布图无旧 Runner/Facade/selector/adapter；`manyselves/core/reporting` 与旧专属测试已物理删除 |
-| FA-06 Generic FastAPI/React surface | `completed` | Schema/WAITING/Output/Event/Cost 由通用 Run Workspace 投影，无 Capability-ID 流程分支或旧 `/api/v1/reporting` 路由 |
+| FA-06 Generic FastAPI + Capability frontend boundary | `completed` | FastAPI Run/Schema/WAITING/Output/Event/Cost 保持通用；当前 React 产品只服务 Distribution Reporting，通用 Run Workspace 不再进入产品路由 |
 | FA-07 Completion audit and final real test | `automatic audit completed; real test deferred` | 所有生产 Provider 的 completed-result correlation 与自动架构证据已收敛；真实 Provider、真实项目、浏览器测试按用户要求暂缓 |
 
 ## Historical evidence retained
@@ -319,6 +319,7 @@
 - FA-08/M9.67 加载 M9.66 后在侧边 `success` 新 Main conversation `c93f26d3-452b-4021-8061-1fb164600a80` 发出真实 full-report 请求；Main 的第一轮真实 Provider 请求前，网页保存 Provider 配置触发 `RuntimeHost.replace_loop_manager()`，新 Loop 只恢复内置工具，Main 随后明确返回本轮缺少 `manage_workflows`，没有创建 Run。失败对话原样保留。Characterization First 以 RuntimeHost 缺少持久 Application tool factory 得到 `AttributeError` RED；GREEN 后 RuntimeHost 按 `(agent_id, tool_name)` 保存业务中立 Tool factory，并在每次 manager bind/replacement 时重放；LoopManager 在 Agent Loop 尚未创建时也保存 Application tool，创建 Main Loop 后注册。项目 rebind 继续只替换同名 factory，不复制工具或业务路由。Loop replacement/Main tool focused `6 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未新增 Capability 分支、Kernel Action、Gate、Hash/CAS、锁、判断算法、重试、依赖或公共 HTTP 接口。下一步加载本修复，在同一 conversation 重发同一已确认请求。
 - FA-08/M9.68 根据真实验收时对产品边界的纠正撤回 M9.66 的通用 `manage_workflows` Main 交互及其未使用工具模块：当前网页是配电安全服务 Demo，原 `main` 分支的产品契约是用户只与 Main 对话，由 Main 在五路 `operation` 中直接选择，不应要求用户或 Main 先发现内部 Workflow ID/Schema。Characterization First 新增 Capability Main 工具测试并以缺少 `distribution_reporting.adapters.main_tool` 得到 `ModuleNotFoundError` RED；GREEN 后 `run_reporting_workflow` 位于 Distribution Reporting Capability adapter，保留 `distill_template_skill/full_report/module_report/aggregate_existing/render_existing` 五路输入，将它们分别投影到当前五个文件定义公共入口，并继续通过 `WorkflowProjectionFacade.start()`、Workflow Compiler、Generic Host 和会话 Run 绑定执行；没有恢复旧 ReportingService/Runner。单账户、多账户启动及项目 rebind 改为注入此 Demo 工具，RuntimeHost 的业务中立 factory replay 继续保证 Provider 重载后工具存在。Main Prompt 恢复配电 Demo 语义并明确内部编排仍由 Markdown/YAML/Schema/Python Tools 与通用 Runtime 负责。focused/Prompt/Loop replacement/Web 生命周期共 `17 passed`，定向 Ruff、compileall 与 `git diff --check` 通过；未跑全量，未改 Kernel、Compiler、Host、HTTP Workflow API 或 React 通用 Run 投影，也未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。M9.67 的失败消息保留，且本片尚未向 Provider 重发请求。
 - FA-08/M9.69 加载 M9.68 后在侧边可见的同一 `success` Main conversation 直接发送“使用三份 Excel 启动完整报告”，Main 一次调用 `run_reporting_workflow(operation=full_report)`，未调用工作流发现或 Schema 接口。真实 Run `full-report-7e9f515ee24f4de09967aa19860854fd` 已创建并绑定当前 conversation；Main 明确返回同一 Run ID，页面显示 `运行中 · full-report`。持久 `runtime-state.json` 为 `workflow_id=full-report/status=running`，请求参数精确为五模块、`draft/observe/deterministic_workers/4`；Input snapshot 已包含 `S2-1收资表.xlsx`、`S4-4诊断工作用表.xlsx`、`S4-6评估总表.xlsx` 和 `Inputs/report-template-role-skills/`，三份 Excel 均完成解析。服务日志已创建五个 Module specialist 的 Generic Runtime Agent loop 并进入真实 Provider 执行。按用户说明不对约半小时的 Run 持续高频监控，当前不宣称最终报告完成；同一 Run 和网页现场保留。
+- FA-08/M9.70 纠正最终产品前端边界：`main` 分支原产品壳没有通用 Workflow 路由或侧栏入口，当前 `frontend/` 应是 `distribution-reporting` 配电安全 Demo 的专属产品前端，而不是把所有 Capability 混在一起的控制台。Characterization First 先证明侧栏仍暴露“工作流”、旧路由仍加载 Capability 列表、Main 活跃 Run 仍跳往跨 Capability 页面；GREEN 后侧栏移除该入口，`/projects/:projectId/workflows` 兼容重定向回项目 Main，Main 直接显示“配电安全报告运行中”并在同一界面提供 WAITING/恢复，不再跳到通用 Run Workspace。通用 FastAPI Run API、Definition/Compiler/Generic Host 与 `parameter-adjustment` 后端验证 Capability 均保留；其它产品 Capability 未来建立独立前端，可共享无业务语义的 UI primitives，但不能进入本 Demo 的产品导航。规范同步改为“共享 Runtime/FastAPI、Capability-specific frontend”。三个边界 Characterization 与两项 Main Run 交互 focused 通过，定向 ESLint、TypeScript、frontend build 与 `git diff --check` 通过；未跑全量，未重启后端、未中断当前真实 Provider Run，未改 Kernel/Compiler/Host/API，也未新增 Gate、Hash/CAS、锁、判断算法、重试、依赖或公共接口。
 - 本阶段没有运行全量回归；M9.60 加载后已从网页恢复同一 `full-report-1e692d9bbada41d09260a9113797fc51`，没有新建 Run。页面恢复为 `running`，最新服务日志证明 Cross reduction 已完成并进入 Chief chapter Provider 执行；M9.55 的 typed context、M9.56 的 undeclared tools、M9.57 的 local reviewer input 与 M9.60 的 Cross pipeline extra field 四个错误均未在对应恢复后的新增事件中再次出现。旧错误仍作为该 Run 的历史事件保留。按真实运行通常约半小时的约束，在越过确定性失败边界、确认真实 Provider 请求与 Main→同 Run UI 导航后停止长时间监控，不宣称整份报告已经完成。Main 对话 Run 投影、三种 Lane 选择、原 Run 中断恢复、侧边栏及通用 Output 产品化与最终自动架构审计均已完成。
 
 ## Research decisions
@@ -368,7 +369,7 @@ git diff --check
 | Capability-owned Reporting Domain Runtime | `achieved; final real Provider execution remains under acceptance` |
 | No Declarative→Legacy Runner inheritance/delegation | `achieved; old Runner/Facade/Core package deleted` |
 | Generic Capability Binding/Application | `achieved; RuntimeServicesView is Runtime-owned and Capability no longer imports Application` |
-| Generic FastAPI/React for two capabilities | `achieved; Schema/WAITING/Event/Output/Cost generic projection` |
+| Generic FastAPI + capability-specific frontend | `achieved; both capabilities use the common Runtime/API, while current React product exposes Distribution Reporting only` |
 | Legacy Runner/Facade/selectors absent from production/release | `achieved by production scan and boundary tests` |
 | Recovery/Same-run behaviors on final path | `correction/continuation/no-progress/session/tool-result/persisted Agent completion and failed physical-attempt rotation achieved across all production Provider roles; final real validation pending` |
 | Focused/affected checks and builds | `final Definition/Compiler/Host 107 passed; public roots 13 passed; AgentLoop 78 passed; Runtime/architecture 56 passed; frontend 36 passed; targeted Ruff/ESLint/TypeScript passed` |

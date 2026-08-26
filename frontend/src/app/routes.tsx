@@ -5,7 +5,6 @@ import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-rou
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
 import { createProjectApi, type Project, type ProjectApi } from "../features/projects/project-api";
-import { createWorkflowApi } from "../features/runs/workflow-api";
 import { createSettingsApi } from "../features/settings/settings-api";
 import type { SettingsStorage } from "../features/settings/settings-storage";
 import { AppLayout } from "../features/shell/AppLayout";
@@ -44,11 +43,6 @@ const HistoryRoutePage = lazy(async () => {
 const SettingsPage = lazy(async () => {
   const module = await import("../features/settings/SettingsPage");
   return { default: module.SettingsPage };
-});
-
-const RunWorkspace = lazy(async () => {
-  const module = await import("../features/runs/RunWorkspace");
-  return { default: module.RunWorkspace };
 });
 
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
@@ -136,30 +130,11 @@ function ProjectRouteLayout({ accountUsername, onLogout, projectApi }: { readonl
   /></>;
 }
 
-function WorkflowRoutePage({ gateway, projectApi }: { readonly gateway: ApiGateway; readonly projectApi: ProjectApi }) {
+function RemovedWorkflowRoute() {
   const { projectId } = useParams();
-  const queryClient = useQueryClient();
-  const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
-  const routeProject = projects.data?.find((project) => project.id === projectId);
-  const activation = useQuery({
-    enabled: Boolean(projectId && routeProject && !routeProject.active),
-    queryFn: async () => {
-      const activated = await projectApi.activate(projectId!);
-      queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
-        current?.map((project) => ({ ...project, active: project.id === activated.id }))
-      ));
-      return activated;
-    },
-    queryKey: ["project-activation", projectId, routeProject?.revision],
-    retry: false,
-  });
-  const projectReady = Boolean(routeProject?.active || activation.isSuccess);
-
-  if (!projectId) return <p role="alert">工作流路由无效</p>;
-  if (projects.isPending) return <p role="status">正在加载项目…</p>;
-  if (projects.isError || !routeProject) return <p role="alert">项目不可用</p>;
-  if (!projectReady) return activation.isError ? <p role="alert">项目切换失败</p> : <p role="status">正在切换项目…</p>;
-  return <RunWorkspace api={createWorkflowApi(gateway)} key={projectId} projectId={projectId} />;
+  return projectId
+    ? <Navigate replace to={`/projects/${encodeURIComponent(projectId)}`} />
+    : <Navigate replace to="/" />;
 }
 
 function NotFound() {
@@ -197,11 +172,7 @@ export function AppRoutes({ accountUsername, gateway, onLogout, platform, settin
         <HistoryRoutePage gateway={gateway} />
       </Suspense>
     )} />
-    <Route path="/projects/:projectId/workflows" element={(
-      <Suspense fallback={<Placeholder title="正在加载通用工作流…" />}>
-        <WorkflowRoutePage gateway={gateway} projectApi={projectApi} />
-      </Suspense>
-    )} />
+    <Route path="/projects/:projectId/workflows" element={<RemovedWorkflowRoute />} />
     <Route path="/projects/:projectId/:section" element={(
       <Suspense fallback={<Placeholder title="正在加载项目文件…" />}>
         <ProjectDirectoryPage gateway={gateway} {...(platform ? { platform } : {})} />
