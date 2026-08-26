@@ -359,7 +359,7 @@ describe("ConversationWorkspace", () => {
     )).toBe(true));
   });
 
-  it("shows an active original run in the Main conversation", async () => {
+  it("keeps an active original run in a non-scrolling Main status row", async () => {
     const requestJson = vi.fn(async (path: string) => {
       if (path.startsWith("/api/v1/conversations/messages")) {
         return { messages: [], projectId: "project-1", sessionId: "s1" };
@@ -388,6 +388,8 @@ describe("ConversationWorkspace", () => {
     </QueryClientProvider>);
 
     expect(await screen.findByText("配电安全报告运行中")).toBeVisible();
+    expect(screen.getByRole("region", { name: "运行交互" }).parentElement)
+      .toHaveClass("conversation-workspace__run");
     expect(screen.getByText("full-report · full-report-3")).toBeVisible();
     expect(screen.queryByRole("link", { name: "查看运行" })).not.toBeInTheDocument();
   });

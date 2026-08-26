@@ -1,12 +1,23 @@
 .conversation-workspace {
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden;
   position: relative;
 }
+
+.conversation-workspace__run {
+  background: rgb(255 255 255 / 96%);
+  border-bottom: 1px solid #e6e6e2;
+  padding: 14px clamp(24px, 7vw, 96px);
+  z-index: 2;
+}
+
+.conversation-workspace__run:empty { display: none; }
+
+.conversation-workspace__run .run-interaction-feed { margin: 0 auto; }
 
 .conversation-workspace__main {
   display: flex;
