@@ -121,6 +121,13 @@ export function FileList({
                     <span aria-hidden="true" className="file-list__folder-icon" />
                     <span className="file-list__directory-name">{entry.name}</span>
                   </button>
+                  {capabilities.downloadDirectory ? (
+                    <div aria-label={`${entry.name} 文件操作`} className="file-row-menu" role="group">
+                      <button aria-label={`下载 ${entry.name}`} onClick={() => onDownload(entry)} type="button">
+                        下载文件夹
+                      </button>
+                    </div>
+                  ) : null}
                 </li>
               );
             }
