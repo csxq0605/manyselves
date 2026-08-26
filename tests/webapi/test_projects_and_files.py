@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import threading
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -686,6 +687,41 @@ async def test_upload_is_bounded_and_download_supports_byte_ranges(api) -> None:
     assert partial.headers["accept-ranges"] == "bytes"
     assert too_large.status_code == 413
     assert too_large.json()["error"]["code"] == "UPLOAD_TOO_LARGE"
+
+
+@pytest.mark.asyncio
+async def test_download_directory_returns_a_zip_with_the_complete_folder_tree(api) -> None:
+    """Generated Skills can be downloaded as one portable, hierarchy-preserving ZIP."""
+    client, _, _ = api
+    headers = await acquire_controller(client)
+    for path, content in {
+        "Inputs/generated-skill/SKILL.md": b"# Skill",
+        "Inputs/generated-skill/references/boundary.json": b"{}",
+    }.items():
+        uploaded = await client.post(
+            "/api/v1/projects/p1/files/upload",
+            params={"path": path},
+            headers={**headers, "Content-Type": "application/octet-stream"},
+            content=content,
+        )
+        assert uploaded.status_code == 201
+
+    downloaded = await client.get(
+        "/api/v1/projects/p1/files/download",
+        params={"path": "Inputs/generated-skill"},
+    )
+
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert "generated-skill.zip" in downloaded.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
+        assert set(archive.namelist()) == {
+            "generated-skill/",
+            "generated-skill/references/",
+            "generated-skill/references/boundary.json",
+            "generated-skill/SKILL.md",
+        }
+        assert archive.read("generated-skill/SKILL.md") == b"# Skill"
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import zipfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -115,6 +116,12 @@ class OpenDownload:
     size: int
     modified_at: datetime
     revision: str
+    temporary_path: Path | None = None
+
+    def close(self) -> None:
+        self.stream.close()
+        if self.temporary_path is not None:
+            self.temporary_path.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,8 +338,16 @@ class WorkspaceFiles:
         return self._existing_file(relative_path)
 
     def open_download(self, relative_path: str) -> OpenDownload:
-        """Open a validated file and derive all response metadata from its descriptor."""
-        path = self._existing_file(relative_path)
+        """Open one validated file or a snapshot ZIP of one validated directory."""
+        path = self.resolve(relative_path)
+        if not path.exists():
+            raise WorkspaceEntryNotFound()
+        if path.is_symlink():
+            raise UnsafeWorkspacePath()
+        if path.is_dir():
+            return self._open_directory_download(path)
+        if not path.is_file():
+            raise WorkspaceEntryTypeError()
         stream = path.open("rb")
         try:
             stat = os.fstat(stream.fileno())
@@ -349,6 +364,64 @@ class WorkspaceFiles:
         except BaseException:
             stream.close()
             raise
+
+    def _open_directory_download(self, path: Path) -> OpenDownload:
+        """Create a temporary ZIP without following links outside the workspace."""
+        fd, archive_name = tempfile.mkstemp(prefix="manyselves-download-", suffix=".zip")
+        archive_path = Path(archive_name)
+        os.close(fd)
+        stream: BufferedReader | None = None
+        try:
+            with self._mutation_lock:
+                revision = self._entry_revision(path)
+                stat = path.stat()
+                with zipfile.ZipFile(
+                    archive_path,
+                    mode="w",
+                    compression=zipfile.ZIP_DEFLATED,
+                ) as archive:
+                    self._write_directory_to_archive(path, archive)
+            stream = archive_path.open("rb")
+            archive_stat = os.fstat(stream.fileno())
+            return OpenDownload(
+                stream=stream,
+                path=self.relative(path),
+                name=f"{path.name}.zip",
+                size=archive_stat.st_size,
+                modified_at=_modified_at(stat.st_mtime),
+                revision=revision,
+                temporary_path=archive_path,
+            )
+        except BaseException:
+            if stream is not None:
+                stream.close()
+            archive_path.unlink(missing_ok=True)
+            raise
+
+    def _write_directory_to_archive(self, root: Path, archive: zipfile.ZipFile) -> None:
+        """Write a deterministic, bounded tree and reject any symlink it contains."""
+        pending = [root]
+        entry_count = 0
+        while pending:
+            directory = pending.pop()
+            relative_directory = directory.relative_to(root.parent).as_posix()
+            archive.writestr(f"{relative_directory}/", b"")
+            children = sorted(directory.iterdir(), key=lambda item: (item.name.casefold(), item.name))
+            child_directories: list[Path] = []
+            for child in children:
+                entry_count += 1
+                if entry_count > self.max_tree_entries:
+                    raise WorkspaceTreeTooLarge()
+                if child.is_symlink():
+                    raise UnsafeWorkspacePath()
+                arcname = child.relative_to(root.parent).as_posix()
+                if child.is_dir():
+                    child_directories.append(child)
+                elif child.is_file():
+                    archive.write(child, arcname)
+                else:
+                    raise WorkspaceEntryTypeError()
+            pending.extend(reversed(child_directories))
 
     def relative(self, path: Path) -> str:
         return path.relative_to(self.project_root).as_posix()
