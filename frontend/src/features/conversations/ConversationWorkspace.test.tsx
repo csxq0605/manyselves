@@ -137,6 +137,43 @@ describe("ConversationWorkspace", () => {
     expect(screen.queryByText("项目一会话")).not.toBeInTheDocument();
   });
 
+  it("does not reject a requested session while the new project's conversation list is loading", async () => {
+    let finishProjectTwo!: () => void;
+    const projectTwo = new Promise<Record<string, unknown>>((resolve) => {
+      finishProjectTwo = () => resolve({
+        activeSessionId: "s2",
+        conversations: [{ active: true, name: "项目二会话", preview: "", projectId: "project-2", sessionId: "s2", timestamp: "now" }],
+        projectId: "project-2",
+      });
+    });
+    const requestJson = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        const projectId = path.includes("project-2") ? "project-2" : "project-1";
+        return { messages: [], projectId, sessionId: projectId === "project-2" ? "s2" : "s1" };
+      }
+      if (path.includes("projectId=project-1")) return {
+        activeSessionId: "s1",
+        conversations: [{ active: true, name: "项目一会话", preview: "", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+        projectId: "project-1",
+      };
+      if (path.includes("projectId=project-2")) return projectTwo;
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-1" requestedSessionId="s1" />
+    </QueryClientProvider>);
+    expect(await screen.findByRole("button", { name: "上传本地文件" })).toBeVisible();
+
+    view.rerender(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={{ requestJson } as unknown as ApiGateway} projectId="project-2" requestedSessionId="s2" />
+    </QueryClientProvider>);
+
+    expect(screen.queryByText("该会话不属于当前项目")).not.toBeInTheDocument();
+    finishProjectTwo();
+    expect(await screen.findByRole("button", { name: "上传本地文件" })).toBeVisible();
+  });
+
   it("uses the confirmed Codex-like empty conversation composition", async () => {
     const user = userEvent.setup();
     const requestJson = vi.fn(async (path: string) => {

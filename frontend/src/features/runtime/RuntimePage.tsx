@@ -1,10 +1,11 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
 import { createProjectApi } from "../projects/project-api";
+import { useProjectActivation } from "../projects/use-project-activation";
 import "./runtime-page.css";
 
 type RuntimeSnapshot = components["schemas"]["RuntimeSnapshotResponse"];
@@ -161,40 +162,11 @@ export function RuntimePage({ snapshot }: RuntimePageProps) {
 
 export function RuntimeRoutePage({ gateway }: { readonly gateway: ApiGateway }) {
   const { projectId } = useParams();
-  const queryClient = useQueryClient();
   const projectApi = useMemo(() => createProjectApi(gateway), [gateway]);
   const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
   const routeProject = projects.data?.find((project) => project.id === projectId);
-  const activation = useQuery({
-    enabled: Boolean(projectId && routeProject && !routeProject.active),
-    queryFn: async () => {
-      const activated = await projectApi.activate(projectId!);
-      queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
-        current?.map((project) => ({ ...project, active: project.id === activated.id }))
-      ));
-      queryClient.removeQueries({ queryKey: ["conversations"] });
-      queryClient.removeQueries({ queryKey: ["conversation-messages"] });
-      const savedState = localStorage.getItem("manyselves-active-conversation");
-      if (savedState) {
-        try {
-          const parsed = JSON.parse(savedState);
-          if (parsed.state?.activeSessionIds) {
-            const currentProjectSessionId = parsed.state.activeSessionIds[projectId!];
-            parsed.state.activeSessionIds = currentProjectSessionId
-              ? { [projectId!]: currentProjectSessionId }
-              : {};
-            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
-          }
-        } catch {
-          localStorage.removeItem("manyselves-active-conversation");
-        }
-      }
-      return activated;
-    },
-    queryKey: ["project-activation", projectId, routeProject?.revision],
-    retry: false,
-  });
-  const projectReady = Boolean(routeProject?.active || activation.isSuccess);
+  const activation = useProjectActivation(projectId, routeProject, projectApi);
+  const projectReady = activation.isReady;
   const runtime = useQuery({
     enabled: projectReady,
     queryFn: async () => {

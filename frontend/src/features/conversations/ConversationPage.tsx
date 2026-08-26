@@ -4,7 +4,9 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import { createProjectApi } from "../projects/project-api";
+import { useProjectActivation } from "../projects/use-project-activation";
 import { createConversationApi } from "./conversation-api";
+import { cacheCreatedConversation } from "./conversation-cache";
 import "./conversation.css";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
@@ -18,40 +20,8 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
   const createRef = useRef<{ readonly projectId: string; readonly promise: ReturnType<typeof api.create> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const routeProject = projects.data?.find((project) => project.id === projectId);
-  const activation = useQuery({
-    enabled: Boolean(projectId && projects.data && routeProject && !routeProject.active),
-    queryFn: async () => {
-      const activated = await projectApi.activate(projectId!);
-      queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
-        current?.map((project) => ({ ...project, active: project.id === activated.id }))
-      ));
-      // 清空所有会话相关的缓存，避免项目切换后显示旧项目的会话
-      queryClient.removeQueries({ queryKey: ["conversations"] });
-      queryClient.removeQueries({ queryKey: ["conversation-messages"] });
-      // 清空 localStorage 中保存的活跃会话 ID，避免尝试激活其他项目的会话
-      const savedState = localStorage.getItem("manyselves-active-conversation");
-      if (savedState) {
-        try {
-          const parsed = JSON.parse(savedState);
-          if (parsed.state?.activeSessionIds) {
-            // 只保留当前项目的活跃会话 ID
-            const currentProjectSessionId = parsed.state.activeSessionIds[projectId!];
-            parsed.state.activeSessionIds = currentProjectSessionId
-              ? { [projectId!]: currentProjectSessionId }
-              : {};
-            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
-          }
-        } catch {
-          // 解析失败时，清空整个状态
-          localStorage.removeItem("manyselves-active-conversation");
-        }
-      }
-      return activated;
-    },
-    queryKey: ["project-activation", projectId, routeProject?.revision],
-    retry: false,
-  });
-  const projectReady = Boolean(routeProject?.active || activation.isSuccess);
+  const activation = useProjectActivation(projectId, routeProject, projectApi);
+  const projectReady = activation.isReady;
 
   useEffect(() => {
     if (!projectId || conversationId !== "new" || !projectReady) return;
@@ -59,14 +29,12 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
       createRef.current = { projectId, promise: api.create(projectId, "新会话", "main") };
     }
     let cancelled = false;
-    void createRef.current.promise.then((created) => {
-      if (!cancelled) {
-        // 先刷新会话列表缓存，确保新会话可见
-        queryClient.invalidateQueries({ queryKey: ["conversations", projectId, "main"] });
-        navigate(`/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(created.sessionId)}`, {
-          replace: true,
-        });
-      }
+    void createRef.current.promise.then(async (created) => {
+      if (cancelled) return;
+      await cacheCreatedConversation(queryClient, projectId, "main", created);
+      if (!cancelled) navigate(`/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(created.sessionId)}`, {
+        replace: true,
+      });
     }).catch(() => {
       if (!cancelled) setError("新建会话失败");
     });
@@ -84,6 +52,7 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
     <ConversationWorkspace
       agentId="main"
       gateway={gateway}
+      onRequestedSessionMissing={() => navigate(`/projects/${encodeURIComponent(projectId)}`, { replace: true })}
       onSessionChanged={(sessionId) => navigate(
         `/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(sessionId)}`,
       )}
