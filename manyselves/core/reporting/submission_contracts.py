@@ -256,8 +256,8 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Never include a full report, other chapter bodies, tables, photos, or Cross state.",
     ],
     "chief_chapter_lane_revision_submission": [
-        "Return exact old_text/new_text edits only for the assigned section_ids and lane-local revision responses.",
-        "old_text must be copied from the current section body and occur exactly once; never return another chapter, a complete report, or a replacement complete section.",
+        "Return only changed part_refs for this chapter lane and lane-local revision responses.",
+        "Never copy another chapter or the full edited report.",
     ],
     "final_chapter_lane_finding_submission": [
         "Check only checked_section_ids in one chapter lane; findings must target those sections.",
@@ -566,13 +566,9 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "chapter_id": "3",
         "revision": 1,
         "section_ids": ["3.2"],
-        "edits": [
-            {
-                "target_section_id": "3.2",
-                "old_text": "现有改善行动。",
-                "new_text": "现有改善行动。\n\n补充本轮指定的核验说明。",
-            }
-        ],
+        "part_refs": {
+            "improvement_action_plan": "Work/runs/report-example/results/chief-c3-r1-3.2.md"
+        },
         "revision_responses": [],
     },
     "final_chapter_lane_finding_submission": {

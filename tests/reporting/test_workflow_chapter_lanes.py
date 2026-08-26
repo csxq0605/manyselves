@@ -6,14 +6,11 @@ import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
-import pytest
-
 from manyselves.core.reporting.agentic_models import (
     ChapterScopedFinalReviewFinding,
     ChapterScopedFinalReviewTargetChange,
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
-    ChiefSectionTextEdit,
     EditedReportSubmission,
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
@@ -34,7 +31,7 @@ from manyselves.core.reporting.models import (
 from manyselves.core.reporting.parallel_runtime import AggregateState, RecoveryStateStore
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
+from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 
 def _read_json(service: SimpleNamespace, ref: str) -> dict:
@@ -150,72 +147,6 @@ def test_chief_chapter_lanes_dispatch_independently_and_reduce(tmp_path: Path) -
     assert "lane-local body 4.1" in (state["edited_report"].special_topic_analysis or "")
     assert "approved 2.1" == state["edited_report"].module_narratives["2.1"]
     assert "chief" in state["aggregate_refs"]
-
-
-def test_final_chief_exact_edits_preserve_unassigned_sections_and_reject_rewrite(
-    tmp_path: Path,
-) -> None:
-    runner = ReportWorkflowRunner.__new__(ReportWorkflowRunner)
-    runner.service = SimpleNamespace(workspace=tmp_path, store=ReportingStore(tmp_path))
-    contract = ChiefChapterLaneInput(
-        phase="revision",
-        run_id="run-exact-edit",
-        subject_ref="Work/runs/run-exact-edit/edited-revisions/chief-r0.json",
-        chapter_id="1",
-        section_ids=["1.2"],
-        section_bodies={"1.2": "原有发现正文。"},
-        assigned_findings=[
-            ChapterScopedFinalReviewFinding(
-                id="F-1.2",
-                target_section_ids=["1.2"],
-                target_changes=[
-                    ChapterScopedFinalReviewTargetChange(
-                        target_section_id="1.2",
-                        required_change="补充当前发现对应的核验方法、责任主体和后续处置说明。",
-                        reviewer_checks=["保留原正文并补充核验说明。"],
-                    )
-                ],
-                category="traceability",
-                impact="blocking",
-                observation="当前发现正文缺少核验说明，无法形成可追溯的管理结论。",
-                evidence_refs=[
-                    "Work/runs/run-exact-edit/edited-revisions/chief-r0.json"
-                ],
-            )
-        ],
-        revision=1,
-    )
-    additive = ChiefChapterLaneRevisionSubmission(
-        run_id=contract.run_id,
-        base_subject_ref=contract.subject_ref,
-        chapter_id="1",
-        revision=1,
-        section_ids=["1.2"],
-        edits=[
-            ChiefSectionTextEdit(
-                target_section_id="1.2",
-                old_text="原有发现正文。",
-                new_text="原有发现正文。\n\n补充核验说明。",
-            )
-        ],
-    )
-    assert runner._apply_chief_revision_edits(contract, additive) == {
-        "1.2": "原有发现正文。\n\n补充核验说明。"
-    }
-
-    rewrite = additive.model_copy(
-        update={
-            "edits": [
-                ChiefSectionTextEdit(
-                    target_section_id="1.2",
-                    old_text="原有发现正文。",
-                    new_text="XX主中心采用2N UPS，并配置柴油发电机。",
-                )
-            ]
-        }
-    )
-    with pytest.raises(AgentWorkflowError, match="cannot replace an entire section"):
-        runner._apply_chief_revision_edits(contract, rewrite)
 
 
 def test_chief_resume_reuses_only_business_valid_completed_lanes(tmp_path: Path) -> None:
@@ -596,23 +527,45 @@ def test_final_findings_revise_only_affected_chapter_lanes(tmp_path: Path) -> No
                 findings=findings,
             )
         if envelope.input_contract_kind == "chief_chapter_lane_input":
+            refs: dict[str, str] = {}
+            task_root = (
+                tmp_path
+                / "Work/runs"
+                / state["run_id"]
+                / "drafts"
+                / envelope.task_id
+                / "r1"
+            )
+            task_root.mkdir(parents=True, exist_ok=True)
+            changed_ids = {
+                section_id
+                for item in payload["assigned_findings"]
+                for section_id in item["target_section_ids"]
+            }
+            if chapter_id == "4":
+                path = task_root / "special_topic_analysis.md"
+                path.write_text(
+                    "### 4.1 Topic A\nRevised Topic A body with verification detail.\n\n"
+                    "### 4.2 Topic B\nTopic B body with enough substantive detail.",
+                    encoding="utf-8",
+                )
+                refs["special_topic_analysis"] = path.relative_to(tmp_path).as_posix()
+            else:
+                for section_id in changed_ids:
+                    part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                    path = task_root / f"{part_id}.md"
+                    path.write_text(
+                        "Revised section body with verification detail.",
+                        encoding="utf-8",
+                    )
+                    refs[part_id] = path.relative_to(tmp_path).as_posix()
             return ChiefChapterLaneRevisionSubmission(
                 run_id=state["run_id"],
                 base_subject_ref=state["chief_candidate_ref"],
                 chapter_id=chapter_id,
                 revision=1,
-                section_ids=section_ids,
-                edits=[
-                    ChiefSectionTextEdit(
-                        target_section_id=section_id,
-                        old_text=payload["section_bodies"][section_id],
-                        new_text=(
-                            payload["section_bodies"][section_id]
-                            + "\n\nRevised section body with verification detail."
-                        ),
-                    )
-                    for section_id in section_ids
-                ],
+                section_ids=section_ids if chapter_id == "4" else sorted(changed_ids),
+                part_refs=refs,
                 revision_responses=[
                     RevisionResponse(
                         finding_id=item["id"],
@@ -666,13 +619,13 @@ def test_final_findings_revise_only_affected_chapter_lanes(tmp_path: Path) -> No
     }
     assert {
         skill for task, _session, skill in calls if task.startswith("chief-chapter-")
-    } == {None}
+    } == {"skill:chief-revision"}
     chief_inputs = {
         task: _read_json(runner.service, f"Work/runs/{state['run_id']}/context/{task}-input-r1.json")
         for task in ("chief-chapter-1", "chief-chapter-4")
     }
-    assert chief_inputs["chief-chapter-1"]["section_ids"] == ["1.1"]
-    assert chief_inputs["chief-chapter-4"]["section_ids"] == ["4.1"]
+    assert chief_inputs["chief-chapter-1"]["section_ids"] == ["1.1", "1.2", "1.3"]
+    assert chief_inputs["chief-chapter-4"]["section_ids"] == ["4.1", "4.2"]
     assert all(
         "skill:final-auditor" in skill
         for task, _session, skill in calls
@@ -719,23 +672,45 @@ def test_final_recheck_new_finding_runs_second_affected_wave(tmp_path: Path) -> 
             )
         if envelope.input_contract_kind == "chief_chapter_lane_input":
             revision = int(payload["revision"])
+            task_root = (
+                tmp_path
+                / "Work/runs"
+                / state["run_id"]
+                / "drafts"
+                / envelope.task_id
+                / f"r{revision}"
+            )
+            task_root.mkdir(parents=True, exist_ok=True)
+            changed_ids = {
+                section_id
+                for item in payload["assigned_findings"]
+                for section_id in item["target_section_ids"]
+            }
+            refs: dict[str, str] = {}
+            if chapter_id == "4":
+                path = task_root / "special_topic_analysis.md"
+                path.write_text(
+                    "### 4.1 Topic A\nTopic A revised body with substantive verification detail.\n\n"
+                    "### 4.2 Topic B\nTopic B body with enough substantive detail.",
+                    encoding="utf-8",
+                )
+                refs["special_topic_analysis"] = path.relative_to(tmp_path).as_posix()
+            else:
+                for section_id in changed_ids:
+                    part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                    path = task_root / f"{part_id}.md"
+                    path.write_text(
+                        f"Revised section body {section_id} with verification detail.",
+                        encoding="utf-8",
+                    )
+                    refs[part_id] = path.relative_to(tmp_path).as_posix()
             return ChiefChapterLaneRevisionSubmission(
                 run_id=state["run_id"],
                 base_subject_ref=payload["subject_ref"],
                 chapter_id=chapter_id,
                 revision=revision,
-                section_ids=section_ids,
-                edits=[
-                    ChiefSectionTextEdit(
-                        target_section_id=section_id,
-                        old_text=payload["section_bodies"][section_id],
-                        new_text=(
-                            payload["section_bodies"][section_id]
-                            + f"\n\nRevised section body {section_id} with verification detail."
-                        ),
-                    )
-                    for section_id in section_ids
-                ],
+                section_ids=section_ids if chapter_id == "4" else sorted(changed_ids),
+                part_refs=refs,
                 revision_responses=[
                     RevisionResponse(
                         finding_id=item["id"],
@@ -880,31 +855,49 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
     chief_revision_ref = f"Work/runs/{run_id}/edited-revisions/chief-r1.json"
     runner.service.store.write_json(chief_revision_ref, state["edited_report"].model_dump(mode="json"))
     for chapter_id in ("1", "4"):
-        target_ids = [
-            section_id
-            for finding_item in initial_findings[chapter_id]
-            for section_id in finding_item.target_section_ids
-        ]
-        current_bodies = runner._final_chapter_section_bodies(
-            state["edited_report"], chapter_id
+        task_root = (
+            tmp_path
+            / "Work/runs"
+            / run_id
+            / "drafts"
+            / f"chief-chapter-{chapter_id}-r1"
+            / "r1"
         )
+        task_root.mkdir(parents=True, exist_ok=True)
+        refs: dict[str, str] = {}
+        target_ids = sorted(
+            {
+                section_id
+                for finding_item in initial_findings[chapter_id]
+                for section_id in finding_item.target_section_ids
+            }
+        )
+        if chapter_id == "4":
+            target_ids = section_ids[chapter_id]
+        if chapter_id == "4":
+            path = task_root / "special_topic_analysis.md"
+            path.write_text(
+                "### 4.1 Topic A\nTopic A revised body with verification detail.\n\n"
+                "### 4.2 Topic B\nTopic B body with enough substantive detail.",
+                encoding="utf-8",
+            )
+            refs["special_topic_analysis"] = path.relative_to(tmp_path).as_posix()
+        else:
+            for section_id in target_ids:
+                part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                path = task_root / f"{part_id}.md"
+                path.write_text(
+                    f"Revised body {section_id} with verification detail.",
+                    encoding="utf-8",
+                )
+                refs[part_id] = path.relative_to(tmp_path).as_posix()
         payload = ChiefChapterLaneRevisionSubmission(
             run_id=run_id,
             base_subject_ref=state["chief_candidate_ref"],
             chapter_id=chapter_id,
             revision=1,
             section_ids=target_ids,
-            edits=[
-                ChiefSectionTextEdit(
-                    target_section_id=section_id,
-                    old_text=current_bodies[section_id],
-                    new_text=(
-                        current_bodies[section_id]
-                        + f"\n\nRevised body {section_id} with verification detail."
-                    ),
-                )
-                for section_id in target_ids
-            ],
+            part_refs=refs,
             revision_responses=[
                 RevisionResponse(
                     finding_id=item.id,
@@ -938,12 +931,9 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
     # response that the recovered chapter lanes deterministically reduce.
     revised = state["edited_report"].model_copy(
         update={
-            "assessment_background": (
-                "background body\n\nRevised body 1.1 with verification detail."
-            ),
+            "assessment_background": "Revised body 1.1 with verification detail.",
             "special_topic_analysis": (
-                "### 4.1 Topic A\nTopic A body with enough substantive detail.\n\n"
-                "Revised body 4.1 with verification detail.\n\n"
+                "### 4.1 Topic A\nTopic A revised body with verification detail.\n\n"
                 "### 4.2 Topic B\nTopic B body with enough substantive detail."
             ),
         }

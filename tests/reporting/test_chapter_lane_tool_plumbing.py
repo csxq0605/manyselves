@@ -183,13 +183,19 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
         run_id=RUN,
         subject_ref=CHIEF_SUBJECT,
         chapter_id="3",
-        section_ids=["3.2"],
-        section_bodies={"3.2": "当前章节正文。"},
+        section_ids=list(CHAPTER3_SECTION_IDS),
+        section_bodies={section_id: "当前章节正文。" for section_id in CHAPTER3_SECTION_IDS},
         assigned_findings=[finding],
         revision=1,
     )
     revision_ref = _write_contract(tmp_path, revision_contract)
     revision_task = "chief-ch3-revision"
+    revision_refs = await _write_chief_parts(
+        tmp_path,
+        task_id=revision_task,
+        revision=1,
+        part_ids=["improvement_action_plan"],
+    )
     revision_tool = _submit_tool(
         tmp_path,
         task_id=revision_task,
@@ -206,13 +212,7 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
             "chapter_id": "3",
             "revision": 1,
             "section_ids": ["3.2"],
-            "edits": [
-                {
-                    "target_section_id": "3.2",
-                    "old_text": "当前章节正文。",
-                    "new_text": "当前章节正文。\n\n补充整改顺序、责任边界和验收条件。",
-                }
-            ],
+            "part_refs": revision_refs,
             "revision_responses": [
                 {
                     "finding_id": "F-3-001",
@@ -229,13 +229,7 @@ async def test_chief_initial_and_revision_are_assembled_from_saved_parts(tmp_pat
             encoding="utf-8"
         )
     )
-    assert revision_result["payload"]["edits"] == [
-        {
-            "target_section_id": "3.2",
-            "old_text": "当前章节正文。",
-            "new_text": "当前章节正文。\n\n补充整改顺序、责任边界和验收条件。",
-        }
-    ]
+    assert revision_result["payload"]["part_refs"] == revision_refs
 
 
 @pytest.mark.asyncio
@@ -511,7 +505,7 @@ def test_runner_chief_lane_exposes_exact_parts_and_one_output_schema(tmp_path: P
     assert submission_schema["properties"]["section_ids"]["const"] == ["1.1", "1.2", "1.3"]
 
 
-def test_runner_final_chief_revision_exposes_only_exact_edit_tools(
+def test_runner_final_chief_revision_exposes_source_read_and_part_tools(
     tmp_path: Path,
 ) -> None:
     source_ref = f"Work/runs/{RUN}/context/chief-source-modules/2.1.md"
@@ -521,8 +515,11 @@ def test_runner_final_chief_revision_exposes_only_exact_edit_tools(
         run_id=RUN,
         subject_ref=CHIEF_SUBJECT,
         chapter_id="3",
-        section_ids=["3.2"],
-        section_bodies={"3.2": "当前行动计划正文。"},
+        section_ids=list(CHAPTER3_SECTION_IDS),
+        section_bodies={
+            section_id: "当前行动计划正文。"
+            for section_id in CHAPTER3_SECTION_IDS
+        },
         source_refs=[source_ref],
         assigned_findings=[
             {
@@ -550,7 +547,13 @@ def test_runner_final_chief_revision_exposes_only_exact_edit_tools(
         agent_id="chief-editor",
         objective="只修订 Final 命中的 Chapter 3 小节",
         input_refs=[contract_ref, source_ref],
-        allowed_tools=["open_artifact", "search_text", "submit_result"],
+        allowed_tools=[
+            "open_artifact",
+            "search_text",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
         allowed_outputs=["chief_chapter_lane_revision_submission"],
         revision=1,
         input_contract_kind=contract.kind,
@@ -574,18 +577,21 @@ def test_runner_final_chief_revision_exposes_only_exact_edit_tools(
         "open_artifact",
         "open_tool_result",
         "search_text",
+        "write_result_part",
+        "list_result_parts",
         "submit_result",
     }
     submission_schema = registry._schema_cache["submit_result"]
-    assert "part_refs" not in submission_schema["properties"]
-    assert submission_schema["properties"]["section_ids"]["items"]["enum"] == [
-        "3.2"
+    assert "part_refs" in submission_schema["properties"]
+    assert submission_schema["properties"]["section_ids"]["items"]["enum"] == list(
+        CHAPTER3_SECTION_IDS
+    )
+    assert registry._schema_cache["write_result_part"]["properties"]["part_id"]["enum"] == [
+        "risk_panorama",
+        "dimension_risk_analysis",
+        "data_gap_analysis",
+        "improvement_action_plan",
     ]
-    assert submission_schema["examples"][0]["edits"][0] == {
-        "target_section_id": "3.2",
-        "old_text": "当前行动计划正文。",
-        "new_text": "当前行动计划正文。\n\n补充本轮 finding 指定的核验说明。",
-    }
 
 
 def test_chief_chapter_four_tool_schema_allows_nested_planned_headings(

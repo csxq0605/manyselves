@@ -6128,36 +6128,6 @@ class ReportWorkflowRunner:
         return bodies
 
     @staticmethod
-    def _apply_chief_revision_edits(
-        contract: ChiefChapterLaneInput,
-        submission: ChiefChapterLaneRevisionSubmission,
-    ) -> dict[str, str]:
-        """Apply exact edits without allowing an entire section to be replaced."""
-
-        bodies = dict(contract.section_bodies)
-        for edit in submission.edits:
-            body = bodies[edit.target_section_id]
-            occurrences = body.count(edit.old_text)
-            if occurrences != 1:
-                raise AgentWorkflowError(
-                    "Chief revision old_text must occur exactly once in its target section"
-                )
-            if edit.old_text == body and edit.old_text not in edit.new_text:
-                raise AgentWorkflowError(
-                    "Chief revision cannot replace an entire section; retain the current "
-                    "body verbatim and add only the assigned change"
-                )
-            bodies[edit.target_section_id] = body.replace(
-                edit.old_text,
-                edit.new_text,
-                1,
-            )
-        return {
-            section_id: bodies[section_id]
-            for section_id in submission.section_ids
-        }
-
-    @staticmethod
     def _split_special_topic_analysis(
         markdown: str,
         plan: SpecialTopicPlan | None,
@@ -6884,17 +6854,7 @@ class ReportWorkflowRunner:
                 findings = findings_by_chapter[chapter_id]
                 if not findings:
                     return chapter_id, None, None
-                chapter_bodies = self._final_chapter_section_bodies(current, chapter_id)
-                target_section_ids = {
-                    section_id
-                    for finding in findings
-                    for section_id in finding.target_section_ids
-                }
-                section_ids = [
-                    section_id
-                    for section_id in chapter_sections[chapter_id]
-                    if section_id in target_section_ids
-                ]
+                section_bodies = self._final_chapter_section_bodies(current, chapter_id)
                 source_context, source_refs = self._chief_chapter_source_projection(
                     state, chapter_id
                 )
@@ -6903,11 +6863,8 @@ class ReportWorkflowRunner:
                     run_id=run_id,
                     subject_ref=subject_ref,
                     chapter_id=chapter_id,
-                    section_ids=section_ids,
-                    section_bodies={
-                        section_id: chapter_bodies[section_id]
-                        for section_id in section_ids
-                    },
+                    section_ids=list(chapter_sections[chapter_id]),
+                    section_bodies=section_bodies,
                     source_context=source_context,
                     source_refs=source_refs,
                     assigned_findings=findings,
@@ -6918,15 +6875,11 @@ class ReportWorkflowRunner:
                 self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
                 if chapter_id in recovered_chief_revision:
                     recovered_payload, recovered_ref = recovered_chief_revision[chapter_id]
-                    if not set(recovered_payload.section_ids).issubset(
-                        set(contract.section_ids)
-                    ):
-                        raise AgentWorkflowError(
-                            f"chief chapter {chapter_id} recovered revision is out of scope"
-                        )
-                    parts = self._apply_chief_revision_edits(
-                        contract,
+                    parts = self._read_chief_chapter_parts(
+                        state,
+                        chapter_id,
                         recovered_payload,
+                        f"chief-chapter-{chapter_id}-r{revision_number}",
                     )
                     return chapter_id, recovered_payload, recovered_ref, parts
                 task_id = f"chief-chapter-{chapter_id}-r{revision_number}"
@@ -6937,18 +6890,23 @@ class ReportWorkflowRunner:
                     objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
                     input_refs=[input_ref, *contract.source_refs],
                     constraints=[
-                        "只提交 chief_chapter_lane_revision_submission 精确文本补丁，禁止提交完整报告或完整小节正文",
+                        "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
+                        "Chapter 1/3 的 part_refs 只写被 finding 修改的小节；Chapter 4 使用完整 special_topic_analysis 聚合 part；revision_responses 必须对应本章 findings",
                         (
-                            "edits.target_section_id 和 section_ids 只能覆盖本轮 finding 指定的小节："
-                            + ",".join(section_ids)
+                            "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                            if chapter_id != "4"
+                            else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
                         ),
-                        "未列入 section_ids 的原章节正文由 Runtime 原样保留，不得重写或重复提交",
-                        "old_text 必须从对应 section_bodies 原样复制且唯一出现；new_text 只实现 assigned finding",
-                        "若 old_text 是完整小节正文，new_text 必须逐字包含完整 old_text，只能增补指定内容",
-                        "revision_responses 必须对应本章 findings",
+                        "新增或调整事实前必须查阅 source_refs 中的批准模块正文或证据，不得编造地点、设备、数量或风险事实",
                     ],
                     allowed_outputs=["chief_chapter_lane_revision_submission"],
-                    allowed_tools=["open_artifact", "search_text", "submit_result"],
+                    allowed_tools=[
+                        "open_artifact",
+                        "search_text",
+                        "write_result_part",
+                        "list_result_parts",
+                        "submit_result",
+                    ],
                     revision=revision_number,
                     prior_result_ref=subject_ref,
                     input_contract_kind="chief_chapter_lane_input",
@@ -6960,6 +6918,9 @@ class ReportWorkflowRunner:
                             for source_ref in contract.source_refs
                         },
                     },
+                    inline_context=self._chief_template_skill_context(
+                        state, (chapter_id,)
+                    ),
                 )
                 payload = await self._agent(
                     "chief-editor",
@@ -6975,7 +6936,6 @@ class ReportWorkflowRunner:
                     or payload.base_subject_ref != subject_ref
                     or payload.chapter_id != chapter_id
                     or payload.revision != revision_number
-                    or not set(payload.section_ids).issubset(set(contract.section_ids))
                     or {
                         response.finding_id
                         for response in payload.revision_responses
@@ -6983,9 +6943,11 @@ class ReportWorkflowRunner:
                     != {finding.id for finding in findings}
                 ):
                     raise AgentWorkflowError(f"chief chapter {chapter_id} revision identity mismatch")
-                parts = self._apply_chief_revision_edits(
-                    contract,
+                parts = self._read_chief_chapter_parts(
+                    state,
+                    chapter_id,
                     payload,
+                    task_id,
                 )
                 output_ref = f"Work/runs/{run_id}/reviews/chief-chapter-lane-{chapter_id}-r{revision_number}.json"
                 self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
@@ -7370,28 +7332,15 @@ class ReportWorkflowRunner:
 
         async def dispatch_chief(chapter_id: str):
             findings = pending_by_chapter[chapter_id]
-            chapter_bodies = self._final_chapter_section_bodies(current, chapter_id)
-            target_section_ids = {
-                section_id
-                for finding in findings
-                for section_id in finding.target_section_ids
-            }
-            section_ids = [
-                section_id
-                for section_id in chapter_sections[chapter_id]
-                if section_id in target_section_ids
-            ]
+            section_bodies = self._final_chapter_section_bodies(current, chapter_id)
             source_context, source_refs = self._chief_chapter_source_projection(state, chapter_id)
             contract = ChiefChapterLaneInput(
                 phase="revision",
                 run_id=run_id,
                 subject_ref=subject_ref,
                 chapter_id=chapter_id,
-                section_ids=section_ids,
-                section_bodies={
-                    section_id: chapter_bodies[section_id]
-                    for section_id in section_ids
-                },
+                section_ids=list(chapter_sections[chapter_id]),
+                section_bodies=section_bodies,
                 source_context=source_context,
                 source_refs=source_refs,
                 assigned_findings=findings,
@@ -7411,18 +7360,23 @@ class ReportWorkflowRunner:
                 objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
                 input_refs=[input_ref, *contract.source_refs],
                 constraints=[
-                    "只提交 chief_chapter_lane_revision_submission 精确文本补丁，禁止提交完整报告或完整小节正文",
+                    "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
+                    "Chapter 1/3 的 part_refs 只写被 finding 修改的小节；Chapter 4 使用完整 special_topic_analysis 聚合 part；revision_responses 必须对应本章 findings",
                     (
-                        "edits.target_section_id 和 section_ids 只能覆盖本轮 finding 指定的小节："
-                        + ",".join(section_ids)
+                        "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                        if chapter_id != "4"
+                        else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
                     ),
-                    "未列入 section_ids 的原章节正文由 Runtime 原样保留，不得重写或重复提交",
-                    "old_text 必须从对应 section_bodies 原样复制且唯一出现；new_text 只实现 assigned finding",
-                    "若 old_text 是完整小节正文，new_text 必须逐字包含完整 old_text，只能增补指定内容",
-                    "revision_responses 必须对应本章 findings",
+                    "新增或调整事实前必须查阅 source_refs 中的批准模块正文或证据，不得编造地点、设备、数量或风险事实",
                 ],
                 allowed_outputs=["chief_chapter_lane_revision_submission"],
-                allowed_tools=["open_artifact", "search_text", "submit_result"],
+                allowed_tools=[
+                    "open_artifact",
+                    "search_text",
+                    "write_result_part",
+                    "list_result_parts",
+                    "submit_result",
+                ],
                 revision=revision_number,
                 prior_result_ref=subject_ref,
                 input_contract_kind="chief_chapter_lane_input",
@@ -7434,6 +7388,9 @@ class ReportWorkflowRunner:
                         for source_ref in contract.source_refs
                     },
                 },
+                inline_context=self._chief_template_skill_context(
+                    state, (chapter_id,)
+                ),
             )
             payload = await self._agent(
                 "chief-editor",
@@ -7449,7 +7406,6 @@ class ReportWorkflowRunner:
                 or payload.base_subject_ref != subject_ref
                 or payload.chapter_id != chapter_id
                 or payload.revision != revision_number
-                or not set(payload.section_ids).issubset(set(contract.section_ids))
                 or {
                     response.finding_id
                     for response in payload.revision_responses
@@ -7457,7 +7413,12 @@ class ReportWorkflowRunner:
                 != {finding.id for finding in findings}
             ):
                 raise AgentWorkflowError(f"chief chapter {chapter_id} revision identity mismatch")
-            parts = self._apply_chief_revision_edits(contract, payload)
+            parts = self._read_chief_chapter_parts(
+                state,
+                chapter_id,
+                payload,
+                task_id,
+            )
             output_ref = (
                 f"Work/runs/{run_id}/reviews/chief-chapter-lane-"
                 f"{chapter_id}-r{revision_number}.json"
