@@ -1,0 +1,774 @@
+<!doctype html>
+<!DOCTYPE html>
+
+<!DOCTYPE html>
+
+<!DOCTYPE html>
+
+<!DOCTYPE html>
+
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/><title>Manyselves 报告工作流开发交接｜当前实现</title><script>
+(function(){
+  try{
+    const saved = localStorage.getItem('manyselves-report-theme');
+    document.documentElement.dataset.theme = saved === 'dark' ? 'dark' : 'light';
+  }catch(_error){
+    document.documentElement.dataset.theme = 'light';
+  }
+})();
+</script><style>
+:root{
+  color-scheme:light;
+  --bg:#f4f6f8;--bg-soft:#eef2f6;--panel:#ffffff;--panel-2:#f8fafc;
+  --text:#172033;--text-strong:#101828;--muted:#667085;--line:#d8e0ea;
+  --accent:#2f5fb3;--accent-strong:#214b91;--accent-soft:#eaf1ff;
+  --teal:#0f766e;--amber:#b54708;--red:#b42318;--green:#067647;--purple:#6941c6;
+  --shadow:0 10px 34px rgba(15,23,42,.07);--shadow-soft:0 3px 12px rgba(15,23,42,.05);
+  --radius:14px;--diagram-bg:#ffffff;--diagram-text:#172033;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0f1723;--bg-soft:#111c2b;--panel:#172233;--panel-2:#1c2a3d;
+  --text:#e9eef5;--text-strong:#f8fafc;--muted:#aeb9c8;--line:#334155;
+  --accent:#82aaff;--accent-strong:#a8c2ff;--accent-soft:#1e355d;
+  --teal:#5eead4;--amber:#fbbf24;--red:#fda4af;--green:#6ee7b7;--purple:#c4b5fd;
+  --shadow:0 16px 42px rgba(0,0,0,.24);--shadow-soft:0 4px 14px rgba(0,0,0,.18);
+  --diagram-bg:#111827;--diagram-text:#f8fafc;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;background:var(--bg)}
+body{margin:0;background:linear-gradient(180deg,var(--bg-soft) 0,var(--bg) 280px);color:var(--text);font-family:var(--sans);line-height:1.72;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(47,95,179,.22)}
+a{color:var(--accent);text-decoration:none;text-underline-offset:3px}a:hover{text-decoration:underline}
+button{font:inherit}
+.layout{display:grid;grid-template-columns:292px minmax(0,1fr);min-height:100vh}
+.sidebar{position:sticky;top:0;height:100vh;overflow:auto;padding:24px 18px;border-right:1px solid var(--line);background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(16px);z-index:10}
+.brand{padding:10px 12px 20px;border-bottom:1px solid var(--line);margin-bottom:14px}.brand b{display:block;font-size:17px;letter-spacing:.15px;color:var(--text-strong)}.brand small{display:block;margin-top:4px;color:var(--muted)}
+.toc a{display:block;padding:8px 10px;margin:2px 0;border-radius:8px;color:var(--text);font-size:13px;line-height:1.45;border-left:3px solid transparent}.toc a:hover{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent-strong);text-decoration:none}.toc a.sub{padding-left:24px;font-size:12px;color:var(--muted)}
+.main{min-width:0}
+.hero{position:relative;overflow:hidden;padding:68px clamp(28px,5.5vw,88px) 52px;border-bottom:1px solid var(--line);background:linear-gradient(135deg,color-mix(in srgb,var(--panel) 96%,var(--accent-soft)) 0%,var(--panel) 58%,color-mix(in srgb,var(--accent-soft) 66%,var(--panel)) 100%)}
+.hero:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(47,95,179,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(47,95,179,.045) 1px,transparent 1px);background-size:36px 36px;mask-image:linear-gradient(to bottom,black,transparent 85%);pointer-events:none}
+.hero:after{content:"";position:absolute;right:-110px;top:-150px;width:390px;height:390px;border-radius:50%;background:radial-gradient(circle,rgba(47,95,179,.16),rgba(47,95,179,.03) 55%,transparent 70%);pointer-events:none}
+.hero>*{position:relative;z-index:1}
+.eyebrow{color:var(--accent);font-weight:800;text-transform:uppercase;letter-spacing:1.7px;font-size:12px}.hero h1{font-size:clamp(36px,5vw,66px);line-height:1.1;margin:14px 0 18px;max-width:1120px;color:var(--text-strong);letter-spacing:-.025em}.hero .lead{font-size:clamp(17px,1.8vw,22px);max-width:1000px;color:var(--muted);line-height:1.65}.meta{display:flex;flex-wrap:wrap;gap:9px;margin-top:26px}.chip{border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 90%,transparent);padding:7px 11px;border-radius:999px;color:var(--muted);font-size:12px;box-shadow:var(--shadow-soft)}.chip strong{color:var(--text-strong)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}.btn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 13px;border-radius:9px;font-weight:700;box-shadow:var(--shadow-soft);transition:.18s ease}.btn:hover{border-color:var(--accent);color:var(--accent-strong);transform:translateY(-1px)}.btn.primary{background:var(--accent);border-color:var(--accent);color:white}.btn.primary:hover{background:var(--accent-strong);color:white}
+.content{max-width:1380px;margin:0 auto;padding:36px clamp(22px,4.4vw,72px) 100px}.section{scroll-margin-top:24px;margin:36px 0 58px}.section h2{font-size:30px;line-height:1.25;margin:0 0 18px;color:var(--text-strong);letter-spacing:-.012em}.section h3{font-size:21px;margin:30px 0 12px;color:var(--text-strong)}.section h4{font-size:16px;margin:22px 0 8px;color:var(--text-strong)}.kicker{color:var(--accent);font-size:12px;letter-spacing:1.45px;font-weight:850;text-transform:uppercase;margin-bottom:7px}
+p{margin:9px 0 14px;color:var(--text)}.muted{color:var(--muted)}.small{font-size:12px}.mono,code{font-family:var(--mono)}code{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:2px 5px;color:var(--accent-strong);word-break:break-word;font-size:.92em}
+.grid{display:grid;gap:16px}.grid.cols2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.cols3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid.cols4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow-soft)}.card h3,.card h4{margin-top:0}.card .num{font-size:34px;font-weight:850;color:var(--accent);line-height:1}.card p:last-child{margin-bottom:0}
+.callout{border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-left:4px solid var(--accent);background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));padding:16px 18px;border-radius:10px;margin:18px 0}.callout.warn{border-color:color-mix(in srgb,var(--amber) 38%,var(--line));border-left-color:var(--amber);background:color-mix(in srgb,#fff4e5 76%,var(--panel))}.callout.danger{border-color:color-mix(in srgb,var(--red) 36%,var(--line));border-left-color:var(--red);background:color-mix(in srgb,#fff0f0 76%,var(--panel))}.callout.success{border-color:color-mix(in srgb,var(--green) 36%,var(--line));border-left-color:var(--green);background:color-mix(in srgb,#ecfdf3 76%,var(--panel))}
+html[data-theme="dark"] .callout.warn{background:#332510}html[data-theme="dark"] .callout.danger{background:#351a20}html[data-theme="dark"] .callout.success{background:#112d24}
+.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:800;white-space:nowrap}.badge.code{background:#e8f7f4;color:#0f5f58;border:1px solid #a9ddd5}.badge.test{background:#edf3ff;color:#234f9b;border:1px solid #bfd0f5}.badge.infer{background:#f3efff;color:#5d3fa1;border:1px solid #d6c8f4}.badge.risk{background:#fff0f1;color:#9f1d27;border:1px solid #f1bcc2}
+html[data-theme="dark"] .badge.code{background:#123630;color:#8ff5df;border-color:#276a5e}html[data-theme="dark"] .badge.test{background:#172e58;color:#bed1ff;border-color:#365a97}html[data-theme="dark"] .badge.infer{background:#2b244d;color:#d9ceff;border-color:#53468c}html[data-theme="dark"] .badge.risk{background:#3a1d24;color:#ffc1c8;border-color:#743440}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-soft)}table{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}th{position:sticky;top:0;background:var(--panel-2);color:var(--text-strong);text-align:left;padding:12px 13px;border-bottom:1px solid var(--line);z-index:1;font-weight:800}td{padding:11px 13px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--text)}tr:last-child td{border-bottom:0}tbody tr:hover{background:color-mix(in srgb,var(--accent-soft) 42%,transparent)}
+ul,ol{padding-left:22px;color:var(--text)}li{margin:6px 0}.tight li{margin:3px 0}.clean{list-style:none;padding-left:0}.clean li{padding:7px 0;border-bottom:1px dashed var(--line)}
+.diagram{border:1px solid #cbd5e1;background:var(--diagram-bg);border-radius:14px;padding:18px;margin:18px 0 26px;box-shadow:var(--shadow);overflow:hidden;color:var(--diagram-text)}
+.diagram .diagram-title{color:var(--diagram-text);font-size:15px;font-weight:850;margin:0;line-height:1.5}
+.diagram-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:12px 0 10px;padding-bottom:10px;border-bottom:1px solid color-mix(in srgb,var(--diagram-text) 16%,transparent)}
+.diagram-tool{cursor:pointer;border:1px solid color-mix(in srgb,var(--diagram-text) 24%,transparent);background:color-mix(in srgb,var(--diagram-bg) 90%,var(--diagram-text));color:var(--diagram-text);border-radius:7px;padding:5px 9px;font-size:12px;font-weight:750;line-height:1.2}
+.diagram-tool:hover{border-color:#4772bb}
+.diagram-zoom-label{min-width:48px;text-align:center;font-size:12px;font-weight:800;color:var(--diagram-text)}
+.mermaid-viewport{overflow:auto;overscroll-behavior:contain;padding:12px 10px 18px;max-height:none;border-radius:9px;scrollbar-color:#9aa9bc transparent}.mermaid{display:block;min-width:max-content;margin:0;white-space:normal!important;font-family:var(--sans)!important;line-height:1.45}.mermaid svg{display:block;max-width:none!important;height:auto;overflow:visible!important;margin:0 auto}.mermaid svg text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Segoe UI",Arial,sans-serif!important;text-rendering:geometricPrecision}.mermaid .edgeLabel{background:var(--diagram-bg)!important}.mermaid .labelBkg{fill:var(--diagram-bg)!important}.mermaid foreignObject,.mermaid foreignObject>div{overflow:visible!important}.mermaid.render-error{min-width:0;white-space:pre-wrap!important;background:#fff0f0;color:#8a1c24;border:1px solid #efb2b8;border-radius:8px;padding:14px;font:12px/1.6 var(--mono)!important}
+.diagram details{margin-top:12px;color:var(--diagram-text);border-top:1px solid color-mix(in srgb,var(--diagram-text) 14%,transparent);padding-top:10px}
+.diagram details summary{cursor:pointer;font-size:12px;font-weight:750}
+.diagram details pre{white-space:pre-wrap;background:#111827;color:#e5edf7;padding:13px;border-radius:8px;font-size:12px;line-height:1.62;overflow:auto;border:1px solid #334155}
+.diagram-note{color:color-mix(in srgb,var(--diagram-text) 72%,transparent);font-size:12px;margin-top:8px}
+.diagram:fullscreen{border-radius:0;padding:24px;background:var(--diagram-bg)}
+.diagram:fullscreen .mermaid-viewport{max-height:calc(100vh - 130px)}
+.path-tree{white-space:pre;overflow:auto;background:#111827;border:1px solid #334155;border-radius:12px;padding:18px;color:#e5edf7;font-family:var(--mono);font-size:12px;line-height:1.65;box-shadow:var(--shadow-soft)}
+.priority{display:inline-block;width:34px;text-align:center;font-weight:900;border-radius:6px;margin-right:6px}.p0{background:#ffe6e8;color:#a31622}.p1{background:#fff0d8;color:#9a4c04}.p2{background:#eaf1ff;color:#244f9b}html[data-theme="dark"] .p0{background:#4a2028;color:#ffc2c8}html[data-theme="dark"] .p1{background:#443016;color:#ffd38a}html[data-theme="dark"] .p2{background:#1b3768;color:#c7d8ff}
+hr{border:0;border-top:1px solid var(--line);margin:38px 0}.foot{border-top:1px solid var(--line);padding:22px;color:var(--muted);font-size:12px;text-align:center;background:var(--panel)}.nowrap{white-space:nowrap}.anchor{color:inherit}.anchor:hover{text-decoration:none}.source-list code{display:block;margin:4px 0;padding:7px 9px}
+@media(max-width:1080px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}.toc{columns:2}.grid.cols3,.grid.cols4{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{padding-top:46px}}
+@media(max-width:680px){.toc{columns:1}.grid.cols2,.grid.cols3,.grid.cols4{grid-template-columns:1fr}.hero h1{font-size:37px}.content{padding-left:16px;padding-right:16px}.table-wrap{border-radius:10px}.diagram{padding:12px}}
+@media print{html{color-scheme:light!important}html,html[data-theme="dark"]{--bg:#fff;--bg-soft:#fff;--panel:#fff;--panel-2:#f6f7f9;--text:#111827;--text-strong:#111827;--muted:#4b5563;--line:#cbd5e1;--accent:#234f9b;--accent-strong:#173d7b;--accent-soft:#eef4ff;--diagram-bg:#fff;--diagram-text:#111827}body{background:white;color:#111}.layout{display:block}.sidebar,.actions,.diagram-toolbar{display:none!important}.hero{padding:30px;border-bottom:2px solid #222;background:white}.hero:before,.hero:after{display:none}.hero h1,.hero .lead,.content p,.content li,.section h2,.section h3,.section h4{color:#111}.content{max-width:none;padding:20px}.card,.table-wrap,.callout{box-shadow:none;background:white;border-color:#aaa}.diagram{break-inside:avoid;box-shadow:none;border-color:#aaa;background:white}.mermaid-viewport{max-height:none;overflow:visible}.mermaid svg{max-width:100%!important;width:100%!important;height:auto!important}.section{break-before:auto}.badge{border-color:#777;color:#111;background:white}code,.path-tree{background:#f5f5f5;color:#111;border-color:#ccc}.foot{color:#444}.diagram details{display:none}}
+</style></head>
+<body><div class="layout"><aside class="sidebar"><div class="brand"><b>Manyselves · 源码实证调研</b><small>开发交接版 · 当前实现</small></div><nav class="toc"><a href="#scope">基线、阅读范围与术语</a><a href="#startup">启动调用链</a><a href="#routing">报告任务路由与输入冻结</a><a href="#preparation">资料准备流程</a><a href="#state-machine">报告主流程状态</a><a href="#contract-model">Agent 有效合同组成</a><a href="#agent-matrix">Agent 身份与运行合同</a><a href="#schemas">结构化输入与输出</a><a href="#permissions">权限、工具与制品访问能力</a><a href="#template-skill">模板角色技能生成流程</a><a href="#skill-loading">技能按身份加载规则</a><a href="#domain-skill">模块专业技能解析与治理</a><a href="#knowledge">专业知识加载与项目事实边界</a><a href="#module-lane">模块专业流程内部顺序</a><a href="#cross">跨模块责任流程</a><a href="#chief-final">总编与成稿审计章节流程</a><a href="#identity">身份、会话与模型路由</a><a href="#recovery">并发、恢复、结果复用与成本记录</a><a href="#artifacts">运行目录与阶段制品</a><a href="#delivery">确定性交付终态</a><a href="#inactive">当前未进入报告主流程的已定义角色</a><a href="#change-guides">当前代码结构中的变更关联点</a><a href="#tests">当前测试契约与验证顺序</a><a href="#sources">代码位置索引</a></nav></aside>
+<main class="main"><header class="hero"><div class="eyebrow">开发交接版</div><h1>Manyselves 报告工作流开发交接</h1><p class="lead">按当前 main 分支代码说明报告运行时、任务合同、Agent 身份、权限、技能与知识加载、并行恢复、制品目录和交付流程。</p>
+<div class="meta"><span class="chip"><strong>仓库</strong> csxq0605/manyselves</span><span class="chip"><strong>基线</strong> main@5298ec55d48d</span><span class="chip"><strong>修订</strong> 2026-08-20 14:47 UTC+8</span><span class="chip"><strong>方法</strong> 源码 / Agent 模板 / 测试契约</span></div>
+<div class="actions"><button class="btn primary" id="themeToggle" onclick="toggleTheme()">切换深色</button><button class="btn" onclick="toggleSources()">展开 / 收起流程图源码</button><button class="btn" onclick="printReport()">打印 / 导出 PDF</button></div></header>
+<div class="content">
+<section class="section" id="scope"><div class="kicker">0 · 基线</div><h2>基线、阅读范围与术语</h2>
+<div class="callout"><b>调研口径。</b> 仅从 <code>main</code> 分支固定提交 <code>5298ec55d48d6cf10413c0ab73b01351a4b315a3</code> 的可执行源码、Agent 前置定义、Pydantic 合同和测试代码反向还原；仓库内 README、设计方案、计划和交接文档不作为事实依据。<br/><span class="muted">受当前环境限制，未在本地克隆私有仓库并执行测试；“测试佐证”表示静态阅读了测试所约束的行为，而不是声称已跑通。</span></div>
+<div class="grid cols2"><div class="card"><h3>固定基线</h3><p><code>main@5298ec55d48d6cf10413c0ab73b01351a4b315a3</code></p><p class="muted">所有路径、类名和运行行为均以该固定提交为准；后续 main 变化需要重新核验。</p></div><div class="card"><h3>本报告组织顺序</h3><ol class="tight"><li>入口与调用链</li><li>任务信封和结构化输入</li><li>Agent 身份运行器与制品权限</li><li>审查、恢复和交付状态</li><li>仓库测试中的并发与恢复契约</li></ol></div></div>
+<h3>术语</h3><div class="table-wrap"><table style="min-width:960px"><thead><tr><th>术语</th><th>本报告含义</th></tr></thead><tbody><tr><td>AgentDefinition</td><td>Markdown frontmatter + instructions 的静态身份声明；不是最终权限。</td></tr><tr><td>identity_key</td><td>运行时会话、租约和“原审查者”连续性的键。</td></tr><tr><td>TaskEnvelope</td><td>一次任务的动态边界：目标、范围、允许输出/工具、revision、input contract。</td></tr><tr><td>Typed Input Contract</td><td>当前 phase 的结构化输入；通常以内联方式交付。</td></tr><tr><td>Capability</td><td>某个具体 artifact ref 在当前 run 下允许的操作。</td></tr><tr><td>Lane</td><td>可独立执行、重试和形成 terminal record 的最小业务责任链。</td></tr><tr><td>Barrier / Reducer</td><td>等待一组 lane 达到终态，再生成唯一阶段聚合。</td></tr><tr><td>Template Role Skill</td><td>由报告模板蒸馏的去事实化写作/审查方法。</td></tr><tr><td>Domain Module Skill</td><td>按模块版本治理的专业方法 Skill。</td></tr><tr><td>Knowledge / Evidence</td><td>R-* 专业参考；E-* 当前项目事实。</td></tr></tbody></table></div></section>
+<section class="section" id="startup"><div class="kicker">1 · 启动</div><h2>启动调用链</h2><figure class="diagram"><div class="diagram-title">图 1｜进程启动与常驻主智能体创建顺序</div><pre class="mermaid">flowchart TB
+  C["程序入口"] --&gt; A["桌面应用"]
+  A --&gt; H["运行时宿主"]
+  H --&gt; P["建立工作区、日志与配置"]
+  P --&gt; B["创建并启动共享消息总线"]
+  B --&gt; L["创建并启动循环管理器"]
+  L --&gt; R["初始化模型服务"]
+  R --&gt; M["创建唯一常驻主智能体"]
+  M --&gt; Q["组装主智能体路由提示、公共提示与工具"]
+  Q --&gt; S["桌面进入就绪或降级状态"]
+</pre><div class="diagram-note">桌面运行时只创建一个长期面向用户的主控循环；报告专业身份由后续报告任务按需创建。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  C["程序入口"] --&gt; A["桌面应用"]
+  A --&gt; H["运行时宿主"]
+  H --&gt; P["建立工作区、日志与配置"]
+  P --&gt; B["创建并启动共享消息总线"]
+  B --&gt; L["创建并启动循环管理器"]
+  L --&gt; R["初始化模型服务"]
+  R --&gt; M["创建唯一常驻主智能体"]
+  M --&gt; Q["组装主智能体路由提示、公共提示与工具"]
+  Q --&gt; S["桌面进入就绪或降级状态"]
+</pre></details></figure>
+<h3>关键实现点</h3><ul><li><code>RuntimeHost</code>拥有总生命周期；启动顺序为 bus → loop manager，停止时先停生产者/loop，再停 bus。</li><li><code>LoopManager</code>只创建一个长期 <code>AgentLoop("main")</code>；没有 Provider 时进入 degraded，不启动专业 loop。</li><li>常驻 Main system prompt 是三段拼接：业务路由 prompt、Common prompt、报告包 <code>main-agent</code> prompt。这个组合是当前 P0 耦合点。</li><li>报告专业 Agent 并不在启动时存在，而由每个 workflow 的 <code>ReportingAgentRunner</code>按 identity_key 创建。</li></ul>
+<div class="source-list"><code>manyselves/__main__.py::main</code><code>manyselves/app.py::ManyselvesApp</code><code>manyselves/application/runtime_host.py::RuntimeHost</code><code>manyselves/core/loops/manager.py::LoopManager._create_loops</code></div></section>
+<section class="section" id="routing"><div class="kicker">2 · 路由</div><h2>报告任务路由与输入冻结</h2><figure class="diagram"><div class="diagram-title">图 2｜常驻主智能体到报告服务的业务操作路由</div><pre class="mermaid">flowchart TB
+  U["用户请求"] --&gt; M["常驻主智能体"]
+  M --&gt; C["识别五类报告任务&lt;br/&gt;模板技能蒸馏・完整报告・指定模块・已有模块汇总・现有汇总稿生成交付文档"]
+  C --&gt; RC["报告运行控制器"]
+  RC --&gt; PR["建立本次运行记录"]
+  PR --&gt; SNAP["冻结输入、知识库、模板&lt;br/&gt;以及显式引用"]
+  SNAP --&gt; EX["取得项目写入租约&lt;br/&gt;与本次运行锁"]
+  EX --&gt; S{"按任务类型进入流程"}
+  S --&gt; TD["模板职责技能流程"]
+  S --&gt; AG["已有模块汇总流程"]
+  S --&gt; RE["确定性文档渲染"]
+  S --&gt; WF["完整报告或指定模块流程"]
+</pre><div class="diagram-note">常驻主控先识别任务类型，报告服务随后创建本次运行、冻结输入并进入对应流程。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  U["用户请求"] --&gt; M["常驻主智能体"]
+  M --&gt; C["识别五类报告任务&lt;br/&gt;模板技能蒸馏・完整报告・指定模块・已有模块汇总・现有汇总稿生成交付文档"]
+  C --&gt; RC["报告运行控制器"]
+  RC --&gt; PR["建立本次运行记录"]
+  PR --&gt; SNAP["冻结输入、知识库、模板&lt;br/&gt;以及显式引用"]
+  SNAP --&gt; EX["取得项目写入租约&lt;br/&gt;与本次运行锁"]
+  EX --&gt; S{"按任务类型进入流程"}
+  S --&gt; TD["模板职责技能流程"]
+  S --&gt; AG["已有模块汇总流程"]
+  S --&gt; RE["确定性文档渲染"]
+  S --&gt; WF["完整报告或指定模块流程"]
+</pre></details></figure>
+<div class="table-wrap"><table style="min-width:1030px"><thead><tr><th>operation</th><th>执行方法</th><th>使用 Provider</th><th>输出</th></tr></thead><tbody><tr><td>distill_template_skill</td><td><code>ReportWorkflowRunner.distill_template_skill</code></td><td>是：仅 Template Distiller</td><td>14 Skills + boundary/source</td></tr><tr><td>full_report</td><td><code>ReportWorkflowRunner.run</code></td><td>是：模块/Cross/Chief/Final</td><td>完整报告与索引</td></tr><tr><td>module_report / target subset</td><td><code>run</code> 中模块完成后提前返回</td><td>是：目标模块作者/Auditor</td><td>目标模块 Markdown</td></tr><tr><td>aggregate_existing</td><td><code>aggregate_existing</code></td><td>是：Chief/Final</td><td>已有五模块汇总报告</td></tr><tr><td>render_existing</td><td><code>_render_existing</code></td><td>否</td><td>DOCX</td></tr></tbody></table></div>
+<h3><code>prepare_run</code> 的真正含义</h3><ol><li>生成 <code>report-&lt;uuid10&gt;</code>。</li><li>写 <code>Work/runs/&lt;run&gt;/request.json</code>。</li><li>确定显式输入：source Markdown、已有模块 refs 等。</li><li><code>RunInputSnapshotStore.freeze</code> 冻结三个 scope：<code>Inputs</code>、<code>Knowledge</code>、<code>Templates</code>，外加显式 refs。</li><li>每个文件入 ContentAddressedStore、创建可信 handle、链接到 <code>frozen-project/&lt;logical_ref&gt;</code>，最后提交 inventory digest。</li><li>真正执行前再获取项目级写租约、run 锁；同一项目同时只允许一个有写操作的报告 job。</li></ol>
+<div class="callout warn"><b>恢复语义：</b> 同一 run 再次执行不会重新冻结新文件；它必须继续使用原 inventory。补充资料通过 typed supplements/决策流程进入，不应静默替换冻结输入。</div></section>
+<section class="section" id="preparation"><div class="kicker">3 · 资料准备</div><h2>资料准备流程</h2><figure class="diagram"><div class="diagram-title">图 3｜资料准备阶段的确定性处理流程</div><pre class="mermaid">flowchart TB
+  A["本次运行输入快照"] --&gt; B["建立项目资料清单"]
+  B --&gt; C{"报告目录工作簿是否唯一？"}
+  C -- "否" --&gt; X["停止于资料准备阶段"]
+  C -- "是" --&gt; D["读取本次报告目录体系"]
+  D --&gt; E["按文件并行解析资料"]
+  E --&gt; F["按资料清单顺序归并"]
+  F --&gt; G["规范化项目证据 E-*"]
+  G --&gt; I["关联项目图片 P-*&lt;br/&gt;与证据邻接关系"]
+  G --&gt; J["保存资料映射记录"]
+  G --&gt; K["计算模块覆盖状态"]
+  I --&gt; K
+  J --&gt; K
+  K --&gt; L["应用证据准备策略"]
+  L --&gt; M["固定资料准备快照&lt;br/&gt;与完成记录"]
+</pre><div class="diagram-note">资料准备由确定性程序完成，不通过报告专业 Agent 生成项目资料清单和项目证据。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  A["本次运行输入快照"] --&gt; B["建立项目资料清单"]
+  B --&gt; C{"报告目录工作簿是否唯一？"}
+  C -- "否" --&gt; X["停止于资料准备阶段"]
+  C -- "是" --&gt; D["读取本次报告目录体系"]
+  D --&gt; E["按文件并行解析资料"]
+  E --&gt; F["按资料清单顺序归并"]
+  F --&gt; G["规范化项目证据 E-*"]
+  G --&gt; I["关联项目图片 P-*&lt;br/&gt;与证据邻接关系"]
+  G --&gt; J["保存资料映射记录"]
+  G --&gt; K["计算模块覆盖状态"]
+  I --&gt; K
+  J --&gt; K
+  K --&gt; L["应用证据准备策略"]
+  L --&gt; M["固定资料准备快照&lt;br/&gt;与完成记录"]
+</pre></details></figure>
+<div class="table-wrap"><table style="min-width:1100px"><thead><tr><th>步骤</th><th>实现</th><th>输入</th><th>输出/校验</th></tr></thead><tbody><tr><td>Manifest</td><td><code>ReportingService._build_manifest</code></td><td>冻结 Inputs root</td><td>ProjectManifest；写 Work/manifest.json</td></tr><tr><td>Taxonomy</td><td><code>_prepare_report_taxonomy</code></td><td>purpose=s4-6 的冻结 workbook</td><td>必须恰好一个；激活当前 run taxonomy</td></tr><tr><td>Parse</td><td><code>_parse_artifacts</code> + <code>prepare_manifest_file</code></td><td>manifest files</td><td>可用 deterministic_workers 并行；结果按 manifest_order reducer</td></tr><tr><td>Normalize</td><td><code>_normalize_evidence</code></td><td>parsed artifacts / mappers</td><td>稳定 E-####、P-*、照片主证据、邻接、映射未匹配记录</td></tr><tr><td>Coverage</td><td><code>_evaluate_coverage</code></td><td>request + E-* + 资料映射记录</td><td>CoverageMatrix</td></tr><tr><td>Readiness</td><td><code>EvidenceReadinessPolicy.evaluate</code></td><td>missing_evidence_policy + coverage</td><td>继续 / blocked / needs_user_decision</td></tr><tr><td>Persist</td><td><code>_persist_preparation_snapshot</code></td><td>以上结果</td><td>current-run immutable preparation refs + hashes + completion</td></tr></tbody></table></div>
+<p>这些角色过去可能被命名为 manifest-builder、normalizer、coverage-evaluator，但当前真实实现是确定性函数和 worker，不是 LLM Agent。</p></section>
+<section class="section" id="state-machine"><div class="kicker">4 · 主流程</div><h2>报告主流程状态</h2><figure class="diagram"><div class="diagram-title">图 4｜完整报告与模块报告的运行状态及两级审计回路</div><pre class="mermaid">flowchart TB
+  P["资料准备"] --&gt; D["任务分配"]
+  P -- "证据策略要求暂停" --&gt; W["等待用户补充"]
+  W --&gt; P
+
+  D --&gt; MA["专业模块作者"]
+  MA --&gt; MR["模块独立审计身份"]
+  MR --&gt; MQ{"模块审计事项&lt;br/&gt;是否全部关闭？"}
+  MQ -- "否：返回原模块作者" --&gt; MA
+  MQ -- "是：指定模块任务" --&gt; PD["指定模块交付"]
+  MQ -- "是：五个模块全部完成" --&gt; MB["五模块完成门"]
+
+  MB --&gt; CR["跨模块责任审计身份"]
+  CR --&gt; CQ{"跨模块审计事项&lt;br/&gt;是否全部关闭？"}
+  CQ -- "否：返回责任模块原作者" --&gt; CA["责任模块原作者&lt;br/&gt;定向修订"]
+  CA --&gt; LR["原模块独立审计身份&lt;br/&gt;局部回归审计"]
+  LR --&gt; CR
+  CQ -- "是：五个责任模块全部完成" --&gt; CB["跨模块完成门"]
+
+  CB --&gt; E["总编章节成稿"]
+  E --&gt; F["终审章节审计"]
+  F --&gt; FQ{"章节审计事项&lt;br/&gt;是否全部关闭？"}
+  FQ -- "否：只返回受影响章节" --&gt; E
+  FQ -- "是" --&gt; O["确定性交付"]
+  O --&gt; DONE["任务完成"]
+  PD --&gt; DONE</pre><div class="diagram-note">模块阶段与跨模块阶段都包含内部回路：模块审计事项返回原模块作者并由原模块审计身份复核；跨模块审计事项返回责任模块原作者，经原模块审计身份完成局部回归后，再回到原跨模块责任审计身份。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  P["资料准备"] --&gt; D["任务分配"]
+  P -- "证据策略要求暂停" --&gt; W["等待用户补充"]
+  W --&gt; P
+
+  D --&gt; MA["专业模块作者"]
+  MA --&gt; MR["模块独立审计身份"]
+  MR --&gt; MQ{"模块审计事项&lt;br/&gt;是否全部关闭？"}
+  MQ -- "否：返回原模块作者" --&gt; MA
+  MQ -- "是：指定模块任务" --&gt; PD["指定模块交付"]
+  MQ -- "是：五个模块全部完成" --&gt; MB["五模块完成门"]
+
+  MB --&gt; CR["跨模块责任审计身份"]
+  CR --&gt; CQ{"跨模块审计事项&lt;br/&gt;是否全部关闭？"}
+  CQ -- "否：返回责任模块原作者" --&gt; CA["责任模块原作者&lt;br/&gt;定向修订"]
+  CA --&gt; LR["原模块独立审计身份&lt;br/&gt;局部回归审计"]
+  LR --&gt; CR
+  CQ -- "是：五个责任模块全部完成" --&gt; CB["跨模块完成门"]
+
+  CB --&gt; E["总编章节成稿"]
+  E --&gt; F["终审章节审计"]
+  F --&gt; FQ{"章节审计事项&lt;br/&gt;是否全部关闭？"}
+  FQ -- "否：只返回受影响章节" --&gt; E
+  FQ -- "是" --&gt; O["确定性交付"]
+  O --&gt; DONE["任务完成"]
+  PD --&gt; DONE</pre></details></figure>
+<h3><code>ReportWorkflowRunner.run</code> 顺序</h3><ol><li>建立预算 ledger 与 provider attempt guard。</li><li>恢复成本边界；执行/恢复 Preparation。</li><li>Evidence readiness gate。</li><li>阶段 checkpoint 后执行成本边界策略。</li><li>校验固定 Template Role Skill bundle。</li><li>构建模块 Knowledge 上下文与 ModuleDispatchPlan，写 handoff contracts。</li><li>运行目标模块 lanes；子集则交付后返回。</li><li>五模块全量时运行 Cross owner pipelines。</li><li>运行 Chief 章节 lanes，并确定性保护/装配第二章。</li><li>运行 Final 章节审计；只返工受影响章节。</li><li>引用绑定、结构校验、Markdown/DOCX、来源索引、delivery receipt。</li><li>仅在未挂起时关闭 workflow 身份；恢复时复用仍保留身份或 completion。</li></ol></section>
+<section class="section" id="contract-model"><div class="kicker">5 · Agent 合同</div><h2>Agent 有效合同组成</h2><figure class="diagram"><div class="diagram-title">图 5｜静态身份、任务合同与制品权限共同形成有效合同</div><pre class="mermaid">flowchart TB
+  B["当前任务合同由四层共同组成&lt;br/&gt;静态智能体定义・任务信封・类型化输入合同・制品访问能力"]
+  B --&gt; C["当前任务有效合同"]
+  C --&gt; R["当前任务运行边界&lt;br/&gt;系统提示与任务边界・实际工具集合・唯一提交结构・任务级制品访问网关"]
+</pre><div class="diagram-note">静态 Agent 定义只是候选边界，当前任务信封、结构化输入和制品能力共同形成实际执行合同。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  B["当前任务合同由四层共同组成&lt;br/&gt;静态智能体定义・任务信封・类型化输入合同・制品访问能力"]
+  B --&gt; C["当前任务有效合同"]
+  C --&gt; R["当前任务运行边界&lt;br/&gt;系统提示与任务边界・实际工具集合・唯一提交结构・任务级制品访问网关"]
+</pre></details></figure>
+<div class="grid cols2"><div class="card"><h3>静态层解决什么</h3><p>角色、职责范围、候选工具、模型参数、memory/background、逻辑 reads/writes。它是身份不变量。</p></div><div class="card"><h3>动态层解决什么</h3><p>本次任务目标、当前 phase、可见 subject、可读制品、精确输出 Schema 和 revision。它是任务变量。</p></div></div>
+<div class="callout danger"><b>开发常见误区：</b> frontmatter 的 <code>reads/writes</code> 是逻辑 carrier 声明，不是文件系统 ACL；frontmatter 的 <code>tools</code> 是候选全集，不代表本次 TaskRegistry 一定暴露。</div></section>
+<section class="section" id="agent-matrix"><div class="kicker">6 · Agent 身份</div><h2>Agent 身份与运行合同</h2><div class="table-wrap"><table style="min-width:1620px"><thead><tr><th>角色</th><th>identity_key</th><th>memory</th><th>生命周期</th><th>职责范围</th><th>任务上下文</th><th>候选/有效工具</th><th>输出</th></tr></thead><tbody><tr><td>Persistent Main</td><td><code>main</code></td><td>session</td><td>长期</td><td>路由、状态、取消、恢复；不拥有专业结论</td><td>General Main prompt + Common + packaged main-agent</td><td>报告控制工具、Work 写工具等</td><td>用户消息 → 工具回执/终态</td></tr><tr><td>Exception Main</td><td><code>main-&lt;scope&gt;-exception</code></td><td>session</td><td>按升级问题</td><td>只处理 WorkflowExceptionInput</td><td>main-agent.md</td><td>运行时通常收紧到 submit_result</td><td>WorkflowDecisionSubmission</td></tr><tr><td>Template Distiller</td><td><code>template-distillation</code></td><td>task</td><td>独立 action</td><td>模板方法去事实化蒸馏</td><td>TemplateDistillationInput + one DOCX capability</td><td>inspect once / write/list/submit/block</td><td>TemplateSkillSubmission</td></tr><tr><td>2.1 Specialist</td><td><code>module-2.1</code></td><td>task</td><td>模块 lane</td><td>系统架构、容量、韧性</td><td>ModuleAuthoring/RevisionInput + author-2.1 + 2.1 Knowledge</td><td>证据/参考/Web/文档/图片/计算/分片写入等，受 task 裁剪</td><td>ModuleSubmission / ModuleRevisionSubmission</td></tr><tr><td>2.2 Specialist</td><td><code>module-2.2</code></td><td>task</td><td>模块 lane</td><td>工况、电能质量</td><td>同上，目标 2.2</td><td>同上</td><td>同上</td></tr><tr><td>2.3 Specialist</td><td><code>module-2.3</code></td><td>task</td><td>模块 lane</td><td>故障、保护链</td><td>同上，目标 2.3</td><td>同上</td><td>同上</td></tr><tr><td>2.4 Specialist</td><td><code>module-2.4</code></td><td>task</td><td>模块 lane</td><td>设备对象、配置与状态</td><td>同上，目标 2.4</td><td>同上</td><td>同上</td></tr><tr><td>2.5 Specialist</td><td><code>module-2.5</code></td><td>task</td><td>模块 lane</td><td>运维治理</td><td>同上，目标 2.5</td><td>同上</td><td>同上</td></tr><tr><td>Evidence Auditor</td><td><code>module-auditor-2.x</code></td><td>task</td><td>每模块一个身份</td><td>模块可信性与批准权；不改正文</td><td>ModuleReviewInput + auditor-2.x</td><td>证据/来源只读、计算、submit；实际 task 裁剪</td><td>FindingSubmission / VerdictSubmission</td></tr><tr><td>Cross Reviewer</td><td><code>cross-owner-2.x</code></td><td>task</td><td>五 owner</td><td>跨模块关系；只写 owner</td><td>CrossOwnerInput + review_focus</td><td>仅 submit_result</td><td>CrossOwnerFinding/VerdictSubmission</td></tr><tr><td>Chief Editor</td><td><code>chief-chapter-1/3/4</code></td><td>task</td><td>按章</td><td>管理层叙事与综合，不改 Chapter 2</td><td>ChiefChapterLaneInput + exact chapter Skill</td><td>write/list/submit</td><td>ChiefChapterLaneSubmission / Revision</td></tr><tr><td>Final Auditor</td><td><code>final-chapter-1/3/4</code></td><td>task</td><td>按章</td><td>交付就绪审计；不写正文</td><td>FinalChapterLaneInput + final-auditor</td><td>仅 submit_result</td><td>FinalChapterLaneFinding / Verdict</td></tr><tr><td>Product Skill Maintainer</td><td>独立 task identity</td><td>task</td><td>显式治理操作</td><td>产品专业 Skill 演进</td><td>feedback/candidate/evaluation IDs</td><td>inspect/product_skill_evolution/submit</td><td>SkillEvolutionSubmission</td></tr></tbody></table></div>
+<h3>静态角色细节</h3><div class="grid cols3"><div class="card"><h3>Module Specialist</h3><p><code>maxTurns=14</code>、<code>maxTokens=12288</code>、high effort。静态工具含项目证据、参考库、Web、文档/图片、计算、研究笔记、peer、gap、分片写入和结构化提交；task 可进一步缩减。</p></div><div class="card"><h3>Cross / Chief</h3><p>Cross 静态仅 <code>submit_result</code>，<code>maxTurns=28</code>/<code>32768</code>；Chief 仅分片写入/列出/提交，按章节身份运行。</p></div><div class="card"><h3>Final</h3><p>静态仅 <code>submit_result</code>，<code>maxTurns=16</code>。其输出永远是 finding 或 verdict，不直接改稿。</p></div></div></section>
+<section class="section" id="schemas"><div class="kicker">7 · 结构化合同</div><h2>结构化输入与输出</h2><div class="table-wrap"><table style="min-width:1500px"><thead><tr><th>合同</th><th>生产者/消费者</th><th>关键字段</th><th>当前校验规则</th></tr></thead><tbody><tr><td>TaskEnvelope</td><td>所有 Agent task</td><td>task_id、run_id、agent_id、objective、input_refs、constraints、allowed_outputs/tools、revision、prior_result_ref、delivery_modes、input_contract_ref/kind、targets</td><td>input contract 必须内联且声明；target submodule 必须属于固定 taxonomy；extra 字段拒绝</td></tr><tr><td>TemplateDistillationInput → TemplateSkillSubmission</td><td>Template Distiller</td><td>template_ref、inspect_max_chars、required_part_ids → 14 skill refs + runtime boundary</td><td>required IDs 精确一致；模型不提交 boundary；每个长 Skill 先写 part</td></tr><tr><td>ModuleAuthoringInput → ModuleSubmission</td><td>Module Specialist</td><td>module_id、required_submodules、evidence/coverage/knowledge projections → narratives、claims、source_ids、unresolved</td><td>固定小节全集；项目事实 Claim 必须绑定当前 run E-*；禁止额外数字标题</td></tr><tr><td>ModuleReviewInput → Finding/Verdict</td><td>Evidence Auditor</td><td>phase、subject、scope、claim statements、evidence excerpts、prior finding/response/delta</td><td>finding immutable；verdict 覆盖全部 assigned finding；same reviewer identity</td></tr><tr><td>ModuleRevisionInput → ModuleRevisionSubmission</td><td>原 Specialist</td><td>baseline、requested changes、finding IDs、allowed targets</td><td>只改目标小节；response 精确覆盖 findings；未变部分继承</td></tr><tr><td>CrossOwnerInput → Cross owner result</td><td>Cross owner</td><td>owner module、related views、review_focus、phase、finding/response/local completion</td><td>finding 只能 owner-local；related modules 只读；Cross 不复审局部文风</td></tr><tr><td>ChiefChapterLaneInput → Chapter result</td><td>Chief</td><td>chapter_id、section_ids、source context、assigned findings、special topic plan</td><td>只写当前章；Chapter 2 运行时保护；part IDs 精确</td></tr><tr><td>FinalChapterLaneInput → Final result</td><td>Final Auditor</td><td>chapter body/delta、unchanged hashes、review_focus、required findings、responses</td><td>只审当前章；verdict 覆盖 assigned；new finding 不得跨章</td></tr><tr><td>WorkflowExceptionInput → Decision</td><td>Exception Main</td><td>trigger、findings、responses、verdicts、allowed decisions</td><td>精确覆盖 exception finding；不改上游记录</td></tr></tbody></table></div>
+<h3>提交工具的关键行为</h3><ul><li>每个 task 只注册当前允许 output 的 submission schema；模块号、chapter、revision、finding 数量等会被固定为 const/精确约束。</li><li>长正文不能直接塞进最终 JSON；必须先用 <code>write_result_part</code> 写入当前 task/revision 的固定目录，再以 artifact ref 提交。</li><li><code>submit_result</code> 要求字段直接位于顶层，禁止用通用 <code>payload</code> 包装绕过 schema。</li><li>模块正文的 E-* 绑定由运行时读取 part sidecar 并生成 Claim；模型不能自造 Claim marker。</li><li>验证失败会返回结构化修复指令；重复同一错误受到次数和指纹门禁。</li></ul></section>
+<section class="section" id="permissions"><div class="kicker">8 · 制品权限</div><h2>权限、工具与制品访问能力</h2><figure class="diagram"><div class="diagram-title">图 6｜制品能力编译与实际工具暴露</div><pre class="mermaid">flowchart TB
+  E["任务信封中的显式引用"] --&gt; C["递归收集当前任务引用"]
+  I["类型化输入中的引用&lt;br/&gt;与图片编号"] --&gt; C
+  C --&gt; S{"属于当前运行&lt;br/&gt;且路径安全？"}
+  S -- "否" --&gt; D["拒绝任务配置"]
+  S -- "是" --&gt; A["识别制品类型&lt;br/&gt;与允许操作"]
+  A --&gt; P["形成当前任务制品能力"]
+  P --&gt; M{"制品交付方式"}
+  M --&gt; IN["内容内联&lt;br/&gt;不可再次打开"]
+  M --&gt; H["哈希保留&lt;br/&gt;不可再次打开"]
+  M --&gt; R["引用交付&lt;br/&gt;按文件类型受限读取"]
+  ST["静态身份中的候选工具"] --&gt; X["与当前任务允许工具取交集"]
+  R --&gt; X
+  X --&gt; T["当前任务实际工具集合"]
+  T --&gt; L["进入智能体执行循环"]
+</pre><div class="diagram-note">只有按引用方式交付且通过当前任务能力校验的制品，才能被对应读取工具重新打开。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  E["任务信封中的显式引用"] --&gt; C["递归收集当前任务引用"]
+  I["类型化输入中的引用&lt;br/&gt;与图片编号"] --&gt; C
+  C --&gt; S{"属于当前运行&lt;br/&gt;且路径安全？"}
+  S -- "否" --&gt; D["拒绝任务配置"]
+  S -- "是" --&gt; A["识别制品类型&lt;br/&gt;与允许操作"]
+  A --&gt; P["形成当前任务制品能力"]
+  P --&gt; M{"制品交付方式"}
+  M --&gt; IN["内容内联&lt;br/&gt;不可再次打开"]
+  M --&gt; H["哈希保留&lt;br/&gt;不可再次打开"]
+  M --&gt; R["引用交付&lt;br/&gt;按文件类型受限读取"]
+  ST["静态身份中的候选工具"] --&gt; X["与当前任务允许工具取交集"]
+  R --&gt; X
+  X --&gt; T["当前任务实际工具集合"]
+  T --&gt; L["进入智能体执行循环"]
+</pre></details></figure>
+<div class="table-wrap"><table style="min-width:1200px"><thead><tr><th>能力类别</th><th>工具</th><th>访问对象</th><th>实际门禁</th></tr></thead><tbody><tr><td>项目证据</td><td>search_project_evidence / open_project_source</td><td>当前 run E-* 索引与来源</td><td>有对应 capability；只能当前 run</td></tr><tr><td>参考知识</td><td>search_reference_library / open_reference</td><td>R-* Knowledge</td><td>active snapshot + capability；不能作为项目事实</td></tr><tr><td>Web 参考</td><td>web_search / open_web_source</td><td>W-*</td><td>角色声明且 task 未禁用；仍不是客户事实</td></tr><tr><td>文档/图片</td><td>inspect_document / inspect_image</td><td>DOCX/XLSX/PDF/text/image</td><td>具体 MIME capability；Template 源有一次性特例</td></tr><tr><td>计算</td><td>calculate</td><td>结构化计算</td><td>角色声明 + task allow</td></tr><tr><td>协作</td><td>query_peer / reply_peer / publish_research_note</td><td>聚焦询问/复用研究</td><td>只在当前 task 有效工具包含时；不自动共享完整会话</td></tr><tr><td>长文持久化</td><td>write_result_part / list_result_parts</td><td>当前 task/revision 的正文 part</td><td>固定落点 <code>Work/runs/&lt;run&gt;/drafts/&lt;task&gt;/r&lt;n&gt;</code></td></tr><tr><td>结构化完成</td><td>submit_result</td><td>唯一允许输出 Schema</td><td>顶层字段必须直接匹配；不能用 payload 包裹</td></tr><tr><td>阻塞</td><td>report_gap / report_blocked</td><td>明确缺口或阻塞</td><td>生成 typed terminal/notice；不能以自然语言假完成</td></tr><tr><td>Continuation</td><td>open_tool_result</td><td>读取长工具结果</td><td>兼容性保留；不授予任意文件读</td></tr></tbody></table></div>
+<h3>文件/进程级边界</h3><ul><li>常驻 Main 的修改工具被限制在 <code>Work/</code>；报告工作流的专业 Agent 通过 scoped ArtifactGateway 访问具体 refs。</li><li>Capability 编译拒绝绝对路径、<code>..</code>、跨 workspace、<code>.manyselves</code>、其它 run 的 <code>Work/runs/&lt;id&gt;</code>。</li><li>图片 P-* 只能通过当前 run photo map 映射到真实路径，不允许猜 <code>Inputs/P-...</code>。</li><li><code>inline</code> 与 <code>hash_retained</code> 不授予重新打开；只有 <code>reference</code> 且 descriptor 支持 operation 才产生 reader。</li><li>Template Distiller 的源 DOCX 是特例：只给精确 task/agent/run 一次专用 inspect，不进入通用 artifact capability。</li><li>ProjectWriteLease 有 fencing epoch；IdentityLease 也有 owner/epoch，陈旧 worker 写入会被拒绝。</li></ul></section>
+<section class="section" id="template-skill"><div class="kicker">9 · 模板角色技能</div><h2>模板角色技能生成流程</h2><figure class="diagram"><div class="diagram-title">图 7｜模板职责技能的独立生成与固定流程</div><pre class="mermaid">flowchart TB
+  A["常驻主智能体选择&lt;br/&gt;模板职责技能蒸馏"] --&gt; B["报告服务建立独立任务&lt;br/&gt;冻结蒸馏模板"]
+  B --&gt; C["报告流程编排器&lt;br/&gt;写入模板蒸馏输入合同"]
+  C --&gt; D["模板技能蒸馏智能体&lt;br/&gt;一次读取完整模板"]
+  D --&gt; E["按十四个固定职责技能编号&lt;br/&gt;逐份保存完整技能正文"]
+  E --&gt; F["检查十四份技能保存状态"]
+  F --&gt; G["提交十四个技能制品引用"]
+  G --&gt; H["固定写入模板职责技能目录"]
+  H --&gt; I["写入边界清单、来源清单与哈希清单"]
+  I --&gt; J["重新加载并校验技能完整性"]
+</pre><div class="diagram-note">模板只在独立蒸馏任务中读取一次；写作任务只加载已经固定并校验过的职责技能。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  A["常驻主智能体选择&lt;br/&gt;模板职责技能蒸馏"] --&gt; B["报告服务建立独立任务&lt;br/&gt;冻结蒸馏模板"]
+  B --&gt; C["报告流程编排器&lt;br/&gt;写入模板蒸馏输入合同"]
+  C --&gt; D["模板技能蒸馏智能体&lt;br/&gt;一次读取完整模板"]
+  D --&gt; E["按十四个固定职责技能编号&lt;br/&gt;逐份保存完整技能正文"]
+  E --&gt; F["检查十四份技能保存状态"]
+  F --&gt; G["提交十四个技能制品引用"]
+  G --&gt; H["固定写入模板职责技能目录"]
+  H --&gt; I["写入边界清单、来源清单与哈希清单"]
+  I --&gt; J["重新加载并校验技能完整性"]
+</pre></details></figure>
+<h3>固定 14 个身份 Skill</h3><div class="grid cols4"><div class="card"><h4>Author ×5</h4><p>author-2.1 … author-2.5</p></div><div class="card"><h4>Auditor ×5</h4><p>auditor-2.1 … auditor-2.5</p></div><div class="card"><h4>Chief ×3</h4><p>chief-editor-chapter-1 / 3 / 4</p></div><div class="card"><h4>Final ×1</h4><p>final-auditor</p></div></div>
+<h3>去事实化边界</h3><ul><li>只迁移“观察 → 证据限定 → 结论 → 原因 → 影响 → 行动”的写作与审查方法。</li><li>不得复制客户名称、数值、项目问题、原结论、原行动内容和证据编号。</li><li>不得迁移专业机理、标准、适用条件和带单位阈值；这些属于 Knowledge。</li><li>Cross 不生成模板 Skill；其专业化只来自 owner review_focus 和 typed contract。</li><li>生成 bundle 后必须验证 source.json、boundary policy、每个文件 SHA；写报告时只读 bundle，不重新读取模板。</li></ul>
+<div class="callout warn"><b>当前行为：</b> full_report 遇到缺失/哈希不匹配的 bundle 会失败，要求先单独运行 <code>distill_template_skill</code>；不会在写报告中自动蒸馏。</div></section>
+<section class="section" id="skill-loading"><div class="kicker">10 · 技能加载</div><h2>技能按身份加载规则</h2><div class="table-wrap"><table style="min-width:1420px"><thead><tr><th>身份</th><th>Template Role Skill</th><th>专业 Skill</th><th>Knowledge / Evidence</th><th>成本与隔离策略</th></tr></thead><tbody><tr><td>模块作者 2.x</td><td><code>author-2.x</code></td><td>该模块 active professional Skills</td><td>该模块 Knowledge 文本 + R-* 来源；E-* evidence tools</td><td>完整内联 Template Skill；Knowledge 有预算和去重</td></tr><tr><td>模块 Auditor 2.x</td><td><code>auditor-2.x</code></td><td>目标模块相关 professional Skills（按 resolver/target）</td><td>模块 subject、claim/evidence excerpt；复核只给 delta + hashes</td><td>不重复全文，不继承作者提示</td></tr><tr><td>Cross owner</td><td>无</td><td>无模板 Skill；专业化来自 <code>review_focus</code> 与 owner contract</td><td>五模块紧凑关系视图 + 哈希</td><td>禁止模板写作方法影响 Cross 判断</td></tr><tr><td>Chief 1/3/4</td><td>精确一章对应 Skill</td><td>通常不加载模块专业 Skill</td><td>Chapter1 摘要；Chapter3 Cross pack；Chapter4 专项知识</td><td>不读蒸馏源、不读其它章完整正文</td></tr><tr><td>Final 1/3/4</td><td>共享 <code>final-auditor</code></td><td>无模块专业 Skill</td><td>当前章正文/变化/未变哈希</td><td>章专化由 input review_focus，不复制 Skill</td></tr><tr><td>Exception Main</td><td>无专属模板 Skill</td><td>无</td><td>升级记录的紧凑合同</td><td>不读取完整项目</td></tr></tbody></table></div>
+<p>Template Skill 以 XML 标记完整内联；Domain Knowledge 也以内联片段交付，但带 <code>project_fact_authority=false</code>。其它较大制品优先使用 reference 或 hash-retained，防止每个任务重复塞入全量上下文。</p></section>
+<section class="section" id="domain-skill"><div class="kicker">11 · 专业技能</div><h2>模块专业技能解析与治理</h2>
+<div class="grid cols3"><div class="card"><h3>解析优先级</h3><p>packaged → product → project；同一 skill_id 后加载层覆盖前层，因此 project 最高。</p></div><div class="card"><h3>加载范围</h3><p>模块 Specialist 获得本模块拥有的全部 active Skills；模块 Auditor 按固定模块和目标小节过滤；Cross/Chief/Final 不自动继承。</p></div><div class="card"><h3>发布治理</h3><p>显式反馈意图 → candidate → non-regression evaluation → 用户确认 → immutable SkillVersion → active manifest；可 rollback。</p></div></div>
+<h3>产品级治理状态机</h3><figure class="diagram"><div class="diagram-title">图 8｜产品级模块专业技能的治理流程</div><pre class="mermaid">stateDiagram-v2
+  state "记录明确反馈" as F
+  state "形成技能候选" as C
+  state "记录对比评测" as E
+  state "发布不可变版本" as P
+  state "保持未发布" as R
+  state "切换到历史版本" as B
+  [*] --&gt; F: 记录反馈
+  F --&gt; C: 生成候选
+  C --&gt; E: 执行评测
+  E --&gt; P: 无回归且用户确认
+  E --&gt; R: 存在回归或未确认
+  P --&gt; B: 执行回滚
+  R --&gt; [*]
+  B --&gt; [*]
+</pre><div class="diagram-note">专业技能版本由反馈、候选、评估、确认发布和回滚记录组成。</div><details><summary>查看 Mermaid 源码</summary><pre>stateDiagram-v2
+  state "记录明确反馈" as F
+  state "形成技能候选" as C
+  state "记录对比评测" as E
+  state "发布不可变版本" as P
+  state "保持未发布" as R
+  state "切换到历史版本" as B
+  [*] --&gt; F: 记录反馈
+  F --&gt; C: 生成候选
+  C --&gt; E: 执行评测
+  E --&gt; P: 无回归且用户确认
+  E --&gt; R: 存在回归或未确认
+  P --&gt; B: 执行回滚
+  R --&gt; [*]
+  B --&gt; [*]
+</pre></details></figure>
+<div class="callout">Template Role Skill 不进入这条产品专业 Skill 演进链；项目 Main 也无权直接发布产品版本。</div></section>
+<section class="section" id="knowledge"><div class="kicker">12 · 知识库</div><h2>专业知识加载与项目事实边界</h2>
+<div class="grid cols2"><div class="card"><h3>来源与冻结</h3><ul class="tight"><li>项目：<code>Knowledge/</code>（随 run input snapshot 冻结）。</li><li>全局：可选 <code>GlobalKnowledge</code>，由 Knowledge builder 建独立快照。</li><li>同相对路径时项目知识优先。</li><li>拒绝 symlink/path escape，解析文本并去重。</li></ul></div><div class="card"><h3>检索与预算</h3><ul class="tight"><li>按固定 taxonomy id/title 进行确定性相关性排序。</li><li>当前模块上下文预算约 14,000 chars。</li><li>单 snippet 约 900 chars；每子模块最多 3 个文档片段。</li><li>来源注册为 R-*，上下文写入 current-run context 文件。</li></ul></div></div>
+<div class="callout danger"><b>事实权限：</b> R-*、W-*、Template Skill、Domain Skill 和模型知识都不能把某个事实写成“该客户已发生”；项目事实必须有当前 run 的 E-*，没有则按 missing evidence policy 写成待核实、低置信度或未评估。</div></section>
+<section class="section" id="module-lane"><div class="kicker">13 · 模块流程</div><h2>模块专业流程内部顺序</h2><figure class="diagram"><div class="diagram-title">图 9｜一个专业模块任务中原作者与原模块审计身份的循环</div><pre class="mermaid">flowchart TB
+  A["专业模块主流程&lt;br/&gt;下发写作合同、作者技能与专业知识"] --&gt; B["专业模块作者&lt;br/&gt;读取允许范围内的项目证据与专业参考"]
+  B --&gt; C["保存小节正文并提交模块结果"]
+  C --&gt; D["确定性校验&lt;br/&gt;目录、标题、来源与证据绑定"]
+  D --&gt; E["模块独立审计身份&lt;br/&gt;执行首次模块审计"]
+  E --&gt; F{"模块审计事项&lt;br/&gt;是否全部关闭"}
+  F -- "是" --&gt; Z["写入模块审计完成记录&lt;br/&gt;与模块终态"]
+  F -- "否：返回原模块作者" --&gt; G["原专业模块作者&lt;br/&gt;提交定向补丁与作者响应"]
+  G --&gt; H["确定性校验&lt;br/&gt;修订范围与模块不变量"]
+  H --&gt; I["原模块独立审计身份&lt;br/&gt;只复核变化内容和未变哈希"]
+  I --&gt; J{"复核后模块审计事项&lt;br/&gt;是否全部关闭"}
+  J -- "是" --&gt; Z
+  J -- "否：继续返回原模块作者" --&gt; G
+  J -- "需要外部处理或升级" --&gt; M["并行模块汇合后&lt;br/&gt;异常裁决智能体串行处理"]
+  M --&gt; G</pre><div class="diagram-note">未关闭或新增模块审计事项持续返回原模块作者；作者再次提交后仍由原模块独立审计身份复核，直至全部关闭。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  A["专业模块主流程&lt;br/&gt;下发写作合同、作者技能与专业知识"] --&gt; B["专业模块作者&lt;br/&gt;读取允许范围内的项目证据与专业参考"]
+  B --&gt; C["保存小节正文并提交模块结果"]
+  C --&gt; D["确定性校验&lt;br/&gt;目录、标题、来源与证据绑定"]
+  D --&gt; E["模块独立审计身份&lt;br/&gt;执行首次模块审计"]
+  E --&gt; F{"模块审计事项&lt;br/&gt;是否全部关闭"}
+  F -- "是" --&gt; Z["写入模块审计完成记录&lt;br/&gt;与模块终态"]
+  F -- "否：返回原模块作者" --&gt; G["原专业模块作者&lt;br/&gt;提交定向补丁与作者响应"]
+  G --&gt; H["确定性校验&lt;br/&gt;修订范围与模块不变量"]
+  H --&gt; I["原模块独立审计身份&lt;br/&gt;只复核变化内容和未变哈希"]
+  I --&gt; J{"复核后模块审计事项&lt;br/&gt;是否全部关闭"}
+  J -- "是" --&gt; Z
+  J -- "否：继续返回原模块作者" --&gt; G
+  J -- "需要外部处理或升级" --&gt; M["并行模块汇合后&lt;br/&gt;异常裁决智能体串行处理"]
+  M --&gt; G</pre></details></figure>
+<h3>并发与 reducer</h3><ul><li>五个 ready lane 同时获得业务调度资格，ProviderAdmissionController 另行限制全局/provider-model 并发（当前默认 8）。</li><li>每个 lane 内作者和 Auditor 串行闭环；不同 lane 可以并发。</li><li>一个 lane 失败时先 drain sibling；RecoveryStateStore 保留已完成 lane，只重试失败 lane。</li><li>只有目标 lane 全部 terminal，Reducer 才写 module aggregate 并允许 Cross。</li><li>模块审查有机器 preflight，但机器通过不能替代语义 Auditor。</li></ul></section>
+<section class="section" id="cross"><div class="kicker">14 · 跨模块流程</div><h2>跨模块责任流程</h2><figure class="diagram"><div class="diagram-title">图 10｜跨模块责任审计中的模块内循环与原审计外循环</div><pre class="mermaid">flowchart TB
+  S["冻结五个已批准专业模块"] --&gt; P["并行启动五个&lt;br/&gt;跨模块责任审计身份&lt;br/&gt;2.1・2.2・2.3・2.4・2.5"]
+  P --&gt; O["每个身份只写本责任模块&lt;br/&gt;其余四个模块只读"]
+  O --&gt; Q{"跨模块审计事项&lt;br/&gt;是否全部关闭"}
+  Q -- "是" --&gt; C["写入该责任流程完成记录"]
+  Q -- "否：返回原责任模块作者" --&gt; R["原责任模块作者&lt;br/&gt;定向修订责任模块"]
+  R --&gt; L["原模块独立审计身份&lt;br/&gt;执行局部回归审计或复核"]
+  L --&gt; LQ{"局部模块审计事项&lt;br/&gt;是否全部关闭"}
+  LQ -- "否：继续返回原模块作者" --&gt; R
+  LQ -- "是：回到原跨模块审计" --&gt; V["原跨模块责任审计身份&lt;br/&gt;给出逐项复核结论"]
+  V --&gt; N{"跨模块审计事项&lt;br/&gt;是否全部关闭"}
+  N -- "否：再次返回原责任模块作者" --&gt; R
+  N -- "是" --&gt; C
+  C --&gt; B["等待五个责任审计流程全部完成"]
+  B --&gt; D["写入跨模块完成门&lt;br/&gt;形成跨模块综合决策包"]</pre><div class="diagram-note">跨模块审计事项返回原责任模块作者后，先在作者与原模块独立审计身份之间完成局部模块闭环；局部模块审计关闭后才回到原跨模块审计。跨模块审计未关闭或产生新事项时，再次进入同一流程。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  S["冻结五个已批准专业模块"] --&gt; P["并行启动五个&lt;br/&gt;跨模块责任审计身份&lt;br/&gt;2.1・2.2・2.3・2.4・2.5"]
+  P --&gt; O["每个身份只写本责任模块&lt;br/&gt;其余四个模块只读"]
+  O --&gt; Q{"跨模块审计事项&lt;br/&gt;是否全部关闭"}
+  Q -- "是" --&gt; C["写入该责任流程完成记录"]
+  Q -- "否：返回原责任模块作者" --&gt; R["原责任模块作者&lt;br/&gt;定向修订责任模块"]
+  R --&gt; L["原模块独立审计身份&lt;br/&gt;执行局部回归审计或复核"]
+  L --&gt; LQ{"局部模块审计事项&lt;br/&gt;是否全部关闭"}
+  LQ -- "否：继续返回原模块作者" --&gt; R
+  LQ -- "是：回到原跨模块审计" --&gt; V["原跨模块责任审计身份&lt;br/&gt;给出逐项复核结论"]
+  V --&gt; N{"跨模块审计事项&lt;br/&gt;是否全部关闭"}
+  N -- "否：再次返回原责任模块作者" --&gt; R
+  N -- "是" --&gt; C
+  C --&gt; B["等待五个责任审计流程全部完成"]
+  B --&gt; D["写入跨模块完成门&lt;br/&gt;形成跨模块综合决策包"]</pre></details></figure>
+<h3>关键约束</h3><ul><li>每个 owner 从同一冻结的五模块批准快照开始，避免 reviewer 看见不同版本。</li><li>related 四模块只读；finding 只能写回 owner 模块。</li><li>owner 作者修订后，必须由原模块 Auditor 做局部回归；之后原 Cross owner 才能语义关闭。</li><li>无 finding 也必须产生 no-op completion，保证五路 barrier 完整。</li><li>快 owner 可先进入自己的局部闭环，不必等待慢 owner 完成 initial review；最终仍需五 owner barrier。</li></ul></section>
+<section class="section" id="chief-final"><div class="kicker">15 · 总编与成稿审查</div><h2>总编与成稿审计章节流程</h2><figure class="diagram"><div class="diagram-title">图 11｜总编与终审的章节级修订流程</div><pre class="mermaid">flowchart TB
+  X["跨模块综合决策包"] --&gt; C1["总编：第一章"]
+  X --&gt; C3["总编：第三章"]
+  SP["专项问题计划"] --&gt; C4["总编：第四章"]
+  M2["已批准的第二章五个专业模块"] --&gt; RED["运行时保护装配与章节汇总"]
+  C1 --&gt; RED
+  C3 --&gt; RED
+  C4 --&gt; RED
+  RED --&gt; F1["终审：第一章"]
+  RED --&gt; F3["终审：第三章"]
+  RED --&gt; F4["终审：第四章"]
+  F1 --&gt; Q{"哪些章节存在审查事项？"}
+  F3 --&gt; Q
+  F4 --&gt; Q
+  Q --&gt; C1R["只重派第一章总编"]
+  Q --&gt; C3R["只重派第三章总编"]
+  Q --&gt; C4R["只重派第四章总编"]
+  C1R --&gt; F1R["第一章原终审身份复核"]
+  C3R --&gt; F3R["第三章原终审身份复核"]
+  C4R --&gt; F4R["第四章原终审身份复核"]
+  F1R --&gt; DONE["终审完成记录"]
+  F3R --&gt; DONE
+  F4R --&gt; DONE
+</pre><div class="diagram-note">总编和成稿审计按章节运行；后续只重派存在审查项的章节。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  X["跨模块综合决策包"] --&gt; C1["总编：第一章"]
+  X --&gt; C3["总编：第三章"]
+  SP["专项问题计划"] --&gt; C4["总编：第四章"]
+  M2["已批准的第二章五个专业模块"] --&gt; RED["运行时保护装配与章节汇总"]
+  C1 --&gt; RED
+  C3 --&gt; RED
+  C4 --&gt; RED
+  RED --&gt; F1["终审：第一章"]
+  RED --&gt; F3["终审：第三章"]
+  RED --&gt; F4["终审：第四章"]
+  F1 --&gt; Q{"哪些章节存在审查事项？"}
+  F3 --&gt; Q
+  F4 --&gt; Q
+  Q --&gt; C1R["只重派第一章总编"]
+  Q --&gt; C3R["只重派第三章总编"]
+  Q --&gt; C4R["只重派第四章总编"]
+  C1R --&gt; F1R["第一章原终审身份复核"]
+  C3R --&gt; F3R["第三章原终审身份复核"]
+  C4R --&gt; F4R["第四章原终审身份复核"]
+  F1R --&gt; DONE["终审完成记录"]
+  F3R --&gt; DONE
+  F4R --&gt; DONE
+</pre></details></figure>
+<h3>按章输入边界</h3><div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>lane</th><th>主要输入</th><th>允许写入</th></tr></thead><tbody><tr><td>Chief Chapter 1</td><td>模块摘要、批准标记、背景输入</td><td>1.1/1.2/1.3 对应 part</td></tr><tr><td>Chief Chapter 3</td><td>CrossDecisionPack、模块边界与行动信息</td><td>3.1.1/3.1.2/3.1.3/3.2 part</td></tr><tr><td>Chief Chapter 4</td><td>immutable SpecialTopicPlan + 专项 Knowledge</td><td>计划定义的全部且仅有 4.n 小节</td></tr><tr><td>Final Chapter 1/3/4</td><td>对应章节正文、review_focus、finding/response、未变哈希</td><td>只提交 finding/verdict，不写正文</td></tr></tbody></table></div>
+<p>第二章五模块正文不作为 Chief 的自由生成任务，而由运行时保护并装配。Final 发现问题时只派发受影响章节的 Chief 修订与 Final recheck；未受影响章节不重跑。当前默认最多 3 个 Final 修订波次。</p></section>
+<section class="section" id="identity"><div class="kicker">16 · 身份与会话</div><h2>身份、会话与模型路由</h2>
+<div class="table-wrap"><table style="min-width:1180px"><thead><tr><th>对象</th><th>生命周期/键</th><th>关键行为</th></tr></thead><tbody><tr><td>Workflow AgentRunner</td><td>每个 live workflow 一个 registry</td><td>持有 identity → AgentLoop 映射；workflow 结束关闭，挂起时可保留。</td></tr><tr><td>IdentityLease</td><td>workflow_id + identity_key</td><td>跨进程排他，monotonic epoch；防止同一身份被两个 worker 同时驱动。</td></tr><tr><td>Agent session</td><td>identity_key 对应</td><td>系统身份稳定；每个新任务调用 begin_typed_task，只追加 task boundary/delta。</td></tr><tr><td>Provider route/model</td><td>identity 生命周期内固定</td><td>中途配置变化不替换已有 identity 的 route/model；需新 workflow/identity。</td></tr><tr><td>TaskAttemptStore</td><td>task envelope hash + execution profile + contract/subject hashes</td><td>匹配则恢复 terminal result；不匹配则拒绝错误复用。</td></tr><tr><td>ProviderAdmissionController</td><td>服务级共享</td><td>业务 lane readiness 与 API 并发/429 cooldown 分离；默认全局 8、provider-model 8。</td></tr></tbody></table></div>
+<div class="callout"><b>当前监控字段：</b> 统计和 UI 必须同时显示 <code>agent_definition_id</code> 与 <code>identity_key</code>。仅按 definition 聚合会把 5 个 module auditor、5 个 Cross owner、3 个 Chief/Final lane 混在一起。</div></section>
+<section class="section" id="recovery"><div class="kicker">17 · 恢复</div><h2>并发、恢复、结果复用与成本记录</h2><figure class="diagram"><div class="diagram-title">图 12｜恢复依据、结果复用与失败流程单元重试</div><pre class="mermaid">flowchart TB
+  UI["工作流状态文件&lt;br/&gt;只用于界面展示"] -. "状态投影" .-&gt; V["运行状态界面"]
+  S["恢复所依据的业务记录&lt;br/&gt;并行流程与阶段完成记录・任务尝试记录・身份租约・项目写入租约"] --&gt; R["恢复协调器"]
+  R --&gt; C{"已完成结果是否匹配当前合同"}
+  C -- "是" --&gt; U["复用已完成结果&lt;br/&gt;不再次调用模型"]
+  C -- "否" --&gt; T["只重试失败或失效的流程单元"]
+  U --&gt; B["等待同批任务结束"]
+  T --&gt; B
+  B --&gt; A["只执行一次阶段汇总"]
+  A --&gt; S2["更新并行流程与阶段完成记录"]
+</pre><div class="diagram-note">恢复以业务完成记录和任务结果为依据；当前合同仍匹配的已完成结果直接复用。</div><details><summary>查看 Mermaid 源码</summary><pre>flowchart TB
+  UI["工作流状态文件&lt;br/&gt;只用于界面展示"] -. "状态投影" .-&gt; V["运行状态界面"]
+  S["恢复所依据的业务记录&lt;br/&gt;并行流程与阶段完成记录・任务尝试记录・身份租约・项目写入租约"] --&gt; R["恢复协调器"]
+  R --&gt; C{"已完成结果是否匹配当前合同"}
+  C -- "是" --&gt; U["复用已完成结果&lt;br/&gt;不再次调用模型"]
+  C -- "否" --&gt; T["只重试失败或失效的流程单元"]
+  U --&gt; B["等待同批任务结束"]
+  T --&gt; B
+  B --&gt; A["只执行一次阶段汇总"]
+  A --&gt; S2["更新并行流程与阶段完成记录"]
+</pre></details></figure>
+<h3>恢复原则</h3><ul><li>UI checkpoint 不是恢复源；lane/aggregate record 才是。</li><li>已完成 task 的 input contract、execution profile、lease epoch 和 result 必须一致，才允许直接复用。</li><li>Finding、completion、review artifact 使用不可变写入；恢复重复写只允许字节/模型一致。</li><li>失败重试按 lane/affected chapter，不允许把整个阶段重新作为“一个大任务”重放。</li><li>Main exception 只能在 private-lane cohort 排空后序列化执行，避免在并行作者/审查者运行中改变全局决策。</li></ul>
+<h3>成本控制实际语义</h3><p><code>UsageLedger</code>记录 input/output/cached tokens、schema chars、重复字符、持续时间和估算费用；<code>StageCostController</code>在安全阶段边界 observe/warn/pause。当前预算 snapshot 明确标记 <code>limits_enforced=false</code> / <code>hard_request_limits_enforced=false</code>，因此不要把 max attempts/tokens 对外描述成“每次请求硬截断”。</p></section>
+<section class="section" id="artifacts"><div class="kicker">18 · 阶段制品</div><h2>运行目录与阶段制品</h2>
+<div class="path-tree">Work/
+├── report-template-role-skills/               # 跨 run 固定 bundle
+│   ├── author-2.1/SKILL.md ...
+│   ├── auditor-2.1/SKILL.md ...
+│   ├── chief-editor-chapter-1|3|4/SKILL.md
+│   ├── final-auditor/SKILL.md
+│   ├── boundary.json
+│   └── source.json
+├── leases/project-write/                       # 项目写 fencing
+├── report-versions/&lt;run&gt;/version.json
+└── runs/&lt;run&gt;/
+    ├── request.json
+    ├── input-snapshot.json
+    ├── frozen-project/{Inputs,Knowledge,Templates}/
+    ├── leases/identity/
+    ├── preparation/                            # manifest/taxonomy/evidence/coverage/completion
+    ├── context/                                # typed inputs / dispatch / knowledge projections
+    ├── task-attempts/ / recovery/              # terminal / lane / aggregate state
+    ├── drafts/&lt;task&gt;/r&lt;n&gt;/                    # durable prose parts
+    ├── modules/ / approved-modules/
+    ├── reviews/ / validation/
+    ├── ledgers/{claims,sources}.json
+    ├── report/ / source-index/ / templates/
+    ├── delivery/&lt;run&gt;-&lt;run&gt;/
+    ├── delivery-receipt.json
+    └── delivery-completion.json</div>
+<h3>Producer → Consumer 合同</h3><p>每个 run 会写 <code>handoff-contracts.json</code>，包含 template-skill-read、dispatch、module-validation、cross-review、synthesis、final-review、render 的 producer、consumer、input、output 与 content checks。这是运行时代码生成的实际交接矩阵，可作为调试入口。</p></section>
+<section class="section" id="delivery"><div class="kicker">19 · 交付</div><h2>确定性交付终态</h2>
+<ol><li>要求有效的 Final ReviewCompletionRecord 和 FinalAuditSnapshot。</li><li>重载已审计 EditedReport，验证 in-memory 未被篡改。</li><li>汇总 ClaimLedger / SourceLedger / E-* / photos / tables。</li><li>运行时绑定引用，生成 canonical Markdown；再次做最终结构校验。</li><li>生成 run-scoped Markdown、DOCX、证据来源索引和模板 provenance。</li><li>发布到 <code>Outputs/Reports</code>，同时发布 5 个 <code>Outputs/Modules/2.x.md</code>。</li><li>materialize delivery package、receipt、manifest，尝试写 ReportVersion。</li><li>写 <code>delivery-completion.json status=delivered</code>。</li><li><code>ReportingService._finalize_completed_run</code>逐个验证声明输出可读且非空；DOCX 必须可被 python-docx 打开，否则标记 failed_before_delivery。</li></ol>
+<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>公开交付</th><th>路径</th></tr></thead><tbody><tr><td>五模块 Markdown</td><td><code>Outputs/Modules/2.1.md</code> … <code>2.5.md</code></td></tr><tr><td>完整 Markdown</td><td><code>Outputs/Reports/配电安全专家咨询报告.md</code></td></tr><tr><td>完整 DOCX</td><td><code>Outputs/Reports/配电安全专家咨询报告.docx</code></td></tr><tr><td>来源索引</td><td><code>Outputs/Reports/证据与来源索引.md/.docx</code></td></tr><tr><td>run 交付包</td><td><code>Work/runs/&lt;run&gt;/delivery/&lt;run&gt;-&lt;run&gt;/</code></td></tr></tbody></table></div></section>
+<section class="section" id="inactive"><div class="kicker">角色定义清单</div><h2>当前未进入报告主流程的已定义角色</h2><div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>Agent 定义</th><th>当前派发状态</th><th>当前由哪个实现承担</th></tr></thead><tbody><tr><td>manifest-builder</td><td>Agent 模板存在，无业务派发点</td><td>真实 manifest 由 <code>ReportingService._build_manifest</code> 确定性生成</td></tr><tr><td>intake-parser</td><td>模板存在，无主链派发</td><td>真实解析由 <code>prepare_manifest_file</code> workers 执行</td></tr><tr><td>evidence-normalizer</td><td>模板存在，无主链派发</td><td>真实规范化由 <code>_normalize_evidence</code> 执行</td></tr><tr><td>coverage-evaluator</td><td>模板存在，无主链派发</td><td>真实 coverage 由 <code>evaluate_coverage</code> 执行</td></tr><tr><td>citation-builder</td><td>模板存在，无主链派发</td><td>引用由 ClaimLedger / renderer 确定性绑定</td></tr><tr><td>docx-renderer</td><td>模板存在，无主链派发</td><td>DOCX 由 PdsDocxRenderer / PackagedV2DocxCore 渲染</td></tr><tr><td>project-delivery</td><td>模板存在，无主链派发</td><td>交付由 <code>_deliver</code> 与 materialized receipt 完成</td></tr></tbody></table></div>
+<div class="callout">这些 Markdown 会被配置加载器读取为 AgentDefinition，但当前报告业务代码没有对应派发点。现行主流程中的资料清单、文件解析、证据规范化、资料覆盖、引用绑定、DOCX 渲染和交付由表中列出的确定性实现承担。</div></section>
+<section class="section" id="change-guides">
+<div class="kicker">代码关联</div>
+<h2>当前代码结构中的变更关联点</h2>
+<h3>A. 增加专业模块时涉及的现有位置</h3>
+<div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>实现区域</th><th>当前关联内容</th></tr></thead><tbody>
+<tr><td>报告目录</td><td><code>REPORT_MODULE_IDS</code>、报告目录工作簿解析、子模块归属校验。</td></tr>
+<tr><td>Agent 定义</td><td><code>module-2.x-specialist</code> 定义，以及模块审查员和跨模块审查员的身份展开规则。</td></tr>
+<tr><td>模板角色技能</td><td>固定身份技能编号、边界清单、来源记录和运行时身份映射。</td></tr>
+<tr><td>专业技能</td><td><code>templates/reporting/skills/2.x</code>、产品级和项目级覆盖目录、模块归属校验。</td></tr>
+<tr><td>结构化合同</td><td>模块编号 Literal、模块提交、跨模块责任模块、完成屏障和章节装配模型。</td></tr>
+<tr><td>工作流</td><td>模块任务生成、模块完成屏障、跨模块责任任务数量、第二章保护装配和交付清单。</td></tr>
+<tr><td>测试</td><td>并发任务数量、阶段屏障、失败恢复、固定标题和输出目录的测试数据。</td></tr>
+</tbody></table></div>
+<h3>B. 增加 Agent 身份时涉及的现有合同</h3>
+<div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>组成</th><th>当前实现位置</th></tr></thead><tbody>
+<tr><td>静态身份</td><td>Agent Markdown frontmatter、instructions 和配置加载器。</td></tr>
+<tr><td>业务派发</td><td>工作流中的 <code>_agent(...)</code> 调用点、任务信封和 session key。</td></tr>
+<tr><td>输入输出</td><td>结构化输入模型、提交模型和 Provider 可见的唯一提交 Schema。</td></tr>
+<tr><td>访问范围</td><td>制品能力编译、任务允许工具和当前 run 的制品引用。</td></tr>
+<tr><td>恢复记录</td><td>身份租约、任务尝试记录、阶段任务记录和完成记录。</td></tr>
+</tbody></table></div>
+<h3>C. 增加工具时涉及的现有边界</h3>
+<div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>组成</th><th>当前实现位置</th></tr></thead><tbody>
+<tr><td>工具实现</td><td><code>Tool</code> 子类、调用参数和工具结果结构。</td></tr>
+<tr><td>制品操作</td><td>制品描述中的可执行操作、文件类型和当前 run 范围。</td></tr>
+<tr><td>身份声明</td><td>AgentDefinition 中的候选工具列表。</td></tr>
+<tr><td>任务收敛</td><td>TaskEnvelope 的 <code>allowed_tools</code> 与制品能力交集。</td></tr>
+<tr><td>调用记录</td><td>任务尝试、Provider 使用记录、工具结果索引和续写状态。</td></tr>
+</tbody></table></div>
+<h3>D. 增加或修改技能时的现有入口</h3>
+<div class="table-wrap"><table style="min-width:1050px"><thead><tr><th>内容类型</th><th>当前存储与加载路径</th></tr></thead><tbody>
+<tr><td>模板角色技能</td><td><code>Work/report-template-role-skills</code> 固定技能包，由模板技能蒸馏任务生成并按身份内联。</td></tr>
+<tr><td>专业技能</td><td>内置、产品级、项目级三层解析，同一技能编号由后加载层覆盖。</td></tr>
+<tr><td>知识库</td><td><code>Knowledge</code> 与可选全局知识库，按 run 冻结并注册为 R-* 参考。</td></tr>
+<tr><td>项目事实</td><td><code>Inputs</code> 和结构化用户补充，经准备阶段形成当前 run 的 E-* 证据。</td></tr>
+</tbody></table></div>
+</section>
+<section class="section" id="tests">
+<div class="kicker">验证入口</div>
+<h2>当前测试契约与验证顺序</h2>
+<div class="table-wrap"><table style="min-width:1180px"><thead><tr><th>测试文件或目录</th><th>代码中覆盖的运行行为</th><th>对应关注点</th></tr></thead><tbody>
+<tr><td><code>test_module_auditor_concurrency.py</code></td><td>五模块同时准入、单任务失败后同批任务继续结束、已完成模块恢复复用。</td><td>模块身份与会话隔离、模块完成屏障、失败模块单独恢复。</td></tr>
+<tr><td><code>test_cross_owner_concurrency.py</code></td><td>五个责任模块审查任务独立推进、多轮复核、失败责任模块恢复。</td><td>冻结五模块输入、责任模块写入边界、跨模块完成屏障。</td></tr>
+<tr><td><code>test_workflow_chapter_lanes.py</code></td><td>章节总编和成稿审查按章并行，仅调度受影响章节返修。</td><td>第二章保护装配、可选第 4 章、章节级完成记录。</td></tr>
+<tr><td><code>test_capabilities.py</code></td><td>跨运行引用、路径越界和未授权制品操作被拒绝。</td><td>内联、保留哈希、引用三种交付方式和 P-* 图片编号。</td></tr>
+<tr><td><code>test_execution_runtime.py</code></td><td>模型路由、身份绑定、任务执行配置和任务尝试恢复。</td><td>身份生命周期内模型路由固定、完成结果复用。</td></tr>
+<tr><td><code>test_chapter_lane_tool_plumbing.py</code></td><td>章节正文分段写入、状态查询和结构化提交的工具边界。</td><td>章节 part 编号、修订目录和提交结构。</td></tr>
+<tr><td><code>tests/core/artifacts/test_run_135_tool_error_replay.py</code></td><td>工具错误记录、重复调用和对话历史中的工具结果一致性。</td><td>工具结果复用与错误重放。</td></tr>
+</tbody></table></div>
+</section>
+<section class="section" id="sources"><div class="kicker">23 · 代码索引</div><h2>代码位置索引</h2>
+<div class="table-wrap"><table style="min-width:1220px"><thead><tr><th>子系统</th><th>主要文件 / 符号</th></tr></thead><tbody><tr><td>启动</td><td><code>manyselves/__main__.py</code>；<code>app.py::ManyselvesApp</code>；<code>application/runtime_host.py::RuntimeHost</code></td></tr><tr><td>常驻运行时</td><td><code>core/loops/manager.py::LoopManager</code>；<code>agent_loop.py::AgentLoop</code>；<code>bus.py::MessageBus</code></td></tr><tr><td>Main 路由 Prompt</td><td><code>templates/agents/main_agent.md</code>；<code>core/prompts/loader.py</code></td></tr><tr><td>报告入口</td><td><code>core/tools/reporting_tool.py</code></td></tr><tr><td>服务/冻结/锁</td><td><code>core/reporting/service.py</code>；<code>input_snapshot.py</code>；<code>parallel_runtime.py</code></td></tr><tr><td>主编排</td><td><code>core/reporting/workflow.py::ReportWorkflowRunner</code></td></tr><tr><td>审查闭环</td><td><code>core/reporting/review_lifecycle.py</code></td></tr><tr><td>Agent runner</td><td><code>core/reporting/agent_runner.py</code>；<code>execution_runtime.py</code>；<code>provider_admission.py</code></td></tr><tr><td>Schema</td><td><code>agentic_models.py</code>；<code>input_contracts.py</code>；<code>submission_contracts.py</code></td></tr><tr><td>权限</td><td><code>capabilities.py::compile_agent_access</code>；<code>core/artifacts/*</code>；<code>reporting_collaboration_tools.py</code></td></tr><tr><td>模板 Skill</td><td><code>workflow.py::_distill_template_skill/_load_template_skill</code>；<code>templates/reporting/agents/template-distiller.md</code></td></tr><tr><td>专业 Skill</td><td><code>module_skills.py</code>；<code>skills/resolver.py</code>；<code>skills/governance.py</code>；<code>skills/service.py</code></td></tr><tr><td>Knowledge</td><td><code>research/knowledge_context.py</code>；<code>research/reference_library.py</code></td></tr><tr><td>Agent 模板</td><td><code>templates/reporting/agents/*.md</code></td></tr><tr><td>渲染/交付</td><td><code>rendering/*</code>；<code>workflow.py::_deliver</code>；<code>delivery.py</code>；<code>versions.py</code></td></tr><tr><td>测试</td><td><code>tests/reporting/*</code>；<code>tests/core/artifacts/*</code></td></tr></tbody></table></div>
+</section>
+</div><footer class="foot">本报告以固定提交 5298ec55d48d6cf10413c0ab73b01351a4b315a3 为基线；未将 README、设计说明或交接文档作为事实来源。</footer></main></div>
+<script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
+
+const diagramItems = Array.from(document.querySelectorAll('.mermaid')).map((element, index) => ({
+  element,
+  index,
+  source: element.textContent.trim()
+}));
+
+function currentTheme(){
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function mermaidConfig(theme){
+  const dark = theme === 'dark';
+  const c = dark ? {
+    bg:'#111827', text:'#f8fafc', primary:'#203a60', primaryBorder:'#78a7ff',
+    secondary:'#123f3c', secondaryBorder:'#5eead4', tertiary:'#49361c', tertiaryBorder:'#fbbf24',
+    line:'#b8c4d4', cluster:'#172233', clusterBorder:'#64748b', note:'#3d3218', noteBorder:'#f0c35a'
+  } : {
+    bg:'#ffffff', text:'#172033', primary:'#eaf1ff', primaryBorder:'#3f64a8',
+    secondary:'#eaf8f5', secondaryBorder:'#2b7d73', tertiary:'#fff3df', tertiaryBorder:'#b66a16',
+    line:'#455468', cluster:'#f7f9fc', clusterBorder:'#8b99aa', note:'#fff7df', noteBorder:'#c28a2c'
+  };
+  return {
+    startOnLoad:false,
+    securityLevel:'loose',
+    theme:'base',
+    deterministicIds:false,
+    fontFamily:'PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Segoe UI, Arial, sans-serif',
+    flowchart:{useMaxWidth:false,htmlLabels:false,curve:'linear',nodeSpacing:34,rankSpacing:48,padding:18,wrappingWidth:190},
+    sequence:{useMaxWidth:false,wrap:true,diagramMarginX:24,diagramMarginY:20,actorMargin:42,width:138,height:58,boxMargin:10,messageMargin:34,noteMargin:12,mirrorActors:false},
+    state:{useMaxWidth:false},
+    themeVariables:{
+      background:c.bg,textColor:c.text,fontSize:'16px',
+      primaryColor:c.primary,primaryTextColor:c.text,primaryBorderColor:c.primaryBorder,
+      secondaryColor:c.secondary,secondaryTextColor:c.text,secondaryBorderColor:c.secondaryBorder,
+      tertiaryColor:c.tertiary,tertiaryTextColor:c.text,tertiaryBorderColor:c.tertiaryBorder,
+      mainBkg:c.primary,nodeBorder:c.primaryBorder,lineColor:c.line,
+      clusterBkg:c.cluster,clusterBorder:c.clusterBorder,
+      edgeLabelBackground:c.bg,
+      actorBkg:c.primary,actorBorder:c.primaryBorder,actorTextColor:c.text,actorLineColor:c.line,
+      signalColor:c.line,signalTextColor:c.text,
+      labelBoxBkgColor:c.secondary,labelBoxBorderColor:c.secondaryBorder,labelTextColor:c.text,
+      loopTextColor:c.text,noteBkgColor:c.note,noteBorderColor:c.noteBorder,noteTextColor:c.text,
+      activationBkgColor:c.secondary,activationBorderColor:c.secondaryBorder,
+      sequenceNumberColor:c.text,
+      stateBkg:c.primary,stateBorder:c.primaryBorder,stateLabelColor:c.text,
+      compositeBackground:c.cluster,altBackground:c.cluster,
+      titleColor:c.text
+    }
+  };
+}
+
+function stabilizeMermaidSvg(svg){
+  if (!svg) return;
+  svg.style.overflow = 'visible';
+  const viewBox = svg.viewBox && svg.viewBox.baseVal;
+  if (viewBox && viewBox.width > 0 && !svg.dataset.paddedViewbox){
+    const pad = 14;
+    svg.setAttribute('viewBox', `${viewBox.x - pad} ${viewBox.y - pad} ${viewBox.width + pad * 2} ${viewBox.height + pad * 2}`);
+    svg.dataset.paddedViewbox = 'true';
+  }
+  svg.querySelectorAll('g.node').forEach(node => {
+    const foreignObject = node.querySelector('foreignObject');
+    const rect = node.querySelector('rect');
+    if (!foreignObject || !rect || foreignObject.dataset.labelPadded) return;
+    const extra = 18;
+    const fx = Number(foreignObject.getAttribute('x'));
+    const fw = Number(foreignObject.getAttribute('width'));
+    const rx = Number(rect.getAttribute('x'));
+    const rw = Number(rect.getAttribute('width'));
+    if (Number.isFinite(fx) && Number.isFinite(fw)){
+      foreignObject.setAttribute('x', String(fx - extra / 2));
+      foreignObject.setAttribute('width', String(fw + extra));
+    }
+    if (Number.isFinite(rx) && Number.isFinite(rw)){
+      rect.setAttribute('x', String(rx - extra / 2));
+      rect.setAttribute('width', String(rw + extra));
+    }
+    foreignObject.dataset.labelPadded = 'true';
+  });
+}
+
+function setupDiagramControls(){
+  document.querySelectorAll('.diagram').forEach(figure => {
+    const block = figure.querySelector('.mermaid');
+    if (!block) return;
+    let viewport = figure.querySelector('.mermaid-viewport');
+    if (!viewport){
+      viewport = document.createElement('div');
+      viewport.className = 'mermaid-viewport';
+      block.parentNode.insertBefore(viewport, block);
+      viewport.appendChild(block);
+    }
+    if (!figure.querySelector('.diagram-toolbar')){
+      const toolbar = document.createElement('div');
+      toolbar.className = 'diagram-toolbar';
+      toolbar.innerHTML = `
+        <button class="diagram-tool" type="button" data-action="out" aria-label="缩小图表">缩小</button>
+        <span class="diagram-zoom-label">100%</span>
+        <button class="diagram-tool" type="button" data-action="in" aria-label="放大图表">放大</button>
+        <button class="diagram-tool" type="button" data-action="reset">复位</button>
+        <button class="diagram-tool" type="button" data-action="fullscreen">全屏</button>`;
+      const title = figure.querySelector('.diagram-title');
+      title.insertAdjacentElement('afterend', toolbar);
+      figure.dataset.zoom = '1';
+      toolbar.addEventListener('click', event => {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const action = button.dataset.action;
+        if (action === 'fullscreen'){
+          if (document.fullscreenElement === figure) document.exitFullscreen();
+          else figure.requestFullscreen?.();
+          return;
+        }
+        let zoom = Number(figure.dataset.zoom || 1);
+        if (action === 'in') zoom += .2;
+        if (action === 'out') zoom -= .2;
+        if (action === 'reset') zoom = 1;
+        setDiagramZoom(figure, zoom);
+      });
+    }
+  });
+}
+
+function expandSvgViewBox(svg){
+  try{
+    const box = svg.getBBox();
+    if (!Number.isFinite(box.width) || box.width <= 0 || box.height <= 0) return;
+    const pad = 28;
+    svg.setAttribute('viewBox', `${box.x - pad} ${box.y - pad} ${box.width + pad * 2} ${box.height + pad * 2}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+  }catch(_error){}
+}
+
+function setDiagramZoom(figure, zoom){
+  zoom = Math.max(.6, Math.min(2.2, Math.round(zoom * 10) / 10));
+  figure.dataset.zoom = String(zoom);
+  const label = figure.querySelector('.diagram-zoom-label');
+  if (label) label.textContent = `${Math.round(zoom * 100)}%`;
+  const viewport = figure.querySelector('.mermaid-viewport');
+  const svg = figure.querySelector('.mermaid svg');
+  if (!viewport || !svg || !svg.viewBox || !svg.viewBox.baseVal.width) return;
+  const viewBox = svg.viewBox.baseVal;
+  const available = Math.max(320, viewport.clientWidth - 48);
+  const fit = viewBox.width < available ? Math.min(1.15, available / viewBox.width) : 1;
+  const scale = fit * zoom;
+  svg.style.width = `${Math.ceil(viewBox.width * scale)}px`;
+  svg.style.height = `${Math.ceil(viewBox.height * scale)}px`;
+}
+
+function refreshDiagramSizes(){
+  document.querySelectorAll('.diagram').forEach(figure => setDiagramZoom(figure, Number(figure.dataset.zoom || 1)));
+}
+
+async function renderAllMermaid(){
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  mermaid.initialize(mermaidConfig(currentTheme()));
+  for (const item of diagramItems){
+    try{
+      const renderId = `manyselves-mermaid-${item.index}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      const {svg, bindFunctions} = await mermaid.render(renderId, item.source);
+      item.element.innerHTML = svg;
+      stabilizeMermaidSvg(item.element.querySelector('svg'));
+      item.element.classList.remove('render-error');
+      if (bindFunctions) bindFunctions(item.element);
+    }catch(error){
+      item.element.textContent = `Mermaid 渲染失败：${error?.message || error}\n\n${item.source}`;
+      item.element.classList.add('render-error');
+    }
+  }
+  try{ await document.fonts.ready; }catch(_error){}
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  document.querySelectorAll('.mermaid svg').forEach(expandSvgViewBox);
+  refreshDiagramSizes();
+}
+
+window.toggleSources = function(){
+  const details = Array.from(document.querySelectorAll('.diagram details'));
+  const shouldOpen = details.some(item => !item.open);
+  details.forEach(item => item.open = shouldOpen);
+};
+window.printReport = function(){window.print();};
+window.toggleTheme = async function(){
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try{ localStorage.setItem('manyselves-report-theme', next); }catch(_error){}
+  updateThemeButton();
+  await renderAllMermaid();
+};
+function updateThemeButton(){
+  const button = document.getElementById('themeToggle');
+  if (button) button.textContent = currentTheme() === 'dark' ? '切换浅色' : '切换深色';
+}
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(refreshDiagramSizes, 120);
+});
+document.addEventListener('fullscreenchange', () => setTimeout(refreshDiagramSizes, 80));
+
+setupDiagramControls();
+updateThemeButton();
+await renderAllMermaid();</script>
+</body></html>
