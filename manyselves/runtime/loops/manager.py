@@ -32,7 +32,7 @@ from ..tools import (
     TaskBoard,
 )
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
-from ..tools.registry import ToolRegistry
+from ..tools.registry import Tool, ToolRegistry
 from .agent_loop import AgentLoop
 from .bus import MessageBus
 
@@ -234,6 +234,19 @@ class LoopManager:
             AgentLoop instance or None if not found.
         """
         return self._loops.get(normalize_agent_id(agent_id))
+
+    def register_agent_tool(
+        self,
+        agent_id: AgentId | AgentType,
+        tool: Tool,
+    ) -> bool:
+        """Register an Application-composed tool on an existing Agent loop."""
+
+        loop = self.get_loop(agent_id)
+        if loop is None:
+            return False
+        loop.tools.register(tool)
+        return True
 
     def get_agent_session_id(self, agent_id: AgentId | AgentType) -> str | None:
         loop = self.get_loop(agent_id)

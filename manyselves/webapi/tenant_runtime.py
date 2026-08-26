@@ -13,6 +13,7 @@ from uuid import uuid4
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.global_knowledge_service import GlobalKnowledgeService
+from ..application.main_workflow_tool import attach_main_workflow_tool
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
@@ -75,6 +76,11 @@ class TenantRuntime:
         )
         await previous.close()
         self.workflow_projection = replacement
+        attach_main_workflow_tool(
+            self.runtime_host,
+            projection_resolver=lambda: self.workflow_projection,
+            conversation_resolver=lambda: self.conversation_service,
+        )
 
 
 TenantFactory = Callable[[str, Path, WebSettings], Awaitable[TenantRuntime]]
@@ -199,7 +205,7 @@ async def start_tenant_runtime(
     event_store = EventStore(tenant_settings.event_db_path)
     _attach_event_persistence(broker, event_store)
     broker.start()
-    return TenantRuntime(
+    runtime = TenantRuntime(
         account_id=account_id,
         data_root=data_root,
         web_settings=tenant_settings,
@@ -214,6 +220,12 @@ async def start_tenant_runtime(
         event_store=event_store,
         workflow_projection=workflow_projection,
     )
+    attach_main_workflow_tool(
+        host,
+        projection_resolver=lambda: runtime.workflow_projection,
+        conversation_resolver=lambda: runtime.conversation_service,
+    )
+    return runtime
 
 
 class TenantRuntimeManager:

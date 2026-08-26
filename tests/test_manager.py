@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from manyselves.config.schema import ApiConfig, AppConfig
 from manyselves.interfaces.types import AgentType
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.loops.manager import LoopManager
+from manyselves.runtime.tools.registry import Tool
 
 
 @pytest.fixture
@@ -65,6 +67,16 @@ def test_manager_loop_lookup_uses_string_id(manager):
     assert manager.get_loop("module-2.4-specialist") is manager._loops[
         "module-2.4-specialist"
     ]
+
+
+def test_manager_registers_an_application_tool_on_an_existing_agent_loop(manager):
+    loop = SimpleNamespace(tools=manager._create_tools_for_agent("main"))
+    manager._loops["main"] = loop
+    tool = Tool()
+    tool.name = "application-tool"
+
+    assert manager.register_agent_tool("main", tool) is True
+    assert loop.tools.get("application-tool") is tool
 
 
 def test_subscribes_to_restart(manager):
@@ -132,6 +144,7 @@ async def test_start_creates_loops(mock_factory, manager):
     system_prompt = manager._loops["main"]._system_prompt_override
     assert system_prompt is not None
     assert "通用协作 Agent" in system_prompt
+    assert "manage_workflows" in system_prompt
     assert "<agent_identity" not in system_prompt
     assert "run_reporting_workflow" not in system_prompt
     assert all(

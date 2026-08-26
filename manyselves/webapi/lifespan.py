@@ -14,6 +14,7 @@ from ..application.async_ownership import await_owned
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.global_knowledge_service import GlobalKnowledgeService
+from ..application.main_workflow_tool import attach_main_workflow_tool
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
@@ -284,6 +285,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.conversation_service = conversations
         app.state.workflow_projection = workflow_projection
+        attach_main_workflow_tool(
+            host,
+            projection_resolver=lambda: app.state.workflow_projection,
+            conversation_resolver=lambda: app.state.conversation_service,
+        )
 
         async def rebind_workflow_projection(workspace) -> None:
             previous = app.state.workflow_projection
@@ -293,6 +299,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             await previous.close()
             app.state.workflow_projection = replacement
+            attach_main_workflow_tool(
+                app.state.runtime_host,
+                projection_resolver=lambda: app.state.workflow_projection,
+                conversation_resolver=lambda: app.state.conversation_service,
+            )
 
         app.state.rebind_workflow_projection = rebind_workflow_projection
         app.state.python_run_service = python_runs
