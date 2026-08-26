@@ -65,6 +65,7 @@ class LoopManager:
         self._task_board = TaskBoard()
         self.manifest_manager = ManifestManager(self.workspace)
         self._file_state_managers: dict[str, FileStateManager] = {}
+        self._application_tools: dict[str, dict[str, Tool]] = {}
         self._artifact_gateway = ArtifactGateway(
             self.workspace, ArtifactGrant("main", "main", "main", "main")
         )
@@ -223,6 +224,8 @@ class LoopManager:
             artifact_gateway=self._artifact_gateway,
         )
         self._loops["main"] = loop
+        for tool in self._application_tools.get("main", {}).values():
+            loop.tools.register(tool)
 
     def get_loop(self, agent_id: AgentId | AgentType) -> "AgentLoop | None":
         """Get an agent loop by registry identifier.
@@ -242,10 +245,11 @@ class LoopManager:
     ) -> bool:
         """Register an Application-composed tool on an existing Agent loop."""
 
-        loop = self.get_loop(agent_id)
-        if loop is None:
-            return False
-        loop.tools.register(tool)
+        normalized = normalize_agent_id(agent_id)
+        self._application_tools.setdefault(normalized, {})[tool.name] = tool
+        loop = self.get_loop(normalized)
+        if loop is not None:
+            loop.tools.register(tool)
         return True
 
     def get_agent_session_id(self, agent_id: AgentId | AgentType) -> str | None:

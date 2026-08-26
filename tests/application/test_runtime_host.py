@@ -151,6 +151,11 @@ class _ProviderLoopBoundary:
         self.start_calls = 0
         self.stop_calls = 0
         self.running = False
+        self.registered_tools: list[tuple[str, object]] = []
+
+    def register_agent_tool(self, agent_id: str, tool: object) -> bool:
+        self.registered_tools.append((agent_id, tool))
+        return True
 
     async def start(self) -> None:
         self.start_calls += 1
@@ -1007,6 +1012,29 @@ async def test_replace_loop_manager_uses_factory_and_keeps_shared_bus(
         assert bus.shutdown_calls == 0
     finally:
         await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_replace_loop_manager_replays_application_tool_factory(
+    tmp_path: Path,
+) -> None:
+    host, _, _, _, created, _, _ = _provider_runtime(
+        tmp_path,
+        [_LoopControl(), _LoopControl()],
+    )
+    await host.start(tmp_path / "workspace")
+
+    host.register_agent_tool_factory(
+        "main",
+        "manage_workflows",
+        lambda: object(),
+    )
+    await host.replace_loop_manager()
+
+    assert created[0].registered_tools[0][0] == "main"
+    assert created[1].registered_tools[0][0] == "main"
+
+    await host.stop()
 
 
 @pytest.mark.asyncio

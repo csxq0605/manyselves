@@ -107,16 +107,23 @@ def attach_main_workflow_tool(
 ) -> bool:
     """Attach the generic Application workflow port to an existing Main loop."""
 
+    def factory() -> ManageWorkflowsTool:
+        return ManageWorkflowsTool(
+            projection_resolver=projection_resolver,
+            conversation_resolver=conversation_resolver,
+        )
+
+    register_factory = getattr(runtime_host, "register_agent_tool_factory", None)
+    if callable(register_factory):
+        return bool(register_factory("main", ManageWorkflowsTool.name, factory))
+
     manager = getattr(runtime_host, "loop_manager", None)
-    register = getattr(manager, "register_agent_tool", None)
-    if not callable(register):
+    register_tool = getattr(manager, "register_agent_tool", None)
+    if not callable(register_tool):
         return False
     return bool(
-        register(
+        register_tool(
             "main",
-            ManageWorkflowsTool(
-                projection_resolver=projection_resolver,
-                conversation_resolver=conversation_resolver,
-            ),
+            factory(),
         )
     )
