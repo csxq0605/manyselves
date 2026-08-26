@@ -83,10 +83,10 @@ def test_get_filename_normalizes_hyphens_for_task_roles(agents_dir):
     assert loader._get_filename("evidence-auditor") == "evidence_auditor_agent.md"
 
 
-def test_packaged_main_prompt_is_capability_neutral():
+def test_packaged_main_prompt_preserves_distribution_demo_entrypoint():
     prompt = PromptLoader().load_prompt("main")
 
-    assert "通用协作 Agent" in prompt
-    assert "工作流页面" in prompt
-    assert "run_reporting_workflow" not in prompt
-    assert "配电报告" not in prompt
+    assert "配电安全服务 Demo" in prompt
+    assert "run_reporting_workflow" in prompt
+    assert "不需要先列出工作流或读取 Schema" in prompt
+    assert "Kernel 保持无状态且业务无关" in prompt

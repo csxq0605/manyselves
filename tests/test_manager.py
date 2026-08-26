@@ -143,10 +143,10 @@ async def test_start_creates_loops(mock_factory, manager):
     assert set(manager._loops) == {"main"}
     system_prompt = manager._loops["main"]._system_prompt_override
     assert system_prompt is not None
-    assert "通用协作 Agent" in system_prompt
-    assert "manage_workflows" in system_prompt
+    assert "配电安全服务 Demo" in system_prompt
+    assert "run_reporting_workflow" in system_prompt
     assert "<agent_identity" not in system_prompt
-    assert "run_reporting_workflow" not in system_prompt
+    assert "manage_workflows" not in system_prompt
     assert all(
         legacy not in manager._loops
         for legacy in ("data_analysis", "plotting", "theory", "report")

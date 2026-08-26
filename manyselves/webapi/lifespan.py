@@ -14,13 +14,15 @@ from ..application.async_ownership import await_owned
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.global_knowledge_service import GlobalKnowledgeService
-from ..application.main_workflow_tool import attach_main_workflow_tool
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_services import build_runtime_services_view
 from ..application.workflow_projection import WorkflowProjectionFacade
+from ..capabilities.distribution_reporting.adapters.main_tool import (
+    attach_main_reporting_tool,
+)
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
 from ..runtime.loops.bus import MessageBus
 from .accounts import AccountCatalog
@@ -285,7 +287,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.conversation_service = conversations
         app.state.workflow_projection = workflow_projection
-        attach_main_workflow_tool(
+        attach_main_reporting_tool(
             host,
             projection_resolver=lambda: app.state.workflow_projection,
             conversation_resolver=lambda: app.state.conversation_service,
@@ -299,7 +301,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             await previous.close()
             app.state.workflow_projection = replacement
-            attach_main_workflow_tool(
+            attach_main_reporting_tool(
                 app.state.runtime_host,
                 projection_resolver=lambda: app.state.workflow_projection,
                 conversation_resolver=lambda: app.state.conversation_service,

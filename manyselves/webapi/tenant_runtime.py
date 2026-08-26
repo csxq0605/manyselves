@@ -13,7 +13,6 @@ from uuid import uuid4
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.global_knowledge_service import GlobalKnowledgeService
-from ..application.main_workflow_tool import attach_main_workflow_tool
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
@@ -21,6 +20,9 @@ from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
 from ..application.runtime_services import build_runtime_services_view
 from ..application.workflow_projection import WorkflowProjectionFacade
+from ..capabilities.distribution_reporting.adapters.main_tool import (
+    attach_main_reporting_tool,
+)
 from ..config import ConfigManager
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
 from ..runtime.loops.bus import MessageBus
@@ -76,7 +78,7 @@ class TenantRuntime:
         )
         await previous.close()
         self.workflow_projection = replacement
-        attach_main_workflow_tool(
+        attach_main_reporting_tool(
             self.runtime_host,
             projection_resolver=lambda: self.workflow_projection,
             conversation_resolver=lambda: self.conversation_service,
@@ -220,7 +222,7 @@ async def start_tenant_runtime(
         event_store=event_store,
         workflow_projection=workflow_projection,
     )
-    attach_main_workflow_tool(
+    attach_main_reporting_tool(
         host,
         projection_resolver=lambda: runtime.workflow_projection,
         conversation_resolver=lambda: runtime.conversation_service,

@@ -1026,7 +1026,7 @@ async def test_replace_loop_manager_replays_application_tool_factory(
 
     host.register_agent_tool_factory(
         "main",
-        "manage_workflows",
+        "run_reporting_workflow",
         lambda: object(),
     )
     await host.replace_loop_manager()
