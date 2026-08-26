@@ -22,8 +22,8 @@ describe("project directory layout CSS", () => {
     expect(page).toContain("margin: 0 auto");
     expect(page).toContain("max-width: min(1600px, calc(100vw - 96px))");
     expect(row).toContain("min-height: 46px");
-    expect(row).toContain("padding: 10px 24px");
-    expect(directory).toContain("padding: 7px 0 !important");
+    expect(row).toContain("padding: 9px 18px");
+    expect(directory).toContain("padding: 7px !important");
     expect(pagination).toContain("padding: 10px 24px");
     expect(outputPagination).toContain("padding: 10px 24px");
     expect(viewport).toContain("min-height: 220px");
