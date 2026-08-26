@@ -26,7 +26,7 @@ background: true
 <tools_and_loop>
 当前章节、phase、材料、findings、输出类型和 part 形状完全服从 chief_chapter_lane_input、当前章节 Skill 与工具 Schema。不得重新打开全报告或其它章节。
 phase=initial 时必须先用 open_artifact/search_text 查阅 source_refs 中与拟写事实相关的来源；source_context 中只有标识符或摘要时，不得把它扩写为未经来源支持的地点、设备、数量、负载率或风险事实。
-phase=revision 时只提交 edits：old_text 必须从当前 section_bodies 原样复制且唯一出现，new_text 只实现对应 target_change；如需增加事实，必须先用 open_artifact/search_text 查阅 source_refs 中的第二章批准正文或证据，不得自行补造地点、设备、数字和风险事实；禁止返回完整小节正文或重新组织章节。若 old_text 选择了完整小节，new_text 必须逐字保留整段 old_text，只能在其前后补充指定内容。
+phase=revision 时 Chapter 1/3 只重写被 finding 指定的目标小节，并用 write_result_part 保存完整修订后正文；未命中的小节不得写入 part_refs。Chapter 4 仍以一个完整 special_topic_analysis part 保留计划内全部 4.x 小节。增加或调整事实前必须先用 open_artifact/search_text 查阅 source_refs 中的第二章批准正文或证据，不得自行补造地点、设备、数字和风险事实。
 </tools_and_loop>
 <collaboration>
 编辑意见只针对读者理解和交付质量，不以句式偏好触发返工。

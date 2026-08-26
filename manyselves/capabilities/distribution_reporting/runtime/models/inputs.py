@@ -317,10 +317,8 @@ def _validate_chapter_lane_scope(
     chapter_id: str,
     section_ids: list[str],
     special_topic_plan: SpecialTopicPlan | None,
-    *,
-    complete: bool = True,
 ) -> None:
-    """Validate one lane's active chapter scope without copying the report."""
+    """Validate one lane's complete active scope without copying the report."""
 
     if chapter_id not in CHAPTER_IDS:
         raise ValueError(f"unsupported chapter lane: {chapter_id}")
@@ -328,25 +326,17 @@ def _validate_chapter_lane_scope(
         raise ValueError("chapter lane section_ids must be non-empty and unique")
     if chapter_id == "1":
         expected = set(CHAPTER1_SECTION_IDS)
-        if not set(section_ids).issubset(expected):
-            raise ValueError(f"Chapter 1 lane must stay inside {sorted(expected)}")
-        if complete and set(section_ids) != expected:
+        if set(section_ids) != expected:
             raise ValueError(f"Chapter 1 lane must cover exactly {sorted(expected)}")
     elif chapter_id == "3":
         expected = set(CHAPTER3_SECTION_IDS)
-        if not set(section_ids).issubset(expected):
-            raise ValueError(f"Chapter 3 lane must stay inside {sorted(expected)}")
-        if complete and set(section_ids) != expected:
+        if set(section_ids) != expected:
             raise ValueError(f"Chapter 3 lane must cover exactly {sorted(expected)}")
     else:
         if special_topic_plan is None:
             raise ValueError("Chapter 4 lane requires special_topic_plan")
         expected = set(chapter_section_ids("4", special_topic_plan))
-        if not set(section_ids).issubset(expected):
-            raise ValueError(
-                "Chapter 4 lane section_ids must stay inside special_topic_plan"
-            )
-        if complete and set(section_ids) != expected:
+        if set(section_ids) != expected:
             raise ValueError(
                 "Chapter 4 lane section_ids must exactly match special_topic_plan"
             )
@@ -373,12 +363,7 @@ class ChiefChapterLaneInput(StrictModel):
 
     @model_validator(mode="after")
     def lane_is_complete_and_local(self) -> "ChiefChapterLaneInput":
-        _validate_chapter_lane_scope(
-            self.chapter_id,
-            self.section_ids,
-            self.special_topic_plan,
-            complete=self.phase == "initial",
-        )
+        _validate_chapter_lane_scope(self.chapter_id, self.section_ids, self.special_topic_plan)
         if self.phase == "revision" and set(self.section_bodies) != set(self.section_ids):
             raise ValueError("Chief revision lane section_bodies must exactly match section_ids")
         if any(not body.strip() for body in self.section_bodies.values()):

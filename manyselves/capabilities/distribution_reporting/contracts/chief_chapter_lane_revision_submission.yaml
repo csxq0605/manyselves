@@ -1,5 +1,5 @@
 id: chief_chapter_lane_revision_submission
-version: 1.1.0
+version: 1.2.0
 description: Current Reporting chief_chapter_lane_revision_submission contract
 adapter: pydantic
 model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:ChiefChapterLaneRevisionSubmission

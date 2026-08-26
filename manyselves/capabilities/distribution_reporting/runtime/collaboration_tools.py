@@ -732,11 +732,11 @@ class SubmitResultTool(_ResultTool):
         self,
         commit: ChiefChapterLaneSubmission | ChiefChapterLaneRevisionSubmission,
     ) -> ChiefChapterLaneSubmission | ChiefChapterLaneRevisionSubmission:
-        """Normalize one typed initial-part or exact-text revision submission.
+        """Resolve a chapter lane's submitted refs to current-task saved parts.
 
-        Initial lanes still resolve artifact refs through ``write_result_part``.
-        Revision lanes return exact edits directly and never reopen the complete
-        section-part persistence path.
+        The model only returns artifact refs so the Provider never copies long
+        prose into the commit. We still read every part through the existing
+        write_result_part boundary here and derive the canonical refs.
         """
 
         contract = self._feedback_input_contract()
@@ -820,15 +820,6 @@ class SubmitResultTool(_ResultTool):
                     expected=f"a non-empty subset of {contract.section_ids}",
                     received=commit.section_ids,
                 )
-            return ChiefChapterLaneRevisionSubmission(
-                run_id=commit.run_id,
-                base_subject_ref=commit.base_subject_ref,
-                chapter_id=commit.chapter_id,
-                revision=commit.revision,
-                section_ids=list(commit.section_ids),
-                edits=list(commit.edits),
-                revision_responses=commit.revision_responses,
-            )
         expected_part_ids = self._chapter_lane_part_ids(
             contract.chapter_id,
             commit.section_ids,
@@ -899,12 +890,22 @@ class SubmitResultTool(_ResultTool):
                     ),
                 )
             canonical_refs[part_id] = relative
-        return ChiefChapterLaneSubmission(
+        if isinstance(commit, ChiefChapterLaneSubmission):
+            return ChiefChapterLaneSubmission(
+                run_id=commit.run_id,
+                chapter_id=commit.chapter_id,
+                section_ids=list(commit.section_ids),
+                part_refs=canonical_refs,
+                revision=commit.revision,
+            )
+        return ChiefChapterLaneRevisionSubmission(
             run_id=commit.run_id,
+            base_subject_ref=commit.base_subject_ref,
             chapter_id=commit.chapter_id,
+            revision=commit.revision,
             section_ids=list(commit.section_ids),
             part_refs=canonical_refs,
-            revision=commit.revision,
+            revision_responses=commit.revision_responses,
         )
 
     def _assemble_edited_report(

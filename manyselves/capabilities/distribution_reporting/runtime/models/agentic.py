@@ -1419,35 +1419,8 @@ class ChiefChapterLaneSubmission(StrictModel):
         return self
 
 
-class ChiefSectionTextEdit(StrictModel):
-    """One exact, runtime-applied edit inside the assigned Chief section."""
-
-    target_section_id: str = Field(min_length=1)
-    old_text: str = Field(
-        min_length=1,
-        description=(
-            "Exact existing text copied from section_bodies; it must occur once in the "
-            "current target section."
-        ),
-    )
-    new_text: str = Field(
-        min_length=1,
-        description=(
-            "Replacement text for old_text. When old_text is the complete section body, "
-            "new_text must retain that complete body verbatim and only add the requested "
-            "material."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def edit_changes_text(self) -> "ChiefSectionTextEdit":
-        if self.old_text == self.new_text:
-            raise ValueError("Chief section text edit must change the selected text")
-        return self
-
-
 class ChiefChapterLaneRevisionSubmission(StrictModel):
-    """Compact exact-text Chief patch emitted by one chapter lane."""
+    """Compact Chief patch emitted by exactly one chapter lane."""
 
     kind: Literal["chief_chapter_lane_revision_submission"] = (
         "chief_chapter_lane_revision_submission"
@@ -1457,17 +1430,24 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
     chapter_id: Literal["1", "3", "4"]
     revision: int = Field(ge=1)
     section_ids: list[str] = Field(min_length=1)
-    edits: list[ChiefSectionTextEdit] = Field(min_length=1)
+    part_refs: dict[str, str] = Field(min_length=1)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def patch_stays_in_one_chapter(self) -> "ChiefChapterLaneRevisionSubmission":
         scope = _chapter_lane_target_ids(self.chapter_id, self.section_ids)
-        edit_targets = {edit.target_section_id for edit in self.edits}
-        if edit_targets != scope:
-            raise ValueError(
-                "Chief lane revision edits must exactly cover submitted section_ids"
-            )
+        expected_parts = (
+            {"special_topic_analysis"}
+            if self.chapter_id == "4"
+            else {CHIEF_SECTION_RESULT_PART_IDS[section_id] for section_id in self.section_ids}
+        )
+        if self.chapter_id == "4":
+            if set(self.part_refs) != {"special_topic_analysis"}:
+                raise ValueError("Chapter 4 lane revisions use special_topic_analysis only")
+        elif not set(self.part_refs).issubset(expected_parts):
+            raise ValueError("Chief lane revision part_refs must stay in section scope")
+        if any(not ref.strip() for ref in self.part_refs.values()):
+            raise ValueError("Chief lane part_refs must not contain blank refs")
         response_targets = {
             target
             for response in self.revision_responses
