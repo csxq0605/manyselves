@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import { createProjectApi } from "../projects/project-api";
@@ -10,12 +10,17 @@ import { ConversationWorkspace } from "./ConversationWorkspace";
 
 export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) {
   const { conversationId, projectId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const api = useMemo(() => createConversationApi(gateway), [gateway]);
   const projectApi = useMemo(() => createProjectApi(gateway), [gateway]);
   const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
-  const createRef = useRef<{ readonly projectId: string; readonly promise: ReturnType<typeof api.create> } | null>(null);
+  const createRef = useRef<{
+    readonly locationKey: string;
+    readonly projectId: string;
+    readonly promise: ReturnType<typeof api.create>;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const routeProject = projects.data?.find((project) => project.id === projectId);
   const activation = useQuery({
@@ -48,6 +53,7 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
       }
       return activated;
     },
+    gcTime: 0,
     queryKey: ["project-activation", projectId, routeProject?.revision],
     retry: false,
   });
@@ -55,8 +61,17 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
 
   useEffect(() => {
     if (!projectId || conversationId !== "new" || !projectReady) return;
-    if (!createRef.current || createRef.current.projectId !== projectId) {
-      createRef.current = { projectId, promise: api.create(projectId, "新会话", "main") };
+    if (
+      !createRef.current
+      || createRef.current.projectId !== projectId
+      || createRef.current.locationKey !== location.key
+    ) {
+      setError(null);
+      createRef.current = {
+        locationKey: location.key,
+        projectId,
+        promise: api.create(projectId, "新会话", "main"),
+      };
     }
     let cancelled = false;
     void createRef.current.promise.then((created) => {
@@ -81,7 +96,7 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
       if (!cancelled) setError("新建会话失败");
     });
     return () => { cancelled = true; };
-  }, [api, conversationId, navigate, projectId, projectReady, queryClient]);
+  }, [api, conversationId, location.key, navigate, projectId, projectReady, queryClient]);
 
   if (!projectId || !conversationId) return <p role="alert">会话路由无效</p>;
   if (projects.isPending) return <p role="status">正在加载项目…</p>;
