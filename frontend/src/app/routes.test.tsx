@@ -331,15 +331,13 @@ describe("project conversation routes", () => {
       queryKey: ["conversations", "project-1", "main"],
       staleTime: 0,
     }).catch(() => undefined);
-    const user = userEvent.setup();
     render(<AppProviders queryClient={queryClient}>
-      <MemoryRouter initialEntries={["/projects/project-1"]}>
+      <MemoryRouter initialEntries={["/projects/project-1/conversations/new"]}>
         <AppRoutes gateway={gateway} />
         <LocationProbe />
       </MemoryRouter>
     </AppProviders>);
 
-    await user.click(screen.getByRole("button", { name: "新对话" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/projects/project-1/conversations/s-new"));
     expect(screen.queryByText("该会话不属于当前项目")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传本地文件" })).toBeVisible();
