@@ -59,15 +59,21 @@ function normalizeServerUrl(value: string): string {
 }
 
 export interface ResolveServerUrlInput {
+  readonly deploymentUrl?: string;
   readonly environmentUrl?: string;
   readonly origin: string;
   readonly savedUrl: string;
 }
 
 export function resolveServerUrl(input: ResolveServerUrlInput): string {
-  return normalizeServerUrl(
-    input.environmentUrl?.trim() || input.savedUrl.trim() || input.origin,
-  );
+  const environmentUrl = normalizeServerUrl(input.environmentUrl ?? "");
+  if (environmentUrl) return environmentUrl;
+
+  const origin = normalizeServerUrl(input.origin);
+  const deploymentUrl = normalizeServerUrl(input.deploymentUrl ?? "") || origin;
+  const savedUrl = normalizeServerUrl(input.savedUrl);
+  if (savedUrl && !(savedUrl === origin && deploymentUrl !== origin)) return savedUrl;
+  return deploymentUrl;
 }
 
 function applyPreferences(root: HTMLElement, value: ClientPreferences): void {
