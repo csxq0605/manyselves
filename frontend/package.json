@@ -19,7 +19,7 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.101.4",
-    "dompurify": "^3.4.12",
+    "dompurify": "3.4.13",
     "idb": "^8.0.3",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
@@ -30,8 +30,14 @@
     "zustand": "^5.0.14"
   },
   "overrides": {
+    "@redocly/openapi-core": {
+      "js-yaml": "4.3.1"
+    },
     "monaco-editor": {
-      "dompurify": "3.4.12"
+      "dompurify": "3.4.13"
+    },
+    "postcss": {
+      "nanoid": "3.3.18"
     }
   },
   "devDependencies": {

@@ -17,7 +17,7 @@ describe("conversation layout CSS", () => {
     expect(workspace).toContain("height: 100dvh");
     expect(workspace).toContain("max-height: 100dvh");
     expect(workspace).toContain("overflow: hidden");
-    expect(workspace).toContain("grid-template-rows: minmax(0, 1fr) auto auto");
+    expect(workspace).toContain("grid-template-rows: auto minmax(0, 1fr) auto auto");
     expect(main).toContain("flex-direction: column");
     expect(main).toContain("overflow-y: auto");
     expect(main).toContain("overscroll-behavior: contain");
