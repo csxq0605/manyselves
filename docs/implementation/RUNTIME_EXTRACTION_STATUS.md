@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**自动架构与产品化实施已完成；最终真实 Provider 验收按用户要求暂缓**
+> 状态：**自动架构与产品化实施已完成；最终真实 Provider 验收进行中**
 
 ## Program
 
@@ -17,14 +17,14 @@
 
 ## Current position
 
-- Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete)`
-- Current slice: `FA-08/M9.67 Preserve Application tools across Main Loop replacement`
+- Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
+- Current slice: `FA-08/M9.75 Windows startup and final acceptance hardening`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `15fb538 Runtime: start generic workflows from Main`
-- Program status: `automatic scope complete; final real acceptance deferred`
-- Final real-test status: `resumed by user; preparing a new success/full-report Run through Main`
-- Blockers: `none；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `load M9.66, create a fresh success Main conversation, and start full-report through the visible browser after Provider transmission confirmation`
+- HEAD at slice start: `c1c76db Frontend: project Workflow Runs into runtime cockpit`
+- Program status: `automatic architecture scope complete; final acceptance in progress`
+- Final real-test status: `Windows Web service is live/ready against the test project; parameter-adjustment completed in the current service and is visible in the runtime cockpit; Main full-report still requires Provider configuration and user-approved data transmission`
+- Blockers: `no LLM Provider/API key is configured；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `configure and test an approved Provider in the visible browser, then start the single Main full-report Run after confirming transmission of the test project's Excel, Knowledge, and role Skill data`
 
 ## Why the prior completion claim is reopened
 
@@ -68,7 +68,7 @@
 | 文件 Workflow 是唯一流程所有者 | 五个公开入口均编译文件定义并由 Generic Host 执行，Module/Cross/Chief/Final/Delivery 作为 Capability Tool/Subworkflow | 已达到 | 真实测试确认长流程 |
 | 单一生产入口 | Generic `/runs` + RuntimeBindingCatalog，无 Legacy/declarative selector | 已达到 | 保持 API Characterization |
 | 旧兼容代码不在发布图 | 旧 Reporting Runner/Facade/API/Core 包已删除；Legacy Runtime/Tool adapter 名称和实现已删除 | 已达到 | 最终扫描 |
-| 文档直面最终形态 | 权威规范、状态、Feature matrix 和网页版真实测试交接均指向 Generic Run Workspace | 已达到；最终结果待真实测试回填 | FA-07 回填 |
+| 文档直面最终形态 | 权威规范、状态和网页版真实测试交接均指向 Distribution Reporting 的 Main-only 产品入口；通用 Run API 保留为开发/诊断边界 | 已达到；最终结果待真实测试回填 | FA-08/M9.75 回填 |
 
 ## Gate provenance
 
@@ -103,6 +103,13 @@
 
 ## Current slice evidence
 
+- FA-08/M9.75 removed the unconditional Windows import of POSIX-only `fcntl` from the generic Usage Ledger and Capability parallel state. A stdlib-only cross-platform coordination-file adapter preserves POSIX `flock` behavior and uses Windows `LockFileEx`/`UnlockFileEx` with shared/exclusive and blocking/non-blocking modes; focused Windows lock, ledger, lease, and state tests pass (`16 passed`). This is a portability replacement for existing locks, not a new locking boundary or dependency.
+- Windows `ConversationService.flush()` now opens its own persisted files as `rb+` before `fsync`, because Windows rejects `fsync` on a read-only descriptor. The two lifecycle Characterization tests changed from `2 failed` to `2 passed` without changing file content or shutdown order.
+- The remaining PyQt import failure was isolated to the original `.venv` inheriting Conda's incompatible ICU DLL (`icuuc.dll` exports suffixed ICU 73 symbols while Qt 6.11 requests unsuffixed symbols). A separate uv-managed CPython 3.12.13 environment, synced from the unchanged lockfile, imports `PyQt6.QtWidgets` and `ManyselvesApp`; both desktop startup tests pass (`2 passed`). No application DLL preload or dependency downgrade was added.
+- Windows aggregate/delivery Characterization then exposed host separators in serialized `OutputArtifact.path`, read-only staging cleanup, and unsupported directory-fd `fsync`. JSON artifact refs now serialize with `Path.as_posix()`; Windows atomically publishes the already-fsynced same-volume CAS staging file with `os.rename` and skips only the unsupported directory descriptor `fsync`, while POSIX retains its original hard-link and directory-fsync path. The complete Content Store plus aggregate-existing selections pass (`23 passed`).
+- The merged clean-CPython affected selection passes (`158 passed`, one existing Pydantic V2 deprecation warning). Frontend API generation check, lint, build, and all Vitest tests pass (`61 files, 260 tests`); the only stale layout assertion was updated to include the already-present Main run-card row. Focused dependency overrides move DOMPurify, js-yaml, and nanoid to patched versions, and `npm audit` reports zero vulnerabilities.
+- The native Windows Web service started on `127.0.0.1:9092` with data root `E:\PKU\program\2026\Aug\work` and initial project `test`; `/health/live` and `/health/ready` both succeeded. Provider health explicitly reports unconfigured, so the service is available in degraded mode rather than falsely claiming Provider readiness.
+- In that live service, developer smoke Run `parameter-adjustment-ad8cf9ebb7fb4b69a9b4bc4d5ff164e0` was accepted and completed with output `result=10`, zero Provider attempts and zero tokens. The authenticated browser runtime cockpit projected `1 / 1` completed, zero active runs, an empty queue, and no errors for the same Run ID.
 - FA-00 三项只读审计确认生产链仍为 `Generic /runs → Distribution binding → ReportingFacade → ReportingRunController → ReportingService → DeclarativeReportWorkflowRunner(ReportWorkflowRunner)`；82 个 Capability Contract 中有 41 个 model 路径仍指向 `manyselves.core.reporting.*`。
 - FA-00 将 `AGENTS.md`、产品定位、主架构方案、自主执行协议、官方研究和本状态文件统一改写为最终定义驱动形态；`git diff --check` 通过。
 - FA-01 新增 `tests/architecture/test_final_runtime_boundaries.py`。实现前 5 项均真实失败，分别覆盖 generic layer import、Binding host、Contract ownership、Runner inheritance 和五个文件入口；当前以 strict xfail 记录尚未修复的生产差异，任何完整修复都会先产生 XPASS，必须同步移除对应标记。

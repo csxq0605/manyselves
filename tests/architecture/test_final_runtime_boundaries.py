@@ -325,8 +325,8 @@ def test_no_compatibility_module_or_script_reenters_core_reporting() -> None:
     assert not (REPOSITORY_ROOT / "scripts" / "preview_reporting_storage.py").exists()
 
 
-def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> None:
-    """Conversation runtime must not bypass file workflows through Core Reporting."""
+def test_main_reporting_entrypoint_is_capability_owned_not_runtime_owned() -> None:
+    """The Demo command may reach file workflows without living in generic Runtime."""
 
     manager_source = _read_python_source(
         PACKAGE_ROOT / "runtime" / "loops" / "manager.py"
@@ -337,9 +337,11 @@ def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> No
     prompt_source = (PACKAGE_ROOT / "templates" / "agents" / "main_agent.md").read_text(
         encoding="utf-8"
     )
+    capability_adapter_source = _read_python_source(
+        REPORTING_CAPABILITY_ROOT / "adapters" / "main_tool.py"
+    )
 
     for legacy_tool in (
-        "run_reporting_workflow",
         "resume_reporting_workflow",
         "revise_reporting_workflow",
         "cancel_reporting_workflow",
@@ -350,6 +352,13 @@ def test_main_agent_does_not_expose_legacy_reporting_orchestration_tools() -> No
         assert legacy_tool not in manager_source
         assert legacy_tool not in loop_source
         assert legacy_tool not in prompt_source
+    assert "run_reporting_workflow" not in manager_source
+    assert "run_reporting_workflow" not in loop_source
+    assert "RunReportingWorkflowTool" not in manager_source
+    assert "RunReportingWorkflowTool" not in loop_source
+    assert 'name = "run_reporting_workflow"' in capability_adapter_source
+    assert "_WORKFLOW_BY_OPERATION" in capability_adapter_source
+    assert "run_reporting_workflow" in prompt_source
     assert "ProjectSkillEvolutionTool" not in manager_source
     assert "RunProductSkillMaintainerTool" not in manager_source
     assert "load_packaged_agents" not in manager_source
