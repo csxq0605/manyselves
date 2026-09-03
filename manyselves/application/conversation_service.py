@@ -597,7 +597,10 @@ class ConversationService:
         root = self.workspace / ".manyselves" / "conversations"
         for path in root.rglob("*") if root.exists() else ():
             if path.is_file():
-                with path.open("rb") as handle:
+                # Windows rejects fsync on a read-only CRT descriptor.  These are
+                # ConversationService-owned files, so open them read/write without
+                # changing their contents before flushing the existing bytes.
+                with path.open("rb+") as handle:
                     os.fsync(handle.fileno())
         self._fsync_directories(root)
 

@@ -1,7 +1,7 @@
 """Capability-owned durable contracts for isolated, recoverable reporting lanes.
 
 The reporting workflow is still coordinated in-process, but these primitives
-deliberately use project-local files and POSIX advisory locks so task identity,
+deliberately use project-local files and cross-platform process locks so task identity,
 lease ownership, and successful results do not depend on one Python object's
 memory.  They are the compatibility boundary for later worker processes.
 """
@@ -9,7 +9,6 @@ memory.  They are the compatibility boundary for later worker processes.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import inspect
 import json
@@ -26,6 +25,8 @@ from typing import Any, Callable, Iterable, Literal, Mapping, TextIO
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from manyselves.runtime.file_lock import lock_file, unlock_file
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -78,10 +79,10 @@ def exclusive_file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+", encoding="utf-8")
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        lock_file(handle)
         yield
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        unlock_file(handle)
         handle.close()
 
 
@@ -194,7 +195,7 @@ class IdentityLeaseManager:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_path.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(handle, blocking=False)
         except BlockingIOError as exc:
             handle.close()
             raise RuntimeError(
@@ -211,7 +212,7 @@ class IdentityLeaseManager:
                     )
                 )
             except (OSError, ValueError, TypeError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(handle)
                 handle.close()
                 raise RuntimeError(f"identity lease record is invalid: {record_path}")
 
@@ -254,7 +255,7 @@ class IdentityLeaseManager:
             )
             atomic_write_json(record_path, released.model_dump(mode="json"))
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
             handle.close()
 
 
@@ -317,7 +318,7 @@ class ProjectWriteLeaseManager:
         self.root.mkdir(parents=True, exist_ok=True)
         handle = self.lock_path.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(handle, blocking=False)
         except BlockingIOError as exc:
             handle.close()
             raise RuntimeError("project already has an active write operation") from exc
@@ -328,7 +329,7 @@ class ProjectWriteLeaseManager:
                     self.record_path.read_text(encoding="utf-8")
                 ).lease_epoch
             except (OSError, ValueError) as exc:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(handle)
                 handle.close()
                 raise RuntimeError("project write lease record is invalid") from exc
         lease = ProjectWriteLease(
@@ -373,7 +374,7 @@ class ProjectWriteLeaseManager:
             )
             atomic_write_json(self.record_path, released.model_dump(mode="json"))
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
             handle.close()
 
 
@@ -482,7 +483,7 @@ class TaskAttemptStore:
         path = self.run_root / "task-attempts" / task_id / ".promotion.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
         handle = path.open("a+", encoding="utf-8")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        lock_file(handle)
         return handle
 
     def activate(self, correlation: TaskCorrelation) -> Path:
@@ -504,7 +505,7 @@ class TaskAttemptStore:
             atomic_write_json(path, correlation.model_dump(mode="json"))
             return path
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
             handle.close()
 
     def current(self, task_id: str) -> TaskCorrelation | None:
@@ -748,7 +749,7 @@ class TaskAttemptStore:
                 _atomic_write_bytes(canonical, serialized)
                 promoted = True
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
             handle.close()
 
         terminal = TaskTerminal(

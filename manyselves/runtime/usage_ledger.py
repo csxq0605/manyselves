@@ -9,13 +9,14 @@ for ledgers written before the round/attempt fields were introduced.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import threading
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from .file_lock import lock_file, unlock_file
 
 
 class RoundReason(StrEnum):
@@ -307,13 +308,13 @@ class UsageLedger:
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with self._lock_for(self.path):
             with lock_path.open("a+", encoding="utf-8") as process_lock:
-                fcntl.flock(process_lock.fileno(), fcntl.LOCK_EX)
+                lock_file(process_lock)
                 try:
                     with self.path.open("a", encoding="utf-8") as handle:
                         handle.write(line)
                         handle.flush()
                 finally:
-                    fcntl.flock(process_lock.fileno(), fcntl.LOCK_UN)
+                    unlock_file(process_lock)
         return row
 
     def rows(self) -> list[dict[str, Any]]:
@@ -322,7 +323,7 @@ class UsageLedger:
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with self._lock_for(self.path):
             with lock_path.open("a+", encoding="utf-8") as process_lock:
-                fcntl.flock(process_lock.fileno(), fcntl.LOCK_SH)
+                lock_file(process_lock, exclusive=False)
                 try:
                     rows: list[dict[str, Any]] = []
                     for line in self.path.read_text(encoding="utf-8").splitlines():
@@ -339,7 +340,7 @@ class UsageLedger:
                         rows.append(row)
                     return rows
                 finally:
-                    fcntl.flock(process_lock.fileno(), fcntl.LOCK_UN)
+                    unlock_file(process_lock)
 
     @staticmethod
     def _group_name(row: dict[str, Any], group_by: str) -> str:

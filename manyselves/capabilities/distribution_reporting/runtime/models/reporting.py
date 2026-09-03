@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
 
@@ -647,6 +654,12 @@ class OutputArtifact(ReportingModel):
     kind: Literal["module", "review", "report", "run", "skill"]
     path: Path
     module_id: str | None = None
+
+    @field_serializer("path", when_used="json")
+    def serialize_logical_path(self, value: Path) -> str:
+        """Keep the persisted artifact-ref contract independent of the host OS."""
+
+        return value.as_posix()
 
 
 OutputArtifacts = list[OutputArtifact]

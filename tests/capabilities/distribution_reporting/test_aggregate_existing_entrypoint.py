@@ -204,7 +204,10 @@ def test_prepare_aggregate_existing_projects_five_frozen_markdown_modules(
     ) == {
         "source_format": "markdown",
         "module_refs": {
-            module_id: f"Work/runs/{run_id}/frozen-project/{refs[module_id]}"
+            module_id: (
+                f"Work/runs/{run_id}/frozen-project/"
+                f"{refs[module_id].as_posix()}"
+            )
             for module_id in REPORT_MODULE_IDS
         },
     }

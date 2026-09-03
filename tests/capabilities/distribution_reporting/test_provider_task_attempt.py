@@ -49,6 +49,22 @@ def _result(
     )
 
 
+def test_identity_lease_rejects_a_second_active_owner(tmp_path: Path) -> None:
+    manager = IdentityLeaseManager(tmp_path, "identity-contention")
+    first = manager.acquire("public-reporting", "module-2.4-specialist")
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            manager.acquire("public-reporting", "module-2.4-specialist")
+    finally:
+        first.release()
+
+    resumed = manager.acquire("public-reporting", "module-2.4-specialist")
+    try:
+        assert resumed.lease.lease_epoch == first.lease.lease_epoch + 1
+    finally:
+        resumed.release()
+
+
 def test_failed_terminal_resumes_as_new_attempt_in_same_session(tmp_path: Path) -> None:
     """A failed physical attempt must not own the resumed result path."""
 

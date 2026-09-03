@@ -104,7 +104,14 @@ class ContentAddressedStore:
             target.parent.mkdir(parents=True, exist_ok=True)
             os.chmod(temporary, 0o444)
             try:
-                os.link(temporary, target)
+                if os.name == "nt":
+                    # Windows refuses to unlink the read-only staging hardlink.
+                    # A same-volume rename preserves the fsynced inode and its
+                    # read-only mode while still publishing the target atomically.
+                    os.rename(temporary, target)
+                    temporary = None
+                else:
+                    os.link(temporary, target)
                 created_target = True
             except FileExistsError:
                 self._verify_existing(target, digest, size)
@@ -140,6 +147,8 @@ class ContentAddressedStore:
             return self._blob(digest, size, target)
         finally:
             if temporary is not None:
+                if os.name == "nt":
+                    os.chmod(temporary, 0o600)
                 temporary.unlink(missing_ok=True)
 
     def persist_with_policy(
@@ -587,6 +596,11 @@ class ContentAddressedStore:
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            # The Windows CRT cannot open directories as file descriptors, so
+            # Python cannot issue the POSIX durability fence used below. File
+            # contents are still fsynced before the atomic replace/rename.
+            return
         flags = os.O_RDONLY
         if hasattr(os, "O_DIRECTORY"):
             flags |= os.O_DIRECTORY
