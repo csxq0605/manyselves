@@ -101,3 +101,31 @@ def test_runtime_services_view_preserves_degraded_host_resources(
     assert view.workspace is None
     assert view.active_provider is None
     assert view.bus is not None
+
+
+def test_existing_services_view_tracks_provider_replacement(tmp_path: Path) -> None:
+    from manyselves.application.runtime_services import build_runtime_services_view
+
+    host = _host(tmp_path, workspace=tmp_path / "project")
+    view = build_runtime_services_view(host)
+    original_bus = view.bus
+    assert view.active_provider is None
+
+    for model in ("first-live-model", "replacement-live-model"):
+        provider = object()
+        loop = SimpleNamespace(llm_provider=provider)
+        host._loop_manager = SimpleNamespace(  # noqa: SLF001
+            get_loop=lambda agent_id: loop if agent_id == "main" else None,
+        )
+        host.config_manager._config = AppConfig(  # noqa: SLF001
+            agents={"defaults": AgentDefaults(model=model)}
+        )
+
+        assert view.active_provider is provider
+        assert view.agent_defaults is host.config_manager.config.agents.defaults
+        assert view.agent_defaults.model == model
+        assert view.bus is original_bus
+        assert view.workspace == tmp_path / "project"
+
+    host._loop_manager = None  # noqa: SLF001
+    assert view.active_provider is None

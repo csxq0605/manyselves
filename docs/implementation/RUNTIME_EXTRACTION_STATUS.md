@@ -18,13 +18,20 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.75 Windows startup and final acceptance hardening`
+- Current slice: `FA-08/M9.76 Live Provider replacement and Windows conversation persistence`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `c1c76db Frontend: project Workflow Runs into runtime cockpit`
+- HEAD at slice start: `2e4fb1f Docs: record Windows live acceptance`
 - Program status: `automatic architecture scope complete; final acceptance in progress`
-- Final real-test status: `Windows Web service is live/ready against the test project; parameter-adjustment completed in the current service and is visible in the runtime cockpit; Main full-report still requires Provider configuration and user-approved data transmission`
-- Blockers: `no LLM Provider/API key is configured；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `configure and test an approved Provider in the visible browser, then start the single Main full-report Run after confirming transmission of the test project's Excel, Knowledge, and role Skill data`
+- Final real-test status: `user-approved DashScope qwen3.8-flash is configured through Anthropic Messages; Main started full-report-a3e668f660694886b554ad8ac535814f from test Excel/Knowledge/Skills/Templates; preparation completed; two live failures fixed and the same Run resumed from the visible browser`
+- Blockers: `no external blocker currently; final report delivery still unverified；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `continue the same full-report Run through module/cross/chief/final/render/delivery; fix intermediate failures, resume the same Run, and verify real output files in the sidebar browser`
+
+### Current live acceptance hardening (2026-09-05)
+
+- 首次报告 Module Provider 调用暴露两处真实问题：网页保存配置只替换 Main 所属 LoopManager，Capability 的静态 RuntimeServicesView 仍持有启动时的空 Provider；同时 `public-reporting:module-2.1-specialist:specialist-2.1` 被直接作为 Windows 目录名，ConversationStore 以 WinError 123 失败。
+- Characterization First 分别复现 Provider replacement 后原 view 仍返回 `None`、真实 Agent ID 的会话写盘失败。RuntimeServicesView 现在只对可替换 Provider/defaults 使用 Host-owned resolver；workspace/bus 和既有 Workflow bindings 保留，不关闭或重建活动 Run。ConversationStore 仅在磁盘路径边界可逆编码 Agent ID，逻辑身份与 Session 不变，安全旧目录名不变；没有新增 hash、锁、Gate 或 Provider 重试。
+- Provider/view 和全部相关 Reporting Provider 文件定向选择 `84 passed`；扩展 Windows 编码矩阵后会话文件 `41 passed`，另两项 shutdown persistence 通过；changed-path Ruff 通过。未运行全仓回归。
+- 修复加载后，从原 Main conversation 的“恢复原报告”恢复同一 `full-report-a3e668f660694886b554ad8ac535814f`，持久状态已回到 `running/run-module-cohort`，冻结输入和准备阶段结果保留。用户本轮明确要求完成全流程并修复中途失败，因此不再沿用历史“仅越过失败点后停止观察”的验收方式；最终输出尚未验证，不宣称完成。
 
 ## Why the prior completion claim is reopened
 
@@ -353,7 +360,7 @@
 - 默认禁止新增不必要的 Gate、判断门禁、Hash、CAS、锁和额外校验链；确有需要必须先解释并获得批准；
 - 保留结构化纠正、Schema 原 Conversation 修正、Max Token、Tool Slice、No-progress、Tool Result 复用、Conversation/Session 复用和 Same-run 恢复；
 - 中途不设置人工验收断点，自动推进到最终架构完成；
-- 最后只进行一次真实 Provider/项目/浏览器测试；真实长任务不持续高频监控，失败保留同一 Run 和现场。
+- 最后进行真实 Provider/项目/浏览器全流程测试；2026-09-05 用户明确要求中途失败必须修复并继续，保留同一 Run 和现场直到验证交付。
 
 ## Verification policy
 
@@ -395,7 +402,7 @@ git diff --check
 2. `completed` — Main 单一对话与三种 Lane 恢复选择已接入通用 Run/Interaction 投影；
 3. `completed` — 侧边栏、Run Output/Event/Cost、通用 Schema/WAITING 和动态 Output 分类已完成产品化复审；
 4. `completed` — 最终自动架构/发布图审计已完成；
-5. `deferred by user` — 最终真实 Provider/项目/浏览器测试，恢复时继续使用已保留现场或新建明确验收 Run。
+5. `in progress` — 最终真实 Provider/项目/浏览器全流程测试，继续同一 `full-report-a3e668f660694886b554ad8ac535814f`，修复中途失败并验证交付。
 
 ## Resume instruction
 
