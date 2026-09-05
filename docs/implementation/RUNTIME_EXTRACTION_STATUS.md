@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**自动架构与产品化实施已完成；最终真实 Provider 验收进行中**
+> 状态：**真实验收已发现并修复多项问题；全流程尚未完成，当前受 Provider 计费状态阻塞**
 
 ## Program
 
@@ -21,10 +21,10 @@
 - Current slice: `FA-08/M9.80 Restore bounded Provider handoffs after process restart`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `a7395ac Reporting: preserve existing evidence across path normalization`
-- Program status: `automatic architecture scope complete; final acceptance in progress`
-- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f passed preparation and module 2.3 authoring; other module authors/review remain incomplete; service paused to load evidence path recovery and wire existing handoff restoration; no final delivery yet`
-- Blockers: `no external blocker currently; final report delivery still unverified；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `continue the same full-report Run through module/cross/chief/final/render/delivery; fix intermediate failures, resume the same Run, and verify real output files in the sidebar browser`
+- Program status: `final acceptance incomplete; blocked on provider billing availability`
+- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f completed preparation and produced module 2.3 r0 requiring semantic correction; 18:22 browser resume reached real Provider calls but failed with HTTP 400 Arrearage; module/review/cross/chief/final/render/delivery remain incomplete`
+- Blockers: `DashScope rejects calls with Arrearage; user must restore billing availability or provide another authorized usable provider. DOCX page-render QA also lacks bundled LibreOffice on Windows. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `after user restores provider availability, use the existing browser restore button for the same Run; verify handoff restoration and corrected evidence access, then module 2.3 revision and the remaining cross/chief/final/render/delivery chain; do not treat accepted/running or tool-failure drafts as success`
 
 ### Current live acceptance hardening (2026-09-05)
 
@@ -41,6 +41,7 @@
 - M9.80 只读核对 2.3 r0 发现正文把工具故障当成客户资料缺失，不能视为有效成稿。其 Auditor 已实际发起三次证据检索，尚无 completed result；声明式 finding→revision→recheck 路由可在同一 Run 纠正，revision 的既有独立 task identity 不会命中原 Author completion。暂不添加语义 Gate，继续观察修复后真实 Auditor 结论。同步架构边界选择 `20 passed`。
 - 最终 DOCX 排版 QA 预检按 documents 技能使用捆绑 Python/render_docx.py；Windows 捆绑依赖未提供 LibreOffice，返回 `LibreOffice soffice.exe was not found on PATH`。未使用桌面 LibreOffice、未将项目文档上传其他服务；报告生成/下载验收继续，逐页版面验收尚未完成。
 - M9.80 Characterization 后接通既有 bounded handoff：ProviderAgentSessionFactory 从既有路径加载，AgentExecutionService 在新 loop start 前 restore，同进程缓存 loop 不二次恢复；七处 Reporting Provider composition 启用既有 persistence。AgentLoop stop 将最后压缩后的新工具进展合并到既有 bounded 摘要后落盘。核心 focused `18 passed`、七类 Provider 受影响 `73 passed`；13 个相关文件 Ruff（仅忽略 AgentLoop 既有 N818）及 diff check 通过。没有新增 store、身份、Hash、锁、Gate 或业务编排；旧版本未持久化的分析不能补回。18:20 已重新启动服务，继续同一真实 Run。
+- M9.80 已提交推送 `8b90f18`。补跑完整 AgentLoop/AgentExecution/TypedAgentTurn/ProviderAgentSession 四文件 `95 passed`。18:22 浏览器点击恢复原 Run 后，各模块真实请求被 DashScope `HTTP 400 / code=Arrearage` 拒绝，错误为 non-retryable、automatic_retries=0、definitely_rejected；侧边栏已显示同一失败原因和“恢复原报告”入口。官方 [Arrearage 文档](https://help.aliyun.com/zh/model-studio/error-code#overdue-payment) 将其归因于 API Key 所属账户欠费或账户异常，不能靠代码或更换同账户 endpoint 解决。服务保留可访问，未发起充值、未改用未经授权的 Provider。四个真实 handoff 文件已落盘，并通过生产 load adapter 只读回载；带 handoff 的后续真实模型续跑仍待计费恢复验证，未宣称全流程通过。
 
 ## Why the prior completion claim is reopened
 
