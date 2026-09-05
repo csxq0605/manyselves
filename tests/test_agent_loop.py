@@ -963,6 +963,56 @@ def test_identity_task_boundary_and_restart_restore_keep_lossless_history(agent_
     assert restored.handoff_summary["progress"] == ["saved"]
 
 
+def test_durable_handoff_summary_includes_history_after_last_compaction(agent_loop):
+    agent_loop._handoff_summary = {
+        "version": 1,
+        "progress": ["older analysis"],
+        "decisions": ["older decision"],
+        "constraints": ["preserve evidence"],
+        "remaining_work": ["stale remaining work"],
+        "critical_refs": ["E-OLD"],
+        "tool_state": [],
+        "sequence": 3,
+    }
+    agent_loop._compaction_sequence = 3
+    agent_loop._conversation_history = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-new",
+                    name="inspect_document",
+                    arguments={"path": "Inputs/source.xlsx"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="tool",
+            content=json.dumps(
+                {
+                    "status": "blocked",
+                    "next_action": "finish latest source analysis",
+                    "result_path": "Work/runs/run-1/latest.json",
+                }
+            ),
+            tool_call_id="call-new",
+            is_tool_result=True,
+        ),
+    ]
+
+    summary = agent_loop.durable_handoff_summary()
+
+    assert "older decision" in summary["decisions"]
+    assert "Inputs/source.xlsx" in summary["critical_refs"]
+    assert summary["remaining_work"] == ["finish latest source analysis"]
+    assert summary["tool_state"][-1]["tool_call_id"] == "call-new"
+    assert summary["tool_state"][-1]["result_path"] == (
+        "Work/runs/run-1/latest.json"
+    )
+    assert summary["sequence"] == 3
+
+
 def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
     agent_loop.usage_run_id = "run-usage"
     agent_loop.usage_task_id = "task-usage"
@@ -1100,6 +1150,39 @@ async def test_start_stop(agent_loop):
 
     await agent_loop.stop()
     assert agent_loop._running is False
+
+
+@pytest.mark.asyncio
+async def test_stop_persists_latest_bounded_handoff(agent_loop, workspace):
+    agent_loop.persist_handoff_summary = True
+    agent_loop.usage_run_id = "run-stop-handoff"
+    agent_loop._conversation_history = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-stop",
+                    name="inspect_document",
+                    arguments={"path": "Inputs/latest.xlsx"},
+                )
+            ],
+        )
+    ]
+
+    await agent_loop.start()
+    await agent_loop.stop()
+
+    handoff_path = (
+        workspace
+        / "Work"
+        / "runs"
+        / "run-stop-handoff"
+        / "agent-conversations"
+        / "main.handoff.json"
+    )
+    payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["critical_refs"] == ["Inputs/latest.xlsx"]
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ class ScriptedSessionLoop:
     usage_run_id: str | None = None
     usage_task_id: str | None = None
     _system_prompt_override: str | None = None
+    initial_session_restore: Any = None
 
 
 def test_provider_session_factory_passes_provider_loop_inputs_and_applies_runtime_option(
@@ -90,3 +92,86 @@ def test_provider_session_factory_rebinds_one_existing_loop_for_next_typed_task(
     assert loop.usage_task_id == "next-task"
     assert loop._system_prompt_override == "next prompt"
     assert loop.persist_handoff_summary is False
+
+
+def test_provider_session_factory_loads_existing_bounded_handoff(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-restart"
+    runtime_id = "public-reporting:module-2.1-specialist:specialist-2.1"
+    safe_agent = runtime_id.replace(":", "_")
+    handoff_path = (
+        tmp_path
+        / "Work"
+        / "runs"
+        / run_id
+        / "agent-conversations"
+        / f"{safe_agent}.handoff.json"
+    )
+    handoff_path.parent.mkdir(parents=True)
+    handoff_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "run_id": run_id,
+                "agent_type": runtime_id,
+                "summary": {
+                    "progress": ["inspected Inputs/source.xlsx"],
+                    "decisions": [],
+                    "constraints": ["cite project evidence"],
+                    "remaining_work": ["finish module 2.1"],
+                    "critical_refs": ["E-0001"],
+                    "sequence": 3,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loop = ScriptedSessionLoop()
+    factory = ProviderAgentSessionFactory(
+        loop_builder=lambda **_kwargs: loop,
+        loop_kwargs={
+            "agent_type": runtime_id,
+            "workspace": tmp_path,
+            "usage_run_id": run_id,
+        },
+        persist_handoff_summary=True,
+    )
+
+    created = factory()
+
+    assert created.initial_session_restore is not None
+    assert created.initial_session_restore.messages == ()
+    assert created.initial_session_restore.handoff_summary == {
+        "progress": ["inspected Inputs/source.xlsx"],
+        "decisions": [],
+        "constraints": ["cite project evidence"],
+        "remaining_work": ["finish module 2.1"],
+        "critical_refs": ["E-0001"],
+        "sequence": 3,
+    }
+
+
+def test_all_reporting_provider_compositions_enable_bounded_handoff() -> None:
+    runtime = (
+        Path(__file__).parents[2]
+        / "manyselves"
+        / "capabilities"
+        / "distribution_reporting"
+        / "runtime"
+    )
+    providers = (
+        "aggregate_provider.py",
+        "chief_provider.py",
+        "cross_provider.py",
+        "final_chief_provider.py",
+        "final_provider.py",
+        "module_provider.py",
+        "template_provider.py",
+    )
+
+    for filename in providers:
+        source = (runtime / filename).read_text(encoding="utf-8")
+        assert "persist_handoff_summary=True" in source
+        assert "persist_handoff_summary=False" not in source

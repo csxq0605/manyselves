@@ -263,7 +263,7 @@ class FinalProviderRuntime:
         session_factory = ProviderAgentSessionFactory(
             loop_builder=self.loop_builder,
             loop_kwargs=loop_kwargs,
-            persist_handoff_summary=False,
+            persist_handoff_summary=True,
         )
         existing = self.execution.session(self.workflow_id, conversation.key.value)
         if existing is not None:

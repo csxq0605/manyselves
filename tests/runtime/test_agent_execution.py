@@ -29,10 +29,13 @@ class ScriptedAgentLoop:
     runtime_id: str
     responses: list[str]
     restored_messages: list[dict[str, Any]] = field(default_factory=list)
+    restored_handoff_summary: dict[str, Any] | None = None
+    restore_calls: int = 0
     started: int = 0
     stopped: int = 0
     completed_turns: int = 0
     received: list[UserMessage] = field(default_factory=list)
+    lifecycle_events: list[str] = field(default_factory=list)
     _callback: Callable[[UserMessage], Any] | None = None
 
     def restore_conversation(
@@ -42,10 +45,14 @@ class ScriptedAgentLoop:
         task_boundaries=(),
         handoff_summary=None,
     ) -> None:
-        del task_boundaries, handoff_summary
+        del task_boundaries
+        self.lifecycle_events.append("restore")
+        self.restore_calls += 1
         self.restored_messages = list(messages)
+        self.restored_handoff_summary = handoff_summary
 
     async def start(self) -> None:
+        self.lifecycle_events.append("start")
         self.started += 1
 
         async def respond(message: UserMessage) -> None:
@@ -156,6 +163,55 @@ async def test_service_owns_session_restore_reuse_turn_and_close() -> None:
     assert service.sessions == {}
     bus.shutdown()
     await bus_task
+
+
+@pytest.mark.asyncio
+async def test_service_applies_factory_handoff_once_before_start() -> None:
+    bus = MessageBus()
+    first_loop = ScriptedAgentLoop(bus, "runtime-agent", [])
+    first_service = AgentExecutionService(bus, timeout=1)
+    await first_service.start_or_restore(
+        workflow_id="workflow-restore",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-restore",
+        session_factory=lambda: first_loop,
+    )
+    await first_service.close_workflow("workflow-restore")
+
+    restored_loop = ScriptedAgentLoop(bus, "runtime-agent", [])
+    restored_loop.initial_session_restore = AgentSessionRestore(  # type: ignore[attr-defined]
+        messages=[],
+        handoff_summary={"progress": ["inspected Inputs/source.xlsx"], "sequence": 4},
+    )
+    service = AgentExecutionService(bus, timeout=1)
+
+    first = await service.start_or_restore(
+        workflow_id="workflow-restore",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="provider-session-restore",
+        session_factory=lambda: restored_loop,
+    )
+    reused = await service.start_or_restore(
+        workflow_id="workflow-restore",
+        conversation_key="agent-a",
+        runtime_id="runtime-agent",
+        session_id="ignored-on-reuse",
+        session_factory=lambda: restored_loop,
+    )
+
+    assert first.created is True
+    assert reused.created is False
+    assert restored_loop.restore_calls == 1
+    assert restored_loop.restored_handoff_summary == {
+        "progress": ["inspected Inputs/source.xlsx"],
+        "sequence": 4,
+    }
+    assert restored_loop.lifecycle_events[:2] == ["restore", "start"]
+    assert restored_loop.started == 1
+
+    await service.close_workflow("workflow-restore")
 
 
 @pytest.mark.asyncio

@@ -18,9 +18,9 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.79 Preserve existing evidence through canonical path recovery`
+- Current slice: `FA-08/M9.80 Restore bounded Provider handoffs after process restart`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `0923c11 Runtime: disable reasoning for compaction summaries`
+- HEAD at slice start: `a7395ac Reporting: preserve existing evidence across path normalization`
 - Program status: `automatic architecture scope complete; final acceptance in progress`
 - Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f passed preparation and module 2.3 authoring; other module authors/review remain incomplete; service paused to load evidence path recovery and wire existing handoff restoration; no final delivery yet`
 - Blockers: `no external blocker currently; final report delivery still unverified；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
@@ -38,6 +38,9 @@
 - M9.78 补跑 AgentLoop 全文件 `79 passed`，服务已重新启动并加载修复，继续从浏览器恢复同一 Run。
 - M9.79 真实恢复后的压缩请求已返回有效文本且 `thinking_chars=0`，模块 2.3 Author 已完成并进入 Auditor。随后证据工具报告 E-0318/E-0319 等 ID 冲突：新 JSON 使用 `/`，原 Run 的证据字节使用 `\`，现有摘要冲突检查将路径表示修正误判为事实变化。Characterization First 复现后，仅在 locator 不变、原字节仍匹配既有摘要、JSON 除 source.path 的等价分隔符外完全相等时复用原始字节和 SourceRecord；真实事实、定位、来源路径变化和原字节损坏仍拒绝。未修改原 Run 数据、证据 ID 或既有摘要算法，未新增 Gate/Hash/锁。focused/affected `8 passed`；只读检查现场六条失败证据均证实仅路径分隔符差异。
 - 18:03 暂停服务以加载修复，保留原 Run、已完成模块结果、snapshot 与 tool artifacts。另一个真实缺口已定位：新进程只恢复 external_session_id，未给 `AgentSessionRestore` 传入上下文；core UI JSONL 缺少 tool_call_id，不能作为 Provider 历史回灌。现有 handoff persistence/restore 将在下一切片接线；完整报告交付仍未验证。
+- M9.80 只读核对 2.3 r0 发现正文把工具故障当成客户资料缺失，不能视为有效成稿。其 Auditor 已实际发起三次证据检索，尚无 completed result；声明式 finding→revision→recheck 路由可在同一 Run 纠正，revision 的既有独立 task identity 不会命中原 Author completion。暂不添加语义 Gate，继续观察修复后真实 Auditor 结论。同步架构边界选择 `20 passed`。
+- 最终 DOCX 排版 QA 预检按 documents 技能使用捆绑 Python/render_docx.py；Windows 捆绑依赖未提供 LibreOffice，返回 `LibreOffice soffice.exe was not found on PATH`。未使用桌面 LibreOffice、未将项目文档上传其他服务；报告生成/下载验收继续，逐页版面验收尚未完成。
+- M9.80 Characterization 后接通既有 bounded handoff：ProviderAgentSessionFactory 从既有路径加载，AgentExecutionService 在新 loop start 前 restore，同进程缓存 loop 不二次恢复；七处 Reporting Provider composition 启用既有 persistence。AgentLoop stop 将最后压缩后的新工具进展合并到既有 bounded 摘要后落盘。核心 focused `18 passed`、七类 Provider 受影响 `73 passed`；13 个相关文件 Ruff（仅忽略 AgentLoop 既有 N818）及 diff check 通过。没有新增 store、身份、Hash、锁、Gate 或业务编排；旧版本未持久化的分析不能补回。18:20 已重新启动服务，继续同一真实 Run。
 
 ## Why the prior completion claim is reopened
 

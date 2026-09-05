@@ -16,6 +16,8 @@ from .agent_recovery import AgentRecoveryDriver
 class AgentSessionLoop(Protocol):
     """Minimum session lifecycle required by the generic Agent runtime."""
 
+    initial_session_restore: AgentSessionRestore | None
+
     def restore_conversation(
         self,
         messages: Sequence[Mapping[str, Any]],
@@ -233,11 +235,16 @@ class AgentExecutionService:
             )
 
         loop = session_factory()
-        if restore is not None:
+        effective_restore = restore
+        if effective_restore is None:
+            candidate = getattr(loop, "initial_session_restore", None)
+            if isinstance(candidate, AgentSessionRestore):
+                effective_restore = candidate
+        if effective_restore is not None:
             loop.restore_conversation(
-                restore.messages,
-                task_boundaries=restore.task_boundaries,
-                handoff_summary=restore.handoff_summary,
+                effective_restore.messages,
+                task_boundaries=effective_restore.task_boundaries,
+                handoff_summary=effective_restore.handoff_summary,
             )
         self._sessions[key] = (loop, session_id, runtime_id)
         try:

@@ -43,6 +43,7 @@ from ...interfaces.types import (
 from ...utils.agent_labels import get_agent_badge
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..prompts import PromptLoader
+from ..provider_agent_session import agent_session_handoff_path
 from ..providers.base import (
     LLMProvider,
     LLMToolCall,
@@ -1456,12 +1457,42 @@ class AgentLoop:
         restart context without adding business state.
         """
 
-        summary = self.handoff_summary or _build_handoff_summary(
-            self._conversation_history
-        )
+        latest = _build_handoff_summary(self._conversation_history)
+        previous = self.handoff_summary or {}
+        summary = dict(latest)
+
+        def merged_values(key: str, *, limit: int) -> list[Any]:
+            merged: list[Any] = []
+            seen: set[str] = set()
+            for item in (
+                *list(previous.get(key) or ()),
+                *list(latest.get(key) or ()),
+            ):
+                marker = json.dumps(item, sort_keys=True, default=str)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                merged.append(item)
+            return merged[-limit:]
+
+        for key in ("progress", "decisions", "constraints"):
+            summary[key] = merged_values(key, limit=12)
+        summary["critical_refs"] = merged_values("critical_refs", limit=64)
+        summary["tool_state"] = merged_values("tool_state", limit=24)
+        if not latest.get("active_task") and previous.get("active_task"):
+            summary["active_task"] = dict(previous["active_task"])
+        default_remaining = [
+            "Continue the active task from the latest retained protocol unit."
+        ]
+        if (
+            latest.get("remaining_work") == default_remaining
+            and previous.get("remaining_work")
+        ):
+            summary["remaining_work"] = list(previous["remaining_work"])
         summary["sequence"] = max(
-            int(summary.get("sequence", 0) or 0),
+            int(previous.get("sequence", 0) or 0),
             self._compaction_sequence,
+            int(latest.get("sequence", 0) or 0),
         )
         return summary
 
@@ -1597,6 +1628,8 @@ class AgentLoop:
             except asyncio.CancelledError:
                 pass
             self._processing_task = None
+        if self.persist_handoff_summary and self._conversation_history:
+            self._persist_handoff_summary(self.durable_handoff_summary())
         logger.info("Stopping agent loop for {}", self.agent_type)
 
     def cancel_current(self) -> None:
@@ -3849,11 +3882,7 @@ class AgentLoop:
         run_id = str(self.usage_run_id or "").strip()
         if not run_id:
             return
-        safe_agent = "".join(
-            char if char.isalnum() or char in "-_." else "_"
-            for char in str(self.agent_type)
-        )
-        path = self.workspace / f"Work/runs/{run_id}/agent-conversations/{safe_agent}.handoff.json"
+        path = agent_session_handoff_path(self.workspace, run_id, str(self.agent_type))
         path.parent.mkdir(parents=True, exist_ok=True)
         serialized = json.dumps(
             {
