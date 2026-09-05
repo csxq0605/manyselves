@@ -18,11 +18,11 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.78 Bound compaction reasoning without changing report reasoning`
+- Current slice: `FA-08/M9.79 Preserve existing evidence through canonical path recovery`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `49ca6d3 Reporting: canonicalize Windows source paths in agent inputs`
+- HEAD at slice start: `0923c11 Runtime: disable reasoning for compaction summaries`
 - Program status: `automatic architecture scope complete; final acceptance in progress`
-- Final real-test status: `user-approved DashScope qwen3.8-flash is configured through Anthropic Messages; Main started full-report-a3e668f660694886b554ad8ac535814f from test Excel/Knowledge/Skills/Templates; preparation completed; two live failures fixed and the same Run resumed from the visible browser`
+- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f passed preparation and module 2.3 authoring; other module authors/review remain incomplete; service paused to load evidence path recovery and wire existing handoff restoration; no final delivery yet`
 - Blockers: `no external blocker currently; final report delivery still unverified；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `continue the same full-report Run through module/cross/chief/final/render/delivery; fix intermediate failures, resume the same Run, and verify real output files in the sidebar browser`
 
@@ -36,6 +36,8 @@
 - M9.77 补跑完整受影响 Module Runtime、input snapshot、preparation ownership 三文件合计 `41 passed`，修复已提交 `49ca6d3`。M9.78 实测进一步定位多数 `messages=2` 的上下文压缩请求反复返回 `max_tokens/output_tokens=8192/text_chars=0`，随后回退 deterministic handoff，造成每工具轮次重复耗时；这不是报告成稿成功，也不是外部配额失败。官方 [Anthropic 兼容参数](https://help.aliyun.com/zh/model-studio/anthropic-api-messages) 支持 `thinking={type:disabled}`；使用已保存的同一 Provider 做一次无项目数据的小请求，1.5 秒、24 output tokens 返回有效五字段 JSON。服务暂时停止以加载压缩专用请求设置，原 Run/state/snapshot/tool artifacts 保留；报告任务本身的思考配置不变，尚未验证交付。
 - M9.78 Characterization First 得到两个 RED 后，仅为压缩请求传递可选的禁思考 hint，沿用既有 retry/admission/usage 链；Anthropic 将 False 映射到官方 disabled 参数，None/True 不改变默认值，OpenAI 兼容 adapter 暂不映射这一非统一参数。Provider/retry 两文件 `53 passed`，AgentLoop compaction/retry/thinking focused `11 passed`；Ruff 除旧有 N818 异常类命名外通过。修复后的真实 `AgentLoop._request_model_handoff_summary` 小探针 2.17 秒返回 `source=model` 和完整五字段，不是 deterministic fallback。没有新增 debounce、failure latch、重试、阈值、Gate 或依赖，也没有修改业务任务思考/No-progress 判定。下一步恢复原 Run 并验证完整交付。
 - M9.78 补跑 AgentLoop 全文件 `79 passed`，服务已重新启动并加载修复，继续从浏览器恢复同一 Run。
+- M9.79 真实恢复后的压缩请求已返回有效文本且 `thinking_chars=0`，模块 2.3 Author 已完成并进入 Auditor。随后证据工具报告 E-0318/E-0319 等 ID 冲突：新 JSON 使用 `/`，原 Run 的证据字节使用 `\`，现有摘要冲突检查将路径表示修正误判为事实变化。Characterization First 复现后，仅在 locator 不变、原字节仍匹配既有摘要、JSON 除 source.path 的等价分隔符外完全相等时复用原始字节和 SourceRecord；真实事实、定位、来源路径变化和原字节损坏仍拒绝。未修改原 Run 数据、证据 ID 或既有摘要算法，未新增 Gate/Hash/锁。focused/affected `8 passed`；只读检查现场六条失败证据均证实仅路径分隔符差异。
+- 18:03 暂停服务以加载修复，保留原 Run、已完成模块结果、snapshot 与 tool artifacts。另一个真实缺口已定位：新进程只恢复 external_session_id，未给 `AgentSessionRestore` 传入上下文；core UI JSONL 缺少 tool_call_id，不能作为 Provider 历史回灌。现有 handoff persistence/restore 将在下一切片接线；完整报告交付仍未验证。
 
 ## Why the prior completion claim is reopened
 

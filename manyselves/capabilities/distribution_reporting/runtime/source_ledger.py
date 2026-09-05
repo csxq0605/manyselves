@@ -94,6 +94,30 @@ class SourceLedger:
         ]
         return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
+    def _original_project_content(
+        self, record: SourceRecord, candidate: str
+    ) -> str | None:
+        """Reuse old bytes when only the JSON source path's slash format changed."""
+
+        try:
+            original = (self.content_root / f"{record.id}.txt").read_text(
+                encoding="utf-8"
+            )
+            old_payload = json.loads(original)
+            new_payload = json.loads(candidate)
+            old_path = old_payload["source"]["path"]
+            new_path = new_payload["source"]["path"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not isinstance(old_path, str) or not isinstance(new_path, str):
+            return None
+        if old_path.replace("\\", "/") != new_path.replace("\\", "/"):
+            return None
+        new_payload["source"]["path"] = old_path
+        if old_payload != new_payload or self._digest(original) != record.content_sha256:
+            return None
+        return original
+
     def _validate_local_locator(
         self,
         locator: str,
@@ -180,6 +204,7 @@ class SourceLedger:
                     kind = entry["kind"]
                     digest = entry["content_sha256"]
                     locator = entry["locator"]
+                    content = entry["content"]
                     existing = None
                     if kind is SourceKind.PROJECT_EVIDENCE:
                         existing = next(
@@ -194,10 +219,17 @@ class SourceLedger:
                             existing.locator != locator
                             or existing.content_sha256 != digest
                         ):
-                            raise ValueError(
-                                "conflicting project evidence id: "
-                                f"{entry['evidence_id']}"
+                            original_content = (
+                                self._original_project_content(existing, content)
+                                if existing.locator == locator
+                                else None
                             )
+                            if original_content is None:
+                                raise ValueError(
+                                    "conflicting project evidence id: "
+                                    f"{entry['evidence_id']}"
+                                )
+                            content = original_content
                     else:
                         existing = next(
                             (
@@ -242,7 +274,7 @@ class SourceLedger:
                         )
                         records.append(existing)
                     results.append(existing)
-                    pending_contents.append((existing.id, entry["content"]))
+                    pending_contents.append((existing.id, content))
                 for source_id, content in pending_contents:
                     self._persist_content(source_id, content)
                 self._persist(records)
