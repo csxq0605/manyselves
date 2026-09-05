@@ -622,7 +622,8 @@ async def test_openai_stream_waits_for_usage_only_chunk_and_normalizes_cache():
     streamed = [
         chunk
         async for chunk in provider.chat_stream(
-            [Message(role="user", content="audit")]
+            [Message(role="user", content="audit")],
+            reasoning_enabled=False,
         )
     ]
 
@@ -641,11 +642,14 @@ async def test_openai_stream_waits_for_usage_only_chunk_and_normalizes_cache():
     assert terminal.request_metrics["representation"] == (
         "openai_chat_completions_stream_payload_v1"
     )
+    assert "thinking" not in captured
 
 
 @pytest.mark.asyncio
 async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
     from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+
+    captured = {}
 
     class StreamContext:
         def __aiter__(self):
@@ -679,6 +683,7 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
 
     class Messages:
         def stream(self, **kwargs):
+            captured.update(kwargs)
             return StreamContext()
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
@@ -706,6 +711,7 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
     assert chunks[0].request_metrics["representation"] == (
         "anthropic_messages_stream_payload_v1"
     )
+    assert "thinking" not in captured
 
 
 @pytest.mark.asyncio

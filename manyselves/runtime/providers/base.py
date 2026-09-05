@@ -256,6 +256,7 @@ class LLMProvider(ABC):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        reasoning_enabled: bool | None = None,
     ) -> LLMResponse:
         """Send chat completion request.
 
@@ -264,6 +265,8 @@ class LLMProvider(ABC):
             tools: Optional list of tool definitions for function calling.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            reasoning_enabled: Optional best-effort request-scoped reasoning hint;
+                adapters may preserve their provider default when it is true.
 
         Returns:
             LLM response with content and/or tool calls.
@@ -276,6 +279,7 @@ class LLMProvider(ABC):
         temperature: float = 0.1,
         max_tokens: int = 8192,
         stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
     ):
         """Send streaming chat completion request.
 
@@ -287,6 +291,8 @@ class LLMProvider(ABC):
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
             stream_idle_timeout_seconds: Optional per-request idle timeout.
+            reasoning_enabled: Optional best-effort request-scoped reasoning hint;
+                adapters may preserve their provider default when it is true.
 
         Yields:
             LLMStreamChunk with delta content for each chunk.

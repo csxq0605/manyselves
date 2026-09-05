@@ -18,9 +18,9 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.77 Canonical project paths in live Agent inputs`
+- Current slice: `FA-08/M9.78 Bound compaction reasoning without changing report reasoning`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `2e4fb1f Docs: record Windows live acceptance`
+- HEAD at slice start: `49ca6d3 Reporting: canonicalize Windows source paths in agent inputs`
 - Program status: `automatic architecture scope complete; final acceptance in progress`
 - Final real-test status: `user-approved DashScope qwen3.8-flash is configured through Anthropic Messages; Main started full-report-a3e668f660694886b554ad8ac535814f from test Excel/Knowledge/Skills/Templates; preparation completed; two live failures fixed and the same Run resumed from the visible browser`
 - Blockers: `no external blocker currently; final report delivery still unverified；仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
@@ -33,6 +33,9 @@
 - Provider/view 和全部相关 Reporting Provider 文件定向选择 `84 passed`；扩展 Windows 编码矩阵后会话文件 `41 passed`，另两项 shutdown persistence 通过；changed-path Ruff 通过。未运行全仓回归。
 - 修复加载后，从原 Main conversation 的“恢复原报告”恢复同一 `full-report-a3e668f660694886b554ad8ac535814f`，持久状态已回到 `running/run-module-cohort`，冻结输入和准备阶段结果保留。用户本轮明确要求完成全流程并修复中途失败，因此不再沿用历史“仅越过失败点后停止观察”的验收方式；最终输出尚未验证，不宣称完成。
 - M9.77 真实 Module 调用 `inspect_document(path='Inputs\\S4-6评估总表.xlsx')` 被既有 canonical project-relative 合同拒绝。核对冻结 snapshot、manifest、evidence 与 Agent 输入后确认是 Pydantic 将 Windows `Path` 输出为反斜杠，模型复用了应用提供的路径。Characterization First 在 Windows 得到两项 RED；Capability 对四类既有路径载体使用 JSON-only POSIX 序列化，Python mode 仍返回 Path。Module Author initial/recovery prompt 重新投影旧 checkpoint 中这几类 typed source carriers，因而无需手改原 Run 即可规范化历史路径。未放宽 document_tool 权限/路径合同、未增加 Gate、hash 或锁。focused `18 passed`、Ruff 与 diff check 通过；当前真实 Run 未中断，修复将在下一次正常加载生效。
+- M9.77 补跑完整受影响 Module Runtime、input snapshot、preparation ownership 三文件合计 `41 passed`，修复已提交 `49ca6d3`。M9.78 实测进一步定位多数 `messages=2` 的上下文压缩请求反复返回 `max_tokens/output_tokens=8192/text_chars=0`，随后回退 deterministic handoff，造成每工具轮次重复耗时；这不是报告成稿成功，也不是外部配额失败。官方 [Anthropic 兼容参数](https://help.aliyun.com/zh/model-studio/anthropic-api-messages) 支持 `thinking={type:disabled}`；使用已保存的同一 Provider 做一次无项目数据的小请求，1.5 秒、24 output tokens 返回有效五字段 JSON。服务暂时停止以加载压缩专用请求设置，原 Run/state/snapshot/tool artifacts 保留；报告任务本身的思考配置不变，尚未验证交付。
+- M9.78 Characterization First 得到两个 RED 后，仅为压缩请求传递可选的禁思考 hint，沿用既有 retry/admission/usage 链；Anthropic 将 False 映射到官方 disabled 参数，None/True 不改变默认值，OpenAI 兼容 adapter 暂不映射这一非统一参数。Provider/retry 两文件 `53 passed`，AgentLoop compaction/retry/thinking focused `11 passed`；Ruff 除旧有 N818 异常类命名外通过。修复后的真实 `AgentLoop._request_model_handoff_summary` 小探针 2.17 秒返回 `source=model` 和完整五字段，不是 deterministic fallback。没有新增 debounce、failure latch、重试、阈值、Gate 或依赖，也没有修改业务任务思考/No-progress 判定。下一步恢复原 Run 并验证完整交付。
+- M9.78 补跑 AgentLoop 全文件 `79 passed`，服务已重新启动并加载修复，继续从浏览器恢复同一 Run。
 
 ## Why the prior completion claim is reopened
 

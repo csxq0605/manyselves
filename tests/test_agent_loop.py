@@ -762,9 +762,85 @@ async def test_working_memory_compaction_uses_model_handoff_when_available(agent
     compacted = await agent_loop._compact_working_memory_async(messages)
 
     assert agent_loop._chat_with_retries.await_args.kwargs["phase"] == "context_compaction"
+    assert agent_loop._chat_with_retries.await_args.kwargs["reasoning_enabled"] is False
     assert '"source":"model"' in compacted[1].content
     assert "不得重写已完成分段" in compacted[1].content
     assert "checkpoint_ref" not in compacted[1].content
+
+
+@pytest.mark.asyncio
+async def test_model_handoff_disables_anthropic_reasoning_on_wire(agent_loop):
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+
+    captured = {}
+    model_summary = {
+        "progress": ["bounded"],
+        "decisions": [],
+        "constraints": [],
+        "remaining_work": ["continue"],
+        "critical_refs": [],
+    }
+
+    class StreamContext:
+        def __init__(self):
+            self._events = [
+                SimpleNamespace(
+                    type="content_block_delta",
+                    delta=SimpleNamespace(
+                        type="text_delta",
+                        text=json.dumps(model_summary),
+                    ),
+                )
+            ]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._events:
+                raise StopAsyncIteration
+            return self._events.pop(0)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get_final_message(self):
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="text",
+                        text=json.dumps(model_summary),
+                    )
+                ],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(
+                    input_tokens=100,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                    output_tokens=24,
+                ),
+            )
+
+    class Messages:
+        def stream(self, **kwargs):
+            captured.update(kwargs)
+            return StreamContext()
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.model = "qwen3.8-flash"
+    provider._supports_cache = False
+    provider.client = SimpleNamespace(messages=Messages())
+    agent_loop.llm_provider = provider
+
+    summary = await agent_loop._request_model_handoff_summary(
+        [LLMMessage(role="user", content="continue the active task")]
+    )
+
+    assert summary is not None
+    assert captured["thinking"] == {"type": "disabled"}
 
 
 @pytest.mark.asyncio

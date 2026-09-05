@@ -252,8 +252,11 @@ class OpenAICompatProvider(LLMProvider):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        reasoning_enabled: bool | None = None,
     ) -> LLMResponse:
         """Send chat completion request."""
+        # The generic hint is intentionally not mapped to OpenAI-compatible
+        # endpoints because support is not uniform across those APIs.
         params = self._completion_params(
             messages,
             tools=tools,
@@ -385,11 +388,13 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float = 0.1,
         max_tokens: int = 8192,
         stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
     ):
         """Send streaming chat completion request.
 
         Yields LLMStreamChunk objects as text arrives.
         """
+        # Accept the generic hint without sending an unknown wire parameter.
         params = self._completion_params(
             messages,
             tools=tools,

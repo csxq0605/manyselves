@@ -2401,6 +2401,7 @@ class AgentLoop:
         messages: list[LLMMessage],
         tool_definitions: list[dict] | None,
         stream_idle_timeout_seconds: float | None,
+        reasoning_enabled: bool | None = None,
     ):
         """Yield one adapter stream while holding exactly one request lease."""
 
@@ -2409,6 +2410,8 @@ class AgentLoop:
             stream_kwargs: dict[str, Any] = {}
             if stream_idle_timeout_seconds is not None:
                 stream_kwargs["stream_idle_timeout_seconds"] = stream_idle_timeout_seconds
+            if reasoning_enabled is not None:
+                stream_kwargs["reasoning_enabled"] = reasoning_enabled
             stream = self.llm_provider.chat_stream(
                 messages=messages,
                 tools=tool_definitions if tool_definitions else None,
@@ -2434,16 +2437,21 @@ class AgentLoop:
         self,
         messages: list[LLMMessage],
         tool_definitions: list[dict] | None,
+        reasoning_enabled: bool | None = None,
     ) -> Any:
         """Fallback non-streaming adapter call with its own request lease."""
 
         lease = await self._acquire_provider_request_lease(messages)
         try:
+            chat_kwargs: dict[str, Any] = {}
+            if reasoning_enabled is not None:
+                chat_kwargs["reasoning_enabled"] = reasoning_enabled
             return await self.llm_provider.chat(
                 messages=messages,
                 tools=tool_definitions,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
+                **chat_kwargs,
             )
         except BaseException as exc:
             if lease is not None:
@@ -2460,6 +2468,7 @@ class AgentLoop:
         tool_definitions: list[dict] | None,
         user_message_id: str | None,
         stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
     ) -> _LoopLLMResponse:
         """Run a post-tool LLM round, streaming UI deltas when supported."""
         accumulated_content = ""
@@ -2472,15 +2481,14 @@ class AgentLoop:
         ttft_ms: int | None = None
         try:
             try:
-                stream_kwargs: dict[str, Any] = {}
-                if stream_idle_timeout_seconds is not None:
-                    stream_kwargs["stream_idle_timeout_seconds"] = (
-                        stream_idle_timeout_seconds
-                    )
+                reasoning_kwargs: dict[str, Any] = {}
+                if reasoning_enabled is not None:
+                    reasoning_kwargs["reasoning_enabled"] = reasoning_enabled
                 stream = self._admitted_chat_stream(
                     messages,
                     tool_definitions,
                     stream_idle_timeout_seconds,
+                    **reasoning_kwargs,
                 )
                 async for chunk in stream:
                     if ttft_ms is None and (
@@ -2557,7 +2565,11 @@ class AgentLoop:
                     ),
                 )
             except NotImplementedError:
-                response = await self._admitted_chat(messages, tool_definitions)
+                response = await self._admitted_chat(
+                    messages,
+                    tool_definitions,
+                    **reasoning_kwargs,
+                )
                 return _LoopLLMResponse(
                     content=response.content or "",
                     tool_calls=response.tool_calls,
@@ -2730,6 +2742,7 @@ class AgentLoop:
         *,
         phase: str = "provider",
         stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
         rebuild_count = 0
@@ -2802,11 +2815,15 @@ class AgentLoop:
                     attempts,
                 )
             try:
+                reasoning_kwargs: dict[str, Any] = {}
+                if reasoning_enabled is not None:
+                    reasoning_kwargs["reasoning_enabled"] = reasoning_enabled
                 response = await self._chat_followup(
                     provider_messages,
                     provider_tool_definitions,
                     user_message_id,
                     stream_idle_timeout_seconds,
+                    **reasoning_kwargs,
                 )
                 # Only a successful physical request advances the typed context
                 # delivery state.  Definite rejects keep the full payload for a
@@ -3737,6 +3754,7 @@ class AgentLoop:
                 f"compaction-{self._compaction_sequence + 1}",
                 phase="context_compaction",
                 stream_idle_timeout_seconds=None,
+                reasoning_enabled=False,
             )
         except Exception as exc:
             logger.warning("Model handoff summary failed for {}: {}", self.agent_type, exc)

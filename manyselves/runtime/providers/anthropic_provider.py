@@ -352,6 +352,7 @@ class AnthropicProvider(LLMProvider):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        reasoning_enabled: bool | None = None,
     ) -> LLMResponse:
         """Send chat completion request."""
         system_message, anthropic_messages = self._convert_messages(messages)
@@ -365,6 +366,9 @@ class AnthropicProvider(LLMProvider):
 
         if system_message:
             params["system"] = system_message
+
+        if reasoning_enabled is False:
+            params["thinking"] = {"type": "disabled"}
 
         if tools:
             params["tools"] = self._convert_tools(tools)
@@ -432,6 +436,7 @@ class AnthropicProvider(LLMProvider):
         temperature: float = 0.1,
         max_tokens: int = 8192,
         stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
     ):
         """Send streaming chat completion request.
 
@@ -450,6 +455,9 @@ class AnthropicProvider(LLMProvider):
 
         if system_message:
             params["system"] = system_message
+
+        if reasoning_enabled is False:
+            params["thinking"] = {"type": "disabled"}
 
         if tools:
             params["tools"] = self._convert_tools(tools)
