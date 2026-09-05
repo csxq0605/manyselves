@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_serializer
 
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
@@ -23,6 +23,16 @@ class FrozenProjectFile(StrictModel):
     size: int = Field(ge=0)
     blob_ref: Path
     trusted_handle_ref: Path
+
+    @field_serializer(
+        "logical_ref",
+        "snapshot_ref",
+        "blob_ref",
+        "trusted_handle_ref",
+        when_used="json",
+    )
+    def serialize_project_ref(self, value: Path) -> str:
+        return value.as_posix().replace("\\", "/")
 
 
 class RunInputSnapshot(StrictModel):

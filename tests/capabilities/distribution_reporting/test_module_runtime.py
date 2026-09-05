@@ -599,6 +599,44 @@ def test_module_provider_selects_envelope_for_current_declared_task() -> None:
     assert ModuleAuthoringAgentBridge._envelope(context, revision_task) is revision_envelope
 
 
+def test_module_author_prompt_canonicalizes_restored_windows_source_paths() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+        ModuleAuthoringAgentBridge,
+    )
+
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.1",
+        workflow_id="public-reporting",
+        reporting_state={
+            "run_id": "restored-run",
+            "evidence_items": [
+                {
+                    "id": "E-0001",
+                    "subject": "restored evidence",
+                    "fact": "source path came from a Windows checkpoint",
+                    "source": {
+                        "file_id": "file-s4-6",
+                        "path": r"Inputs\S4-6评估总表.xlsx",
+                    },
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    prompt = ModuleAuthoringAgentBridge._prompt(
+        object(),
+        SimpleNamespace(instructions="author"),
+        SimpleNamespace(objective="write", tools=[], output_contract="module"),
+        context,
+    )
+    payload = json.loads(prompt.rsplit("\n\n", maxsplit=1)[-1])
+
+    assert payload["module_context"]["reporting_state"]["evidence_items"][0][
+        "source"
+    ]["path"] == "Inputs/S4-6评估总表.xlsx"
+
+
 @pytest.mark.asyncio
 async def test_module_provider_runtime_builds_declared_tools_and_reuses_conversation_session(
     tmp_path: Path,

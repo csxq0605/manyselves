@@ -296,6 +296,10 @@ class SourceLocation(ReportingModel):
             raise ValueError("source path must not be blank")
         return value
 
+    @field_serializer("path", when_used="json")
+    def serialize_path(self, value: Path) -> str:
+        return value.as_posix().replace("\\", "/")
+
 
 SupplementScope = Literal["run", "module", "submodule", "claim", "final_section"]
 SupplementStage = Literal[

@@ -147,6 +147,88 @@ def test_preparation_models_preserve_nested_round_trip_and_extra_forbid() -> Non
             type(value).model_validate({**value.model_dump(mode="json"), "extra": True})
 
 
+def test_preparation_models_serialize_project_paths_as_canonical_refs() -> None:
+    preparation = import_module(PREPARATION_MODULE)
+    reporting = import_module(REPORTING_MODULE)
+    project_path = Path("Inputs") / "S4-6评估总表.xlsx"
+    snapshot_path = (
+        Path("Work")
+        / "runs"
+        / "reporting-1"
+        / "frozen-project"
+        / project_path
+    )
+
+    manifest_file = preparation.ManifestFile(
+        id="file-s4-6",
+        path=project_path,
+        snapshot_ref=snapshot_path,
+        sha256="a" * 64,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    file_result = preparation.FilePreparationResult(
+        manifest_order=0,
+        file_id="file-s4-6",
+        source_path=project_path,
+        source_sha256="a" * 64,
+        status="parsed",
+        parsed_artifacts=[
+            preparation.ParsedArtifact(
+                id="artifact-s4-6",
+                kind="workbook",
+                source=reporting.SourceLocation(
+                    file_id="file-s4-6",
+                    path=project_path,
+                ),
+                payload={},
+            )
+        ],
+    )
+
+    assert manifest_file.model_dump(mode="json") == {
+        "id": "file-s4-6",
+        "path": "Inputs/S4-6评估总表.xlsx",
+        "sha256": "a" * 64,
+        "media_type": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        "purpose": None,
+        "snapshot_ref": (
+            "Work/runs/reporting-1/frozen-project/Inputs/S4-6评估总表.xlsx"
+        ),
+        "parse_status": "pending",
+        "error": None,
+    }
+    dumped_result = file_result.model_dump(mode="json")
+    assert dumped_result["source_path"] == "Inputs/S4-6评估总表.xlsx"
+    assert dumped_result["parsed_artifacts"][0]["source"]["path"] == (
+        "Inputs/S4-6评估总表.xlsx"
+    )
+    assert isinstance(manifest_file.model_dump(mode="python")["path"], Path)
+    assert isinstance(file_result.model_dump(mode="python")["source_path"], Path)
+    assert isinstance(
+        file_result.model_dump(mode="python")["parsed_artifacts"][0]["source"][
+            "path"
+        ],
+        Path,
+    )
+
+    restored_evidence = reporting.EvidenceItem.model_validate(
+        {
+            "id": "E-S4-6",
+            "subject": "source ledger compatibility",
+            "fact": "legacy Windows path is accepted and re-emitted canonically",
+            "source": {
+                "file_id": "file-s4-6",
+                "path": r"Inputs\S4-6评估总表.xlsx",
+            },
+        }
+    )
+    assert restored_evidence.model_dump(mode="json")["source"]["path"] == (
+        "Inputs/S4-6评估总表.xlsx"
+    )
+
+
 def test_preparation_contract_catalog_uses_typed_models_and_collection_shapes() -> None:
     _, registry = load_distribution_reporting_capability()
     contracts = build_contract_catalog(registry)

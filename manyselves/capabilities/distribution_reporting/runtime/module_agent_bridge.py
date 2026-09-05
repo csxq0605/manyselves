@@ -33,6 +33,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRuntimeLaneContext,
     envelope_for_output_contract,
 )
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+    FilePreparationResult,
+    ParsedArtifact,
+    ProjectManifest,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -52,6 +60,33 @@ SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]
 ]
+
+
+def _serialize_module_context(
+    context: DeclarativeModuleRuntimeLaneContext,
+) -> dict[str, Any]:
+    """Re-project restored typed source carriers at the Agent output boundary."""
+
+    payload = context.model_dump(mode="json")
+    state = payload["reporting_state"]
+    restored_state = context.reporting_state
+
+    manifest = restored_state.get("project_manifest")
+    if manifest is not None:
+        state["project_manifest"] = ProjectManifest.model_validate(manifest).model_dump(
+            mode="json"
+        )
+    for key, model in (
+        ("preparation_worker_results", FilePreparationResult),
+        ("parsed_artifacts", ParsedArtifact),
+        ("evidence_items", EvidenceItem),
+    ):
+        values = restored_state.get(key)
+        if isinstance(values, list):
+            state[key] = [
+                model.model_validate(value).model_dump(mode="json") for value in values
+            ]
+    return payload
 
 
 class ModuleAuthoringAgentBridge:
@@ -276,7 +311,7 @@ class ModuleAuthoringAgentBridge:
                 f"Task: {task.objective}",
                 json.dumps(
                     {
-                        "module_context": context.model_dump(mode="json"),
+                        "module_context": _serialize_module_context(context),
                         "allowed_tools": task.tools,
                         "output_contract": task.output_contract,
                     },
@@ -349,7 +384,7 @@ class ModuleAuthoringAgentBridge:
                 "立即调用 submit_result，提交符合 output contract 的类型化结果。",
                 json.dumps(
                     {
-                        "module_context": context.model_dump(mode="json"),
+                        "module_context": _serialize_module_context(context),
                         "output_contract": task.output_contract,
                     },
                     ensure_ascii=False,

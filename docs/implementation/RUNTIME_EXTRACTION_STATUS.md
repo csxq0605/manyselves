@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.76 Live Provider replacement and Windows conversation persistence`
+- Current slice: `FA-08/M9.77 Canonical project paths in live Agent inputs`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `2e4fb1f Docs: record Windows live acceptance`
 - Program status: `automatic architecture scope complete; final acceptance in progress`
@@ -32,6 +32,7 @@
 - Characterization First 分别复现 Provider replacement 后原 view 仍返回 `None`、真实 Agent ID 的会话写盘失败。RuntimeServicesView 现在只对可替换 Provider/defaults 使用 Host-owned resolver；workspace/bus 和既有 Workflow bindings 保留，不关闭或重建活动 Run。ConversationStore 仅在磁盘路径边界可逆编码 Agent ID，逻辑身份与 Session 不变，安全旧目录名不变；没有新增 hash、锁、Gate 或 Provider 重试。
 - Provider/view 和全部相关 Reporting Provider 文件定向选择 `84 passed`；扩展 Windows 编码矩阵后会话文件 `41 passed`，另两项 shutdown persistence 通过；changed-path Ruff 通过。未运行全仓回归。
 - 修复加载后，从原 Main conversation 的“恢复原报告”恢复同一 `full-report-a3e668f660694886b554ad8ac535814f`，持久状态已回到 `running/run-module-cohort`，冻结输入和准备阶段结果保留。用户本轮明确要求完成全流程并修复中途失败，因此不再沿用历史“仅越过失败点后停止观察”的验收方式；最终输出尚未验证，不宣称完成。
+- M9.77 真实 Module 调用 `inspect_document(path='Inputs\\S4-6评估总表.xlsx')` 被既有 canonical project-relative 合同拒绝。核对冻结 snapshot、manifest、evidence 与 Agent 输入后确认是 Pydantic 将 Windows `Path` 输出为反斜杠，模型复用了应用提供的路径。Characterization First 在 Windows 得到两项 RED；Capability 对四类既有路径载体使用 JSON-only POSIX 序列化，Python mode 仍返回 Path。Module Author initial/recovery prompt 重新投影旧 checkpoint 中这几类 typed source carriers，因而无需手改原 Run 即可规范化历史路径。未放宽 document_tool 权限/路径合同、未增加 Gate、hash 或锁。focused `18 passed`、Ruff 与 diff check 通过；当前真实 Run 未中断，修复将在下一次正常加载生效。
 
 ## Why the prior completion claim is reopened
 

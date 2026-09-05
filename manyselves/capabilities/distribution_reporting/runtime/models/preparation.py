@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_serializer
 
 from .reporting import (
     CoverageMatrix,
@@ -30,6 +30,10 @@ class ManifestFile(ReportingModel):
     )
     parse_status: Literal["pending", "parsed", "failed"] = "pending"
     error: str | None = None
+
+    @field_serializer("path", "snapshot_ref", when_used="json")
+    def serialize_project_ref(self, value: Path | None) -> str | None:
+        return value.as_posix().replace("\\", "/") if value is not None else None
 
 
 class ProjectManifest(ReportingModel):
@@ -61,6 +65,10 @@ class FilePreparationResult(ReportingModel):
     raw_photo_assets: dict[str, PhotoAsset] = Field(default_factory=dict)
     mapping_gaps: list[dict] = Field(default_factory=list)
     error: str | None = None
+
+    @field_serializer("source_path", when_used="json")
+    def serialize_source_path(self, value: Path) -> str:
+        return value.as_posix().replace("\\", "/")
 
 
 class MappingGap(ReportingModel):
