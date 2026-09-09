@@ -9,8 +9,8 @@ from manyselves.capabilities.distribution_reporting.domain.claim_ledger import (
     ClaimLedger,
 )
 
-from .assets import ReportAssetAssembler
-from .models.agentic import EditedReportSubmission
+from .assets import ReportAssetAssembler, expand_approved_module_markers
+from .models.agentic import EditedReportSubmission, ModuleSubmission
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .source_ledger import SourceLedger
 
@@ -23,6 +23,12 @@ def build_delivery_projection(
 ) -> tuple[ApprovedReport, str]:
     """Build the citation-bound Markdown passed to the Capability renderer."""
 
+    source_modules = dict(state.get("markdown_modules", {}))
+    source_modules.update({
+        module_id: ModuleSubmission.model_validate(module).markdown
+        for module_id, module in state.get("module_submissions", {}).items()
+    })
+    edited = expand_approved_module_markers(edited, source_modules)
     if claims is None:
         claims = [
             claim

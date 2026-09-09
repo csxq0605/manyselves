@@ -179,6 +179,25 @@ def test_final_completion_restores_json_roundtripped_asset_carriers(
     assert isinstance(serialized["state"][carrier][0], dict)
 
 
+def test_delivery_projection_expands_approved_aggregate_modules_without_editing_subject(
+    tmp_path: Path,
+) -> None:
+    edited = _edited_report().model_copy(update={
+        "module_narratives": {
+            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            for module_id in REPORT_MODULE_IDS
+        },
+    })
+    original = edited.model_dump(mode="json")
+    state = _state("aggregate-marker-projection", edited)
+    report, markdown = build_delivery_projection(tmp_path, state, edited)
+
+    for module_id, module in state["module_submissions"].items():
+        assert report.module_narratives[module_id] == module.markdown
+    assert "[[APPROVED_MODULE:" not in markdown
+    assert edited.model_dump(mode="json") == original
+
+
 @pytest.mark.parametrize("invalid_suffix", ["\n# 99. unexpected\n"])
 def test_capability_validation_persists_same_success_and_failure_reports(
     tmp_path: Path,

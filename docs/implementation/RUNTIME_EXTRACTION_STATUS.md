@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.90 Restore typed evidence/photo carriers at Final completion`
+- Current slice: `FA-08/M9.94 Aggregate approved-module projection; cross-run source handoff permission pending`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
 - Program status: `original full Run completed after M9.90 and same-run resume; corrected aggregate-existing is executing, final delivery acceptance incomplete`
@@ -27,6 +27,9 @@
 - Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.94：真实 aggregate state 的五个 module_narratives 仍为 APPROVED_MODULE 标记，原 delivery projection 直接传给 Renderer；已有 expand_approved_module_markers 定义但未接入该路径。Characterization RED 后仅在审查/交付共用投影复用该展开函数，从当前 typed ModuleSubmission.markdown 或 markdown_modules 生成报告视图，不改审查 subject 和原模块。delivery_projection_validation、delivery_tools、aggregate_existing_entrypoint 三文件 24 passed（46.66s），两文件 Ruff 通过。尚未加载活动服务，不中断 Final。
+- 2026-09-09 17:04：M9.93 的旧 Run 恢复通过生产 prepare_cohort 从持久化 reporting-state 精确补写原本不存在的 chief-r0.json；没有更改 runtime-state.json 或 accepted Agent payload。服务 17:03:48 重启，浏览器恢复同一 aggregate Run；17:04:28 Final 1/3 已实际发起 MiMo 请求，17:07:08 第 3 章审查完成。另发现新聚合 Run 缺失来源账本与照片/证据载体交接；已向用户异步请求允许复用既有账本编号分配并仅在新 Run 同步转换引用，原 Run/模块不变，同 E 编号不同事实仍拒绝，尚未获答复。当前 2.3 只引用 E-*，与原 Run 同编号的内容差异抽查仅为 Windows 路径斜杠（E-0008）；不得推断任意跨 Run R/W 编号也安全合并。
 
 - M9.93：真实聚合在 Final 1/3 的 task correlation 创建前因 subject 不存在失败；aggregate handoff 没有 Chief publish 步骤，而 Final preparation 只返回内存对象。Characterization RED 后，Final cohort preparation 在没有 chief_candidate_ref 时以已有 state.edited_report 发布原约定 chief-r0.json，并把引用交给后续章节；显式 Chief 修订文件保持原字节，输入 state 不变。aggregate_existing_entrypoint、final_provider、reporting_tail_runtime 三文件 33 passed（265.41s），两文件 Ruff 通过。旧失败 Run 的已完成 preparation checkpoint 需要通过同一修复后的确定性 Tool 从持久化 reporting-state 补写缺失 subject，不能改已接受的 Agent payload 或强制通过审查。另观察到 aggregate state 仍有 APPROVED_MODULE 占位符、当前 Run 来源账本为空；交付尚不能验收，继续实际路径定位。
 
