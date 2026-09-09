@@ -392,10 +392,8 @@ def _edited_report_example() -> dict[str, Any]:
         "dimension_risk_analysis": "比较五个专业维度的主导风险和管理含义。",
         "data_gap_analysis": "归并证据缺口并说明其判断影响和补证优先级。",
         "improvement_action_plan": "按依赖顺序列出责任接口、行动、验收指标和剩余风险。",
-        "special_topic_analysis": (
-            "### 4.1 动态专项问题\n\n"
-            "依据 Inputs 简要要求，在项目事实边界内形成判断、建议和验证方法。"
-        ),
+        "special_topic_plan": None,
+        "special_topic_analysis": None,
         "tables": [],
         "photo_ids": [],
         "unresolved_editorial_issues": [],

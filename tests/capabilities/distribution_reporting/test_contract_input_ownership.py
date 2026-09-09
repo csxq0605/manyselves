@@ -28,6 +28,20 @@ INPUT_CONTRACT_MODELS = {
 }
 
 
+def test_edited_report_example_satisfies_paired_special_topic_contract() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        EditedReportSubmission,
+    )
+
+    submissions = import_module(SUBMISSIONS_MODULE)
+    example = submissions.submission_schema("edited_report_submission")["examples"][0]
+    restored = EditedReportSubmission.model_validate(example)
+
+    assert restored.special_topic_plan is None
+    assert restored.special_topic_analysis is None
+    assert set(restored.module_narratives) == {"2.1", "2.2", "2.3", "2.4", "2.5"}
+
+
 def test_contract_and_input_modules_import_without_core_reporting() -> None:
     completed = subprocess.run(
         [

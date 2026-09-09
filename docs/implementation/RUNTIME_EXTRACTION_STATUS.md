@@ -28,6 +28,10 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- M9.92 验证：contract_input_ownership、aggregate_provider、aggregate_existing_entrypoint 三文件 22 passed（49.65s），两文件 Ruff 通过。真实模型在服务尚未加载该示例修复时通过第三次提交完成了自行纠正，16:51:52 聚合编写被接受；随后进入 Final 时失败 `task subject is not a readable workspace artifact`，正在定位同一聚合 Run 的审查 subject 发布路径。
+
+- M9.92：aggregate-existing 16:42 首次提交携带编号标题，已有校验正常要求纠正；16:47 的第二次提交又因“special_topic_plan / special_topic_analysis 必须同时存在或同时缺省”被拒。源码确认 model-visible KIND_EXAMPLES 自身给了无计划的专项正文；该示例被回传纠正提示，可能引导重复错误。以生产 submission_schema 的 examples[0] 实际验证 EditedReportSubmission，先复现相同 ValidationError，再将通用示例的 plan/analysis 都置 null，避免虚构 Runtime-owned 项目专项计划；真实任务的有计划分支及配对规则不变。两文件 Ruff 通过，focused/affected tests 待记录；不中断活动的原会话纠正轮。
+
 - M9.91：真实 Outputs 页面点击新生成的 30,305,699-byte Word 预览显示笼统失败。直接调用同一 PreviewService 复现 PreviewTooLarge，原因是已有 8 MiB 文件上限；不放宽文件/解压安全限制。Characterization RED 后，前端只对已有 PREVIEW_TOO_LARGE 错误码提示“文件超过安全预览限制，请关闭预览后下载查看。”，其他错误仍原提示且 onError 保持一次调用。三个预览文件 18 passed；两修改文件 ESLint、TypeScript noEmit、Vite production build 通过（保留既有大 chunk warning）。随后验证真实页面提示，下载与逐页版面检查仍不由此证明。
 
 - M9.90 自动验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -m pytest -p pytest_asyncio.plugin -q tests/capabilities/distribution_reporting/test_delivery_projection_validation.py tests/capabilities/distribution_reporting/test_delivery_tools.py tests/capabilities/distribution_reporting/test_aggregate_existing_entrypoint.py --maxfail=3`，21 passed（45.92s）；仅受影响检查，不是全仓库回归。
