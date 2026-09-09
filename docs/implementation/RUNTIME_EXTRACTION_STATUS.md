@@ -28,6 +28,8 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- 2026-09-09 18:26：服务 18:25:18 重启并加载 `8ef2658`（包括 M9.94/M9.95）。从原侧边栏会话发起全新 `full-report-8c70828443b9499d80f8a6bda41c670c`，仅使用 test 原始 Inputs/Knowledge/角色 Skill/Templates，目标 `配电安全专家咨询报告_自主全流程验收.docx`，不复用旧 Run 模块/提交、不恢复旧 Run、不启动跨 Run 聚合。18:27 preparation 已结束并进入 2.1 Author；尚未完成。启动后仅只读观察，新 Run 的业务提交、正文、状态均无外部修改。
+
 - M9.95 自动验证：contract_input_ownership、final_chief_provider、aggregate_existing_entrypoint、reporting_tail_runtime 四文件 **39 passed（181.76s）**；七文件 Ruff 与 git diff --check 通过。测试通过实际 SubmitResultTool 验证两次不同格式错误的纠正反馈、随后合法提交与已保存正文原字节不变；不是 live Provider 自主验收的替代。准备重启空闲服务加载 M9.94/M9.95，再从浏览器启动原始 Inputs 的新 full_report。
 
 - 2026-09-09 M9.95：用户明确“一次成功”指启动后无外部介入，允许系统内部自行重试/纠错；辅助恢复的历史结果不计自主验收。真实 aggregate Chief 1/3 在 17:14/17:19 终止，原因是 input 全章可读 section_ids 与 revision 已修改小节范围混淆。第 3 章纠错曾要求补写 risk_panorama，但 writer 只允许 finding 对应 improvement_action_plan；随后 changed_target_ids 又误用正文块名称。Characterization 先复现 schema 的 Complete 描述和泛化错误提示，再修订字段说明、完整示例、当前章映射与错误反馈；校验规则、预算和业务正文不变。两项新增 focused characterization 已通过，四文件 affected tests 运行中，七文件 Ruff 通过。旧 Run/提交/正文保持原样；全新 full_report 尚未启动。
