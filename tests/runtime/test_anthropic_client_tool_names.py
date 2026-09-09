@@ -6,6 +6,7 @@ import pytest
 
 from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 from manyselves.runtime.providers.base import LLMToolCall, Message
+from manyselves.runtime.tools.registry import Tool, ToolRegistry
 
 
 @pytest.mark.asyncio
@@ -98,3 +99,30 @@ def test_antigravity_removes_only_injected_empty_tool_reason(schema, args, expec
     assert provider._client_tool_arguments("unknown", args, tools) == args
     provider.api_base = "https://api.anthropic.com"
     assert provider._client_tool_arguments("inspect", args, tools) == args
+
+
+def test_empty_callable_registry_schema_reaches_provider_adapter():
+    class Inspect(Tool):
+        name = "inspect"
+
+        async def __call__(self):
+            return {"parts": []}
+
+    registry = ToolRegistry()
+    registry.register(Inspect())
+    tools = registry.get_definitions()
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.api_base = "http://127.0.0.1:8081/antigravity"
+    assert provider._client_tool_arguments("inspect", {"reason": "inspect"}, tools) == {}
+
+
+def test_variadic_callable_registry_schema_stays_open():
+    class Inspect(Tool):
+        name = "inspect"
+
+        async def __call__(self, **kwargs):
+            return kwargs
+
+    registry = ToolRegistry()
+    registry.register(Inspect())
+    assert "additionalProperties" not in registry.get_definitions()[0]["input_schema"]

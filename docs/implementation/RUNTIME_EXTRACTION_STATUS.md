@@ -28,6 +28,9 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- M9.84：原 Run 已从检索循环推进到真实写作，13:55 模块 2.1/2.2/2.4 r0 均已提交并进入审查，2.5 仍在写作。现场仍偶发无参工具 reason 错误：生产 ToolRegistry 从 callable 生成的空对象 Schema 没有 `additionalProperties:false`，先前探针使用文件合同而漏测此接线。新增注册表→Provider Characterization RED；仅对确知 bound callable 参数表为空的工具声明 closed empty object，`**kwargs` 与未知 fallback 不变，运行时参数处理不变。受影响 `58 passed`，Ruff 忽略 registry 既有 E721 后通过；修复暂待下一次服务加载，不为此打断活动审查。
+- 2026-09-09 documents 技能版面预检重新核验 bundle 26.905.11957：无捆绑 soffice，当前 renderer 再次返回 `LibreOffice soffice.exe was not found on PATH`。仅版面 PNG 验收受阻，未调用用户桌面 LibreOffice，未上传项目资料；业务全流程测试继续。
+
 - M9.83：第二处兼容修复后无参工具恢复正常，但真实 Author 连续检索与 list 循环没有写作。Trace 发现 Anthropic-compatible replay 将任意后续 assistant tool_use 块误当成普通终结回答，导致活动工具链只保留最后一对；Characterization 三轮工具链被压成 `7→3`。修复只更正普通回答识别，连续 tool_use（即使附带文字）不会触发历史删除；保留既有已完成旧轮回放规则。Provider 两文件 `51 passed`、Ruff 通过，真实三次依序读取工具结果后正确合并为 `S8JK4PV2Z`。13:48 暂停原 Run 加载修复；此前审查质量尚不可作为通过证据，正文/交付仍待验收。
 
 - M9.82：加载 `51d43f8` 后作者均越过 HTTP 400，真正执行工具；随即 `list_result_parts` 反复报 unexpected keyword `reason`。官方 `schema_cleaner.go` 明确给空对象注入必填 reason。Characterization RED 后，只在 Antigravity response adapter 对原始 Schema 为 closed empty object、仅含 string reason 的调用恢复 `{}`；保留未知参数、开放对象和真实 reason 参数，也不改变其他 Provider。两种响应路径的 focused/affected `50 passed`；真实无参 callable 调用和下一轮结果回传得到 `EMPTY_TOOL_OK`。未放宽 Runtime 参数检查或改工具合同。13:42 停服加载修复，原 Run 保留，随后继续恢复。

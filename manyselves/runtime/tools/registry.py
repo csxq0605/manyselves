@@ -121,11 +121,16 @@ class ToolRegistry:
 
                 properties[param_name] = param_schema
 
-            return {
+            schema = {
                 "type": "object",
                 "properties": properties,
                 "required": required if required else [],
             }
+            if not sig.parameters:
+                # A bound zero-argument callable accepts no arbitrary fields.
+                # Keep **kwargs tools and unknown-schema fallbacks open.
+                schema["additionalProperties"] = False
+            return schema
 
         except Exception as e:
             logger.warning("Failed to generate schema for {}: {}", tool.name, e)
