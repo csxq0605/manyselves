@@ -34,6 +34,7 @@ it("keeps only a compact latest status in chat and loads cost on demand", async 
   expect(screen.queryByText(/Token Plan Lite/)).not.toBeInTheDocument();
   expect(screen.queryByText("old-finished")).not.toBeInTheDocument();
   expect(screen.queryByText(/old-failed/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /处理运行/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/更早完成的运行/)).not.toBeInTheDocument();
   expect(api.cost).not.toHaveBeenCalled();
   expect(api.outputs).not.toHaveBeenCalled();
@@ -52,12 +53,9 @@ it("keeps only a compact latest status in chat and loads cost on demand", async 
   expect(api.listRuns).toHaveBeenCalledWith("owner-1");
 });
 
-it("keeps older failures behind the attention button and reports a failed resume", async () => {
+it("offers recovery for the current failed run and reports a failed resume", async () => {
   const api = {
     listRuns: vi.fn(async () => ({ runs: [{
-      run: { runId: "latest", workflowId: "full-report", status: "completed", active: false },
-      state: {}, waitingInput: [],
-    }, {
       run: { runId: "interrupted", workflowId: "aggregate-existing", status: "failed", active: false },
       state: { error: "原始失败原因" }, waitingInput: [],
     }] })),
@@ -66,7 +64,7 @@ it("keeps older failures behind the attention button and reports a failed resume
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <RunInteractionFeed api={api} conversationId="owner-1" projectId="test" />
   </QueryClientProvider>);
-  expect(await screen.findByText("配电安全报告已完成")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "处理运行（1）" })).toBeVisible();
   expect(screen.queryByText("原始失败原因")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "处理运行（1）" }));
   expect(screen.getByText("原始失败原因")).toBeVisible();

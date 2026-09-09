@@ -321,13 +321,15 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
     },
   });
   const feedRuns = runs.data?.runs ?? [];
-  const waiting = feedRuns.flatMap((run) => run.waitingInput.map((item) => ({
+  const latest = feedRuns[0];
+  // Chat follows one current run. Historical failures remain in run history.
+  const currentRuns = latest ? [latest] : [];
+  const waiting = currentRuns.flatMap((run) => run.waitingInput.map((item) => ({
     run,
     waiting: item as WaitingInput,
   })));
-  const interrupted = feedRuns.filter(isInterrupted);
-  const active = feedRuns.filter((run) => run.run.active);
-  const latest = feedRuns[0];
+  const interrupted = currentRuns.filter(isInterrupted);
+  const active = currentRuns.filter((run) => run.run.active);
   const attentionCount = new Set([
     ...waiting.map(({ run }) => run.run.runId),
     ...interrupted.map((run) => run.run.runId),

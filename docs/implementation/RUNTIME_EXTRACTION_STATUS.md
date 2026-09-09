@@ -28,6 +28,8 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- 2026-09-09 M9.99：Characterization 复现最新 Run 已完成但历史失败仍计入“处理运行”；主对话现在仅对最新 Run 提供待输入/恢复/活动入口，历史数据不删除。12 项前端相关测试、TypeScript 和 Vite build 通过；原侧边栏刷新实测显示 full-report-8c708… 已完成及详情/成本按钮，不再出现旧 aggregate 的处理入口。单基准新 Run 修订接线继续进行，未启动新 Provider 试验。
+
 - 2026-09-09 M9.98：用户指出 M9.97 顶部卡片/历史/成本占满主对话。真实 DOM 测量：898 px viewport 中顶部占 649.16 px，聊天区仅 80 px。Characterization 先固定“主页面只有最新状态、无旧完成/失败正文、不预加载成本/输出、点击后查看、Escape 返回”后，改成单条状态栏；旧完成记录只留既有运行态页面，待处理运行通过计数入口打开；成本/输出按需挂载到独立可滚动非模态浮层，不参与主页面 Grid 高度分配。保留 WAITING/原 Run resume，补充恢复请求失败提示、关闭焦点归还和会话切换卸载浮层。12 focused tests passed，四 TS/TSX 定向 ESLint、tsc 和 Vite build 通过。computer-use/侧边栏实测顶部降为 52.67 px、聊天区 596 px；打开成本浮层聊天区仍为 596 px，显示原 Run 28,343,230 Token/525 attempts 和 MiMo 换算，Escape 关闭并焦点回到详情按钮。未重启后端、未调用 Provider、未修改真实 Run/报告/成本账本。用户提出的统一复制方向已记录为单基准业务快照的新 Run 修订设计，未冒充其后端实现已完成。
 
 - 2026-09-09 M9.97：用户要求修复完成状态/成本展示，并明确跨 Run 汇总应按“基于既有结果，AI 指定局部修改”的恢复路径处理。Characterization 复现 completed-only 会话为空；RunInteractionFeed 现从持久化 Run 显示完成卡、用量和已有 MiMo 套餐换算，旧完成项折叠为历史，不伪造 AI 回复或修改会话/业务状态。Application Cost 投影复用现有版本化 MiMo calculator；保留未知/部分计价语义，区分固定订阅额度折算、API 等价值与实际账单，不向 Kernel/UsageLedger 添加模型计价规则。前端会话与卡片 11 passed；后端 WorkflowProjection/MiMo 27 passed，定向 Ruff、ESLint、tsc、Vite build 通过。确认全部 Run inactive 后重启服务；原侧边栏刷新实际显示 full-report-8c708… 已完成、28,343,230 Token、525 attempts 和原配置的 Lite/Standard/Pro/Max 换算。无新 Provider 调用或业务产物改动。进一步检查确认 RequestedModuleChange/ModuleRevisionInput 已有指定小节合同，但公开五入口尚未接线用户定向修订；aggregate prepare 仍只读取目标 Run 的 evidence/photos，不携带来源 Run ledger。这一缺口不能以 UI 修复或普通 same-run resume 成功代替验收。
