@@ -160,13 +160,25 @@ async def execute_reporting_recovery(
         )
 
     async def stop(
-        _outcome: AgentTurnOutcome,
+        outcome: AgentTurnOutcome,
         directive: AgentRecoveryDirective,
     ) -> AgentInvocationOutcome:
+        reason = directive.reason
+        if not reason and directive.event_kind is RecoveryEventKind.NO_PROGRESS:
+            boundary = None
+            if isinstance(outcome.message, AgentResponse):
+                boundary = {
+                    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED: "max_tokens",
+                    AGENT_TURN_CONTINUATION_REQUIRED: "tool_slice_boundary",
+                }.get(outcome.message.content)
+            reason = "Agent recovery stopped: no_progress"
+            if boundary is not None:
+                reason += f" after {boundary}"
+            reason += "; no new persisted result or semantic conversation event"
         return AgentInvocationOutcome(
             status="incomplete",
             session_id=session.session_id,
-            error=directive.reason or "Agent turn ended without a typed result",
+            error=reason or "Agent turn ended without a typed result",
         )
 
     async def reuse_result(

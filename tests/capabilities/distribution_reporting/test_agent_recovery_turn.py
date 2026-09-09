@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,6 +14,7 @@ from manyselves.interfaces.types import AgentResponse
 from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
 from manyselves.kernel.recovery import RecoveryEventKind
 from manyselves.runtime.agent_execution import (
+    AgentExecutionService,
     AgentExecutionSession,
     AgentRecoveryProgress,
     AgentTurnOutcome,
@@ -102,3 +104,47 @@ async def test_reporting_recovery_observes_progress_before_tool_slice_decision()
             {"task_id": "task"},
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("marker", "boundary"),
+    [
+        ("AGENT_MAX_TOKENS_CONTINUATION_REQUIRED", "max_tokens"),
+        ("AGENT_TURN_CONTINUATION_REQUIRED", "tool_slice_boundary"),
+    ],
+)
+async def test_no_progress_stop_preserves_the_actual_continuation_boundary(
+    marker: str, boundary: str,
+) -> None:
+    """A thinking-only exhausted turn must not become an unexplained missing result."""
+    execution = AgentExecutionService(object())  # type: ignore[arg-type]
+    session = AgentExecutionSession(
+        workflow_id="workflow", conversation_key="conversation",
+        loop=object(), session_id="session", runtime_id="runtime", created=False,
+    )
+    request = AgentTurnRequest(
+        content="initial", message_id="message", workflow_id="workflow",
+        run_id="run", task_id="task", task_attempt_id="attempt",
+    )
+    dispatch = AsyncMock(return_value=AgentTurnOutcome(
+        kind="response",
+        message=AgentResponse(agent_type="runtime", message_id="message", content=marker),
+        session_id="session", runtime_id="runtime",
+    ))
+    execution.dispatch_turn = dispatch
+    observe_progress = AsyncMock(return_value="no_progress")
+    result = await execute_reporting_recovery(
+        execution, session, request,
+        recovery_policy=RecoveryPolicyDefinition(
+            id="recovery", version="1.0.0", description="stop without progress",
+            rules={boundary: RecoveryRule(action="continue"),
+                   "no_progress": RecoveryRule(action="stop")},
+        ),
+        terminals=(), prompt_builder=lambda _event: "continue",
+        result_decoder=lambda _ref: None, progress_observer=observe_progress,
+    )
+    assert result.status == "incomplete"
+    assert "no_progress" in result.error
+    assert boundary in result.error
+    dispatch.assert_awaited_once()

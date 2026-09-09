@@ -28,6 +28,8 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- M9.87：对本次实际失败的错误信息丢失补 Characterization，`no_progress` 在 max_tokens/tool_slice 两种边界均被写成无说明的 `Agent turn ended without a typed result`，两项 RED。Capability recovery adapter 现在仅在既有 NO_PROGRESS stop 且没有显式 reason 时保留停止事件和原 continuation 边界；不改变 Kernel 决策、次数、进度识别、返回状态或重试请求。Recovery/progress/AgentExecution 四文件 `17 passed`，Cross Provider/workflow host/local review 三文件 `13 passed`，两文件 Ruff 通过。该错误信息修复尚未加载到当前进程，不为此中断活动 2.2 真实请求。
+
 - M9.86：14:41 起原 Run 的 MiMo 真实工具调用、正文写盘、结构化纠正、局部审查和跨模块复审均已有成功证据。2.4 r1、2.5 r1、2.1 r2 后因一条引用不足 finding 再修为 r3，其跨模块分支已完成。2.1 当前 revision 输入 24946 字符、2.4 为 47780 字符，均未夹带完整 reporting_state，M9.85 已进入真实生产验证。2.2 于 14:45:08 得到 `stop_reason=max_tokens/output_tokens=8192/text_chars=0/thinking_chars=26521/tool_calls=0`；原 continuation 观察到无新语义/持久结果并停止，其他已运行兄弟收尾后父 Run 呈现 `Agent turn ended without a typed result`。这不是新 Key 的 quota/auth 错误，也未通过删除旧进度或放宽无进展机制绕过。对照 [MiMo 官方 Anthropic 参数](https://mimo.mi.com/docs/en-US/api/chat/anthropic-api)，仅把既有本地 `agents.defaults.max_tokens` 从 8192 调至该模型官方默认 32768，保留思考设置与现有恢复策略；不是新增 Gate/阈值算法。15:02 服务重新加载，15:03 侧边栏恢复同一 Run，仅未完成的 cross-owner 2.2 重新进入执行，未运行连接探针。此配置修正的真实输出仍待验证。
 
 - 2026-09-09 14:39 用户替换 MiMo Token Plan 凭据，通过网页保存并立即启用 `mimo-v2.5`；密钥仅由原有配置服务持久化，不入代码/提交。用户明确“跳过连接测试、继续真实全流程”后，14:41 在侧边栏点击同一 Run 的“恢复原报告”。四路真实业务请求已开启流式响应，`search_project_evidence`、`open_project_source` 与工具结果回传成功，跨模块修订继续执行；未运行独立探针、未创建替代 Run。仍须验证最终成稿内容和交付，不能用 running 或工具成功代替全流程验收。
