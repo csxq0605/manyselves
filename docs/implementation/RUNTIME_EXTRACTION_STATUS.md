@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.86 Real MiMo cross-owner acceptance; output budget correction`
+- Current slice: `FA-08/M9.88 Real Chief acceptance and targeted 2.3 repair; initial Author input projection`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
 - Program status: `final acceptance incomplete; newly authorized MiMo Token Plan credential active, same Run executing real cross-owner review/revision`
@@ -27,6 +27,11 @@
 - Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.88：2.3 定向重做的首次真实 Author 请求记录 input_tokens=281763，源码确认初始/恢复 prompt 仍复制完整 reporting_state。Characterization RED 后，仅在已有 authoring preparation 和当前 Author output contract 下投影该 preparation，完整保留 TaskEnvelope、inline_context、input_refs、constraints 和恢复信息；其余阶段 fallback、路径规范化与 M9.85 revision 路径不变。现场只读同一 context 比较 689353→9427 字符，authoring JSON 完全相等。Module Runtime/reviewer recovery 两文件 37 passed、两文件 Ruff 通过；不新增摘要、阈值、Gate、身份或依赖。此修复尚未加载，不为其打断正在运行的 Chief。
+- 2026-09-09 15:44：原 full-report 已完成全部 cross-owner 分支并进入 Chief，第 4 章已完成。2.3 定向 Run 已经独立审查、发布并 completed，新稿绑定 30 条来源、三个小节，旧稿中的工具故障用语为零；仍待纳入最终聚合和语义验收。Chief 曾误把截断工具结果的 opaque ref 传给 open_artifact 而被拒绝，随后改用已授予的模块路径成功续读；没有放宽引用权限。最终完整交付及版面验收仍未完成。
+
+- 2026-09-09 15:28：实际只读正文复核确认 2.3-r0 的三个小节有 7 处工具故障用语且 source_ids 为空；其他当前模块均已绑定来源。现有 Final cohort 仅审第 1/3/4 章，不会重写 2.3。通过原侧边栏会话明确请求仅重做 2.3 的既有 `module_report`，创建 `module-report-78b76fad8b604d88ad2c5f040d434789`，不取消、重建或手改原 full-report。新 Run 已进入真实 module author；后续只采用审查后的定向修复结果，暂未启动 aggregate-existing。原 Run 同期产生 2.2-r1，独立 Auditor 发现三行检测部位被无来源补写，已自动进入 finding→局部修订，未把工具成功等同于内容通过。
 
 - 2026-09-09 15:21：输出预算修正已越过真实失败点。2.2 首次请求以 `tool_use/output_tokens=21220` 返回，合同拒绝非 `SI-2.2-` 的 synthesis ID 后，原会话纠正请求以 `tool_use/output_tokens=14599` 完成且结果被接受；随后工作流自动进入 2.2 module revision。期间 working-memory summary 返回 808 tokens、有效文本且 thinking=0。没有独立连接测试、手改 submission、清空 continuation 或重跑已完成的兄弟分支；尚未完成后续总编、终审与交付验收。
 

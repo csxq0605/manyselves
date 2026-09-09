@@ -80,6 +80,18 @@ def _serialize_module_context(
             "status": context.status,
             "revision": context.revision.model_dump(mode="json"),
         }
+    if output_contract in {
+        "declarative_module_authoring_agent_result", "module_submission",
+    } and context.authoring is not None:
+        # The prepared task owns the scoped inline material, source references
+        # and constraints. Do not duplicate the complete preparation state or
+        # prior lane phases in the initial/recovery Author request.
+        return {
+            "module_id": context.module_id,
+            "workflow_id": context.workflow_id,
+            "status": context.status,
+            "authoring": context.authoring.model_dump(mode="json"),
+        }
     payload = context.model_dump(mode="json")
     state = payload["reporting_state"]
     restored_state = context.reporting_state

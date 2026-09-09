@@ -614,6 +614,28 @@ def test_module_provider_selects_envelope_for_current_declared_task() -> None:
         assert author_envelope.task_id not in prompt
         assert review_envelope.task_id not in prompt
 
+    author_envelope.input_refs = ["Work/runs/current/evidence.jsonl"]
+    author_envelope.inline_context = "CURRENT_AUTHOR"
+    for prompt in (
+        ModuleAuthoringAgentBridge._prompt(
+            object(),
+            registry.require(DefinitionKind.AGENT, "module-2.4-specialist"),
+            author_task, context,
+        ),
+        ModuleAuthoringAgentBridge._recovery_prompt(
+            registry.require(DefinitionKind.AGENT, "module-2.4-specialist"),
+            author_task, context, "max_tokens",
+        ),
+    ):
+        payload = json.JSONDecoder().raw_decode(prompt[prompt.index('{\n  "module_context"'):])[0]
+        assert payload["module_context"]["authoring"] == context.authoring.model_dump(mode="json")
+        assert author_envelope.task_id in prompt
+        assert "CURRENT_AUTHOR" in prompt
+        assert author_envelope.input_refs[0] in prompt
+        assert "OLD_PREPARATION" not in prompt
+        assert review_envelope.task_id not in prompt
+        assert revision_envelope.task_id not in prompt
+
 
 def test_module_author_prompt_canonicalizes_restored_windows_source_paths() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
