@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**真实全流程验收未完成；已修复多处实际故障，当前跨模块阶段受 Google 上游模型额度耗尽阻塞**
+> 状态：**真实全流程验收未完成；已修复多处实际故障，当前 Google 与用户授权重试的 MiMo Token Plan 均返回额度耗尽**
 
 ## Program
 
@@ -21,12 +21,14 @@
 - Current slice: `FA-08/M9.85 Compact current revision contract; real acceptance quota blocker`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `final acceptance incomplete; existing local Gemini upstream QUOTA_EXHAUSTED`
+- Program status: `final acceptance incomplete; existing local Gemini upstream QUOTA_EXHAUSTED; authorized MiMo Token Plan probe also rejected with HTTP 429 quota exhausted`
 - Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f completed module cohort, including module 2.1 five findings -> revision r1 -> recheck; entered cross-owner findings/revision; 2026-09-09 14:05 Google 429 then gateway 503 halted run-reporting-tail. Chief/final/render/delivery not verified`
-- Blockers: `Google account/model quota exhausted, upstream quotaResetTimeStamp=2026-09-09T09:35:02Z (17:35 Taipei); no quota/cooldown/account mutations. Historical module 2.3 r0 still attributes technical failures to missing customer data and received an empty finding list; it is not valid final acceptance content. Bundle 26.905.11957 lacks soffice.exe for DOCX page-render QA. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Blockers: `Google account/model quota exhausted, upstream quotaResetTimeStamp=2026-09-09T09:35:02Z (17:35 Taipei); 14:24 Taipei MiMo Token Plan/mimo-v2.5 minimal text probe also returned 429 quota exhausted, reset time not established; no quota/cooldown/account mutations. Historical module 2.3 r0 still attributes technical failures to missing customer data and received an empty finding list; it is not valid final acceptance content. Bundle 26.905.11957 lacks soffice.exe for DOCX page-render QA. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `after the authorized upstream quota actually recovers, resume the preserved Run from run-reporting-tail and verify cross/chief/final/render/delivery; preserve old evidence, do not treat tainted module 2.3 as final success. A clean real regression is still needed after implementation fixes; revision payload reduction is automatic-tested and traced but not yet live-tested due to quota`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- 2026-09-09 14:24 台北，按用户新授权重试既有 MiMo Token Plan 凭据与 `mimo-v2.5`。对照官方 [快速接入](https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access)，中国集群 Anthropic base 为 `https://token-plan-cn.xiaomimimo.com/anthropic`；本地已保存的 Provider 地址、模型与之相符。真实生产 `AnthropicProvider.chat` 最小文本探针在受限网络外收到 `HTTP 429`, `error.code=429`, `message=quota exhausted`, `type=limitation`。最初受限网络连接失败不作为 Provider 结果；429 后未继续重试。流式工具、工具回传和续跑均未执行，不能宣称 MiMo 可用或全流程通过；探针只有全部通过才保存配置，因此 active Provider 仍为原本地 Gemini，原 Run 仍为 `failed/run-reporting-tail`。没有记录密钥、改套餐、充值、切账户或修改业务代码；本次为外部额度阻塞，无代码修复依据。
 
 - M9.85：真实 2.1 revision Author 丢失当前 finding 内容并提交虚构旧问题 ID，合同纠正虽拦截 ID 错误，仍暴露完整 Lane/state 混入 prompt 的上下文污染。Characterization RED 后，仅让 revision 的 initial/recovery prompt 投影现有 `ModuleRevisionPreparation`（原 subject、revision_input、required findings 和 TaskEnvelope 完整不变），不再附带其他准备/审查阶段；不增加摘要、阈值或 Gate。真实输入只读对比 `674575→25652` 字符、完整 prepared revision 相等；Module Runtime/reviewer recovery `37 passed`，Ruff 通过。初始作者及其他阶段的大型上下文仍需后续实测与边界检查，不宣称所有 prompt 膨胀已解决。
 - 14:05:13 本地反代记录 Google 429 `RESOURCE_EXHAUSTED` / `QUOTA_EXHAUSTED`，明确 individual quota reached，`quotaResetTimeStamp=2026-09-09T09:35:02Z`（当日台北 17:35:02）；gateway 因该模型自然冷却转为 503 No available accounts。原 Run 经既有自动重试后失败在 `run-reporting-tail` 的 cross-owner revision，模块结果、2.1 r1、五个复审 verdict 和已生成 Cross 资料保留。只读核对账户 active/schedulable 与模型冷却；未清冷却、改套餐、换账户或继续空耗请求。M9.84/M9.85 将在服务重新加载生效，尚未通过后续真实 Provider 验证。
