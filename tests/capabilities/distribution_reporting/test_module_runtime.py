@@ -1843,6 +1843,7 @@ async def test_module_provider_tools_assemble_artifact_tools_and_reuse_completed
         "inspect_image",
         "calculate",
         "open_artifact",
+        "open_tool_result",
         "search_text",
     }
     calculate = registry.get("calculate")

@@ -320,7 +320,7 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
         conversation.external_session_id,
     ]
     assert conversation.external_session_id == "public-reporting:cross-owner-2.1"
-    assert set(built[0]["tools"].get_all()) == {"submit_result"}
+    assert set(built[0]["tools"].get_all()) == {"submit_result", "open_tool_result"}
 
     result_path = (
         tmp_path

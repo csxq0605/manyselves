@@ -28,6 +28,9 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- M9.89：Chief 真实资料读取失败进一步定位为 Runtime 截断 envelope 提示 open_tool_result，但 Chief/Final/Cross composition 仅注册静态 task.tools，漏掉已组装的内部续读工具；不是需要放宽 open_artifact 权限。Characterization RED 后，共用工具组装器仅在既有 scoped gateway 与 result index 均已注入时附加已有 open_tool_result；Capability 工具声明和普通路径 allowlist 不变，缺失上述依赖的注入场景不增加工具。真实格式化器生成 opaque ref 后，生产工具能够按 next_offset 续读，而 open_artifact 仍拒绝同一内部 ref。五个 Provider/Module Runtime 文件 53 passed，七个修改文件 Ruff 通过。尚未加载，不中断活动 Final。
+- 2026-09-09 15:57：原 Run 的 Chief 第 1 章经历三个正文 part 的重复编号纠正后被接受，全部 Chief lanes 汇合；15:58 已进入真实 Final 第 1/3 章，空的第 4 章分支正常完成。Outputs/Reports 现存四个文件仍是 2026-08-17 历史成果，已复制到 test/Work/acceptance-qa/preexisting-reports-20260909 备份，不能当作本次生成证据。2.3 定向修复已完成，抽查定值资料缺失与四处 SPD NG 均匹配新 Run 的源证据；后续经现有 aggregate-existing 纳入修复稿，而不手改原 Run。
+
 - M9.88：2.3 定向重做的首次真实 Author 请求记录 input_tokens=281763，源码确认初始/恢复 prompt 仍复制完整 reporting_state。Characterization RED 后，仅在已有 authoring preparation 和当前 Author output contract 下投影该 preparation，完整保留 TaskEnvelope、inline_context、input_refs、constraints 和恢复信息；其余阶段 fallback、路径规范化与 M9.85 revision 路径不变。现场只读同一 context 比较 689353→9427 字符，authoring JSON 完全相等。Module Runtime/reviewer recovery 两文件 37 passed、两文件 Ruff 通过；不新增摘要、阈值、Gate、身份或依赖。此修复尚未加载，不为其打断正在运行的 Chief。
 - 2026-09-09 15:44：原 full-report 已完成全部 cross-owner 分支并进入 Chief，第 4 章已完成。2.3 定向 Run 已经独立审查、发布并 completed，新稿绑定 30 条来源、三个小节，旧稿中的工具故障用语为零；仍待纳入最终聚合和语义验收。Chief 曾误把截断工具结果的 opaque ref 传给 open_artifact 而被拒绝，随后改用已授予的模块路径成功续读；没有放宽引用权限。最终完整交付及版面验收仍未完成。
 

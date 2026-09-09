@@ -268,8 +268,9 @@ class ChiefProviderRuntime:
             )
 
         # The TaskDefinition is authoritative: build_module_provider_tools may
-        # know additional Capability tools, but it registers only this exact
-        # task.tools sequence below.
+        # know additional Capability tools, but only task.tools are selected.
+        # The shared builder also binds the scoped Runtime tool-result reader
+        # required by its truncation envelopes, without widening artifact access.
         tools = build_module_provider_tools(
             self.workspace,
             envelope=envelope,

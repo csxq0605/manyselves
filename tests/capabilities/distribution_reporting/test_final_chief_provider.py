@@ -400,6 +400,7 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
     assert built[0]["llm_provider"] is services.active_provider
     assert set(loops[0].kwargs["tools"].get_all()) == {
         "open_artifact",
+        "open_tool_result",
         "search_text",
         "write_result_part",
         "list_result_parts",

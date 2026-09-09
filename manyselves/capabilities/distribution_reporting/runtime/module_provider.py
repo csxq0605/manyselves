@@ -371,6 +371,15 @@ def build_module_provider_tools(
     registry = ToolRegistry()
     for name in tool_names:
         registry.register(available[name])
+    # Truncation envelopes advertise this Runtime-owned continuation reader.
+    # It only opens opaque tool-result refs under the existing scoped gateway;
+    # it does not add a Capability tool or grant another public artifact path.
+    if (
+        dependencies.artifact_gateway is not None
+        and dependencies.result_index is not None
+        and "open_tool_result" not in tool_names
+    ):
+        registry.register(available["open_tool_result"])
     if "submit_result" in tool_names and allowed_outputs:
         registry._schema_cache["submit_result"] = submission_schema(allowed_outputs[0])
     return registry

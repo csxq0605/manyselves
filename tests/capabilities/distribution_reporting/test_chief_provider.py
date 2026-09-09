@@ -336,6 +336,7 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
     assert len(built) == 1
     assert set(loops[0].kwargs["tools"].get_all()) == {
         "open_artifact",
+        "open_tool_result",
         "search_text",
         "write_result_part",
         "list_result_parts",
@@ -368,6 +369,30 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
     ]
     assert conversation.external_session_id == "public-reporting:chief-chapter-1"
     assert "Write only the assigned Chapter 1 sections." in loops[0].received[0].content
+
+    import json
+    from types import SimpleNamespace
+
+    from manyselves.runtime.loops.agent_loop import AgentLoop
+
+    # The real formatting boundary tells the Chief to reopen this opaque ref.
+    # That reader is Runtime-owned, not an extra public artifact permission.
+    formatter = SimpleNamespace(
+        config=AgentDefaults(max_tool_result_chars=6000),
+        agent_type="chief-editor",
+        artifact_gateway=built[0]["artifact_gateway"],
+    )
+    full_text = "approved source detail " * 1000
+    truncated = json.loads(AgentLoop._format_tool_result(
+        formatter, full_text, tool_name="open_artifact", tool_call_id="large-source",
+    ))
+    assert truncated["truncated"]
+    page = await loops[0].kwargs["tools"].get("open_tool_result")(
+        truncated["full_result_ref"], offset=truncated["next_offset"],
+    )
+    assert page["content"] == full_text[truncated["next_offset"]:truncated["next_offset"] + 8000]
+    with pytest.raises(PermissionError, match="not delivered"):
+        await loops[0].kwargs["tools"].get("open_artifact")(truncated["full_result_ref"])
 
 
 @pytest.mark.asyncio

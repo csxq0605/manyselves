@@ -440,7 +440,7 @@ async def test_final_provider_uses_real_submit_tool_and_reuses_one_session(
     assert len(loops) == 1
     assert len(built) == 1
     assert built[0]["llm_provider"] is services.active_provider
-    assert set(loops[0].kwargs["tools"].get_all()) == {"submit_result"}
+    assert set(loops[0].kwargs["tools"].get_all()) == {"submit_result", "open_tool_result"}
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]
