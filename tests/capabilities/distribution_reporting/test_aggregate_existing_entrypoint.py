@@ -132,6 +132,42 @@ def _edited_submission_with_final_chapter_4():
     )
 
 
+def test_aggregate_final_preparation_publishes_the_exact_review_subject(tmp_path: Path):
+    from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
+        FinalChapterTools,
+    )
+
+    edited = _edited_submission()
+    tools = FinalChapterTools(workspace=tmp_path, store=ReportingStore(tmp_path))
+    source_state = {"run_id": "aggregate-review-subject", "edited_report": edited}
+    prepared = tools.prepare_cohort(source_state)
+    for chapter_id in ("1", "3"):
+        lane = tools.prepare_lane({"state": prepared, "chapter_id": chapter_id})
+        subject = tmp_path / lane.contract.subject_ref
+        assert subject.is_file()
+        assert json.loads(subject.read_text(encoding="utf-8")) == edited.model_dump(mode="json")
+        assert prepared["chief_candidate_ref"] == lane.contract.subject_ref
+    assert "chief_candidate_ref" not in source_state
+
+
+def test_final_preparation_preserves_an_explicit_chief_subject(tmp_path: Path):
+    from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
+        FinalChapterTools,
+    )
+
+    store = ReportingStore(tmp_path)
+    subject_ref = "Work/runs/existing-subject/edited-revisions/chief-r2.json"
+    store.write_json(subject_ref, {"existing": "must not be overwritten"})
+    before = (tmp_path / subject_ref).read_bytes()
+    state = {
+        "run_id": "existing-subject", "edited_report": _edited_submission(),
+        "chief_candidate_ref": subject_ref,
+    }
+    prepared = FinalChapterTools(workspace=tmp_path, store=store).prepare_cohort(state)
+    assert prepared["chief_candidate_ref"] == subject_ref
+    assert (tmp_path / subject_ref).read_bytes() == before
+
+
 def _write_frozen_modules(
     workspace: Path,
     run_id: str,

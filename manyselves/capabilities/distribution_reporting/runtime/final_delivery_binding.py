@@ -155,9 +155,16 @@ class FinalChapterTools:
         self.store = store
 
     def prepare_cohort(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        """Restore the typed report subject before the parallel Final lanes."""
+        """Restore and publish the report subject before parallel Final lanes."""
 
-        return _restore_state(value)
+        state = _restore_state(value)
+        if not state.get("chief_candidate_ref"):
+            subject_ref = f"Work/runs/{state['run_id']}/edited-revisions/chief-r0.json"
+            self.store.write_json(
+                subject_ref, state["edited_report"].model_dump(mode="json"),
+            )
+            state["chief_candidate_ref"] = subject_ref
+        return state
 
     def prepare_lane(
         self,

@@ -28,6 +28,8 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- M9.93：真实聚合在 Final 1/3 的 task correlation 创建前因 subject 不存在失败；aggregate handoff 没有 Chief publish 步骤，而 Final preparation 只返回内存对象。Characterization RED 后，Final cohort preparation 在没有 chief_candidate_ref 时以已有 state.edited_report 发布原约定 chief-r0.json，并把引用交给后续章节；显式 Chief 修订文件保持原字节，输入 state 不变。aggregate_existing_entrypoint、final_provider、reporting_tail_runtime 三文件 33 passed（265.41s），两文件 Ruff 通过。旧失败 Run 的已完成 preparation checkpoint 需要通过同一修复后的确定性 Tool 从持久化 reporting-state 补写缺失 subject，不能改已接受的 Agent payload 或强制通过审查。另观察到 aggregate state 仍有 APPROVED_MODULE 占位符、当前 Run 来源账本为空；交付尚不能验收，继续实际路径定位。
+
 - M9.92 验证：contract_input_ownership、aggregate_provider、aggregate_existing_entrypoint 三文件 22 passed（49.65s），两文件 Ruff 通过。真实模型在服务尚未加载该示例修复时通过第三次提交完成了自行纠正，16:51:52 聚合编写被接受；随后进入 Final 时失败 `task subject is not a readable workspace artifact`，正在定位同一聚合 Run 的审查 subject 发布路径。
 
 - M9.92：aggregate-existing 16:42 首次提交携带编号标题，已有校验正常要求纠正；16:47 的第二次提交又因“special_topic_plan / special_topic_analysis 必须同时存在或同时缺省”被拒。源码确认 model-visible KIND_EXAMPLES 自身给了无计划的专项正文；该示例被回传纠正提示，可能引导重复错误。以生产 submission_schema 的 examples[0] 实际验证 EditedReportSubmission，先复现相同 ValidationError，再将通用示例的 plan/analysis 都置 null，避免虚构 Runtime-owned 项目专项计划；真实任务的有计划分支及配对规则不变。两文件 Ruff 通过，focused/affected tests 待记录；不中断活动的原会话纠正轮。
