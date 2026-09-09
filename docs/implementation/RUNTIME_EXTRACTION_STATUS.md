@@ -18,7 +18,7 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.96 Sidebar HTTP attachment downloads after autonomous full_report completion`
+- Current slice: `FA-08/M9.97 Persisted completion cards and model-aware cost projection; targeted recovery follow-up`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `346cc1d Record autonomous Chief correction and Final review start`
 - Program status: `fresh autonomous full_report completed on backend behavioral commit 8ef2658 at 20:27; no manual business artifact/state edit or recovery after launch. Sidebar Blob download failure was diagnosed and fixed separately after Run completion. Full PR completion is not established: page QA and aggregate handoff debt remain`
@@ -27,6 +27,8 @@
 - Next automatic action: `preserve completed Run, original Outputs and historical backups; no need to regenerate the report or resume old Runs. Await explicit local-renderer authorization for page-by-page QA and separate outstanding cross-run source rebinding authorization. Do not claim a universal one-shot guarantee or whole-PR completion from this single autonomous trial. No provider connection probes, business-artifact surgery, unapproved renderer installation or source-ID rebinding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- 2026-09-09 M9.97：用户要求修复完成状态/成本展示，并明确跨 Run 汇总应按“基于既有结果，AI 指定局部修改”的恢复路径处理。Characterization 复现 completed-only 会话为空；RunInteractionFeed 现从持久化 Run 显示完成卡、用量和已有 MiMo 套餐换算，旧完成项折叠为历史，不伪造 AI 回复或修改会话/业务状态。Application Cost 投影复用现有版本化 MiMo calculator；保留未知/部分计价语义，区分固定订阅额度折算、API 等价值与实际账单，不向 Kernel/UsageLedger 添加模型计价规则。前端会话与卡片 11 passed；后端 WorkflowProjection/MiMo 27 passed，定向 Ruff、ESLint、tsc、Vite build 通过。确认全部 Run inactive 后重启服务；原侧边栏刷新实际显示 full-report-8c708… 已完成、28,343,230 Token、525 attempts 和原配置的 Lite/Standard/Pro/Max 换算。无新 Provider 调用或业务产物改动。进一步检查确认 RequestedModuleChange/ModuleRevisionInput 已有指定小节合同，但公开五入口尚未接线用户定向修订；aggregate prepare 仍只读取目标 Run 的 evidence/photos，不携带来源 Run ledger。这一缺口不能以 UI 修复或普通 same-run resume 成功代替验收。
 
 - 2026-09-09 M9.96：全新 Run 已于 20:27 自主完成，不涉及下载前端修复。之后侧边栏点击 30 MB Word 和 58 KB 来源索引均无 download event；同一认证 HTTP 接口返回 200，响应原字节等于 Outputs 和本 Run 交付包，直接导航会触发下载。隔离本地页面证明即便保留 Blob URL、不立即 revoke，侧边浏览器也不触发 Blob 下载，排除简单延迟 revoke 猜测。Characterization RED 后，项目 FileApi 暴露既有已编码下载 URL，经现有 SaveDownloadInput 可选字段传给 Browser driver，优先使用 HTTP attachment URL；保持原 API 请求的鉴权/错误检查，Electron 仍保存已取得的原字节，纯 Blob 调用仍可用。未改服务 API、鉴权、文件权限/大小限制、报告正文或 Run。四文件 30 passed（5.45s），九个修改 TS/TSX 文件定向 ESLint、TypeScript noEmit、Vite production build 通过（既有大 chunk warning 保留）。前端重新加载后，真实侧边栏报告/来源索引按钮均捕获 download event。只证明下载触发与接口/交付字节一致，未检查浏览器最终保存路径。隔离测试服务已停止，原报告服务未重启。
 

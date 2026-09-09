@@ -223,6 +223,44 @@ function failureMessage(run: WorkflowRunResponse): string | null {
   return embeddedMessage ?? error;
 }
 
+function RunResult({ api, run, projectId }: {
+  readonly api: WorkflowApi;
+  readonly run: WorkflowRunResponse;
+  readonly projectId: string;
+}) {
+  const cost = useQuery({
+    queryKey: ["runs", "cost", projectId, run.run.runId, run.run.status],
+    queryFn: () => api.cost(run.run.runId),
+  });
+  const outputs = useQuery({
+    queryKey: ["runs", "outputs", projectId, run.run.runId],
+    queryFn: () => api.outputs(run.run.runId),
+  });
+  const usage = objectValue(cost.data?.usage);
+  const totals = objectValue(usage.totals);
+  return <article className="run-interaction-card run-interaction-card--result" aria-live="polite">
+    <strong>{reportingWorkflowLabel(run.run.workflowId)}已完成</strong>
+    <small>{run.run.runId}</small>
+    {outputs.data?.outputs.length ? <details>
+      <summary>本次运行记录的输出路径</summary>
+      <small>Outputs 是项目当前发布位置，后续运行可能更新；历史版本以各 Run 的交付包为准。</small>
+      {outputs.data.outputs.map((output) => <div key={output.id}>
+        {output.path}{output.exists === false ? "（文件当前不可用）" : ""}
+      </div>)}
+    </details> : null}
+    {outputs.isError ? <p role="alert">交付文件列表加载失败，请刷新重试。</p> : null}
+    {cost.isPending ? <span>正在读取本次运行成本…</span> : null}
+    {cost.isError ? <p role="alert">成本读取失败，请刷新重试。</p> : null}
+    {typeof totals.total_tokens === "number" ? <span>
+      累计 Token：{totals.total_tokens.toLocaleString()} · Provider 调用：{String(totals.provider_attempts ?? "未知")}
+    </span> : null}
+    {typeof usage.pricing_summary === "string"
+      ? <p className="run-interaction-card__cost">{usage.pricing_summary}</p>
+      : cost.isSuccess ? <p>成本未知：当前模型未配置价格；Token 用量不等于实际账单。</p> : null}
+    <a href={`/projects/${encodeURIComponent(projectId)}/outputs`}>查看交付文件</a>
+  </article>;
+}
+
 export interface RunInteractionFeedProps {
   readonly api: WorkflowApi & WorkflowRunFeedApi;
   readonly conversationId: string;
@@ -251,8 +289,9 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
   })));
   const interrupted = feedRuns.filter(isInterrupted);
   const active = feedRuns.filter((run) => run.run.active);
+  const completed = feedRuns.filter((run) => run.run.status.toLowerCase() === "completed");
 
-  if (waiting.length === 0 && interrupted.length === 0 && active.length === 0) return null;
+  if (waiting.length === 0 && interrupted.length === 0 && active.length === 0 && completed.length === 0) return null;
   return (
     <section aria-label="运行交互" className="run-interaction-feed">
       {active.map((run) => <article className="run-interaction-card run-interaction-card--status" key={run.run.runId}>
@@ -270,6 +309,11 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
       {waiting.map(({ run, waiting: item }) => (
         <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
       ))}
+      {completed.slice(0, 1).map((run) => <RunResult api={api} run={run} projectId={projectId} key={run.run.runId} />)}
+      {completed.length > 1 ? <details>
+        <summary>更早完成的运行（{completed.length - 1}）</summary>
+        {completed.slice(1).map((run) => <RunResult api={api} run={run} projectId={projectId} key={run.run.runId} />)}
+      </details> : null}
       {interrupted.map((run) => <article aria-live="assertive" className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
         <div className="run-interaction-card__failure">
           <strong>{reportingWorkflowLabel(run.run.workflowId)}失败</strong>

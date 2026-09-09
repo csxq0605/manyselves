@@ -248,6 +248,30 @@ def _facade(workspace: Path, binding: _ReportingAdapter) -> WorkflowProjectionFa
     )
 
 
+def test_run_cost_projects_existing_mimo_rates_without_changing_ledger(tmp_path):
+    path = tmp_path / ".manyselves/usage/report-priced.jsonl"
+    path.parent.mkdir(parents=True)
+    raw = json.dumps({
+        "timestamp": "2026-09-09T12:00:00+08:00",
+        "model": "mimo-v2.5", "input_tokens": 100,
+        "cached_input_tokens": 20, "output_tokens": 10,
+    }) + "\n"
+    path.write_text(raw, encoding="utf-8")
+    result = _facade(tmp_path, _ReportingAdapter()).get_cost("report-priced")
+    usage = result["usage"]
+    assert usage["totals"]["pricing_status"] == "estimated"
+    assert "Token Plan Lite" in usage["pricing_summary"]
+    assert "非实际账单" in usage["pricing_summary"]
+    assert usage["pricing"]["priced_attempts"] == 1
+    assert path.read_text(encoding="utf-8") == raw
+
+
+def test_unknown_model_cost_remains_unknown(tmp_path):
+    result = _facade(tmp_path, _ReportingAdapter()).get_cost("report-unpriced")
+    assert result["usage"]["totals"]["pricing_status"] == "unconfigured"
+    assert "pricing_summary" not in result["usage"]
+
+
 class _DetachedReportingAdapter(_ReportingAdapter):
     """A binding exposing the persisted-state asynchronous start boundary."""
 

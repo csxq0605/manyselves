@@ -6,6 +6,11 @@
   width: 100%;
 }
 
+.run-interaction-card--result { display: grid; gap: 10px; overflow-wrap: anywhere; }
+.run-interaction-card--result > strong { color: #24723b; }
+.run-interaction-card--result > span { font-size: 12px; }
+.run-interaction-card__cost { white-space: pre-wrap; font-size: 13px; }
+
 .run-interaction-card {
   background: linear-gradient(145deg, #fff 0%, #fafaf6 100%);
   border: 1px solid #d8d8d1;

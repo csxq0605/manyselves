@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from manyselves.capabilities import load_builtin_capability_catalog
+from manyselves.core.mimo_pricing import calculate_mimo_run_cost, format_mimo_cost
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     CapabilityCatalog,
@@ -249,7 +250,26 @@ class WorkflowProjectionFacade:
 
     def get_cost(self, run_id: str) -> dict[str, Any]:
         binding, _projection = self._locate_run(run_id)
-        return binding.get_cost(run_id)
+        payload = binding.get_cost(run_id)
+        # Provider pricing belongs to the application projection, not the
+        # business-neutral usage ledger or a particular Capability's workflow.
+        pricing = calculate_mimo_run_cost(self.workspace, run_id)
+        if pricing is None:
+            return payload
+        usage = dict(payload.get("usage", {}))
+        usage["pricing"] = pricing
+        usage["pricing_summary"] = (
+            "按已配置版本估算，非实际账单。\n" + format_mimo_cost(pricing)
+        )
+        usage["totals"] = {
+            **usage.get("totals", {}),
+            "pricing_status": "partial" if pricing["unpriced_attempts"] else "estimated",
+            "pricing_table_version": pricing["pricing_version"],
+            "pricing_currency": pricing["currency"],
+            # Subscription allocation and API equivalent are separate in
+            # pricing; neither is the customer's actual charge.
+        }
+        return {**payload, "usage": usage}
 
     def get_events(self, run_id: str) -> dict[str, Any]:
         """Project the Runtime Host trace persisted for this Run."""
