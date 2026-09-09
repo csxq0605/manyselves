@@ -598,6 +598,22 @@ def test_module_provider_selects_envelope_for_current_declared_task() -> None:
     assert ModuleAuthoringAgentBridge._envelope(context, author_task) is author_envelope
     assert ModuleAuthoringAgentBridge._envelope(context, revision_task) is revision_envelope
 
+    context.reporting_state["unrelated_preparation"] = "OLD_PREPARATION" * 50_000
+    context.revision.prepared.required_finding_ids = ["current-finding"]
+    for prompt in (
+        ModuleAuthoringAgentBridge._prompt(object(),
+                                          registry.require(DefinitionKind.AGENT, "module-2.4-specialist"),
+                                          revision_task, context),
+        ModuleAuthoringAgentBridge._recovery_prompt(
+            registry.require(DefinitionKind.AGENT, "module-2.4-specialist"),
+            revision_task, context, "max_tokens"),
+    ):
+        assert "current-finding" in prompt
+        assert revision_envelope.task_id in prompt
+        assert "OLD_PREPARATION" not in prompt
+        assert author_envelope.task_id not in prompt
+        assert review_envelope.task_id not in prompt
+
 
 def test_module_author_prompt_canonicalizes_restored_windows_source_paths() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (

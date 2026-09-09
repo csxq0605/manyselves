@@ -64,9 +64,22 @@ CompletedResultLoader = Callable[
 
 def _serialize_module_context(
     context: DeclarativeModuleRuntimeLaneContext,
+    output_contract: str,
 ) -> dict[str, Any]:
     """Re-project restored typed source carriers at the Agent output boundary."""
 
+    if output_contract in {
+        "declarative_module_revision_agent_result", "module_revision_submission",
+    } and context.revision is not None:
+        # The current prepared revision already owns the exact subject,
+        # immutable findings, responses and envelope. Unrelated preparation
+        # state and earlier lane phases swamp that contract during compaction.
+        return {
+            "module_id": context.module_id,
+            "workflow_id": context.workflow_id,
+            "status": context.status,
+            "revision": context.revision.model_dump(mode="json"),
+        }
     payload = context.model_dump(mode="json")
     state = payload["reporting_state"]
     restored_state = context.reporting_state
@@ -311,7 +324,7 @@ class ModuleAuthoringAgentBridge:
                 f"Task: {task.objective}",
                 json.dumps(
                     {
-                        "module_context": _serialize_module_context(context),
+                        "module_context": _serialize_module_context(context, task.output_contract),
                         "allowed_tools": task.tools,
                         "output_contract": task.output_contract,
                     },
@@ -384,7 +397,7 @@ class ModuleAuthoringAgentBridge:
                 "立即调用 submit_result，提交符合 output contract 的类型化结果。",
                 json.dumps(
                     {
-                        "module_context": _serialize_module_context(context),
+                        "module_context": _serialize_module_context(context, task.output_contract),
                         "output_contract": task.output_contract,
                     },
                     ensure_ascii=False,
