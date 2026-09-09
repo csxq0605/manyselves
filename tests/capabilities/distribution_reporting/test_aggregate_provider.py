@@ -338,6 +338,7 @@ async def test_aggregate_provider_uses_real_submit_tool_wire_and_one_session(
         "write_result_part",
         "list_result_parts",
         "submit_result",
+        "open_tool_result",
     }
     assert loops[0].kwargs["llm_provider"] is services.active_provider
     assert [message.task_id for message in loops[0].received] == [
