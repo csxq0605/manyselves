@@ -11,7 +11,7 @@
 .conversation-workspace__run {
   background: rgb(255 255 255 / 96%);
   border-bottom: 1px solid #e6e6e2;
-  padding: 14px clamp(24px, 7vw, 96px);
+  padding: 8px clamp(16px, 4vw, 48px);
   z-index: 2;
 }
 

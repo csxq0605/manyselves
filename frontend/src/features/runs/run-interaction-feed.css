@@ -11,6 +11,32 @@
 .run-interaction-card--result > span { font-size: 12px; }
 .run-interaction-card__cost { white-space: pre-wrap; font-size: 13px; }
 
+.run-status-bar { align-items: center; display: flex; gap: 12px; min-height: 36px; }
+.run-status-bar__copy { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
+.run-status-bar__copy strong, .run-status-bar__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-status-bar__copy strong { font-size: 13px; }
+.run-status-bar__copy small { color: #777773; font-size: 12px; }
+.run-status-bar__actions { display: flex; gap: 8px; flex-shrink: 0; }
+.run-status-bar button, .run-details-panel > header button {
+  background: #f4f4f0; border: 1px solid #deded7; border-radius: 8px;
+  color: #44443f; cursor: pointer; font: inherit; font-size: 12px; padding: 7px 10px;
+}
+.run-details-panel {
+  background: #fff; border: 1px solid #deded7; border-radius: 14px;
+  box-shadow: 0 16px 56px rgb(0 0 0 / 18%); box-sizing: border-box;
+  display: flex; flex-direction: column; position: fixed; right: 16px; top: 72px;
+  width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 96px); z-index: 100;
+}
+.run-details-panel > header { align-items: center; display: flex; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #e6e6e2; }
+.run-details-panel__body { padding: 16px; overflow-y: auto; min-height: 0; display: grid; gap: 14px; overflow-wrap: anywhere; }
+.run-details-panel__body .run-interaction-card { box-shadow: none; }
+@media (max-width: 620px) {
+  .run-status-bar { gap: 6px; }
+  .run-status-bar__copy small { display: none; }
+  .run-status-bar__actions { gap: 4px; }
+  .run-status-bar button { padding: 7px 6px; font-size: 11px; }
+}
+
 .run-interaction-card {
   background: linear-gradient(145deg, #fff 0%, #fafaf6 100%);
   border: 1px solid #d8d8d1;

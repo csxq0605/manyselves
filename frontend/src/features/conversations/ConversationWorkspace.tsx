@@ -183,7 +183,7 @@ export function ConversationWorkspace({
     <section aria-label="对话区域" className="conversation-workspace">
       <div className="conversation-workspace__run">
         {agentId === "main" && sessionReady && activeSessionId
-          ? <RunInteractionFeed api={workflowApi} conversationId={activeSessionId} projectId={projectId} />
+          ? <RunInteractionFeed api={workflowApi} conversationId={activeSessionId} projectId={projectId} key={`${projectId}:${activeSessionId}`} />
           : null}
       </div>
       <div className="conversation-workspace__main">

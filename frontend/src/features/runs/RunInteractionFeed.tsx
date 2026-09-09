@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { createUuid } from "../../app/uuid";
 import { useRunStore } from "../../store/run-store";
@@ -223,6 +224,39 @@ function failureMessage(run: WorkflowRunResponse): string | null {
   return embeddedMessage ?? error;
 }
 
+function runStatusLabel(run: WorkflowRunResponse): string {
+  if (run.waitingInput.length > 0) return "需要输入";
+  if (run.run.active) return "运行中";
+  if (isInterrupted(run)) return "失败";
+  return run.run.status.toLowerCase() === "completed" ? "已完成" : run.run.status;
+}
+
+function RunDetailsPanel({ children, onClose }: {
+  readonly children: ReactNode;
+  readonly onClose: () => void;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    closeButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [onClose]);
+  return createPortal(<section aria-label="运行详情与成本" className="run-details-panel" role="dialog">
+    <header>
+      <strong>运行详情与成本</strong>
+      <button onClick={onClose} ref={closeButton} type="button">关闭运行详情</button>
+    </header>
+    <div className="run-details-panel__body">{children}</div>
+  </section>, document.body);
+}
+
 function RunResult({ api, run, projectId }: {
   readonly api: WorkflowApi;
   readonly run: WorkflowRunResponse;
@@ -231,15 +265,17 @@ function RunResult({ api, run, projectId }: {
   const cost = useQuery({
     queryKey: ["runs", "cost", projectId, run.run.runId, run.run.status],
     queryFn: () => api.cost(run.run.runId),
+    refetchInterval: run.run.active ? 5_000 : false,
   });
   const outputs = useQuery({
-    queryKey: ["runs", "outputs", projectId, run.run.runId],
+    queryKey: ["runs", "outputs", projectId, run.run.runId, run.run.status],
     queryFn: () => api.outputs(run.run.runId),
+    refetchInterval: run.run.active ? 5_000 : false,
   });
   const usage = objectValue(cost.data?.usage);
   const totals = objectValue(usage.totals);
   return <article className="run-interaction-card run-interaction-card--result" aria-live="polite">
-    <strong>{reportingWorkflowLabel(run.run.workflowId)}已完成</strong>
+    <strong>{reportingWorkflowLabel(run.run.workflowId)}{runStatusLabel(run)}</strong>
     <small>{run.run.runId}</small>
     {outputs.data?.outputs.length ? <details>
       <summary>本次运行记录的输出路径</summary>
@@ -270,6 +306,8 @@ export interface RunInteractionFeedProps {
 export function RunInteractionFeed({ api, conversationId, projectId }: RunInteractionFeedProps) {
   const client = useQueryClient();
   const setCurrentRun = useRunStore((state) => state.setCurrentRun);
+  const [panel, setPanel] = useState<"latest" | "attention" | null>(null);
+  const closePanel = useCallback(() => setPanel(null), []);
   const runs = useQuery({
     queryFn: () => api.listRuns(conversationId),
     queryKey: ["runs", "interaction-feed", conversationId],
@@ -289,32 +327,35 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
   })));
   const interrupted = feedRuns.filter(isInterrupted);
   const active = feedRuns.filter((run) => run.run.active);
-  const completed = feedRuns.filter((run) => run.run.status.toLowerCase() === "completed");
+  const latest = feedRuns[0];
+  const attentionCount = new Set([
+    ...waiting.map(({ run }) => run.run.runId),
+    ...interrupted.map((run) => run.run.runId),
+    ...active.map((run) => run.run.runId),
+  ]).size;
 
-  if (waiting.length === 0 && interrupted.length === 0 && active.length === 0 && completed.length === 0) return null;
+  if (!latest) return null;
   return (
     <section aria-label="运行交互" className="run-interaction-feed">
-      {active.map((run) => <article className="run-interaction-card run-interaction-card--status" key={run.run.runId}>
-        <div className="run-interaction-card__status-copy">
-          <div className="run-interaction-card__status-heading">
-            <span className="run-interaction-card__live"><i aria-hidden="true" />运行中</span>
-            {reportingRunStepSummary(run) ? <small>{reportingRunStepSummary(run)}</small> : null}
-          </div>
-          <strong>{reportingWorkflowLabel(run.run.workflowId)}运行中</strong>
-          <span className="run-interaction-card__stage">{reportingRunStage(run)}</span>
-          <span>{run.run.workflowId} · {run.run.runId}</span>
+      <div className="run-status-bar">
+        <div className="run-status-bar__copy" aria-live="polite">
+          <strong title={latest.run.runId}>{reportingWorkflowLabel(latest.run.workflowId)}{runStatusLabel(latest)}</strong>
+          {latest.run.active ? <small title={reportingRunStepSummary(latest) ?? undefined}>{reportingRunStage(latest)}</small> : null}
         </div>
-        <a aria-label="查看运行态" href={`/projects/${encodeURIComponent(projectId)}/runtime`}>详情</a>
-      </article>)}
-      {waiting.map(({ run, waiting: item }) => (
-        <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
-      ))}
-      {completed.slice(0, 1).map((run) => <RunResult api={api} run={run} projectId={projectId} key={run.run.runId} />)}
-      {completed.length > 1 ? <details>
-        <summary>更早完成的运行（{completed.length - 1}）</summary>
-        {completed.slice(1).map((run) => <RunResult api={api} run={run} projectId={projectId} key={run.run.runId} />)}
-      </details> : null}
-      {interrupted.map((run) => <article aria-live="assertive" className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
+        <div className="run-status-bar__actions">
+          {attentionCount > 0 ? <button onClick={() => setPanel("attention")} type="button">处理运行（{attentionCount}）</button> : null}
+          <button aria-label="查看本次运行详情与成本" onClick={() => setPanel("latest")} type="button">详情与成本</button>
+        </div>
+      </div>
+      {panel ? <RunDetailsPanel onClose={closePanel}>
+        {panel === "latest" ? <RunResult api={api} run={latest} projectId={projectId} /> : null}
+        {panel === "attention" ? active.map((run) => <p key={run.run.runId}>
+          {reportingWorkflowLabel(run.run.workflowId)}运行中 · {run.run.runId} · {reportingRunStage(run)}
+        </p>) : null}
+        {waiting.filter(({ run }) => panel === "attention" || run.run.runId === latest.run.runId).map(({ run, waiting: item }) => (
+          <WaitingInteraction api={api} key={`${run.run.runId}:${waitingInputId(item) ?? "input"}`} run={run} waiting={item} />
+        ))}
+        {interrupted.filter((run) => panel === "attention" || run.run.runId === latest.run.runId).map((run) => <article className="run-interaction-card run-interaction-card--resume" key={run.run.runId}>
         <div className="run-interaction-card__failure">
           <strong>{reportingWorkflowLabel(run.run.workflowId)}失败</strong>
           <span>{run.run.workflowId} · {run.run.runId}</span>
@@ -327,7 +368,10 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
           <a aria-label="查看运行态" href={`/projects/${encodeURIComponent(projectId)}/runtime`}>详情</a>
           <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原报告</button>
         </div>
-      </article>)}
+        </article>)}
+        {resume.isError ? <p role="alert">恢复失败：{resume.error.message}</p> : null}
+        <a href={`/projects/${encodeURIComponent(projectId)}/runtime`}>查看全部运行记录</a>
+      </RunDetailsPanel> : null}
     </section>
   );
 }
