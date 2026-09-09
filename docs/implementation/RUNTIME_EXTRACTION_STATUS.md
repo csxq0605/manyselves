@@ -30,6 +30,7 @@
 
 - M9.85：真实 2.1 revision Author 丢失当前 finding 内容并提交虚构旧问题 ID，合同纠正虽拦截 ID 错误，仍暴露完整 Lane/state 混入 prompt 的上下文污染。Characterization RED 后，仅让 revision 的 initial/recovery prompt 投影现有 `ModuleRevisionPreparation`（原 subject、revision_input、required findings 和 TaskEnvelope 完整不变），不再附带其他准备/审查阶段；不增加摘要、阈值或 Gate。真实输入只读对比 `674575→25652` 字符、完整 prepared revision 相等；Module Runtime/reviewer recovery `37 passed`，Ruff 通过。初始作者及其他阶段的大型上下文仍需后续实测与边界检查，不宣称所有 prompt 膨胀已解决。
 - 14:05:13 本地反代记录 Google 429 `RESOURCE_EXHAUSTED` / `QUOTA_EXHAUSTED`，明确 individual quota reached，`quotaResetTimeStamp=2026-09-09T09:35:02Z`（当日台北 17:35:02）；gateway 因该模型自然冷却转为 503 No available accounts。原 Run 经既有自动重试后失败在 `run-reporting-tail` 的 cross-owner revision，模块结果、2.1 r1、五个复审 verdict 和已生成 Cross 资料保留。只读核对账户 active/schedulable 与模型冷却；未清冷却、改套餐、换账户或继续空耗请求。M9.84/M9.85 将在服务重新加载生效，尚未通过后续真实 Provider 验证。
+- 14:09 服务已重新启动并加载全部五个修复提交（HEAD `d3484e3`），health/live=200；侧边栏保留原 Run 失败卡和“恢复原报告”入口，未在额度耗尽期间再次点击恢复。工作树干净并已推送现有 Draft PR。未设置定时续跑，待用户选择恢复后的继续方式。
 
 - M9.84：原 Run 已从检索循环推进到真实写作，13:55 模块 2.1/2.2/2.4 r0 均已提交并进入审查，2.5 仍在写作。现场仍偶发无参工具 reason 错误：生产 ToolRegistry 从 callable 生成的空对象 Schema 没有 `additionalProperties:false`，先前探针使用文件合同而漏测此接线。新增注册表→Provider Characterization RED；仅对确知 bound callable 参数表为空的工具声明 closed empty object，`**kwargs` 与未知 fallback 不变，运行时参数处理不变。受影响 `58 passed`，Ruff 忽略 registry 既有 E721 后通过；修复暂待下一次服务加载，不为此打断活动审查。
 - 2026-09-09 documents 技能版面预检重新核验 bundle 26.905.11957：无捆绑 soffice，当前 renderer 再次返回 `LibreOffice soffice.exe was not found on PATH`。仅版面 PNG 验收受阻，未调用用户桌面 LibreOffice，未上传项目资料；业务全流程测试继续。
