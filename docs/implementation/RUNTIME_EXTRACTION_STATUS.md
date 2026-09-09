@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**原真实 full_report 已完成渲染/发布；已启动包含重新审查的 2.3 的修复版聚合，最终交付验收仍未完成**
+> 状态：**无外部介入的完整流程尚未验收通过；历史 full_report 是辅助恢复后的完成，聚合 Run 已失败，正在修复自主纠错说明并准备全新验收 Run**
 
 ## Program
 
@@ -18,15 +18,19 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.94 Aggregate approved-module projection; cross-run source handoff permission pending`
+- Current slice: `FA-08/M9.95 Chief revision scope guidance and autonomous full-flow acceptance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `original full Run completed after M9.90 and same-run resume; corrected aggregate passed writing, Final 1/3 completed and Chief targeted revision is running at 17:09; final delivery acceptance incomplete`
+- Program status: `not autonomously accepted; historical full Run completed with assistant intervention, aggregate Chief 1/3 revision exhausted correction at 17:14/17:19. M9.95 fixes model-visible scope/part-id guidance without editing business submissions or loosening validators`
 - Final real-test status: `full-report-a3e668f660694886b554ad8ac535814f completed including Final, render, materialize and publish at 2026-09-09 16:32; report structure passed, protected_prose_verified=true. Browser Reports lists the new 30,305,699-byte DOCX. Original delivery is backed up in test/Work/acceptance-qa/original-full-report-20260909 because historical module 2.3 is still tainted. aggregate-existing-3d0118aa6d4847cca201ebabe852641f started through the same browser conversation using explicit approved refs (2.1-r3, 2.2-r2, replacement 2.3-r0 from module-report-78b76fad8b604d88ad2c5f040d434789, 2.4-r1, 2.5-r1). No new full-report was created. Corrected delivery/download/page QA remain pending`
-- Blockers: `No current MiMo quota/auth rejection. Corrected aggregate still running; source/evidence/photo handoff is missing, and user approval for cross-run source-reference rebinding through the existing ledger is pending. Original output cannot establish clean content acceptance. Bundle 26.905.11957 lacks soffice.exe; user approval to use/install local LibreOffice for documents-skill page QA is pending. Service restarted 17:03:48 with M9.92/M9.93 loaded; M9.94 projection fix is committed/pushed but not loaded, do not interrupt active Chief merely to load it. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
+- Blockers: `Autonomous full-flow completion not established. Aggregate is failed; its cross-run source/evidence/photo handoff still needs the outstanding source-reference rebinding approval. A fresh full_report does not require that cross-run operation. No current MiMo quota/auth rejection. Bundle lacks soffice.exe; local LibreOffice use/install permission for page QA remains pending. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `finish focused/affected tests, load M9.94/M9.95, start a fresh full_report from original test Inputs through the browser using the configured MiMo credential. Only observe: do not modify submissions, durable prose, missing business artifacts, or runtime state. If unrecoverable, diagnose/fix implementation and distinguish diagnostic recovery from autonomous acceptance. Preserve old Runs. No connection probes, cross-run source rebinding or LibreOffice installation without the outstanding approval`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.95 自动验证：contract_input_ownership、final_chief_provider、aggregate_existing_entrypoint、reporting_tail_runtime 四文件 **39 passed（181.76s）**；七文件 Ruff 与 git diff --check 通过。测试通过实际 SubmitResultTool 验证两次不同格式错误的纠正反馈、随后合法提交与已保存正文原字节不变；不是 live Provider 自主验收的替代。准备重启空闲服务加载 M9.94/M9.95，再从浏览器启动原始 Inputs 的新 full_report。
+
+- 2026-09-09 M9.95：用户明确“一次成功”指启动后无外部介入，允许系统内部自行重试/纠错；辅助恢复的历史结果不计自主验收。真实 aggregate Chief 1/3 在 17:14/17:19 终止，原因是 input 全章可读 section_ids 与 revision 已修改小节范围混淆。第 3 章纠错曾要求补写 risk_panorama，但 writer 只允许 finding 对应 improvement_action_plan；随后 changed_target_ids 又误用正文块名称。Characterization 先复现 schema 的 Complete 描述和泛化错误提示，再修订字段说明、完整示例、当前章映射与错误反馈；校验规则、预算和业务正文不变。两项新增 focused characterization 已通过，四文件 affected tests 运行中，七文件 Ruff 通过。旧 Run/提交/正文保持原样；全新 full_report 尚未启动。
 
 - M9.94：真实 aggregate state 的五个 module_narratives 仍为 APPROVED_MODULE 标记，原 delivery projection 直接传给 Renderer；已有 expand_approved_module_markers 定义但未接入该路径。Characterization RED 后仅在审查/交付共用投影复用该展开函数，从当前 typed ModuleSubmission.markdown 或 markdown_modules 生成报告视图，不改审查 subject 和原模块。delivery_projection_validation、delivery_tools、aggregate_existing_entrypoint 三文件 24 passed（46.66s），两文件 Ruff 通过。尚未加载活动服务，不中断 Final。
 - 2026-09-09 17:04：M9.93 的旧 Run 恢复通过生产 prepare_cohort 从持久化 reporting-state 精确补写原本不存在的 chief-r0.json；没有更改 runtime-state.json 或 accepted Agent payload。服务 17:03:48 重启，浏览器恢复同一 aggregate Run；17:04:28 Final 1/3 已实际发起 MiMo 请求，17:07:08 第 3 章审查完成。另发现新聚合 Run 缺失来源账本与照片/证据载体交接；已向用户异步请求允许复用既有账本编号分配并仅在新 Run 同步转换引用，原 Run/模块不变，同 E 编号不同事实仍拒绝，尚未获答复。当前 2.3 只引用 E-*，与原 Run 同编号的内容差异抽查仅为 Windows 路径斜杠（E-0008）；不得推断任意跨 Run R/W 编号也安全合并。

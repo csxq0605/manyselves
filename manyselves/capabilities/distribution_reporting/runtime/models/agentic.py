@@ -1429,7 +1429,15 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
     base_subject_ref: str = Field(min_length=1)
     chapter_id: Literal["1", "3", "4"]
     revision: int = Field(ge=1)
-    section_ids: list[str] = Field(min_length=1)
+    section_ids: list[str] = Field(
+        min_length=1,
+        description=(
+            "Numeric section ids actually changed by this patch, not the complete "
+            "input lane scope. Omit unchanged sections in Chapters 1/3; each selected "
+            "section maps to one named part_refs key. Chapter 4 uses one complete "
+            "special_topic_analysis body while listing the changed 4.x section ids."
+        ),
+    )
     part_refs: dict[str, str] = Field(min_length=1)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
@@ -1454,7 +1462,13 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
             for target in response.changed_target_ids
         }
         if not response_targets.issubset(scope):
-            raise ValueError("Chief lane revision responses must stay in lane section scope")
+            raise ValueError(
+                "Chief lane revision responses must stay in lane section scope: "
+                "revision_responses[].changed_target_ids must use numeric section ids "
+                f"from section_ids={sorted(scope)}, not named part_refs keys; "
+                f"received out-of-scope targets={sorted(response_targets - scope)}. "
+                "Correct only the response target ids; preserve saved prose and refs."
+            )
         return self
 
 

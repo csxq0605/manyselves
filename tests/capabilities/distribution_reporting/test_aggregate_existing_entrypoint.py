@@ -470,6 +470,15 @@ def test_final_recheck_open_and_new_finding_returns_to_next_round_same_run(
         initial_lane_refs={"1": f"Work/runs/{run_id}/reviews/final-initial.json"},
         revision_number=1,
     )
+    prepared = FinalReviewTools(workspace=tmp_path).prepare_chief_revision(
+        {"review": review, "chapter_id": "1"}
+    )
+    guidance = "\n".join(prepared.envelope.constraints)
+    assert "changed_target_ids" in guidance
+    assert '"1.1": "assessment_background"' in guidance
+    assert "不是待提交修订范围" in guidance
+    assert prepared.contract.section_ids == ["1.1", "1.2", "1.3"]
+
     submission = FinalChapterLaneVerdictSubmission(
         run_id=run_id,
         chapter_id="1",

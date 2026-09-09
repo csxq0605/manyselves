@@ -257,7 +257,13 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Never include a full report, other chapter bodies, tables, photos, or Cross state.",
     ],
     "chief_chapter_lane_revision_submission": [
-        "Return only changed part_refs for this chapter lane and lane-local revision responses.",
+        "Return only changed section_ids and matching part_refs for this chapter lane; "
+        "do not copy unchanged sections from the input contract's complete lane scope.",
+        "section_ids and revision_responses[].changed_target_ids use numeric section "
+        "ids, while write_result_part.part_id and part_refs keys use body names: "
+        "1.1=assessment_background, 1.2=findings_overview, 1.3=regional_executive_summary, "
+        "3.1.1=risk_panorama, 3.1.2=dimension_risk_analysis, 3.1.3=data_gap_analysis, "
+        "3.2=improvement_action_plan. Chapter 4 uses one complete special_topic_analysis part.",
         "Never copy another chapter or the full edited report.",
     ],
     "final_chapter_lane_finding_submission": [
@@ -568,7 +574,12 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "part_refs": {
             "improvement_action_plan": "Work/runs/report-example/results/chief-c3-r1-3.2.md"
         },
-        "revision_responses": [],
+        "revision_responses": [{
+            "finding_id": "F-3-001",
+            "action": "implemented",
+            "summary": "已按指定 finding 补充本小节的行动责任、事实边界与核验方法。",
+            "changed_target_ids": ["3.2"],
+        }],
     },
     "final_chapter_lane_finding_submission": {
         "kind": "final_chapter_lane_finding_submission",

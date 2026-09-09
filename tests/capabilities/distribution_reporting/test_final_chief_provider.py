@@ -134,6 +134,70 @@ def test_final_chief_revision_contract_uses_durable_parts_not_exact_text_edits()
 
 
 @pytest.mark.asyncio
+async def test_chief_revision_feedback_repairs_ids_without_rewriting_saved_prose(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
+        SubmitResultTool,
+        WriteResultPartTool,
+    )
+
+    context = _context(tmp_path, "chief-revision-scope-recovery")
+    args = (
+        "chief-editor", "session", context.contract.run_id,
+        context.envelope.task_id, ReportingStore(tmp_path), MessageBus(),
+    )
+    writer = WriteResultPartTool(
+        context.contract.run_id, context.envelope.task_id, 1,
+        ReportingStore(tmp_path), expected_part_ids=["findings_overview"],
+    )
+    written = await writer(part_id="findings_overview", content="已修订的完整小节正文，其他正文保持不变。")
+    prose_path = tmp_path / written["artifact_ref"]
+    original_prose = prose_path.read_bytes()
+    tool = SubmitResultTool(
+        *args, revision=1,
+        allowed_outputs=["chief_chapter_lane_revision_submission"],
+        input_contract_kind="chief_chapter_lane_input",
+        input_contract_ref=context.input_ref,
+    )
+    payload = {
+        "kind": "chief_chapter_lane_revision_submission",
+        "run_id": context.contract.run_id,
+        "base_subject_ref": context.contract.subject_ref,
+        "chapter_id": "1", "revision": 1,
+        "section_ids": ["1.1", "1.2", "1.3"],
+        "part_refs": {"findings_overview": written["artifact_ref"]},
+        "revision_responses": [{
+            "finding_id": "F-1-001", "action": "implemented",
+            "summary": "已补充事实边界、责任主体与后续动作，便于读者执行。",
+            "changed_target_ids": ["1.2"],
+        }],
+    }
+    feedback = await tool(**payload)
+    assert feedback["status"] == "correction_required"
+    repair = feedback["validation_errors"][0]["repair_instruction"]
+    assert "section_ids" in repair and "unchanged" in repair
+    assert "1.2" in repair and "findings_overview" in repair
+    assert "3.2" not in repair
+    assert feedback["rewrite_part_ids"] == []
+
+    payload["section_ids"] = ["1.2"]
+    payload["revision_responses"][0]["changed_target_ids"] = ["findings_overview"]
+    feedback = await tool(**payload)
+    assert feedback["status"] == "correction_required"
+    problem = feedback["validation_errors"][0]["problem"]
+    assert "changed_target_ids" in problem
+    assert "1.2" in problem and "findings_overview" in problem
+    assert feedback["rewrite_part_ids"] == []
+
+    payload["revision_responses"][0]["changed_target_ids"] = ["1.2"]
+    completed = await tool(**payload)
+    assert completed["status"] == "completed"
+    assert prose_path.read_bytes() == original_prose
+    assert payload["section_ids"] == ["1.2"]
+
+
+@pytest.mark.asyncio
 async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

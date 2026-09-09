@@ -831,6 +831,21 @@ class SubmitResultTool(_ResultTool):
                 field="part_refs",
                 expected=sorted(expected_part_set),
                 received=sorted(commit.part_refs),
+                repair_instruction=(
+                    "For a revision, section_ids lists only the changed sections, "
+                    "not the complete input lane scope. Omit unchanged section_ids "
+                    "instead of inventing refs or writing unchanged prose. Keep saved "
+                    "part_refs and use numeric section ids in changed_target_ids. "
+                    "For an initial submission, cover every assigned section. "
+                    "Current lane section_id -> part_id mapping: "
+                    + json.dumps({
+                        section_id: (
+                            "special_topic_analysis" if contract.chapter_id == "4"
+                            else CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                        )
+                        for section_id in contract.section_ids
+                    })
+                ),
             )
         canonical_refs: dict[str, str] = {}
         for part_id in expected_part_ids:

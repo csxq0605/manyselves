@@ -414,6 +414,18 @@ class FinalReviewTools:
                 (
                     "Chapter 1/3 的 part_refs 只写被 finding 修改的小节；Chapter 4 使用完整 special_topic_analysis 聚合 part"
                 ),
+                (
+                    "输入 section_ids 是整章可读范围，不是待提交修订范围。提交 section_ids 只列实际修改的编号，"
+                    "不复制未改小节；revision_responses[].changed_target_ids 同样使用章节编号，不使用正文块名称。"
+                    "write_result_part.part_id 与 part_refs 键使用对应正文块名称，不传 evidence_ids。当前章对应关系："
+                    + json.dumps({
+                        section_id: (
+                            "special_topic_analysis" if chapter_id == "4"
+                            else CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                        )
+                        for section_id in section_ids
+                    }, ensure_ascii=False)
+                ),
                 "revision_responses 必须对应本章 findings",
                 (
                     "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"

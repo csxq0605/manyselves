@@ -28,6 +28,21 @@ INPUT_CONTRACT_MODELS = {
 }
 
 
+def test_chief_revision_schema_distinguishes_patch_scope_from_body_part_ids() -> None:
+    submissions = import_module(SUBMISSIONS_MODULE)
+    schema = submissions.submission_schema("chief_chapter_lane_revision_submission")
+    assert "changed" in schema["properties"]["section_ids"]["description"]
+    assert "unchanged" in schema["properties"]["section_ids"]["description"]
+    assert "changed_target_ids" in schema["description"]
+    assert "3.2" in schema["description"]
+    assert "improvement_action_plan" in schema["description"]
+    example = schema["examples"][0]
+    assert example["revision_responses"][0]["changed_target_ids"] == ["3.2"]
+    submissions.submission_model(example["kind"]).model_validate(example)
+    initial = submissions.submission_schema("chief_chapter_lane_submission")
+    assert "Complete" in initial["properties"]["section_ids"]["description"]
+
+
 def test_edited_report_example_satisfies_paired_special_topic_contract() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         EditedReportSubmission,
