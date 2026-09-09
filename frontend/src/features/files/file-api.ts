@@ -11,6 +11,7 @@ export interface FileApi {
   createEntry(projectId: string, input: CreateEntryRequest): Promise<FileEntry>;
   deleteEntry(projectId: string, path: string, baseRevision: string): Promise<void>;
   download(projectId: string, path: string): Promise<Blob>;
+  downloadUrl?(projectId: string, path: string): string;
   listTree(projectId: string, path?: string): Promise<FileEntry[]>;
   renameEntry(projectId: string, input: RenameEntryRequest): Promise<FileEntry>;
   upload(
@@ -51,6 +52,8 @@ export function createFileApi(gateway: ApiGateway): FileApi {
       }),
     download: (projectId, path) =>
       gateway.requestBlob(withPath(projectFilesPath(projectId, "/download"), path)),
+    downloadUrl: (projectId, path) =>
+      `${gateway.baseUrl}${withPath(projectFilesPath(projectId, "/download"), path)}`,
     async listTree(projectId, path) {
       const response = await gateway.requestJson<FileTreeResponse>(
         withPath(projectFilesPath(projectId, "/tree"), path),

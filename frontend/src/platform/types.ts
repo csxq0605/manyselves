@@ -14,6 +14,8 @@ export interface LocalDirectoryRef {
 export interface SaveDownloadInput {
   readonly blob: Blob;
   readonly suggestedName: string;
+  /** Existing cookie-authenticated attachment endpoint, when the API exposes one. */
+  readonly sourceUrl?: string;
 }
 
 export interface NotificationInput {

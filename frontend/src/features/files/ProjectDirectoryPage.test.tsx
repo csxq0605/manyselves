@@ -341,20 +341,24 @@ describe("ProjectDirectoryPage", () => {
 
   it("downloads a generated skill folder as a ZIP", async () => {
     const download = vi.fn().mockResolvedValue(new Blob(["archive"]));
+    const sourceUrl = "/api/v1/projects/project-1/files/download?path=Inputs%2Freport-template-role-skills";
+    const downloadUrl = vi.fn().mockReturnValue(sourceUrl);
     const saveDownload = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderDirectory(
       "inputs",
-      fileApi({ listTree: async () => templateSkillEntries, download }),
+      fileApi({ listTree: async () => templateSkillEntries, download, downloadUrl }),
       { ...platform(), saveDownload },
     );
 
     await user.click(await screen.findByRole("button", { name: "下载 report-template-role-skills" }));
 
     expect(download).toHaveBeenCalledWith("project-1", "Inputs/report-template-role-skills");
+    expect(downloadUrl).toHaveBeenCalledWith("project-1", "Inputs/report-template-role-skills");
     expect(saveDownload).toHaveBeenCalledWith({
       blob: expect.any(Blob),
       suggestedName: "report-template-role-skills.zip",
+      sourceUrl,
     });
   });
 

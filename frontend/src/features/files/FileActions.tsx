@@ -152,7 +152,12 @@ export function FileActions({
     setError(null);
     try {
       const blob = await api.download(projectId, selectedEntry.path);
-      await platform.saveDownload({ blob, suggestedName: selectedEntry.name });
+      const sourceUrl = api.downloadUrl?.(projectId, selectedEntry.path);
+      await platform.saveDownload({
+        blob,
+        suggestedName: selectedEntry.name,
+        ...(sourceUrl === undefined ? {} : { sourceUrl }),
+      });
     } catch {
       setError("下载失败");
     }

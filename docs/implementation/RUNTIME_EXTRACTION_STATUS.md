@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**全新 full_report 已自主完成模块、Cross 与总编，正在最终审查；完整交付验收尚未通过，历史辅助恢复结果不计自主验收**
+> 状态：**全新 full_report 已自主完成至发布；随后发现的侧边栏下载兼容问题已修复并实测。Word 逐页版面验收及跨 Run 聚合债务仍未完成，不宣称整个 PR 已完成**
 
 ## Program
 
@@ -18,15 +18,19 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.95 Chief revision scope guidance and autonomous full-flow acceptance`
+- Current slice: `FA-08/M9.96 Sidebar HTTP attachment downloads after autonomous full_report completion`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `96d98ce Record live aggregate revision and pending source binding approval`
-- Program status: `fresh autonomous full_report running on behavioral commit 8ef2658; Module, Cross and Chief completed without assistant intervention, Final started 20:09. Historical full Run was assisted; historical aggregate failed. Full acceptance not yet established`
-- Final real-test status: `full-report-8c70828443b9499d80f8a6bda41c670c started once through the sidebar browser at 18:26 from original test Inputs, configured MiMo v2.5. No manual business submission/prose/state edits, resume, or service restart after launch. All five Cross pipelines completed by 19:46; accepted module versions 2.1-r2, 2.2-r3, 2.3-r1, 2.4-r3, 2.5-r2. Chief 1/3 independently corrected tool parameters and numbered headings, then submitted successfully by 20:08:39; Final/render/publish/download remain to be verified. Target output is 配电安全专家咨询报告_自主全流程验收.docx. Preserve all historical Runs and output backups`
-- Blockers: `Autonomous full-flow completion not established. Aggregate is failed; its cross-run source/evidence/photo handoff still needs the outstanding source-reference rebinding approval. A fresh full_report does not require that cross-run operation. No current MiMo quota/auth rejection. Bundle lacks soffice.exe; local LibreOffice use/install permission for page QA remains pending. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `observe the same fresh Run through Chief/Final/render/publish/download; do not restart or resume it while it is progressing. Do not modify submissions, durable prose, missing business artifacts, or runtime state. If unrecoverable, diagnose/fix implementation and distinguish diagnostic recovery from autonomous acceptance. Preserve old Runs. No connection probes, cross-run source rebinding or desktop LibreOffice use/install without the outstanding approval`
+- HEAD at slice start: `346cc1d Record autonomous Chief correction and Final review start`
+- Program status: `fresh autonomous full_report completed on backend behavioral commit 8ef2658 at 20:27; no manual business artifact/state edit or recovery after launch. Sidebar Blob download failure was diagnosed and fixed separately after Run completion. Full PR completion is not established: page QA and aggregate handoff debt remain`
+- Final real-test status: `full-report-8c70828443b9499d80f8a6bda41c670c started once through the sidebar browser at 18:26 from original test Inputs with MiMo v2.5 and completed at 20:27. Module/Cross/Chief/Final revisions and rechecks, rendering and publishing all autonomous. Final findings F-1-001/F-3-001/F-3-002 resolved; Chief r1 submissions correctly patched only 1.3 and 3.2, zero submission corrections. Runtime status completed, no next action/waiting input; delivery manifest success. Reports output: DOCX 30325035 bytes, Markdown 256476, source-index DOCX 58251, Markdown 118141. HTTP downloads returned 200 and exact bytes matching both published files and current Run package. M9.96 rebuilt frontend then actual sidebar buttons emitted download events for both DOCX files. This is separate post-Run UI repair, not a claim that the old download implementation passed first try. No report business content was edited`
+- Blockers: `Word page QA remains unperformed: bundled runtime lacks soffice.exe and permission to use/install local LibreOffice remains pending. Historical aggregate is failed; cross-run source/evidence/photo handoff still requires the outstanding source-reference rebinding approval. Neither blocks the now completed fresh full_report, but neither is closed by its success. No current MiMo quota/auth rejection. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `preserve completed Run, original Outputs and historical backups; no need to regenerate the report or resume old Runs. Await explicit local-renderer authorization for page-by-page QA and separate outstanding cross-run source rebinding authorization. Do not claim a universal one-shot guarantee or whole-PR completion from this single autonomous trial. No provider connection probes, business-artifact surgery, unapproved renderer installation or source-ID rebinding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- 2026-09-09 M9.96：全新 Run 已于 20:27 自主完成，不涉及下载前端修复。之后侧边栏点击 30 MB Word 和 58 KB 来源索引均无 download event；同一认证 HTTP 接口返回 200，响应原字节等于 Outputs 和本 Run 交付包，直接导航会触发下载。隔离本地页面证明即便保留 Blob URL、不立即 revoke，侧边浏览器也不触发 Blob 下载，排除简单延迟 revoke 猜测。Characterization RED 后，项目 FileApi 暴露既有已编码下载 URL，经现有 SaveDownloadInput 可选字段传给 Browser driver，优先使用 HTTP attachment URL；保持原 API 请求的鉴权/错误检查，Electron 仍保存已取得的原字节，纯 Blob 调用仍可用。未改服务 API、鉴权、文件权限/大小限制、报告正文或 Run。四文件 30 passed（5.45s），九个修改 TS/TSX 文件定向 ESLint、TypeScript noEmit、Vite production build 通过（既有大 chunk warning 保留）。前端重新加载后，真实侧边栏报告/来源索引按钮均捕获 download event。只证明下载触发与接口/交付字节一致，未检查浏览器最终保存路径。隔离测试服务已停止，原报告服务未重启。
+
+- 2026-09-09 20:27：新自主 Run 完成全部 14 个顶层步骤并发布。Final 初审提出 1.3 区域落地缺漏、3.2 责任/残余风险和验收方法共三条 blocking findings；系统自行修订 1.3 与 3.2，两次 r1 首次提交都 accepted（validation_failures=0），随后独立复审均 resolved、new_findings=[]。交付 manifest status=success、五模块齐全，runtime completed/next_action_id=null/waiting_input=null。Word 只读 XML 检查：2724 paragraphs、71 tables、122 media、103611 text chars，无历史工具冲突语句或 APPROVED_MODULE 标记；来源索引 DOCX 也可读取。上述不是 Word 页级版面或全部专业事实的外部验收；documents 技能要求的逐页渲染仍因 bundled LibreOffice 缺失待授权。全程未改提交/正文/状态，未人工恢复或重启后端；仓库状态记录更新不计业务干预。
 
 - 2026-09-09 20:09：新自主 Run 已完成 Chief cohort，进入真实 Final 1/3。Chief 3 先自行改正数字 part_id 与模块专用 evidence_ids 的误用，随后 Chief 1/3 按 submit_result 反馈自行去掉重复编号标题；第 1 章经历三次提交纠正，第 3 章两次，最终均 accepted。没有手改业务正文/提交/状态，没有人工恢复或服务重启。只读检查五个当前模块的结构化 source_ids/claim source_ids 均在本 Run 的 339 条来源账本内，无悬空引用；这不是事实充分性或版面验收。最终审查、发布下载和逐页 QA 仍未完成。
 
