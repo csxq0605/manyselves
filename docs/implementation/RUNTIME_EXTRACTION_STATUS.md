@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**全新 full_report 已自主完成模块审查与 Cross，正在总编；完整交付验收尚未通过，历史辅助恢复结果不计自主验收**
+> 状态：**全新 full_report 已自主完成模块、Cross 与总编，正在最终审查；完整交付验收尚未通过，历史辅助恢复结果不计自主验收**
 
 ## Program
 
@@ -21,12 +21,14 @@
 - Current slice: `FA-08/M9.95 Chief revision scope guidance and autonomous full-flow acceptance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `96d98ce Record live aggregate revision and pending source binding approval`
-- Program status: `fresh autonomous full_report running on behavioral commit 8ef2658; Module and Cross review/revision/recheck completed without assistant intervention, Chief started 19:46. Historical full Run was assisted; historical aggregate failed. Full acceptance not yet established`
-- Final real-test status: `full-report-8c70828443b9499d80f8a6bda41c670c started once through the sidebar browser at 18:26 from original test Inputs, configured MiMo v2.5. No manual business submission/prose/state edits, resume, or service restart after launch. All five Cross pipelines completed by 19:46; accepted module versions 2.1-r2, 2.2-r3, 2.3-r1, 2.4-r3, 2.5-r2. Chief/Final/render/publish/download remain to be verified. Target output is 配电安全专家咨询报告_自主全流程验收.docx. Preserve all historical Runs and output backups`
+- Program status: `fresh autonomous full_report running on behavioral commit 8ef2658; Module, Cross and Chief completed without assistant intervention, Final started 20:09. Historical full Run was assisted; historical aggregate failed. Full acceptance not yet established`
+- Final real-test status: `full-report-8c70828443b9499d80f8a6bda41c670c started once through the sidebar browser at 18:26 from original test Inputs, configured MiMo v2.5. No manual business submission/prose/state edits, resume, or service restart after launch. All five Cross pipelines completed by 19:46; accepted module versions 2.1-r2, 2.2-r3, 2.3-r1, 2.4-r3, 2.5-r2. Chief 1/3 independently corrected tool parameters and numbered headings, then submitted successfully by 20:08:39; Final/render/publish/download remain to be verified. Target output is 配电安全专家咨询报告_自主全流程验收.docx. Preserve all historical Runs and output backups`
 - Blockers: `Autonomous full-flow completion not established. Aggregate is failed; its cross-run source/evidence/photo handoff still needs the outstanding source-reference rebinding approval. A fresh full_report does not require that cross-run operation. No current MiMo quota/auth rejection. Bundle lacks soffice.exe; local LibreOffice use/install permission for page QA remains pending. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `observe the same fresh Run through Chief/Final/render/publish/download; do not restart or resume it while it is progressing. Do not modify submissions, durable prose, missing business artifacts, or runtime state. If unrecoverable, diagnose/fix implementation and distinguish diagnostic recovery from autonomous acceptance. Preserve old Runs. No connection probes, cross-run source rebinding or desktop LibreOffice use/install without the outstanding approval`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- 2026-09-09 20:09：新自主 Run 已完成 Chief cohort，进入真实 Final 1/3。Chief 3 先自行改正数字 part_id 与模块专用 evidence_ids 的误用，随后 Chief 1/3 按 submit_result 反馈自行去掉重复编号标题；第 1 章经历三次提交纠正，第 3 章两次，最终均 accepted。没有手改业务正文/提交/状态，没有人工恢复或服务重启。只读检查五个当前模块的结构化 source_ids/claim source_ids 均在本 Run 的 339 条来源账本内，无悬空引用；这不是事实充分性或版面验收。最终审查、发布下载和逐页 QA 仍未完成。
 
 - 2026-09-09 19:46：新自主 Run 全部 Cross owner pipelines 已完成。2.1/2.2/2.3/2.4/2.5 均经历跨模块定向修订；2.2、2.4 的修订后独立复核还提出进一步修改，系统自行继续修订并通过复审。现进入 Chief 1/3，空专项 Chapter 4 按正常定义处理。服务仍是 18:25:18 启动的同一进程（行为代码 8ef2658），无业务文件/状态人工改动或人工恢复。仅更新本状态文档，不改变活动 Run。documents 技能和 read_review/verify_render/troubleshooting/writing_quality 已读；依赖工具再次确认 bundle 26.905.11957，捆绑目录搜索无 soffice/LibreOffice，逐页 QA 仍待允许使用/安装本机渲染器，不以 XML 检查代替版面验收。
 
