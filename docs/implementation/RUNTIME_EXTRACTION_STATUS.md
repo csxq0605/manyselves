@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**无外部介入的完整流程尚未验收通过；历史 full_report 是辅助恢复后的完成，聚合 Run 已失败，正在修复自主纠错说明并准备全新验收 Run**
+> 状态：**全新 full_report 已自主完成模块审查与 Cross，正在总编；完整交付验收尚未通过，历史辅助恢复结果不计自主验收**
 
 ## Program
 
@@ -20,13 +20,15 @@
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
 - Current slice: `FA-08/M9.95 Chief revision scope guidance and autonomous full-flow acceptance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `not autonomously accepted; historical full Run completed with assistant intervention, aggregate Chief 1/3 revision exhausted correction at 17:14/17:19. M9.95 fixes model-visible scope/part-id guidance without editing business submissions or loosening validators`
-- Final real-test status: `full-report-a3e668f660694886b554ad8ac535814f completed including Final, render, materialize and publish at 2026-09-09 16:32; report structure passed, protected_prose_verified=true. Browser Reports lists the new 30,305,699-byte DOCX. Original delivery is backed up in test/Work/acceptance-qa/original-full-report-20260909 because historical module 2.3 is still tainted. aggregate-existing-3d0118aa6d4847cca201ebabe852641f started through the same browser conversation using explicit approved refs (2.1-r3, 2.2-r2, replacement 2.3-r0 from module-report-78b76fad8b604d88ad2c5f040d434789, 2.4-r1, 2.5-r1). No new full-report was created. Corrected delivery/download/page QA remain pending`
+- HEAD at slice start: `96d98ce Record live aggregate revision and pending source binding approval`
+- Program status: `fresh autonomous full_report running on behavioral commit 8ef2658; Module and Cross review/revision/recheck completed without assistant intervention, Chief started 19:46. Historical full Run was assisted; historical aggregate failed. Full acceptance not yet established`
+- Final real-test status: `full-report-8c70828443b9499d80f8a6bda41c670c started once through the sidebar browser at 18:26 from original test Inputs, configured MiMo v2.5. No manual business submission/prose/state edits, resume, or service restart after launch. All five Cross pipelines completed by 19:46; accepted module versions 2.1-r2, 2.2-r3, 2.3-r1, 2.4-r3, 2.5-r2. Chief/Final/render/publish/download remain to be verified. Target output is 配电安全专家咨询报告_自主全流程验收.docx. Preserve all historical Runs and output backups`
 - Blockers: `Autonomous full-flow completion not established. Aggregate is failed; its cross-run source/evidence/photo handoff still needs the outstanding source-reference rebinding approval. A fresh full_report does not require that cross-run operation. No current MiMo quota/auth rejection. Bundle lacks soffice.exe; local LibreOffice use/install permission for page QA remains pending. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `finish focused/affected tests, load M9.94/M9.95, start a fresh full_report from original test Inputs through the browser using the configured MiMo credential. Only observe: do not modify submissions, durable prose, missing business artifacts, or runtime state. If unrecoverable, diagnose/fix implementation and distinguish diagnostic recovery from autonomous acceptance. Preserve old Runs. No connection probes, cross-run source rebinding or LibreOffice installation without the outstanding approval`
+- Next automatic action: `observe the same fresh Run through Chief/Final/render/publish/download; do not restart or resume it while it is progressing. Do not modify submissions, durable prose, missing business artifacts, or runtime state. If unrecoverable, diagnose/fix implementation and distinguish diagnostic recovery from autonomous acceptance. Preserve old Runs. No connection probes, cross-run source rebinding or desktop LibreOffice use/install without the outstanding approval`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- 2026-09-09 19:46：新自主 Run 全部 Cross owner pipelines 已完成。2.1/2.2/2.3/2.4/2.5 均经历跨模块定向修订；2.2、2.4 的修订后独立复核还提出进一步修改，系统自行继续修订并通过复审。现进入 Chief 1/3，空专项 Chapter 4 按正常定义处理。服务仍是 18:25:18 启动的同一进程（行为代码 8ef2658），无业务文件/状态人工改动或人工恢复。仅更新本状态文档，不改变活动 Run。documents 技能和 read_review/verify_render/troubleshooting/writing_quality 已读；依赖工具再次确认 bundle 26.905.11957，捆绑目录搜索无 soffice/LibreOffice，逐页 QA 仍待允许使用/安装本机渲染器，不以 XML 检查代替版面验收。
 
 - 2026-09-09 19:02：全新自主 Run `full-report-8c70828443b9499d80f8a6bda41c670c` 的五个模块都完成了独立审查/复审，当前版本为 2.1-r1、2.2-r1、2.3-r0、2.4-r1、2.5-r1。2.2 的四条 finding 由系统自行修订后全部 resolved；2.3 三小节绑定 28 来源并首轮通过。启动后没有改动任何 Run 提交/正文/状态，没有手动恢复或重启服务；模型自行处理过工具调用错误和上下文压缩。正在 cohort join 后复用已完成模块结果，Cross/Chief/Final/Delivery 尚未完成，不计全流程验收成功。
 
