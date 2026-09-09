@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**真实验收已发现并修复多项问题；全流程尚未完成，当前受 Provider 计费状态阻塞**
+> 状态：**真实验收继续中；已切换用户授权的本地 Gemini 服务，全流程尚未完成**
 
 ## Program
 
@@ -18,15 +18,19 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.80 Restore bounded Provider handoffs after process restart`
+- Current slice: `FA-08/M9.81 Local Gemini client-tool compatibility and same-run acceptance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `a7395ac Reporting: preserve existing evidence across path normalization`
-- Program status: `final acceptance incomplete; blocked on provider billing availability`
-- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f completed preparation and produced module 2.3 r0 requiring semantic correction; 18:22 browser resume reached real Provider calls but failed with HTTP 400 Arrearage; module/review/cross/chief/final/render/delivery remain incomplete`
-- Blockers: `DashScope rejects calls with Arrearage; user must restore billing availability or provide another authorized usable provider. DOCX page-render QA also lacks bundled LibreOffice on Windows. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `after user restores provider availability, use the existing browser restore button for the same Run; verify handoff restoration and corrected evidence access, then module 2.3 revision and the remaining cross/chief/final/render/delivery chain; do not treat accepted/running or tool-failure drafts as success`
+- HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
+- Program status: `final acceptance incomplete; real local Gemini workflow in progress`
+- Final real-test status: `user-authorized existing Sub2API group 8/model gemini-3.6-flash-medium passed text, streamed tool-call and tool-result continuation through the production AnthropicProvider; same full-report-a3e668f660694886b554ad8ac535814f resumed from the sidebar on 2026-09-09 13:28`
+- Blockers: `initial real author requests hit an Antigravity client web_search/server-tool name collision; transport alias fix passed focused tests and real tool roundtrip, full workflow must be resumed with the fix. Previous DOCX page-render QA lacked bundled LibreOffice on Windows. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `verify real handoff restoration and corrected evidence access, then module 2.3 revision and the remaining cross/chief/final/render/delivery chain; fix failures and resume the same Run, never treat accepted/running or tool-failure drafts as success`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.81 后续真实失败：13:29 四个 Author 请求返回 400，Auditor 2.3 可调用证据工具。只读本地 `ops_error_logs` 确認 upstream 原因为内建工具与 Function calling 混用；当前镜像 revision 的官方转换源码按 `web_search` 名称把自定义客户端函数变为 Google 内建搜索，并回退模型。Characterization First 得到两个 RED；AnthropicProvider 仅对 `/antigravity` route 的三个保留搜索名称做请求内、可逆、避冲突的 wire alias，工具声明、历史 tool_use 和两类响应一致转换；Runtime 名称、证据登记、会话和 Run 不变，不启用内建搜索、不修改反代部署或账户。Provider 相关 `46 passed`，Ruff/diff check 通过；真实 transport-only `web_search` 函数调用与结果回传成功（不是实际网页检索验收）。准备加载修复并恢复原 Run，尚未验证正文及交付。
+
+- 2026-09-09 M9.81：用户提供本地 Gemini Setup 对话及 `Sub2API-Windows-Quickstart` 服务。对照现有固定镜像 0.2.3/8fa67d4 的官方 gateway 路由，使用既有 Antigravity 分组 8、既有 Key 及 `gemini-3.6-flash-medium`，不重装、改账号套餐、清配额或创建 Key。通过 Manyselves `AnthropicProvider` 实测 `/antigravity/v1/messages`：非流式回答 OK（含禁思考参数）、流式工具调用 `add_numbers(7,5)`、工具结果回传后回答 `TOOL_OK_12` 均成功。仅更新被 Git 忽略的应用 Provider 配置，保留旧配置；没有记录或提交凭据。13:27 启动 Manyselves，13:28 在侧边栏登录并点击原 Run 的恢复按钮，当前仍处模块协同与写作，尚非最终交付。
 
 - 首次报告 Module Provider 调用暴露两处真实问题：网页保存配置只替换 Main 所属 LoopManager，Capability 的静态 RuntimeServicesView 仍持有启动时的空 Provider；同时 `public-reporting:module-2.1-specialist:specialist-2.1` 被直接作为 Windows 目录名，ConversationStore 以 WinError 123 失败。
 - Characterization First 分别复现 Provider replacement 后原 view 仍返回 `None`、真实 Agent ID 的会话写盘失败。RuntimeServicesView 现在只对可替换 Provider/defaults 使用 Host-owned resolver；workspace/bus 和既有 Workflow bindings 保留，不关闭或重建活动 Run。ConversationStore 仅在磁盘路径边界可逆编码 Agent ID，逻辑身份与 Session 不变，安全旧目录名不变；没有新增 hash、锁、Gate 或 Provider 重试。

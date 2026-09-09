@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -187,6 +188,7 @@ class AnthropicProvider(LLMProvider):
 
     def _convert_messages(
         self, messages: list[Message],
+        tool_names: dict[str, str] | None = None,
     ) -> tuple[str | list[dict] | None, list[dict]]:
         """Convert internal messages to Anthropic API format.
 
@@ -209,6 +211,7 @@ class AnthropicProvider(LLMProvider):
         system_message: str | list[dict] | None = None
         anthropic_messages: list[dict] = []
         pending_tool_results: list[dict] = []
+        tool_names = tool_names or {}
 
         for msg in messages:
             if msg.role == "system":
@@ -245,7 +248,7 @@ class AnthropicProvider(LLMProvider):
                     content_blocks.append({
                         "type": "tool_use",
                         "id": tc.id,
-                        "name": tc.name,
+                        "name": tool_names.get(tc.name, tc.name),
                         "input": tc.arguments,
                     })
                 anthropic_messages.append({
@@ -355,7 +358,9 @@ class AnthropicProvider(LLMProvider):
         reasoning_enabled: bool | None = None,
     ) -> LLMResponse:
         """Send chat completion request."""
-        system_message, anthropic_messages = self._convert_messages(messages)
+        tool_names = self._client_tool_names(messages, tools)
+        runtime_names = {wire: name for name, wire in tool_names.items()}
+        system_message, anthropic_messages = self._convert_messages(messages, tool_names)
 
         params: dict[str, Any] = {
             "model": self.model,
@@ -371,7 +376,7 @@ class AnthropicProvider(LLMProvider):
             params["thinking"] = {"type": "disabled"}
 
         if tools:
-            params["tools"] = self._convert_tools(tools)
+            params["tools"] = self._convert_tools(tools, tool_names)
         request_metrics = build_provider_request_metrics(
             params,
             representation="anthropic_messages_payload_v1",
@@ -402,7 +407,7 @@ class AnthropicProvider(LLMProvider):
             elif block.type == "tool_use":
                 tool_calls.append(LLMToolCall(
                     id=block.id,
-                    name=block.name,
+                    name=runtime_names.get(block.name, block.name),
                     arguments=block.input,
                 ))
             elif block.type == "thinking":
@@ -444,7 +449,9 @@ class AnthropicProvider(LLMProvider):
         """
         from .base import LLMStreamChunk
 
-        system_message, anthropic_messages = self._convert_messages(messages)
+        tool_names = self._client_tool_names(messages, tools)
+        runtime_names = {wire: name for name, wire in tool_names.items()}
+        system_message, anthropic_messages = self._convert_messages(messages, tool_names)
 
         params: dict[str, Any] = {
             "model": self.model,
@@ -460,7 +467,7 @@ class AnthropicProvider(LLMProvider):
             params["thinking"] = {"type": "disabled"}
 
         if tools:
-            params["tools"] = self._convert_tools(tools)
+            params["tools"] = self._convert_tools(tools, tool_names)
         request_metrics = build_provider_request_metrics(
             params,
             representation="anthropic_messages_stream_payload_v1",
@@ -551,7 +558,7 @@ class AnthropicProvider(LLMProvider):
                 if block.type == "tool_use":
                     final_tool_calls.append(LLMToolCall(
                         id=block.id,
-                        name=block.name,
+                        name=runtime_names.get(block.name, block.name),
                         arguments=block.input,
                     ))
                 elif block.type == "text":
@@ -627,11 +634,40 @@ class AnthropicProvider(LLMProvider):
     # Tool conversion
     # ------------------------------------------------------------------
 
-    def _convert_tools(self, tools: list[dict]) -> list[dict]:
+    def _client_tool_names(
+        self, messages: list[Message], tools: list[dict] | None,
+    ) -> dict[str, str]:
+        """Keep client search tools out of Antigravity's built-in heuristic.
+
+        That gateway interprets these names as server-side search even without
+        an Anthropic server-tool type, changing both execution and the model.
+        Alias only on the wire; runtime tools and persisted calls stay intact.
+        Keep the map request-local because providers serve concurrent sessions.
+        """
+        path = urlsplit(getattr(self, "api_base", None) or "").path
+        if "antigravity" not in path.split("/"):
+            return {}
+        names = {tool["name"] for tool in tools or []}
+        names.update(tc.name for msg in messages for tc in msg.tool_calls or [])
+        aliases = {}
+        for name in sorted(names & {"web_search", "google_search", "web_search_20250305"}):
+            candidate = f"client_{name}"
+            suffix = 0
+            while candidate in names:
+                suffix += 1
+                candidate = f"client_{name}_{suffix}"
+            aliases[name] = candidate
+            names.add(candidate)
+        return aliases
+
+    def _convert_tools(
+        self, tools: list[dict], tool_names: dict[str, str] | None = None,
+    ) -> list[dict]:
         """Convert tools to Anthropic format."""
+        tool_names = tool_names or {}
         return [
             {
-                "name": tool["name"],
+                "name": tool_names.get(tool["name"], tool["name"]),
                 "description": tool["description"],
                 "input_schema": tool["input_schema"],
             }
