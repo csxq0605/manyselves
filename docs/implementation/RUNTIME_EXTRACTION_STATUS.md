@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**真实全流程验收未完成；已修复多处实际故障，当前 Google 与用户授权重试的 MiMo Token Plan 均返回额度耗尽**
+> 状态：**真实全流程验收未完成；用户更换 MiMo 凭据后，已直接恢复同一 Run 的跨模块真实流程**
 
 ## Program
 
@@ -18,15 +18,19 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.85 Compact current revision contract; real acceptance quota blocker`
+- Current slice: `FA-08/M9.86 Real MiMo cross-owner acceptance; output budget correction`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `final acceptance incomplete; existing local Gemini upstream QUOTA_EXHAUSTED; authorized MiMo Token Plan probe also rejected with HTTP 429 quota exhausted`
-- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f completed module cohort, including module 2.1 five findings -> revision r1 -> recheck; entered cross-owner findings/revision; 2026-09-09 14:05 Google 429 then gateway 503 halted run-reporting-tail. Chief/final/render/delivery not verified`
-- Blockers: `Google account/model quota exhausted, upstream quotaResetTimeStamp=2026-09-09T09:35:02Z (17:35 Taipei); 14:24 Taipei MiMo Token Plan/mimo-v2.5 minimal text probe also returned 429 quota exhausted, reset time not established; no quota/cooldown/account mutations. Historical module 2.3 r0 still attributes technical failures to missing customer data and received an empty finding list; it is not valid final acceptance content. Bundle 26.905.11957 lacks soffice.exe for DOCX page-render QA. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
-- Next automatic action: `after the authorized upstream quota actually recovers, resume the preserved Run from run-reporting-tail and verify cross/chief/final/render/delivery; preserve old evidence, do not treat tainted module 2.3 as final success. A clean real regression is still needed after implementation fixes; revision payload reduction is automatic-tested and traced but not yet live-tested due to quota`
+- Program status: `final acceptance incomplete; newly authorized MiMo Token Plan credential active, same Run executing real cross-owner review/revision`
+- Final real-test status: `same full-report-a3e668f660694886b554ad8ac535814f completed MiMo cross-owner branches 2.1/2.4/2.5, including 2.1 r2 -> advisory finding -> r3 -> recheck. Cross-owner 2.2 stopped after thinking-only max_tokens=8192; local output budget corrected to 32768, service reloaded and same Run resumed at only unfinished 2.2 on 2026-09-09 15:03. Chief/final/render/delivery not verified`
+- Blockers: `No current credential rejection with the newly authorized MiMo key; older Google/old-MiMo quota failures remain historical evidence only. Cross-owner 2.2 output-budget correction awaits real result. Historical module 2.3 r0 still attributes technical failures to missing customer data and received an empty finding list; it is not valid final acceptance content. Bundle 26.905.11957 still lacks soffice.exe, reconfirmed by current DOCX page-render preflight. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.86：14:41 起原 Run 的 MiMo 真实工具调用、正文写盘、结构化纠正、局部审查和跨模块复审均已有成功证据。2.4 r1、2.5 r1、2.1 r2 后因一条引用不足 finding 再修为 r3，其跨模块分支已完成。2.1 当前 revision 输入 24946 字符、2.4 为 47780 字符，均未夹带完整 reporting_state，M9.85 已进入真实生产验证。2.2 于 14:45:08 得到 `stop_reason=max_tokens/output_tokens=8192/text_chars=0/thinking_chars=26521/tool_calls=0`；原 continuation 观察到无新语义/持久结果并停止，其他已运行兄弟收尾后父 Run 呈现 `Agent turn ended without a typed result`。这不是新 Key 的 quota/auth 错误，也未通过删除旧进度或放宽无进展机制绕过。对照 [MiMo 官方 Anthropic 参数](https://mimo.mi.com/docs/en-US/api/chat/anthropic-api)，仅把既有本地 `agents.defaults.max_tokens` 从 8192 调至该模型官方默认 32768，保留思考设置与现有恢复策略；不是新增 Gate/阈值算法。15:02 服务重新加载，15:03 侧边栏恢复同一 Run，仅未完成的 cross-owner 2.2 重新进入执行，未运行连接探针。此配置修正的真实输出仍待验证。
+
+- 2026-09-09 14:39 用户替换 MiMo Token Plan 凭据，通过网页保存并立即启用 `mimo-v2.5`；密钥仅由原有配置服务持久化，不入代码/提交。用户明确“跳过连接测试、继续真实全流程”后，14:41 在侧边栏点击同一 Run 的“恢复原报告”。四路真实业务请求已开启流式响应，`search_project_evidence`、`open_project_source` 与工具结果回传成功，跨模块修订继续执行；未运行独立探针、未创建替代 Run。仍须验证最终成稿内容和交付，不能用 running 或工具成功代替全流程验收。
 
 - 2026-09-09 14:24 台北，按用户新授权重试既有 MiMo Token Plan 凭据与 `mimo-v2.5`。对照官方 [快速接入](https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access)，中国集群 Anthropic base 为 `https://token-plan-cn.xiaomimimo.com/anthropic`；本地已保存的 Provider 地址、模型与之相符。真实生产 `AnthropicProvider.chat` 最小文本探针在受限网络外收到 `HTTP 429`, `error.code=429`, `message=quota exhausted`, `type=limitation`。最初受限网络连接失败不作为 Provider 结果；429 后未继续重试。流式工具、工具回传和续跑均未执行，不能宣称 MiMo 可用或全流程通过；探针只有全部通过才保存配置，因此 active Provider 仍为原本地 Gemini，原 Run 仍为 `failed/run-reporting-tail`。没有记录密钥、改套餐、充值、切账户或修改业务代码；本次为外部额度阻塞，无代码修复依据。
 
