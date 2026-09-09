@@ -19,7 +19,9 @@ async def test_client_search_roundtrip_preserves_runtime_names(streaming, api_ba
     captured = {}
     response = SimpleNamespace(
         content=[SimpleNamespace(type="tool_use", id="call_2", name=expected,
-                                 input={"query": "power"})],
+                                 input={"query": "power"}),
+                 SimpleNamespace(type="tool_use", id="call_3", name="empty",
+                                 input={"reason": "inspect"})],
         usage=SimpleNamespace(input_tokens=10, output_tokens=5),
         stop_reason="tool_use",
     )
@@ -56,6 +58,8 @@ async def test_client_search_roundtrip_preserves_runtime_names(streaming, api_ba
     provider.client = SimpleNamespace(messages=Messages())
     tools = [dict(name=name, description=name, input_schema={"type": "object"})
              for name in ("web_search", "client_web_search", "client_web_search_1", "read")]
+    tools.append(dict(name="empty", description="No arguments", input_schema={
+        "type": "object", "properties": {}, "additionalProperties": False}))
     messages = [
         Message(role="user", content="Search"),
         Message(role="assistant", content="", tool_calls=[
@@ -73,4 +77,24 @@ async def test_client_search_roundtrip_preserves_runtime_names(streaming, api_ba
     assert result.tool_calls[0].name == "web_search"
     assert result.tool_calls[0].id == "call_2"
     assert result.tool_calls[0].arguments == {"query": "power"}
+    assert result.tool_calls[1].arguments == (
+        {} if "antigravity" in api_base else {"reason": "inspect"})
     assert tools[0]["name"] == messages[1].tool_calls[0].name == "web_search"
+
+
+@pytest.mark.parametrize("schema,args,expected", [
+    ({"type": "object", "properties": {}, "additionalProperties": False},
+     {"reason": "inspect"}, {}),
+    ({"type": "object", "properties": {}}, {"reason": "inspect"}, {"reason": "inspect"}),
+    ({"type": "object", "properties": {}}, {"unexpected": 1}, {"unexpected": 1}),
+    ({"type": "object", "properties": {"reason": {"type": "string"}}},
+     {"reason": "inspect"}, {"reason": "inspect"}),
+])
+def test_antigravity_removes_only_injected_empty_tool_reason(schema, args, expected):
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.api_base = "http://127.0.0.1:8081/antigravity"
+    tools = [{"name": "inspect", "input_schema": schema}]
+    assert provider._client_tool_arguments("inspect", args, tools) == expected
+    assert provider._client_tool_arguments("unknown", args, tools) == args
+    provider.api_base = "https://api.anthropic.com"
+    assert provider._client_tool_arguments("inspect", args, tools) == args

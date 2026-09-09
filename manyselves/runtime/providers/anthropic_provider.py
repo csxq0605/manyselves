@@ -408,7 +408,9 @@ class AnthropicProvider(LLMProvider):
                 tool_calls.append(LLMToolCall(
                     id=block.id,
                     name=runtime_names.get(block.name, block.name),
-                    arguments=block.input,
+                    arguments=self._client_tool_arguments(
+                        runtime_names.get(block.name, block.name), block.input, tools,
+                    ),
                 ))
             elif block.type == "thinking":
                 thinking = block.thinking
@@ -559,7 +561,9 @@ class AnthropicProvider(LLMProvider):
                     final_tool_calls.append(LLMToolCall(
                         id=block.id,
                         name=runtime_names.get(block.name, block.name),
-                        arguments=block.input,
+                        arguments=self._client_tool_arguments(
+                            runtime_names.get(block.name, block.name), block.input, tools,
+                        ),
                     ))
                 elif block.type == "text":
                     accumulated_text += block.text
@@ -634,6 +638,29 @@ class AnthropicProvider(LLMProvider):
     # Tool conversion
     # ------------------------------------------------------------------
 
+    def _uses_antigravity_transport(self) -> bool:
+        path = urlsplit(getattr(self, "api_base", None) or "").path
+        return "antigravity" in path.split("/")
+
+    def _client_tool_arguments(
+        self, name: str, arguments: dict, tools: list[dict] | None,
+    ) -> dict:
+        """Undo only the gateway's synthetic argument for a closed empty object.
+
+        Antigravity's schema cleaner requires a string ``reason`` when Gemini
+        sees an empty object. It is not an argument of the runtime callable.
+        Unknown arguments and actual user-declared reason fields stay intact.
+        """
+        if not self._uses_antigravity_transport():
+            return arguments
+        schema = next((tool["input_schema"] for tool in tools or []
+                       if tool["name"] == name), {})
+        if (schema.get("type") == "object" and schema.get("properties") == {}
+                and schema.get("additionalProperties") is False
+                and set(arguments) == {"reason"} and isinstance(arguments["reason"], str)):
+            return {}
+        return arguments
+
     def _client_tool_names(
         self, messages: list[Message], tools: list[dict] | None,
     ) -> dict[str, str]:
@@ -644,8 +671,7 @@ class AnthropicProvider(LLMProvider):
         Alias only on the wire; runtime tools and persisted calls stay intact.
         Keep the map request-local because providers serve concurrent sessions.
         """
-        path = urlsplit(getattr(self, "api_base", None) or "").path
-        if "antigravity" not in path.split("/"):
+        if not self._uses_antigravity_transport():
             return {}
         names = {tool["name"] for tool in tools or []}
         names.update(tc.name for msg in messages for tc in msg.tool_calls or [])

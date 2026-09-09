@@ -23,10 +23,12 @@
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
 - Program status: `final acceptance incomplete; real local Gemini workflow in progress`
 - Final real-test status: `user-authorized existing Sub2API group 8/model gemini-3.6-flash-medium passed text, streamed tool-call and tool-result continuation through the production AnthropicProvider; same full-report-a3e668f660694886b554ad8ac535814f resumed from the sidebar on 2026-09-09 13:28`
-- Blockers: `initial real author requests hit an Antigravity client web_search/server-tool name collision; transport alias fix passed focused tests and real tool roundtrip, full workflow must be resumed with the fix. Previous DOCX page-render QA lacked bundled LibreOffice on Windows. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Blockers: `two Antigravity transport mismatches fixed and live-probed: client search name and injected no-argument reason; same-run workflow still needs completion. Module 2.3 r0 received an empty finding list despite attributing technical evidence failures to absent customer data; content acceptance remains open. Previous DOCX page-render QA lacked bundled LibreOffice on Windows. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `verify real handoff restoration and corrected evidence access, then module 2.3 revision and the remaining cross/chief/final/render/delivery chain; fix failures and resume the same Run, never treat accepted/running or tool-failure drafts as success`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.82：加载 `51d43f8` 后作者均越过 HTTP 400，真正执行工具；随即 `list_result_parts` 反复报 unexpected keyword `reason`。官方 `schema_cleaner.go` 明确给空对象注入必填 reason。Characterization RED 后，只在 Antigravity response adapter 对原始 Schema 为 closed empty object、仅含 string reason 的调用恢复 `{}`；保留未知参数、开放对象和真实 reason 参数，也不改变其他 Provider。两种响应路径的 focused/affected `50 passed`；真实无参 callable 调用和下一轮结果回传得到 `EMPTY_TOOL_OK`。未放宽 Runtime 参数检查或改工具合同。13:42 停服加载修复，原 Run 保留，随后继续恢复。
 
 - M9.81 后续真实失败：13:29 四个 Author 请求返回 400，Auditor 2.3 可调用证据工具。只读本地 `ops_error_logs` 确認 upstream 原因为内建工具与 Function calling 混用；当前镜像 revision 的官方转换源码按 `web_search` 名称把自定义客户端函数变为 Google 内建搜索，并回退模型。Characterization First 得到两个 RED；AnthropicProvider 仅对 `/antigravity` route 的三个保留搜索名称做请求内、可逆、避冲突的 wire alias，工具声明、历史 tool_use 和两类响应一致转换；Runtime 名称、证据登记、会话和 Run 不变，不启用内建搜索、不修改反代部署或账户。Provider 相关 `46 passed`，Ruff/diff check 通过；真实 transport-only `web_search` 函数调用与结果回传成功（不是实际网页检索验收）。准备加载修复并恢复原 Run，尚未验证正文及交付。
 
