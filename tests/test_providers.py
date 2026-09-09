@@ -357,6 +357,27 @@ def test_anthropic_convert_tools():
     assert "input_schema" in result[0]
 
 
+def test_anthropic_compatible_retains_entire_active_tool_chain():
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider._supports_cache = False
+    messages = [Message(role="user", content="Research then write")]
+    for index in range(3):
+        messages.extend([
+            Message(role="assistant", content="Checking another source", tool_calls=[
+                LLMToolCall(id=f"call_{index}", name="read", arguments={"id": index})]),
+            Message(role="user", content=f"Evidence {index}", is_tool_result=True,
+                    tool_call_id=f"call_{index}"),
+        ])
+    _, payload = provider._convert_messages(messages)
+    assert len(payload) == 7
+    assert [payload[index]["content"][-1]["id"] for index in (1, 3, 5)] == [
+        "call_0", "call_1", "call_2"]
+    assert [payload[index]["content"][0]["content"] for index in (2, 4, 6)] == [
+        "Evidence 0", "Evidence 1", "Evidence 2"]
+
+
 # ── OpenAI provider conversion tests ────────────────────────────────────
 
 

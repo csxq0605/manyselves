@@ -167,6 +167,13 @@ class AnthropicProvider(LLMProvider):
             )
             later_has_assistant_reply = any(
                 msg.get("role") == "assistant" and msg.get("content")
+                and not (
+                    isinstance(msg["content"], list)
+                    and any(
+                        isinstance(block, dict) and block.get("type") == "tool_use"
+                        for block in msg["content"]
+                    )
+                )
                 for msg in future
             )
 
