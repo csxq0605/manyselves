@@ -28,6 +28,8 @@
 
 ### Current live acceptance hardening (2026-09-05)
 
+- 2026-09-09 19:02：全新自主 Run `full-report-8c70828443b9499d80f8a6bda41c670c` 的五个模块都完成了独立审查/复审，当前版本为 2.1-r1、2.2-r1、2.3-r0、2.4-r1、2.5-r1。2.2 的四条 finding 由系统自行修订后全部 resolved；2.3 三小节绑定 28 来源并首轮通过。启动后没有改动任何 Run 提交/正文/状态，没有手动恢复或重启服务；模型自行处理过工具调用错误和上下文压缩。正在 cohort join 后复用已完成模块结果，Cross/Chief/Final/Delivery 尚未完成，不计全流程验收成功。
+
 - 2026-09-09 18:26：服务 18:25:18 重启并加载 `8ef2658`（包括 M9.94/M9.95）。从原侧边栏会话发起全新 `full-report-8c70828443b9499d80f8a6bda41c670c`，仅使用 test 原始 Inputs/Knowledge/角色 Skill/Templates，目标 `配电安全专家咨询报告_自主全流程验收.docx`，不复用旧 Run 模块/提交、不恢复旧 Run、不启动跨 Run 聚合。18:27 preparation 已结束并进入 2.1 Author；尚未完成。启动后仅只读观察，新 Run 的业务提交、正文、状态均无外部修改。
 
 - M9.95 自动验证：contract_input_ownership、final_chief_provider、aggregate_existing_entrypoint、reporting_tail_runtime 四文件 **39 passed（181.76s）**；七文件 Ruff 与 git diff --check 通过。测试通过实际 SubmitResultTool 验证两次不同格式错误的纠正反馈、随后合法提交与已保存正文原字节不变；不是 live Provider 自主验收的替代。准备重启空闲服务加载 M9.94/M9.95，再从浏览器启动原始 Inputs 的新 full_report。
