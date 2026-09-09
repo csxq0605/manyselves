@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**真实全流程验收未完成；用户更换 MiMo 凭据后，已直接恢复同一 Run 的跨模块真实流程**
+> 状态：**原真实 full_report 已完成渲染/发布；已启动包含重新审查的 2.3 的修复版聚合，最终交付验收仍未完成**
 
 ## Program
 
@@ -21,12 +21,14 @@
 - Current slice: `FA-08/M9.90 Restore typed evidence/photo carriers at Final completion`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `final acceptance incomplete; original full Run passed Final re-review but failed deterministic Final completion; M9.90 fixes typed asset restoration, 21 focused/affected tests and Ruff passed; restart/resume pending`
-- Final real-test status: `original full-report-a3e668f660694886b554ad8ac535814f completed cross-owner review/revisions and all Chief lanes; Final 1/3 started 2026-09-09 15:58, empty Chapter 4 branch completed. Targeted module-report-78b76fad8b604d88ad2c5f040d434789 completed 2.3 writing, real source/calculation audit and publication. Corrected 2.3 must still enter an aggregate-existing delivery after the original Run finishes. No new full-report was created. Render/download/page QA remain unverified`
-- Blockers: `No current MiMo quota/auth rejection. Original full Run still contains historical tainted 2.3, preserved as diagnostic evidence; its independently reviewed replacement exists in the completed module Run and needs aggregation. Bundle 26.905.11957 lacks soffice.exe; asynchronous user approval to use/install local LibreOffice for page QA is pending. M9.87/M9.88/M9.89 are committed/pushed but not yet loaded in the active service; do not interrupt healthy Final solely to load them. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
+- Program status: `original full Run completed after M9.90 and same-run resume; corrected aggregate-existing is executing, final delivery acceptance incomplete`
+- Final real-test status: `full-report-a3e668f660694886b554ad8ac535814f completed including Final, render, materialize and publish at 2026-09-09 16:32; report structure passed, protected_prose_verified=true. Browser Reports lists the new 30,305,699-byte DOCX. Original delivery is backed up in test/Work/acceptance-qa/original-full-report-20260909 because historical module 2.3 is still tainted. aggregate-existing-3d0118aa6d4847cca201ebabe852641f started through the same browser conversation using explicit approved refs (2.1-r3, 2.2-r2, replacement 2.3-r0 from module-report-78b76fad8b604d88ad2c5f040d434789, 2.4-r1, 2.5-r1). No new full-report was created. Corrected delivery/download/page QA remain pending`
+- Blockers: `No current MiMo quota/auth rejection. Corrected aggregate still running; original output cannot establish clean content acceptance. Bundle 26.905.11957 lacks soffice.exe; asynchronous user approval to use/install local LibreOffice for page QA is pending. Service restarted 16:31 with M9.87–M9.90 loaded, same-run deterministic resume succeeded without redoing model review. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.91：真实 Outputs 页面点击新生成的 30,305,699-byte Word 预览显示笼统失败。直接调用同一 PreviewService 复现 PreviewTooLarge，原因是已有 8 MiB 文件上限；不放宽文件/解压安全限制。Characterization RED 后，前端只对已有 PREVIEW_TOO_LARGE 错误码提示“文件超过安全预览限制，请关闭预览后下载查看。”，其他错误仍原提示且 onError 保持一次调用。三个预览文件 18 passed；两修改文件 ESLint、TypeScript noEmit、Vite production build 通过（保留既有大 chunk warning）。随后验证真实页面提示，下载与逐页版面检查仍不由此证明。
 
 - M9.90 自动验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -m pytest -p pytest_asyncio.plugin -q tests/capabilities/distribution_reporting/test_delivery_projection_validation.py tests/capabilities/distribution_reporting/test_delivery_tools.py tests/capabilities/distribution_reporting/test_aggregate_existing_entrypoint.py --maxfail=3`，21 passed（45.92s）；仅受影响检查，不是全仓库回归。
 

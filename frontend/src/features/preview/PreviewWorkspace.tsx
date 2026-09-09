@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { ApiError } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
 import type { PreviewApi, PreviewResponse } from "./preview-api";
 import { PreviewPane } from "./PreviewPane";
@@ -31,9 +32,11 @@ export function PreviewWorkspace({ api, onClose, onError, path, platform, projec
           setObjectUrl(createdObjectUrl);
         }
       }
-    }).catch(() => {
+    }).catch((cause: unknown) => {
       if (!cancelled) {
-        setError("文件预览加载失败");
+        setError(cause instanceof ApiError && cause.code === "PREVIEW_TOO_LARGE"
+          ? "文件超过安全预览限制，请关闭预览后下载查看。"
+          : "文件预览加载失败");
         onError?.();
       }
     });
