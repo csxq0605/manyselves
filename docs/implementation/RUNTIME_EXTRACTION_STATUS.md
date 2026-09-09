@@ -18,15 +18,19 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.89 Real Final acceptance; runtime tool-result continuation binding`
+- Current slice: `FA-08/M9.90 Restore typed evidence/photo carriers at Final completion`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
 - HEAD at slice start: `0c080c0 Docs: record real acceptance billing blocker`
-- Program status: `final acceptance incomplete; authorized MiMo credential active, original full Run executing Final review and targeted module 2.3 repair completed`
+- Program status: `final acceptance incomplete; original full Run passed Final re-review but failed deterministic Final completion; M9.90 fixes typed asset restoration, 21 focused/affected tests and Ruff passed; restart/resume pending`
 - Final real-test status: `original full-report-a3e668f660694886b554ad8ac535814f completed cross-owner review/revisions and all Chief lanes; Final 1/3 started 2026-09-09 15:58, empty Chapter 4 branch completed. Targeted module-report-78b76fad8b604d88ad2c5f040d434789 completed 2.3 writing, real source/calculation audit and publication. Corrected 2.3 must still enter an aggregate-existing delivery after the original Run finishes. No new full-report was created. Render/download/page QA remain unverified`
 - Blockers: `No current MiMo quota/auth rejection. Original full Run still contains historical tainted 2.3, preserved as diagnostic evidence; its independently reviewed replacement exists in the completed module Run and needs aggregation. Bundle 26.905.11957 lacks soffice.exe; asynchronous user approval to use/install local LibreOffice for page QA is pending. M9.87/M9.88/M9.89 are committed/pushed but not yet loaded in the active service; do not interrupt healthy Final solely to load them. 仍禁止未经说明新增身份、Hash/CAS、锁、Gate 或校验算法`
 - Next automatic action: `continue same Run with newly authorized MiMo credential, without connection probes; verify cross/chief/final/render/delivery and repair actual implementation failures. Preserve old evidence, do not treat tainted module 2.3 as final success. Historical Google/old-MiMo quota failures do not establish availability of this new credential; real business tool calls are now succeeding`
 
 ### Current live acceptance hardening (2026-09-05)
+
+- M9.90 自动验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -m pytest -p pytest_asyncio.plugin -q tests/capabilities/distribution_reporting/test_delivery_projection_validation.py tests/capabilities/distribution_reporting/test_delivery_tools.py tests/capabilities/distribution_reporting/test_aggregate_existing_entrypoint.py --maxfail=3`，21 passed（45.92s）；仅受影响检查，不是全仓库回归。
+
+- M9.90：2026-09-09 16:13 Chief 第 3 章定向修订被接受，16:16 Final 复审确认 F-3-001/F-3-002 均解决；随后同一 Run 在 complete-final-review 生成交付投影时真实失败：`'dict' object has no attribute 'id'`。Final 的 state restoration 漏掉 JSON 往返后的 EvidenceItem/PhotoAsset，而 Delivery 已有对应还原。先以两类 carrier 分别复现 AttributeError，再补齐已有模型还原，不改资料、照片归属和结构校验规则。测试通过真实 complete_review 与项目照片来源账本验证，输入字典保持不变；两文件 Ruff 通过，三文件 focused/affected pytest 结果待记录。审查完成快照已写入不代表交付完成；恢复原 Run 后还需实际渲染/发布，再聚合已修复的 2.3。
 
 - M9.89 补充受影响检查：aggregate Provider 与 artifact access ownership 两文件 7 passed；与前五文件合计 60 passed。聚合任务同样仅增加已有 Runtime opaque-result reader，不增加公开资料工具或文件授权。原 Run 的 Final 第 1 章无 finding；第 3 章提出行动责任接口、验收方法和残余风险的一条 blocking finding，重复 target change 格式经原会话修正后接受，已自动进入仅第 3 章的总编修订，仍待复审与交付。
 

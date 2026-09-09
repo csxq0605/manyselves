@@ -40,6 +40,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
     SpecialTopicPlan,
     chapter_section_ids,
 )
@@ -108,6 +110,12 @@ def _chief_template_skill_context(
 
 def _restore_state(value: Mapping[str, Any]) -> dict[str, Any]:
     state = deepcopy(dict(value))
+    evidence = state.get("evidence_items")
+    if isinstance(evidence, list):
+        state["evidence_items"] = [EvidenceItem.model_validate(item) for item in evidence]
+    photos = state.get("photo_assets")
+    if isinstance(photos, list):
+        state["photo_assets"] = [PhotoAsset.model_validate(item) for item in photos]
     modules = state.get("module_submissions")
     if isinstance(modules, Mapping):
         state["module_submissions"] = {

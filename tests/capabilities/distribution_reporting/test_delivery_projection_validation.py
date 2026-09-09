@@ -119,6 +119,66 @@ def test_capability_projection_builds_the_canonical_renderer_markdown(
     assert actual_markdown == PdsDocxRenderer._compose_markdown(actual_report)
 
 
+@pytest.mark.parametrize("carrier", ["evidence_items", "photo_assets"])
+def test_final_completion_restores_json_roundtripped_asset_carriers(
+    tmp_path: Path, carrier: str,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
+        FinalReviewTools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+        DeclarativeFinalReviewContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        EvidenceItem,
+        PhotoAsset,
+    )
+
+    run_id = f"final-restored-{carrier}"
+    edited = _edited_report()
+    state = _state(run_id, edited)
+    assets = {
+        "evidence_items": EvidenceItem.model_validate({
+            "id": "E-0001", "subject": "source fact", "fact": "measured",
+            "source": {"file_id": "source", "path": "Inputs/source.xlsx"},
+        }),
+        "photo_assets": PhotoAsset.model_validate({
+            "id": "P-0001", "path": "Work/unused.png", "sha256": "test-digest",
+            "media_type": "image/png", "source_member": "xl/media/image1.png",
+        }),
+    }
+    state[carrier] = [assets[carrier]]
+    if carrier == "photo_assets":
+        state["evidence_items"] = [assets["evidence_items"].model_copy(update={
+            "module_id": "2.1", "submodule_id": "2.1.1",
+            "photo_refs": ["P-0001"],
+        })]
+        edited.photo_ids = ["P-0001"]
+        photo_path = tmp_path / assets["photo_assets"].path
+        photo_path.parent.mkdir(parents=True, exist_ok=True)
+        photo_path.write_bytes(b"fixture image: projection only checks local presence")
+        from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+            SourceLedger,
+        )
+
+        SourceLedger(tmp_path, run_id).register_project(
+            "E-0001", "source fact", "Inputs/source.xlsx", "measured",
+        )
+    review = DeclarativeFinalReviewContext(
+        state=state, current=edited,
+        subject_ref=f"Work/runs/{run_id}/edited-revisions/chief-r0.json",
+        findings_by_chapter={}, pending_by_chapter={}, initial_lane_refs={},
+    )
+    serialized = json.loads(review.model_dump_json())
+    assert isinstance(serialized["state"][carrier][0], dict)
+
+    completed = FinalReviewTools(workspace=tmp_path).complete_review(serialized)
+
+    assert completed[carrier] == [assets[carrier]]
+    assert (tmp_path / completed["final_audit_snapshot_ref"]).is_file()
+    assert isinstance(serialized["state"][carrier][0], dict)
+
+
 @pytest.mark.parametrize("invalid_suffix", ["\n# 99. unexpected\n"])
 def test_capability_validation_persists_same_success_and_failure_reports(
     tmp_path: Path,
