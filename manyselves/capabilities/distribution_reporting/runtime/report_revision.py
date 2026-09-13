@@ -11,7 +11,7 @@ import shutil
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .aggregate_existing import AggregateExistingTools
 from .input_snapshot import RunInputSnapshotStore
@@ -156,6 +156,17 @@ def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
                  baseline_run_id=baseline_id, revision_targets=dict(request.requested_changes))
     for key, module in modules.items():
         store.write_json(f"{new}/modules/{key}-r{module['revision']}.json", module)
+    completion_refs = _materialize_baseline_module_review_completions(
+        workspace=workspace,
+        store=store,
+        baseline=baseline,
+        modules=modules,
+        old=old,
+        new=new,
+        run_id=run_id,
+    )
+    if completion_refs:
+        state["module_review_completion_refs"] = completion_refs
     photo_assets = state.get("photo_assets") or []
     if photo_assets:
         store.write_json(
@@ -166,6 +177,59 @@ def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
     store.write_json(f"{new}/baseline/original-business-state.json", baseline)
     store.write_json(f"{new}/baseline/business-state.json", state)
     return state
+
+
+def _materialize_baseline_module_review_completions(
+    *,
+    workspace: Path,
+    store: ReportingStore,
+    baseline: Mapping[str, Any],
+    modules: Mapping[str, Any],
+    old: str,
+    new: str,
+    run_id: str,
+) -> dict[str, str]:
+    """Bind already-reviewed baseline modules into this Run for Cross local regression."""
+
+    refs = dict(baseline.get("module_review_completion_refs") or {})
+    completed: dict[str, str] = {}
+    for module_id, module in modules.items():
+        revision = module.get("revision", 0)
+        subject_ref = f"{new}/modules/{module_id}-r{revision}.json"
+        source_ref = refs.get(module_id)
+        payload: dict[str, Any] | None = None
+        if source_ref:
+            source_path = workspace / source_ref
+            if source_path.is_file():
+                try:
+                    payload = _rebase(
+                        json.loads(source_path.read_text(encoding="utf-8")),
+                        old,
+                        new,
+                    )
+                except (OSError, json.JSONDecodeError):
+                    payload = None
+        if not isinstance(payload, dict):
+            payload = {
+                "kind": "review_completion_record",
+                "review_protocol_version": 2,
+                "lifecycle": "module",
+                "run_id": run_id,
+                "reviewer_agent_id": "evidence-auditor",
+                "reviewer_session_key": f"module-auditor-{module_id}",
+                "subject_refs": [subject_ref],
+                "finding_refs": [],
+                "verdict_refs": [],
+                "resolved_finding_ids": [],
+            }
+        else:
+            payload["run_id"] = run_id
+            payload.setdefault("lifecycle", "module")
+            payload["subject_refs"] = [subject_ref]
+        target_ref = f"{new}/reviews/module/baseline/{module_id}/completion-r{revision}.json"
+        store.write_json(target_ref, payload)
+        completed[module_id] = target_ref
+    return completed
 
 
 def module_has_requested_revision(value: Any) -> bool:
