@@ -107,11 +107,19 @@ def _load_run_evidence(workspace: Path, run_id: str) -> list[EvidenceItem]:
 
 
 def _load_run_photos(workspace: Path, run_id: str) -> list[PhotoAsset]:
-    path = workspace / f"Work/runs/{run_id}/context/photo-manifest.json"
-    if not path.is_file():
-        return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return [PhotoAsset.model_validate(item) for item in payload.get("assets", [])]
+    for relative in (
+        f"Work/runs/{run_id}/context/photo-manifest.json",
+        f"Work/runs/{run_id}/photo-manifest.json",
+        f"Work/runs/{run_id}/preparation/photo-manifest.json",
+    ):
+        path = workspace / relative
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assets = payload.get("assets", [])
+        if assets:
+            return [PhotoAsset.model_validate(item) for item in assets]
+    return []
 
 
 class AggregateExistingTools:
@@ -181,6 +189,27 @@ class AggregateExistingTools:
                 "mixing Markdown and JSON would drop evidence bindings"
             )
 
+        return self._prepare_context(value, module_refs, structured_modules, markdown_modules,
+                                     evidence_items, photo_assets)
+
+    def prepare_from_modules(
+        self, value: AggregateExistingPreparationInput,
+        modules: dict[str, ModuleSubmission],
+    ) -> AggregateExistingContext:
+        """Accept current Run typed modules without pretending they are project inputs."""
+        refs = {}
+        for key, module in modules.items():
+            refs[key] = f"Work/runs/{value.run_id}/modules/{key}-r{module.revision}.json"
+            self.store.write_json(refs[key], module.model_dump(mode="json"))
+        return self._prepare_context(
+            value, refs, modules, {},
+            _load_run_evidence(self.workspace, value.run_id),
+            _load_run_photos(self.workspace, value.run_id),
+        )
+
+    def _prepare_context(self, value, module_refs, structured_modules, markdown_modules,
+                         evidence_items, photo_assets) -> AggregateExistingContext:
+        request = value.request
         source_manifest_ref = (
             f"Work/runs/{value.run_id}/context/aggregate-source-manifest.json"
         )
@@ -339,7 +368,14 @@ def project_aggregate_existing_handoff(value: Any) -> AggregateExistingHandoff:
     """Keep the editor result and prepared source context in one typed handoff."""
 
     payload = value if isinstance(value, Mapping) else value
-    return AggregateExistingHandoff.model_validate(payload)
+    handoff = AggregateExistingHandoff.model_validate(payload)
+    runtime_photo_ids = [asset.id for asset in handoff.context.photo_assets]
+    if runtime_photo_ids and list(handoff.edited_report.photo_ids) != runtime_photo_ids:
+        edited = handoff.edited_report.model_copy(
+            update={"photo_ids": runtime_photo_ids}
+        )
+        handoff = handoff.model_copy(update={"edited_report": edited})
+    return handoff
 
 
 def project_aggregate_existing_tail_state(

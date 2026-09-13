@@ -87,6 +87,14 @@ class PublicModuleReportRequest(_PublicReportRequest):
     )
 
 
+class PublicReviseReportRequest(_PublicReportRequest):
+    """New Run copying one baseline and patching explicitly assigned subsections."""
+
+    operation: Literal["revise_report"] = "revise_report"
+    baseline_run_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    requested_changes: dict[str, str] = Field(min_length=1)
+
+
 class PublicAggregateExistingRequest(_PublicReportRequest):
     """User input for aggregating the five already-produced module reports."""
 

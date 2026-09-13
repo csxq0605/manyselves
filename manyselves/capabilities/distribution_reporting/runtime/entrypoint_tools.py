@@ -85,7 +85,7 @@ def attach_module_results(value: Any) -> dict[str, Any]:
             state_value = lane_state.get(state_key)
             if isinstance(state_value, Mapping):
                 attached.setdefault(state_key, {}).update(deepcopy(dict(state_value)))
-    attached["module_submissions"] = submissions
+    attached.setdefault("module_submissions", {}).update(submissions)
     return attached
 
 

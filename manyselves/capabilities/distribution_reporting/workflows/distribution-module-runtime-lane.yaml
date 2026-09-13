@@ -42,6 +42,46 @@ actions:
     module_id: module-id
     lane_outcomes: lane-outcomes
   output_variable: lane-context
+- id: module-has-requested-revision
+  kind: invoke_tool
+  tool: module-has-requested-revision
+  input_variable: lane-context
+  output_variable: requested-revision
+- id: choose-requested-revision
+  kind: if
+  condition:
+    variable: requested-revision
+    operator: truthy
+  then: prepare-requested-module-revision
+  otherwise: module-lane-retries-preflight-revision
+- id: prepare-requested-module-revision
+  kind: invoke_tool
+  tool: prepare-requested-module-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-requested-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: requested-revision-conversation
+- id: invoke-requested-module-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: requested-revision-conversation
+  input_variable: lane-context
+  output_variable: requested-revision-result
+- id: accept-requested-module-revision
+  kind: invoke_tool
+  tool: accept-requested-module-revision
+  input_variables:
+    context: lane-context
+    result: requested-revision-result
+  output_variable: lane-context
+- id: review-requested-revision
+  kind: goto
+  target: prepare-current-module-review
 - id: module-lane-retries-preflight-revision
   kind: invoke_tool
   tool: module-lane-retries-preflight-revision

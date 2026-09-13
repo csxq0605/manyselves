@@ -1,0 +1,10 @@
+id: accept-requested-module-revision
+version: 1.0.0
+description: Single-baseline revision accept-requested-module-revision
+implementation: capability:distribution-reporting:accept-requested-module-revision
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -64,6 +64,19 @@ def numbered_markdown_headings(narrative: str) -> tuple[str, ...]:
     )
 
 
+def strip_numbered_markdown_headings(narrative: str) -> str:
+    """Drop numbered Markdown heading lines; keep the remaining section body."""
+
+    if not numbered_markdown_headings(narrative):
+        return narrative
+    lines = [
+        line
+        for line in narrative.splitlines()
+        if not _NUMBERED_MARKDOWN_HEADING.match(line.strip())
+    ]
+    return "\n".join(lines).strip()
+
+
 def extra_numbered_submodule_headings(
     submodule_id: str,
     narrative: str,
@@ -1625,6 +1638,19 @@ class EditedReportSubmission(StrictModel):
             value = dict(value)
             value.pop("synthesis_dispositions", None)
             value.pop("synthesis_tables", None)
+            for field in (
+                "assessment_background",
+                "findings_overview",
+                "regional_executive_summary",
+                "risk_panorama",
+                "dimension_risk_analysis",
+                "data_gap_analysis",
+                "improvement_action_plan",
+                "special_topic_analysis",
+            ):
+                body = value.get(field)
+                if isinstance(body, str):
+                    value[field] = strip_numbered_markdown_headings(body)
         return value
 
     @model_validator(mode="after")

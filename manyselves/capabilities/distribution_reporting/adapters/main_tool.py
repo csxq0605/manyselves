@@ -12,6 +12,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.entrypoint im
     PublicFullReportRequest,
     PublicModuleReportRequest,
     PublicRenderExistingRequest,
+    PublicReviseReportRequest,
     PublicTemplateDistillationRequest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -27,6 +28,7 @@ ReportOperation = Literal[
     "module_report",
     "aggregate_existing",
     "render_existing",
+    "revise_report",
 ]
 
 _WORKFLOW_BY_OPERATION: dict[ReportOperation, str] = {
@@ -35,6 +37,7 @@ _WORKFLOW_BY_OPERATION: dict[ReportOperation, str] = {
     "module_report": "module-report",
     "aggregate_existing": "aggregate-existing",
     "render_existing": "render-existing",
+    "revise_report": "revise-report",
 }
 
 
@@ -62,7 +65,8 @@ class RunReportingWorkflowTool(Tool):
     description = (
         "Start one Distribution Reporting operation selected from "
         "distill_template_skill, full_report, module_report, aggregate_existing, "
-        "or render_existing. The operation is projected to its Capability-owned "
+        "render_existing, or revise_report (new Run from baseline_run_id, requested_changes maps "
+        "exact subsection IDs to requested edits; NOT interruption resume). The operation is projected to its Capability-owned "
         "file-defined workflow and attached to this Main conversation."
     )
     side_effect = "ordered_state"
@@ -84,6 +88,8 @@ class RunReportingWorkflowTool(Tool):
         source_module_refs: dict[str, str] | None = None,
         source_markdown_ref: str | None = None,
         output_filename: str | None = None,
+        baseline_run_id: str | None = None,
+        requested_changes: dict[str, str] | None = None,
         execution_requirements: list[str] | None = None,
         user_supplements: list[dict[str, Any]] | None = None,
         missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
@@ -120,6 +126,8 @@ class RunReportingWorkflowTool(Tool):
                     Path(source_markdown_ref) if source_markdown_ref is not None else None
                 ),
                 "output_filename": output_filename,
+                "baseline_run_id": baseline_run_id,
+                "requested_changes": requested_changes or {},
                 "execution_requirements": execution_requirements or [],
                 "user_supplements": [
                     UserSupplement.model_validate(item)
@@ -137,6 +145,7 @@ class RunReportingWorkflowTool(Tool):
                 "module_report": PublicModuleReportRequest,
                 "aggregate_existing": PublicAggregateExistingRequest,
                 "render_existing": PublicRenderExistingRequest,
+                "revise_report": PublicReviseReportRequest,
             }[operation]
             request = request_type.model_validate(values)
 

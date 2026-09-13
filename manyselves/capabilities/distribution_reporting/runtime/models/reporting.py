@@ -104,6 +104,7 @@ ReportOperation = Literal[
     "module_report",
     "aggregate_existing",
     "render_existing",
+    "revise_report",
 ]
 CostControlMode = Literal["observe", "warn", "pause_at_boundary"]
 
@@ -393,6 +394,11 @@ class ReportRequest(ReportingModel):
     source_module_refs: dict[str, Path] | None = None
     source_markdown_ref: Path | None = None
     output_filename: str | None = None
+    baseline_run_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
+    requested_changes: dict[str, str] = Field(
+        default_factory=dict,
+        description="For revise_report: exact module subsection id to verbatim requested change.",
+    )
     execution_requirements: list[str] = Field(default_factory=list)
     user_supplements: list[UserSupplement] = Field(
         default_factory=list,
@@ -419,6 +425,16 @@ class ReportRequest(ReportingModel):
 
     @model_validator(mode="after")
     def operation_inputs_are_complete(self) -> "ReportRequest":
+        if self.operation == "revise_report":
+            if not self.baseline_run_id or not self.requested_changes:
+                raise ValueError("revise_report requires baseline_run_id and requested_changes")
+            for target, instruction in self.requested_changes.items():
+                resolve_submodule(target)
+                if not instruction.strip():
+                    raise ValueError("requested change must not be empty")
+            self.target_modules = sorted({".".join(target.split(".")[:2]) for target in self.requested_changes})
+        elif self.baseline_run_id is not None or self.requested_changes:
+            raise ValueError("baseline_run_id and requested_changes are only valid for revise_report")
         supplement_ids = [item.id for item in self.user_supplements]
         if len(supplement_ids) != len(set(supplement_ids)):
             raise ValueError("user supplement ids must be unique")

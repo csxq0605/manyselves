@@ -196,12 +196,13 @@ async def prepare_module_revision(
         prior_result_ref=revision_input.subject_ref,
         artifact_delivery_modes={
             input_ref: "inline",
-            revision_input.subject_ref: "hash_retained",
+            revision_input.subject_ref: "reference",
         },
         target_submodule_ids=sorted(targets),
         input_contract_kind="module_revision_input",
         input_contract_ref=input_ref,
         inline_context="",
+        allowed_tools=["submit_result"],
     )
     return ModuleRevisionPreparation(
         run_id=state["run_id"],

@@ -1,0 +1,103 @@
+id: revise-report
+version: 1.0.0
+description: Copy one business baseline into a new Run, revise assigned subsections, cross-review, aggregate and deliver
+tasks:
+- aggregate-existing
+- cross-owner-review
+recovery:
+- current-reporting-recovery
+outputs:
+- distribution-reporting-result
+input_contract: public_revise_report_input
+input_variable: request
+output_contract: distribution_reporting_output
+state:
+  run-id: ''
+  reporting-state: {}
+actions:
+- id: prepare-report-revision
+  kind: invoke_tool
+  tool: prepare-report-revision
+  input_variables:
+    run_id: run-id
+    request: request
+  output_variable: reporting-state
+- id: run-module-cohort
+  kind: subworkflow
+  workflow: distribution-module-cohort
+  input_variable: reporting-state
+  child_input_variable: module-inputs
+  child_output_name: result
+  output_variable: module-results
+- id: attach-module-results
+  kind: invoke_tool
+  tool: attach-module-results
+  input_variables:
+    reporting_state: reporting-state
+    module_results: module-results
+  output_variable: reporting-state
+- id: run-cross
+  kind: subworkflow
+  workflow: distribution-cross-owner-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: prepare-revision-aggregate
+  kind: invoke_tool
+  tool: prepare-revision-aggregate
+  input_variable: reporting-state
+  output_variable: aggregate-context
+- id: project-aggregate-editor-input
+  kind: invoke_tool
+  tool: project-aggregate-editor-input
+  input_variable: aggregate-context
+  output_variable: aggregate-editor-input
+- id: create-aggregate-editor-conversation
+  kind: create_conversation
+  agent: aggregate-editor
+  conversation_key: aggregate-existing
+  mode: run
+  output_variable: aggregate-conversation
+- id: invoke-aggregate-editor
+  kind: invoke_agent
+  agent: aggregate-editor
+  task: aggregate-existing
+  conversation_variable: aggregate-conversation
+  input_variable: aggregate-editor-input
+  output_variable: edited-report
+- id: project-aggregate-existing-handoff
+  kind: invoke_tool
+  tool: project-aggregate-existing-handoff
+  input_variables:
+    context: aggregate-context
+    edited_report: edited-report
+  output_variable: aggregate-handoff
+- id: project-aggregate-existing-tail
+  kind: invoke_tool
+  tool: project-aggregate-existing-tail
+  input_variable: aggregate-handoff
+  output_variable: reporting-state
+- id: run-final-review
+  kind: subworkflow
+  workflow: distribution-final-chapter-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-report-delivery
+  kind: subworkflow
+  workflow: distribution-report-delivery
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: publish-revised-report
+  kind: publish_result
+  output: distribution-reporting-result
+  input_variable: reporting-state
+  output_name: result
+- id: finish-revised-report
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result

@@ -1,0 +1,10 @@
+id: prepare-report-revision
+version: 1.0.0
+description: Single-baseline revision prepare-report-revision
+implementation: capability:distribution-reporting:prepare-report-revision
+input_contract: reporting_run_initializer_input
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

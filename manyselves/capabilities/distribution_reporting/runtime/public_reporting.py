@@ -114,7 +114,8 @@ class PublicReportingWorkflowRuntime:
         request = project_public_entrypoint_input(workflow_id, run_id, values)
         if not isinstance(request, ReportRequest):
             raise TypeError(f"public root does not project a ReportRequest: {workflow_id}")
-        RunInputSnapshotStore(self.workspace).freeze(run_id)
+        if workflow_id != "revise-report":
+            RunInputSnapshotStore(self.workspace).freeze(run_id)
         await self.execute(request, run_id, workflow_id=workflow_id)
         return {"run_id": run_id, "task_id": None}
 
@@ -407,7 +408,7 @@ class PublicReportingWorkflowRuntime:
         selected = workflow_id or (
             "full-report" if request.operation == "full_report" else "module-report"
         )
-        if selected not in {"full-report", "module-report"}:
+        if selected not in {"full-report", "module-report", "revise-report"}:
             raise ValueError(f"unsupported public Reporting workflow: {selected}")
         return selected
 
@@ -418,7 +419,14 @@ class PublicReportingWorkflowRuntime:
         plan: ResolvedPlan,
     ) -> dict[str, Any]:
         reporting_store = ReportingStore(self.workspace)
+        from .aggregate_existing import build_aggregate_existing_tool_implementations
+        from .report_revision import build_report_revision_tools
+
         implementations = {
+            **build_aggregate_existing_tool_implementations(
+                workspace=self.workspace, input_snapshot=self.input_snapshot, store=reporting_store,
+            ),
+            **build_report_revision_tools(self.workspace),
             **build_public_entrypoint_tool_implementations(),
             **build_preparation_tool_implementations(
                 workspace=self.workspace,
@@ -548,7 +556,7 @@ class PublicReportingWorkflowRuntime:
             state = self.state_store.load(run_id)
         except FileNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
-        if state.workflow_id not in {"full-report", "module-report"}:
+        if state.workflow_id not in {"full-report", "module-report", "revise-report"}:
             raise CapabilityRunNotFoundError(run_id)
         return state
 

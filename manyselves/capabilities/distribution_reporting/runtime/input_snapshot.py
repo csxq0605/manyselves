@@ -219,6 +219,24 @@ class RunInputSnapshotStore:
             )
             return snapshot
 
+    def fork(self, baseline_run_id: str, run_id: str) -> RunInputSnapshot:
+        """Give a revision Run its own views of the original frozen inputs."""
+        path = self._manifest_path(run_id)
+        if path.is_file():
+            return self.load(run_id)
+        baseline = self.load(baseline_run_id)
+        files = []
+        for item in baseline.files:
+            handle = self.content_store.load_trusted_handle(item.trusted_handle_ref)
+            ref = Path("Work/runs") / run_id / "frozen-project" / item.logical_ref
+            target = self.workspace / ref
+            if not target.exists():
+                self.content_store.link_trusted_view(handle, target)
+            files.append(item.model_copy(update={"snapshot_ref": ref}))
+        snapshot = baseline.model_copy(update={"run_id": run_id, "files": files})
+        self.store.write_json(path.relative_to(self.workspace).as_posix(), snapshot.model_dump(mode="json"))
+        return self.load(run_id)
+
     def load(self, run_id: str) -> RunInputSnapshot:
         path = self._manifest_path(run_id)
         if not path.is_file():

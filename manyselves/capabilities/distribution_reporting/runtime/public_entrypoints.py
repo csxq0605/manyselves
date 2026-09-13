@@ -12,6 +12,7 @@ from .models.entrypoint import (
     PublicFullReportRequest,
     PublicModuleReportRequest,
     PublicRenderExistingRequest,
+    PublicReviseReportRequest,
     PublicTemplateDistillationInitializerInput,
     PublicTemplateDistillationRequest,
 )
@@ -81,6 +82,8 @@ def project_public_entrypoint_input(
         payload = public.model_dump(mode="python")
         payload["operation"] = "module_report"
         return ReportRequest.model_validate(payload)
+    if workflow_id == "revise-report":
+        return ReportRequest.model_validate(PublicReviseReportRequest.model_validate(value).model_dump())
     if workflow_id == "aggregate-existing":
         public = PublicAggregateExistingRequest.model_validate(value)
         return project_public_aggregate_existing_input(

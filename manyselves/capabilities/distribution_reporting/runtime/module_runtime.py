@@ -87,6 +87,8 @@ def _prepare_module_lanes(
     if not isinstance(value, Mapping):
         return value
     state = deepcopy(dict(value))
+    if state.get("revision_targets"):
+        return state
     if state.get("resume"):
         _restore_promoted_module_submissions(state, workspace=workspace)
     if "module_dispatch" not in state:

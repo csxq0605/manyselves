@@ -12,6 +12,7 @@ outputs: ./outputs
 entrypoints:
 - full-report
 - module-report
+- revise-report
 - aggregate-existing
 - render-existing
 - distill-template-skill

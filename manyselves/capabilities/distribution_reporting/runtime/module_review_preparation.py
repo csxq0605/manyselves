@@ -408,6 +408,8 @@ def prepare_current_module_review(
     module = ModuleSubmission.model_validate(context.module)
     module_id = context.module_id
     scope = set(REPORT_TAXONOMY[module_id].submodules)
+    if state.get("revision_targets"):
+        scope &= set(state["revision_targets"])
     review_root = f"Work/runs/{run_id}/reviews/module/initial/{module_id}"
     progress_ref = f"{review_root}/progress.json"
     subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r{module.revision}.json"

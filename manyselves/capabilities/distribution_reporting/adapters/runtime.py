@@ -178,6 +178,7 @@ class DistributionReportingRuntimeBinding:
             },
         )
         full_agents = {
+            **aggregate.agent_invokers,
             **cross.agent_invokers,
             **full_final.agent_invokers,
             "chief-editor": chief_router,
@@ -217,6 +218,7 @@ class DistributionReportingRuntimeBinding:
         self._runtimes: dict[str, DetachedRuntime] = {
             "full-report": public,
             "module-report": public,
+            "revise-report": public,
             "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
                 self.workspace,
                 input_snapshot=snapshot_store,
@@ -236,6 +238,7 @@ class DistributionReportingRuntimeBinding:
         self._start_stores = {
             "full-report": public_state_store,
             "module-report": public_state_store,
+            "revise-report": public_state_store,
             "aggregate-existing": aggregate_state_store,
             "render-existing": render_state_store,
             "distill-template-skill": template_state_store,
