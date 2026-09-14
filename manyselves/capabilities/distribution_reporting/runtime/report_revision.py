@@ -18,7 +18,12 @@ from .input_snapshot import RunInputSnapshotStore
 from .models.agentic import ModuleSubmission
 from .models.aggregate_existing import AggregateExistingPreparationInput
 from .models.entrypoint import ReportingRunInitializerInput
-from .models.inputs import RequestedModuleChange, ReviewCompletionRecord, RevisionInputChanges
+from .models.inputs import (
+    RequestedModuleChange,
+    ReviewCompletionRecord,
+    RevisionInputChanges,
+    report_instruction_from_state,
+)
 from .models.module_lane import (
     DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRevisionPreparation,
@@ -183,6 +188,12 @@ def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
     state.update(input_changes=input_changes,
                  input_snapshot_ref=f"{new}/input-snapshot.json",
                  input_snapshot_digest=current_inputs.inventory_digest)
+    baseline_instruction = report_instruction_from_state(baseline)
+    state["report_instruction"] = (
+        f"原报告要求（与本轮冲突时以本轮要求为准）：\n{baseline_instruction}\n"
+        f"本轮修订要求：\n{request.instruction}"
+        if baseline_instruction else request.instruction
+    )
     for key, module in modules.items():
         store.write_json(f"{new}/modules/{key}-r{module['revision']}.json", module)
     completion_refs = _materialize_baseline_module_review_completions(
@@ -345,6 +356,7 @@ def prepare_revision_aggregate(value: Any, *, store: ReportingStore):
     preparation_fields = PreparationContext.model_fields
     preparation = PreparationContext.model_validate({key: value for key, value in state.items() if key in preparation_fields})
     return context.model_copy(update={
+        "report_instruction": report_instruction_from_state(state),
         "preparation_context": preparation,
         "revision_input_changes": RevisionInputChanges.model_validate(state["revision_input_changes"])
         if state.get("revision_input_changes") else None,

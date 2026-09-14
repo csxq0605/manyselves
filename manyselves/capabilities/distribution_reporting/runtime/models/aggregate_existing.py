@@ -36,6 +36,7 @@ class AggregateExistingContext(ReportingModel):
     module_review_completion_refs: dict[ModuleId, str] = Field(default_factory=dict)
     preparation_context: PreparationContext | None = None
     revision_input_changes: RevisionInputChanges | None = None
+    report_instruction: str = ""
     source_manifest_ref: str = Field(min_length=1)
     integrity_report_ref: str = Field(min_length=1)
     editor_input_ref: str = Field(min_length=1)

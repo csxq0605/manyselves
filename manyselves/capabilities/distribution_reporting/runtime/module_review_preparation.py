@@ -26,9 +26,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ModuleReviewInput,
     ReviewClaimStatement,
     ReviewEvidenceExcerpt,
+    RevisionInputChanges,
     ValidationFailure,
     ValidationReport,
     module_content_view,
+    report_instruction_from_state,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleReviewPreparation,
@@ -214,6 +216,8 @@ def prepare_module_local_regression_review(
     review_round: int,
     regression_context: ModuleLocalRegressionContext,
     user_supplements: list[UserSupplement],
+    report_instruction: str = "",
+    input_changes: RevisionInputChanges | None = None,
     previous_preflight_progress: ModuleReviewPreflightProgress | None = None,
 ) -> ModuleInitialReviewPreparation:
     """Prepare the original module Auditor's Cross-triggered local review."""
@@ -293,6 +297,8 @@ def prepare_module_local_regression_review(
         scope,
     )
     review_input = ModuleReviewInput(
+        report_instruction=report_instruction,
+        input_changes=input_changes,
         phase="local_regression",
         run_id=run_id,
         module_id=module_id,
@@ -479,6 +485,8 @@ def prepare_current_module_review(
             scope,
         )
         review_input = ModuleReviewInput(
+            report_instruction=report_instruction_from_state(state),
+            input_changes=state.get("revision_input_changes"),
             phase="initial",
             run_id=run_id,
             module_id=module_id,

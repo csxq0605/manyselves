@@ -18,13 +18,20 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.102 Current input evidence in report revisions and real browser acceptance`
+- Current slice: `FA-08/M9.103 Preserve report requirements and current facts through Cross revisions`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `7be103e Fix revision review provenance and preserve planned topic headings`
+- HEAD at slice start: `e3639a7 Consume current inputs in report revisions and retain source provenance`
 - Program status: `M9.102 consumes current frozen inputs for report revisions while retaining baseline prose and historical source bytes. Main derives the initial requested_changes map from the user's intent and confirmed context; automatic file-diff-to-subsection impact planning is not implemented. Cross-linked changes remain required for consistency. Kernel/Compiler/Runtime are unchanged in this slice`
-- Final real-test status: `Fresh independent browser full-report-c5638b41158e47a9a21cf209e77736cf has completed all five module review pipelines and entered Cross. A Provider ReadError interrupted the first attempt; the existing sidebar recovery action resumed the same Run. This is assisted live acceptance, not an uninterrupted autonomous completion. No revision or final delivery verdict yet`
-- Blockers: `Fresh full/revision Provider and delivery acceptance remain in progress; Word page QA remains outstanding. Browser input add/replace is verified. The live service briefly stopped responding during large state transitions; no Run state or Agent result was manually edited`
-- Next automatic action: `Complete the live full-report-c5638b41158e47a9a21cf209e77736cf baseline in isolated project revision-input-acceptance-20260914; use the already uploaded replacement and supplemental test inputs, then launch revise_report from the sidebar Main and verify new evidence consumption, module review, Cross, Final and Delivery. Initial subsection selection remains explicit; automatic input-to-subsection impact planning is not implemented`
+- Final real-test status: `Fresh full-report-c5638b41158e47a9a21cf209e77736cf completed all five module and Cross pipelines and entered Chief. Content acceptance FAILED: Cross changed 2.3 from r1 to r2 and removed the explicitly requested REV-DEMO sample and E-0317 binding; local and Cross rechecks did not flag the omission. The actual artifacts remain unchanged. A Provider ReadError earlier required sidebar same-Run recovery`
+- Blockers: `Current-code Main revision, final delivery and requirement preservation through Cross remain unverified. Full Run completion alone cannot clear the observed content regression. Word page QA remains outstanding`
+- Next automatic action: `Finish observing the existing full Run, preserve its failure evidence, reload the completed M9.103 patch, and use sidebar Main to revise the report from the already uploaded replacement and supplemental inputs. Verify current facts and retained user requirements after Cross and in delivery; Main's initial subsection selection remains based on user intent/context, not an automatic impact planner`
+
+### M9.103 ongoing evidence (2026-09-14)
+
+- The real full Run retained the explicitly requested fictional sample at 2.3-r0/r1 (0 completed, 3 pending, no review closure, E-0317), then deleted it at 2.3-r2 during Cross. The independent local review and owner recheck accepted that omission. This is a content regression, not a passing baseline.
+- Characterization exposed missing report requirements in revision and reviewer inputs. It also exposed Cross.prepare_revision passing only run_id to the shared author preparation, dropping the current evidence/change context introduced by M9.102. The patch projects requirements and current evidence through the existing Cross input, author preparation, local review and recheck carriers. Revision contracts explicitly preserve valid material within targeted subsections unless changed requirements/evidence supersede it. Report requirements survive a new Run and aggregate handoff; the original baseline remains immutable.
+- Revision/module/Cross boundary selection: 20 passed; expanded Cross local-review test: 4 passed. The expanded test uses actual prepare_initial -> accept_initial -> prepare_revision and local-review tools, asserting the original requirement, current E identity and superseded E identity reach both author and reviewer. Reviewer recovery/delta, aggregate, revision and public-entrypoint affected selection: 37 passed, including six-entrypoint compilation; 43 distinct tests across the combined selections. Changed-Python Ruff, git diff --check and offline wheel build pass. No claim of Provider validation for M9.103 yet.
+
 
 ### M9.102 ongoing evidence (2026-09-14)
 

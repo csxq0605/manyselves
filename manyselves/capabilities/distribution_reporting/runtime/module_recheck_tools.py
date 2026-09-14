@@ -20,6 +20,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     ModuleReviewInput,
     ReviewCompletionRecord,
+    report_instruction_from_state,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRecheckAgentResult,
@@ -209,6 +210,8 @@ def prepare_current_module_recheck(
         if evidence_ref.startswith("E-")
     )
     review_input = ModuleReviewInput(
+        report_instruction=report_instruction_from_state(context.reporting_state),
+        input_changes=context.reporting_state.get("revision_input_changes"),
         phase="recheck",
         run_id=run_id,
         module_id=context.module_id,

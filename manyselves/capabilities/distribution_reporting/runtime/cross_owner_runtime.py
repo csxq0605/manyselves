@@ -84,6 +84,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ModuleContentView,
     ReviewCompletionRecord,
     module_content_view,
+    report_instruction_from_state,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRecheckAgentResult,
@@ -709,6 +710,7 @@ class CrossOwnerRuntime:
                 owner_module_id=owner_module_id,
                 review_round=review_round,
             )
+            contract = contract.model_copy(update={"report_instruction": report_instruction_from_state(state)})
             if state.get("revision_input_changes"):
                 contract = CrossOwnerInput.model_validate({
                     **contract.model_dump(mode="json"),
@@ -965,7 +967,7 @@ class CrossOwnerRuntime:
         prepared = await prepare_module_revision(
             workspace=self.workspace,
             store=self.store,
-            state={"run_id": acceptance.run_id},
+            state=self._owner_business_state(context, acceptance.run_id),
             workflow_id=acceptance.workflow_id,
             subject=current,
             cross_findings=findings,
@@ -1296,6 +1298,18 @@ class CrossOwnerRuntime:
             and context.main_acceptance.result.decision == "return_to_author"
         )
 
+    def _owner_business_state(self, context: DeclarativeCrossOwnerRuntimeContext, run_id: str) -> dict[str, Any]:
+        from .research.project_evidence import ProjectEvidenceIndex
+
+        owner_input = context.preparation.owner_input if context.preparation is not None else None
+        return {
+            "run_id": run_id,
+            "report_instruction": owner_input.report_instruction if owner_input else "",
+            "revision_input_changes": owner_input.input_changes if owner_input else None,
+            "evidence_items": [item for item in ProjectEvidenceIndex(self.workspace, run_id=run_id).items()
+                               if item.module_id in {None, context.owner_module_id}],
+        }
+
     async def prepare_local_review(
         self,
         value: Any,
@@ -1336,6 +1350,7 @@ class CrossOwnerRuntime:
             if previous_lane is not None and previous_lane.review is not None
             else None
         )
+        business_state = self._owner_business_state(context, revision.run_id)
         prepared = prepare_module_local_regression_review(
             store=self.store,
             workflow_id=revision.workflow_id,
@@ -1345,6 +1360,8 @@ class CrossOwnerRuntime:
             review_round=revision.review_round,
             regression_context=regression_context,
             user_supplements=revision.user_supplements,
+            report_instruction=business_state["report_instruction"],
+            input_changes=business_state["revision_input_changes"],
             previous_preflight_progress=previous_preflight_progress,
         )
         preparation = CrossOwnerLocalReviewPreparation(
@@ -1372,6 +1389,7 @@ class CrossOwnerRuntime:
                 },
             }
         )
+        reporting_state = {**reporting_state, **business_state}
         lane = DeclarativeModuleRuntimeLaneContext(
             module_id=revision.owner_module_id,
             workflow_id=revision.workflow_id,

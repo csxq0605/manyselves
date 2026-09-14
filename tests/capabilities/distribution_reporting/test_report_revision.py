@@ -68,6 +68,8 @@ def test_new_revision_copies_business_baseline_not_old_execution(tmp_path):
     assert state["module_submissions"] == original["module_submissions"]
     assert "module_dispatch" not in state and "delivery_completion_ref" not in state
     assert state["resume"] is False
+    assert "原请求" in state["report_instruction"]
+    assert "仅澄清措辞" in state["report_instruction"]
     assert not (tmp_path / "Work/runs/revision/usage.json").exists()
     snapshot = RunInputSnapshotStore(tmp_path).load("revision")
     assert json.loads((tmp_path / snapshot.resolve(Path("Inputs/example.json"))).read_text()) == {"original": False}
@@ -378,6 +380,7 @@ def test_revision_aggregate_retains_current_module_review_references(tmp_path):
                                     baseline_run_id="original", requested_changes={"2.3.1": "clarify"})
     refs = {"2.1": "Work/runs/baseline/reviews/module/cross-r1/2.1/completion-r2.json"}
     state["module_review_completion_refs"] = refs
+    state["report_instruction"] = "Keep the labelled acceptance example and use updated facts."
     state["input_snapshot_ref"] = "Work/runs/baseline/input-snapshot.json"
     context = prepare_revision_aggregate(state, store=ReportingStore(tmp_path))
     edited = EditedReportSubmission(
@@ -391,6 +394,7 @@ def test_revision_aggregate_retains_current_module_review_references(tmp_path):
     assert tail["input_snapshot_ref"] == state["input_snapshot_ref"]
     assert tail["preparation_refs"] == state["preparation_refs"]
     assert tail["full_report"] is True
+    assert tail["report_instruction"] == state["report_instruction"]
 
 
 @pytest.mark.asyncio

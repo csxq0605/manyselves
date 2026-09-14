@@ -417,6 +417,7 @@ def project_aggregate_existing_tail_state(
         "photo_assets": context.photo_assets,
         "module_review_completion_refs": context.module_review_completion_refs,
         "revision_input_changes": context.revision_input_changes,
+        "report_instruction": context.report_instruction,
         "aggregate_source_format": context.source_format,
         "aggregate_source_manifest_ref": context.source_manifest_ref,
         "aggregate_integrity_report_ref": context.integrity_report_ref,

@@ -244,8 +244,42 @@ async def test_cross_runtime_prepares_and_accepts_original_auditor_local_review(
         subject_ref=baseline_ref,
         completion_ref=completion_ref,
     )
+    modules = {module_id: ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={sid: "Existing report content." for sid in spec.submodules},
+        claims=[], source_ids=[], unresolved_questions=[], revision=0,
+    ) for module_id, spec in REPORT_TAXONOMY.items()}
+    modules["2.1"] = baseline
+    current_evidence = {
+        "id": "E-0002", "subject": "Labelled example", "fact": "2 completed, 1 pending",
+        "module_id": "2.1", "submodule_id": "2.1.1",
+        "source": {"file_id": "file-current", "path": "Inputs/example.txt"},
+    }
+    runtime.store.write_jsonl(f"Work/runs/{run_id}/preparation/evidence.jsonl", [current_evidence])
+    changes = {"files": {"modified": ["Inputs/example.txt"]},
+               "superseded_evidence_ids": ["E-0001"], "current_evidence": []}
+    initial = runtime.prepare_initial({"state": {
+        "run_id": run_id,
+        "request": {"instruction": "保留独立验收样例及其未复核边界。"},
+        "module_submissions": modules,
+        "revision_input_changes": changes,
+    }, "owner_module_id": "2.1"})
+    accepted_initial = runtime.accept_initial({"context": initial, "result": {
+        "status": "completed", "submission": {
+            "owner_module_id": "2.1",
+            "coverage": {"module_id": "2.1", "checked_dimensions": [
+                "terminology", "facts", "risk_levels", "dependencies", "propagation", "joint_verification"]},
+            "findings": [finding.model_dump(mode="json")],
+        },
+    }})
+    author = await runtime.prepare_revision(accepted_initial)
+    author_input = author.revision_preparation.prepared.revision_input
+    assert author_input.report_instruction == "保留独立验收样例及其未复核边界。"
+    assert author_input.input_changes.superseded_evidence_ids == ["E-0001"]
+    assert [item.evidence_id for item in author_input.evidence] == ["E-0002"]
     context = DeclarativeCrossOwnerRuntimeContext(
         owner_module_id="2.1",
+        preparation=initial.preparation,
         status="revision_accepted",
         revision_acceptance=CrossOwnerRevisionAcceptance(
             run_id=run_id,
@@ -283,6 +317,9 @@ async def test_cross_runtime_prepares_and_accepts_original_auditor_local_review(
     assert local.phase == "local_regression"
     assert local.reviewer_session_key == "module-auditor-2.1"
     assert local.review_input is not None
+    assert local.review_input.report_instruction == "保留独立验收样例及其未复核边界。"
+    assert local.review_input.input_changes.superseded_evidence_ids == ["E-0001"]
+    assert prepared.local_module_context.reporting_state["report_instruction"] == author_input.report_instruction
     assert local.review_input.trigger_cross_findings == [finding]
     assert local.review_input.prior_review_completion_ref == completion_ref
     assert (

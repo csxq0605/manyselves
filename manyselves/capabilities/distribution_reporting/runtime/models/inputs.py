@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -40,6 +41,22 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 
 from ..contracts.submissions import FIELD_GUIDANCE
+
+
+def report_instruction_from_state(state: Mapping[str, Any]) -> str:
+    if state.get("report_instruction"):
+        return str(state["report_instruction"])
+    request = state.get("request", {})
+    return str(request.get("instruction", "") if isinstance(request, Mapping)
+               else getattr(request, "instruction", ""))
+
+
+REPORT_INSTRUCTION_DESCRIPTION = (
+    "Applicable user requirements for this report; later explicit changes override earlier "
+    "conflicting requirements. Preserve requested content, evidence boundaries and valid "
+    "material unrelated to the assigned finding, including within a changed subsection. "
+    "Review must flag omissions or regressions of these requirements."
+)
 
 
 class ModuleContentView(StrictModel):
@@ -573,6 +590,11 @@ class ModuleAuthoringInput(StrictModel):
 
 class ModuleReviewInput(StrictModel):
     kind: Literal["module_review_input"] = "module_review_input"
+    report_instruction: str = Field(default="", description=REPORT_INSTRUCTION_DESCRIPTION)
+    input_changes: RevisionInputChanges | None = Field(
+        default=None,
+        description="Current input changes. Check revised claims against current facts; superseded IDs are historical evidence only.",
+    )
     review_protocol_version: Literal[2] = Field(
         default=2,
         description="Version 2 binds one stable reviewer identity to each module.",
@@ -1119,6 +1141,7 @@ class CrossOwnerInput(StrictModel):
     """
 
     kind: Literal["cross_owner_input"] = "cross_owner_input"
+    report_instruction: str = Field(default="", description=REPORT_INSTRUCTION_DESCRIPTION)
     input_changes: RevisionInputChanges | None = Field(
         default=None,
         description="Current parsed input changes. Check linked prose against these facts; superseded E IDs describe the old baseline only.",
@@ -1546,6 +1569,7 @@ class RequestedModuleChange(StrictModel):
 
 class ModuleRevisionInput(StrictModel):
     kind: Literal["module_revision_input"] = "module_revision_input"
+    report_instruction: str = Field(default="", description=REPORT_INSTRUCTION_DESCRIPTION)
     input_changes: RevisionInputChanges | None = Field(
         default=None,
         description="Current parsed input changes. Use applicable new evidence for the assigned edits and replace obsolete evidence bindings.",
@@ -1562,7 +1586,9 @@ class ModuleRevisionInput(StrictModel):
     subject: ModuleContentView = Field(
         description=(
             "Only assigned submodule prose and per-submodule E evidence baseline. "
-            "Unassigned content remains workflow-owned and is not resent."
+            "Unassigned content remains workflow-owned and is not resent. Preserve valid "
+            "content within each assigned subsection unless the requested change or current "
+            "evidence specifically supersedes it; do not rewrite away unrelated material."
         )
     )
     target_submodule_ids: list[str] = Field(

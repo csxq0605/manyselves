@@ -156,7 +156,7 @@ async def test_generic_revision_preserves_all_trigger_contracts_and_barrier(
     preparation = await prepare_module_revision(
         workspace=tmp_path,
         store=store,
-        state={"run_id": run_id},
+        state={"run_id": run_id, "request": {"instruction": "保留独立验收样例及其未复核边界。"}},
         workflow_id="distribution-reporting",
         subject=module,
         module_findings=[module_finding],
@@ -182,6 +182,7 @@ async def test_generic_revision_preserves_all_trigger_contracts_and_barrier(
         [module_finding.id, cross_finding.id, requested_change.id]
     )
     assert preparation.revision_input.module_findings == [module_finding]
+    assert preparation.revision_input.report_instruction == "保留独立验收样例及其未复核边界。"
     assert preparation.revision_input.cross_findings == [cross_finding]
     assert preparation.revision_input.requested_changes == [requested_change]
     assert preparation.revision_input.validation_report == validation_report

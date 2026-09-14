@@ -29,6 +29,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     RequestedModuleChange,
     ValidationReport,
     module_content_view,
+    report_instruction_from_state,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
     DeclarativeModuleRevisionAgentResult,
@@ -64,6 +65,7 @@ def _revision_evidence(state: Mapping[str, Any], module_id: str, targets: set[st
 
     items = [EvidenceItem.model_validate(item) for item in state.get("evidence_items", [])]
     return {
+        "report_instruction": report_instruction_from_state(state),
         "input_changes": state.get("revision_input_changes"),
         "evidence": [
             {"evidence_id": item.id, "title": item.subject,
@@ -179,6 +181,7 @@ async def prepare_module_revision(
         f"唯一写作范围是模块 {subject.module_id}",
         f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
         "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
+        "目标小节内与本次 finding 无关的有效内容和原报告要求必须保留；只有新要求或新证据明确替代的内容才更新或移除",
         "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
         "disputed 或 needs_input 不得伪造 changed_target_ids",
         *(
@@ -286,6 +289,7 @@ def prepare_current_module_revision(
             f"唯一写作范围是模块 {context.module_id}",
             f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
             "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
+            "目标小节内与本次 finding 无关的有效内容和原报告要求必须保留；只有新要求或新证据明确替代的内容才更新或移除",
             "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
             "disputed 或 needs_input 不得伪造 changed_target_ids",
         ],
