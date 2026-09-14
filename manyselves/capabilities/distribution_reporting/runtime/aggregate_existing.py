@@ -195,6 +195,8 @@ class AggregateExistingTools:
     def prepare_from_modules(
         self, value: AggregateExistingPreparationInput,
         modules: dict[str, ModuleSubmission],
+        *,
+        module_review_completion_refs: dict[str, str] | None = None,
     ) -> AggregateExistingContext:
         """Accept current Run typed modules without pretending they are project inputs."""
         refs = {}
@@ -205,10 +207,12 @@ class AggregateExistingTools:
             value, refs, modules, {},
             _load_run_evidence(self.workspace, value.run_id),
             _load_run_photos(self.workspace, value.run_id),
+            module_review_completion_refs=module_review_completion_refs,
         )
 
     def _prepare_context(self, value, module_refs, structured_modules, markdown_modules,
-                         evidence_items, photo_assets) -> AggregateExistingContext:
+                         evidence_items, photo_assets, *,
+                         module_review_completion_refs=None) -> AggregateExistingContext:
         request = value.request
         source_manifest_ref = (
             f"Work/runs/{value.run_id}/context/aggregate-source-manifest.json"
@@ -303,6 +307,7 @@ class AggregateExistingTools:
             markdown_modules=markdown_modules,
             evidence_items=evidence_items,
             photo_assets=photo_assets,
+            module_review_completion_refs=module_review_completion_refs or {},
             source_manifest_ref=source_manifest_ref,
             integrity_report_ref=integrity_report_ref,
             editor_input_ref=editor_input_ref,
@@ -398,6 +403,7 @@ def project_aggregate_existing_tail_state(
         "markdown_modules": context.markdown_modules,
         "evidence_items": context.evidence_items,
         "photo_assets": context.photo_assets,
+        "module_review_completion_refs": context.module_review_completion_refs,
         "aggregate_source_format": context.source_format,
         "aggregate_source_manifest_ref": context.source_manifest_ref,
         "aggregate_integrity_report_ref": context.integrity_report_ref,

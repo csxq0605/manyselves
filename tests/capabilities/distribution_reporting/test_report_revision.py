@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
-from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import RunInputSnapshotStore
+from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+    RunInputSnapshotStore,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ModuleSubmission
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
@@ -52,7 +54,9 @@ def seed_baseline(workspace: Path) -> dict:
 
 
 def test_new_revision_copies_business_baseline_not_old_execution(tmp_path):
-    from manyselves.capabilities.distribution_reporting.runtime.report_revision import prepare_report_revision
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
 
     original = seed_baseline(tmp_path)
     before = (tmp_path / "Work/runs/baseline/runtime-state.json").read_bytes()
@@ -147,8 +151,133 @@ def test_revision_requires_explicit_valid_scope():
     assert request.target_modules == ["2.3"]
 
 
+def _seed_reviewed_baseline(workspace: Path, *, refs_in_child: bool = False):
+    seed_baseline(workspace)
+    store = ReportingStore(workspace)
+    prefix = "Work/runs/baseline"
+    findings_ref = f"{prefix}/reviews/module/cross-r1/2.1/findings-r0.json"
+    verdicts_ref = f"{prefix}/reviews/module/cross-r1/2.1/verdicts-r1.json"
+    completion_ref = f"{prefix}/reviews/module/cross-r1/2.1/completion-r2.json"
+    subject_ref = f"{prefix}/modules/2.1-r2.json"
+    store.write_json(findings_ref, {"subject_ref": subject_ref, "findings": [{"id": "original"}]})
+    store.write_json(verdicts_ref, {"finding_refs": [findings_ref], "verdicts": [{"id": "original"}]})
+    store.write_json(completion_ref, {
+        "kind": "review_completion_record", "review_protocol_version": 2,
+        "lifecycle": "module", "run_id": "baseline",
+        "reviewer_agent_id": "evidence-auditor", "reviewer_session_key": "module-auditor-2.1",
+        "subject_refs": [subject_ref], "finding_refs": [findings_ref],
+        "verdict_refs": [verdicts_ref], "resolved_finding_ids": ["original"],
+    })
+    path = workspace / prefix / "runtime-state.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    refs = {"2.1": completion_ref}
+    if refs_in_child:
+        persisted["subworkflow_states"] = {
+            "run-cross": {"status": "completed", "outputs": {"result": {
+                **persisted["outputs"]["result"], "module_review_completion_refs": refs,
+            }}},
+        }
+    else:
+        persisted["outputs"]["result"]["module_review_completion_refs"] = refs
+    store.write_json(f"{prefix}/runtime-state.json", persisted)
+    return completion_ref
+
+
+@pytest.mark.parametrize("refs_in_child", [False, True])
+def test_revision_preserves_review_proof_without_cross_path_collisions(tmp_path, refs_in_child):
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
+
+    original_ref = _seed_reviewed_baseline(tmp_path, refs_in_child=refs_in_child)
+    original_bytes = (tmp_path / original_ref).read_bytes()
+    request = ReportRequest(operation="revise_report", instruction="clarify",
+                            baseline_run_id="baseline", requested_changes={"2.3.1": "clarify"})
+    state = prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path)
+    completion = json.loads((tmp_path / state["module_review_completion_refs"]["2.1"]).read_text(encoding="utf-8"))
+    assert completion["run_id"] == "revision"
+    assert completion["subject_refs"] == ["Work/runs/revision/modules/2.1-r2.json"]
+    assert completion["resolved_finding_ids"] == ["original"]
+
+    # A fresh Cross round reuses these active paths with different findings.
+    ReportingStore(tmp_path).write_json(
+        "Work/runs/revision/reviews/module/cross-r1/2.1/findings-r0.json",
+        {"findings": [{"id": "new-cross"}]},
+    )
+    finding = json.loads((tmp_path / completion["finding_refs"][0]).read_text(encoding="utf-8"))
+    verdict = json.loads((tmp_path / completion["verdict_refs"][0]).read_text(encoding="utf-8"))
+    assert finding["findings"] == [{"id": "original"}]
+    assert (tmp_path / finding["subject_ref"]).is_file()
+    assert verdict["finding_refs"] == completion["finding_refs"]
+    assert (tmp_path / original_ref).read_bytes() == original_bytes
+
+
+def test_revision_does_not_invent_missing_review_completion(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
+
+    seed_baseline(tmp_path)
+    request = ReportRequest(operation="revise_report", instruction="clarify",
+                            baseline_run_id="baseline", requested_changes={"2.3.1": "clarify"})
+    state = prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path)
+    assert not state.get("module_review_completion_refs")
+    assert not list((tmp_path / "Work/runs/revision/reviews").rglob("completion-*.json"))
+
+
+@pytest.mark.parametrize("broken", ["missing", "invalid-json"])
+def test_revision_does_not_replace_unreadable_review_with_empty_completion(tmp_path, broken):
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
+
+    ref = _seed_reviewed_baseline(tmp_path)
+    if broken == "missing":
+        (tmp_path / ref).unlink()
+    else:
+        (tmp_path / ref).write_text("not JSON", encoding="utf-8")
+    request = ReportRequest(operation="revise_report", instruction="clarify",
+                            baseline_run_id="baseline", requested_changes={"2.3.1": "clarify"})
+    with pytest.raises((OSError, ValueError)):
+        prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path)
+    assert not list((tmp_path / "Work/runs/revision/reviews").rglob("completion-*.json"))
+
+
+def test_revision_aggregate_retains_current_module_review_references(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
+        project_aggregate_existing_tail_state,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        EditedReportSubmission,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing import (
+        AggregateExistingHandoff,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_revision_aggregate,
+    )
+
+    state = seed_baseline(tmp_path)
+    state["request"] = ReportRequest(operation="revise_report", instruction="clarify",
+                                    baseline_run_id="original", requested_changes={"2.3.1": "clarify"})
+    refs = {"2.1": "Work/runs/baseline/reviews/module/cross-r1/2.1/completion-r2.json"}
+    state["module_review_completion_refs"] = refs
+    context = prepare_revision_aggregate(state, store=ReportingStore(tmp_path))
+    edited = EditedReportSubmission(
+        title="Report", assessment_background="Background", findings_overview="Findings",
+        regional_executive_summary="Summary", risk_panorama="Risk", dimension_risk_analysis="Analysis",
+        data_gap_analysis="Gaps", improvement_action_plan="Actions",
+        module_narratives={m: ModuleSubmission.model_validate(v).markdown for m, v in state["module_submissions"].items()},
+    )
+    tail = project_aggregate_existing_tail_state(AggregateExistingHandoff(context=context, edited_report=edited))
+    assert tail["module_review_completion_refs"] == refs
+
+
 @pytest.mark.asyncio
 async def test_requested_module_revision_paths_keep_untouched_baseline(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.entrypoint_tools import (
+        attach_module_results,
+    )
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         ModuleRevisionSubmission,
         RevisionResponse,
@@ -162,9 +291,6 @@ async def test_requested_module_revision_paths_keep_untouched_baseline(tmp_path)
         prepare_report_revision,
         prepare_requested_module_revision,
         prepare_revision_aggregate,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.entrypoint_tools import (
-        attach_module_results,
     )
     from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 

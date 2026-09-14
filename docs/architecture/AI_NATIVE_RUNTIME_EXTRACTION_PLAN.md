@@ -263,7 +263,7 @@ GET  /runs/{id}/cost
 
 具体 URL 可维持当前已发布形式，但语义不得依赖 ReportingFacade 或 Capability-ID 分支。
 
-通用 FastAPI Run surface 是多个 Capability 的共享边界，但产品 React 不是统一控制台。当前 `frontend/` 只服务 `distribution-reporting`：Main 对话负责五类报告操作的产品交互，Schema/WAITING/Outputs/Events/Cost 组件继续读取通用投影。其它 Capability 产品必须拥有独立前端应用；通用 Run Workspace 若保留，仅作为开发/诊断 Harness。可提取共享 UI primitive，但不得在共享组件中加入 Capability-ID 业务分支。
+通用 FastAPI Run surface 是多个 Capability 的共享边界，但产品 React 不是统一控制台。当前 `frontend/` 只服务 `distribution-reporting`：Main 对话负责六类报告操作的产品交互，Schema/WAITING/Outputs/Events/Cost 组件继续读取通用投影。其它 Capability 产品必须拥有独立前端应用；通用 Run Workspace 若保留，仅作为开发/诊断 Harness。可提取共享 UI primitive，但不得在共享组件中加入 Capability-ID 业务分支。
 
 ## 9. 最终架构收敛工作包
 

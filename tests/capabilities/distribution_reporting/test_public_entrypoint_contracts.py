@@ -13,6 +13,7 @@ from manyselves.kernel.workflow.models import InvokeToolAction, SubworkflowActio
 PUBLIC_ENTRYPOINTS = (
     "full-report",
     "module-report",
+    "revise-report",
     "aggregate-existing",
     "render-existing",
     "distill-template-skill",

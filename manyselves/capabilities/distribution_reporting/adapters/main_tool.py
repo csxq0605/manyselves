@@ -59,14 +59,15 @@ class ConversationRunPort(Protocol):
 
 
 class RunReportingWorkflowTool(Tool):
-    """Preserve the five-route Distribution Reporting Main contract."""
+    """Expose the six Distribution Reporting operations to Main."""
 
     name = "run_reporting_workflow"
     description = (
         "Start one Distribution Reporting operation selected from "
         "distill_template_skill, full_report, module_report, aggregate_existing, "
         "render_existing, or revise_report (new Run from baseline_run_id, requested_changes maps "
-        "exact subsection IDs to requested edits; NOT interruption resume). The operation is projected to its Capability-owned "
+        "exact subsection IDs to initial edits, followed by Cross-linked revisions for consistency; "
+        "NOT interruption resume). The operation is projected to its Capability-owned "
         "file-defined workflow and attached to this Main conversation."
     )
     side_effect = "ordered_state"

@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**全新 full_report 已自主完成至发布；随后发现的侧边栏下载兼容问题已修复并实测。Word 逐页版面验收及跨 Run 聚合债务仍未完成，不宣称整个 PR 已完成**
+> 状态：**全文 Run 与 Cross 联动修订 Run 均有真实完成产物；本轮修复专题标题、基线审查证据继承与 Main 修订指引。新代码的 Main/Provider/浏览器验收及 Word 逐页版面验收尚未完成，不宣称整个 PR 已完成**
 
 ## Program
 
@@ -18,13 +18,22 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.100 Single-baseline revise-report recovery path with Cross`
+- Current slice: `FA-08/M9.101 Revision review provenance, planned headings and Main entrypoint`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `2a97aa0 Limit chat recovery actions to the current run`
-- Program status: `revise-report public entry copies one complete baseline business snapshot into a new Run, revises only requested subsections with independent module review, now includes Cross owner cohort before aggregate, then Final and Delivery. Clean zero-touch Provider run revise-report-ae52f563ccad4d4b9a761f91b3f7664e completed delivered: 2.1/2.2/2.4/2.5 prose unchanged vs baseline full-report-8c7082..., only 2.3.1 changed, 2.3.2 unchanged. Earlier contaminated run 83b9ceab used manual state/file surgery and is not acceptance evidence`
-- Final real-test status: `clean HTTP API start of revise-report with MiMo v2.5 completed autonomously after code fixes (path rebase, evidence snapshot rebuild, context/photo-manifest, photo_ids inherit, heading strip). Sidebar DOM launch and Cross-enabled clean run still pending`
-- Blockers: `Word page QA still lacks an approved local renderer. Sidebar browser acceptance of revise-report not yet run. Cross was just added to revise-report.yaml and compiled but not yet live-tested`
-- Next automatic action: `Restart service with Cross-enabled revise-report, start one clean revise_report from sidebar or API with no file edits, confirm Cross+module Auditor+Final+Delivery complete and non-target modules stay baseline`
+- HEAD at slice start: `fbcef25 Materialize baseline module review completions for Cross local regression`
+- Program status: `User confirmed Cross-linked changes outside the initially requested subsections are required for consistency. The requested scope selects initial module revision and its independent review; the existing five-owner Cross pipelines may revise related modules before aggregate, Final and Delivery. M9.101 preserves inherited review artifacts outside new Cross paths, carries completion refs through aggregate, and preserves planned Chapter 4 headings`
+- Final real-test status: `Persisted revise-report-6da0b9f015a6425eab43bf7098289432 completed at 2026-09-14 02:01 +08:00 with Cross, Final and Delivery completed and DOCX present. Its initial request targeted 2.3.1; Cross changed ten additional subsections across 2.1/2.2/2.4/2.5, which is intended. This historical Run predates M9.101; it does not validate the new fixes. The earlier no-Cross ae52... Run also completed. Contaminated Run 83b9ceab is not acceptance evidence`
+- Blockers: `Main/Provider/browser acceptance of the M9.101 code and Word page QA remain outstanding. Historical Run artifacts are preserved as observed, including the faulty inherited review pointers in 6da0...`
+- Next automatic action: `Load the verified code into the service for the next authorized Main revision acceptance: use a known complete baseline Run and explicit requested_changes, verify independent module review, Cross-linked revisions, Final/Delivery and intact inherited review proof. Cross changes to related modules are expected; do not require all initially untargeted prose to remain unchanged`
+
+### M9.101 evidence (2026-09-14)
+
+- Read-only audit compared `full-report-8c70828443b9499d80f8a6bda41c670c` (12 review completion records), `revise-report-6da0b9f015a6425eab43bf7098289432` (13), and independent `module-report-78b76fad8b604d88ad2c5f040d434789` (1). Full-report and module-report had no missing subject/finding/verdict files and no empty completion records. The revision Run had one missing inherited verdict for module 2.2; inherited references for 2.1/2.2/2.3/2.4 also resolved to newly generated Cross payloads instead of the original baseline payloads. None of these actual Runs used the synthetic empty-completion fallback.
+- Root cause: baseline preparation rebased review paths without copying the corresponding artifacts, allowing fresh Cross rounds to reuse those paths. It also fabricated empty completion records when proof was unavailable. Aggregate then discarded `module_review_completion_refs`, even though the completed Cross child retained the correct refs. New preparation copies existing proof and its referenced artifacts under `baseline/review-artifacts/`, retains missing proof as missing, and recovers omitted refs only from a completed child with the exact same module payload. Aggregate carries the refs into Final/Delivery and the final result. No new Kernel action, hash, lock, gate or Provider call was added.
+- Isolated reproduction with real source artifacts from both the full-report and Cross revision Run copied five module proofs for each baseline (17 and 19 archived files respectively), with zero missing direct references and zero empty completion records. Source Run files were not edited. Previously persisted faulty artifacts remain historical evidence; this is not a repair of those Run directories.
+- `EditedReportSubmission` now strips numbered headings only from fixed body-only fields. Chapter 4 retains the headings required by `SpecialTopicPlan.validate_analysis`; valid planned and nested headings survive, and unplanned headings remain rejected. Characterization reproduced the deleted-heading failure before the fix.
+- Main's packaged prompt now documents six operations and explicitly selects `revise_report` for edits to an existing complete report. `baseline_run_id` must come from the user or confirmed conversation context; no latest-Run default is invented. `requested_changes` selects the initial modules, Cross maintains consistency, and the new Run is attached to the current Main conversation. Public-entrypoint and Main contract expectations now include the sixth operation.
+- Focused/affected validation: 47 distinct tests passed across report_revision, main_reporting_tool, aggregate_existing_entrypoint, public_entrypoint_contracts, module_revision_tools and prompt_loader (selections: 28 passed, 6 passed, 26 passed, with overlap). The two formerly failing Chapter 4 aggregate delivery tests pass, as does all-six-entrypoint compilation. Changed-Python Ruff, `git diff --check` and offline wheel build pass. No full-suite regression, fresh Provider Run or service restart was performed.
 
 
 ### Current live acceptance hardening (2026-09-05)

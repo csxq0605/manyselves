@@ -18,7 +18,7 @@ from .input_snapshot import RunInputSnapshotStore
 from .models.agentic import ModuleSubmission
 from .models.aggregate_existing import AggregateExistingPreparationInput
 from .models.entrypoint import ReportingRunInitializerInput
-from .models.inputs import RequestedModuleChange
+from .models.inputs import RequestedModuleChange, ReviewCompletionRecord
 from .models.module_lane import (
     DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRevisionPreparation,
@@ -27,7 +27,6 @@ from .models.module_lane import (
 from .models.reporting import REPORT_MODULE_IDS, ReportRequest
 from .module_revision_tools import accept_module_revision, prepare_module_revision
 from .storage import ReportingStore
-
 
 BUSINESS_KEYS = (
     "module_submissions", "evidence_items", "photo_assets", "photo_evidence_adjacency",
@@ -160,6 +159,7 @@ def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
         workspace=workspace,
         store=store,
         baseline=baseline,
+        persisted=persisted,
         modules=modules,
         old=old,
         new=new,
@@ -184,6 +184,7 @@ def _materialize_baseline_module_review_completions(
     workspace: Path,
     store: ReportingStore,
     baseline: Mapping[str, Any],
+    persisted: Mapping[str, Any],
     modules: Mapping[str, Any],
     old: str,
     new: str,
@@ -192,40 +193,70 @@ def _materialize_baseline_module_review_completions(
     """Bind already-reviewed baseline modules into this Run for Cross local regression."""
 
     refs = dict(baseline.get("module_review_completion_refs") or {})
+    # Older aggregate handoffs omitted these refs from the final output. Recover
+    # only proof for the same module payload from a completed child in this Run.
+    for child in persisted.get("subworkflow_states", {}).values():
+        if child.get("status") != "completed":
+            continue
+        result = child.get("outputs", {}).get("result", {})
+        if not isinstance(result, dict):
+            continue
+        for module_id, ref in result.get("module_review_completion_refs", {}).items():
+            if result.get("module_submissions", {}).get(module_id) == baseline["module_submissions"].get(module_id):
+                refs.setdefault(module_id, ref)
+
+    archive_root = f"{new}/baseline/review-artifacts"
+    copied: dict[str, str] = {}
+
+    def copy_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: copy_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [copy_value(item) for item in value]
+        if isinstance(value, str):
+            rebased = _rebase(value, old, archive_root)
+            if rebased != value and (workspace / value).is_file():
+                return copy_artifact(value)
+            return rebased
+        return value
+
+    def copy_artifact(ref: str) -> str:
+        source = (workspace / ref).resolve()
+        relative = source.relative_to((workspace / old).resolve()).as_posix()
+        if relative in copied:
+            return copied[relative]
+        target_ref = f"{archive_root}/{relative}"
+        copied[relative] = target_ref
+        if source.suffix.casefold() == ".json":
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            store.write_json(target_ref, copy_value(payload))
+        else:
+            target = store.workspace / target_ref
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.suffix.casefold() == ".jsonl":
+                lines = [copy_value(json.loads(line)) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
+                store.write_jsonl(target_ref, lines)
+            else:
+                shutil.copyfile(source, target)
+        return target_ref
+
     completed: dict[str, str] = {}
     for module_id, module in modules.items():
         revision = module.get("revision", 0)
         subject_ref = f"{new}/modules/{module_id}-r{revision}.json"
         source_ref = refs.get(module_id)
-        payload: dict[str, Any] | None = None
-        if source_ref:
-            source_path = workspace / source_ref
-            if source_path.is_file():
-                try:
-                    payload = _rebase(
-                        json.loads(source_path.read_text(encoding="utf-8")),
-                        old,
-                        new,
-                    )
-                except (OSError, json.JSONDecodeError):
-                    payload = None
-        if not isinstance(payload, dict):
-            payload = {
-                "kind": "review_completion_record",
-                "review_protocol_version": 2,
-                "lifecycle": "module",
-                "run_id": run_id,
-                "reviewer_agent_id": "evidence-auditor",
-                "reviewer_session_key": f"module-auditor-{module_id}",
-                "subject_refs": [subject_ref],
-                "finding_refs": [],
-                "verdict_refs": [],
-                "resolved_finding_ids": [],
-            }
-        else:
-            payload["run_id"] = run_id
-            payload.setdefault("lifecycle", "module")
-            payload["subject_refs"] = [subject_ref]
+        if not source_ref:
+            # Absence remains absence; Cross owns the existing missing-review error.
+            continue
+        original = ReviewCompletionRecord.model_validate_json(
+            (workspace / source_ref).read_text(encoding="utf-8")
+        )
+        payload = original.model_dump(mode="json")
+        for key in ("finding_refs", "verdict_refs"):
+            payload[key] = [copy_artifact(ref) for ref in payload[key]]
+        copy_artifact(source_ref)
+        payload["run_id"] = run_id
+        payload["subject_refs"] = [subject_ref]
         target_ref = f"{new}/reviews/module/baseline/{module_id}/completion-r{revision}.json"
         store.write_json(target_ref, payload)
         completed[module_id] = target_ref
@@ -279,6 +310,7 @@ def prepare_revision_aggregate(value: Any, *, store: ReportingStore):
     return AggregateExistingTools(workspace=store.workspace, input_snapshot=None, store=store).prepare_from_modules(
         AggregateExistingPreparationInput(run_id=state["run_id"], request=request),
         {key: ModuleSubmission.model_validate(raw) for key, raw in state["module_submissions"].items()},
+        module_review_completion_refs=dict(state.get("module_review_completion_refs") or {}),
     )
 
 

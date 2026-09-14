@@ -175,7 +175,7 @@ FastAPI 只提供通用资源：
 Capability 通过 Registry/Binding 接入，不由路由硬编码具体服务。
 
 每个可交付 Capability 拥有自己的产品前端。当前仓库的 `frontend/` 是
-`distribution-reporting` 配电安全服务 Demo 的前端：用户通过 Main 对话启动五类报告操作，
+`distribution-reporting` 配电安全服务 Demo 的前端：用户通过 Main 对话启动六类报告操作，
 并在同一产品界面查看运行、WAITING、产物和成本。它不是用于选择所有 Capability 的平台控制台。
 
 产品前端仍消费通用运行投影：

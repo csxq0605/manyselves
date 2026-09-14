@@ -132,6 +132,34 @@ def _edited_submission_with_final_chapter_4():
     )
 
 
+def test_edited_submission_preserves_planned_special_topic_headings():
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        EditedReportSubmission,
+    )
+
+    payload = _edited_submission_with_final_chapter_4().model_dump(mode="json")
+    payload["assessment_background"] = "### 1.1 Background\n\nBackground body"
+    payload["special_topic_analysis"] += "\n\n#### 4.1.1 Detail\n\nNested body"
+    original_topic = payload["special_topic_analysis"]
+
+    accepted = EditedReportSubmission.model_validate(payload)
+
+    assert accepted.assessment_background == "Background body"
+    assert accepted.special_topic_analysis == original_topic
+    assert payload["special_topic_analysis"] == original_topic
+
+
+def test_edited_submission_still_rejects_unplanned_special_topic_headings():
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        EditedReportSubmission,
+    )
+
+    payload = _edited_submission_with_final_chapter_4().model_dump(mode="json")
+    payload["special_topic_analysis"] += "\n\n### 4.2 Unrequested topic\n\nBody"
+    with pytest.raises(ValueError, match="headings must exactly match"):
+        EditedReportSubmission.model_validate(payload)
+
+
 def test_aggregate_final_preparation_publishes_the_exact_review_subject(tmp_path: Path):
     from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
         FinalChapterTools,

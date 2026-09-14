@@ -1646,11 +1646,11 @@ class EditedReportSubmission(StrictModel):
                 "dimension_risk_analysis",
                 "data_gap_analysis",
                 "improvement_action_plan",
-                "special_topic_analysis",
             ):
                 body = value.get(field)
                 if isinstance(body, str):
                     value[field] = strip_numbered_markdown_headings(body)
+            # Chapter 4 keeps the numbered headings required by its Inputs plan.
         return value
 
     @model_validator(mode="after")
