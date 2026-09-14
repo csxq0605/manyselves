@@ -22,6 +22,37 @@ actions:
     run_id: run-id
     request: request
   output_variable: reporting-state
+- id: revision-inputs-changed
+  kind: invoke_tool
+  tool: revision-inputs-changed
+  input_variable: reporting-state
+  output_variable: inputs-changed
+- id: choose-revision-inputs
+  kind: if
+  condition:
+    variable: inputs-changed
+    operator: truthy
+  then: project-revision-preparation
+  otherwise: run-module-cohort
+- id: project-revision-preparation
+  kind: invoke_tool
+  tool: project-revision-preparation
+  input_variable: reporting-state
+  output_variable: revision-preparation
+- id: run-revision-preparation
+  kind: subworkflow
+  workflow: distribution-revision-preparation
+  input_variable: revision-preparation
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: revision-preparation
+- id: attach-revision-preparation
+  kind: invoke_tool
+  tool: attach-revision-preparation
+  input_variables:
+    state: reporting-state
+    preparation: revision-preparation
+  output_variable: reporting-state
 - id: run-module-cohort
   kind: subworkflow
   workflow: distribution-module-cohort

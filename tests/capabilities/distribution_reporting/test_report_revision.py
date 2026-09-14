@@ -70,7 +70,9 @@ def test_new_revision_copies_business_baseline_not_old_execution(tmp_path):
     assert state["resume"] is False
     assert not (tmp_path / "Work/runs/revision/usage.json").exists()
     snapshot = RunInputSnapshotStore(tmp_path).load("revision")
-    assert json.loads((tmp_path / snapshot.resolve(Path("Inputs/example.json"))).read_text()) == {"original": True}
+    assert json.loads((tmp_path / snapshot.resolve(Path("Inputs/example.json"))).read_text()) == {"original": False}
+    baseline_snapshot = RunInputSnapshotStore(tmp_path).load("baseline")
+    assert json.loads((tmp_path / baseline_snapshot.resolve(Path("Inputs/example.json"))).read_text()) == {"original": True}
     assert (tmp_path / "Work/runs/baseline/runtime-state.json").read_bytes() == before
     assert prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path) == state
 
@@ -149,6 +151,120 @@ def test_revision_requires_explicit_valid_scope():
         ReportRequest(operation="revise_report", instruction="改", baseline_run_id="baseline", requested_changes={"9.9": "改"})
     request = ReportRequest(operation="revise_report", instruction="改", baseline_run_id="baseline", requested_changes={"2.3.1": "改"})
     assert request.target_modules == ["2.3"]
+
+
+def test_revision_current_inputs_add_replace_and_freeze_once(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
+
+    seed_baseline(tmp_path)
+    (tmp_path / "Inputs/example.json").write_text('{"version": 2}')
+    (tmp_path / "Inputs/new.txt").write_text("ACCEPTANCE ONLY: new source", encoding="utf-8")
+    request = ReportRequest(operation="revise_report", instruction="update inputs",
+                            baseline_run_id="baseline", requested_changes={"2.3.1": "use current facts"})
+    state = prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path)
+    assert state["input_changes"] == {"added": ["Inputs/new.txt"], "modified": ["Inputs/example.json"], "removed": []}
+    (tmp_path / "Inputs/new.txt").write_text("later edit", encoding="utf-8")
+    snapshot = RunInputSnapshotStore(tmp_path).load("revision")
+    assert (tmp_path / snapshot.resolve(Path("Inputs/new.txt"))).read_text(encoding="utf-8") == "ACCEPTANCE ONLY: new source"
+    assert (tmp_path / "Work/runs/revision/baseline/frozen-project/Inputs/example.json").read_text(encoding="utf-8").strip() != '{"version": 2}'
+
+
+def test_successive_revisions_keep_retired_source_bytes(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        prepare_report_revision,
+    )
+
+    seed_baseline(tmp_path)
+    store = ReportingStore(tmp_path)
+    store.write_json("Work/runs/baseline/sources/original.json", {
+        "original_path": "Work/runs/baseline/frozen-project/Inputs/example.json",
+    })
+    store.write_json("Inputs/example.json", {"version": 2})
+    request = ReportRequest(operation="revise_report", instruction="update",
+                            baseline_run_id="baseline", requested_changes={"2.3.1": "new facts"})
+    first = prepare_report_revision({"run_id": "revision", "request": request}, workspace=tmp_path)
+    store.write_json("Work/runs/revision/runtime-state.json", {"status": "completed", "outputs": {"result": first}})
+    store.write_json("Inputs/example.json", {"version": 3})
+    request = request.model_copy(update={"baseline_run_id": "revision"})
+    prepare_report_revision({"run_id": "revision-2", "request": request}, workspace=tmp_path)
+    retired = json.loads((tmp_path / "Work/runs/revision-2/sources/original.json").read_text(encoding="utf-8"))
+    assert "Work/runs/revision-2/" in retired["original_path"]
+    assert json.loads((tmp_path / retired["original_path"]).read_text(encoding="utf-8")) == {"original": True}
+    assert json.loads((tmp_path / "Work/runs/revision-2/baseline/frozen-project/Inputs/example.json").read_text(encoding="utf-8")) == {"version": 2}
+
+
+@pytest.mark.asyncio
+async def test_revision_evidence_preserves_ids_and_supplies_new_facts_to_author_and_cross(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        RequestedModuleChange,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+        PreparationContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        EvidenceItem,
+        SourceLocation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_revision_tools import (
+        prepare_module_revision,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.revision_inputs import (
+        reconcile_revision_evidence,
+    )
+
+    def evidence(eid, fact, file_id="file-old", cell="A1"):
+        return EvidenceItem(id=eid, subject="ACCEPTANCE ONLY", fact=fact, module_id="2.3", submodule_id="2.3.1",
+                            source=SourceLocation(file_id=file_id, path=Path("Inputs/example.xlsx"), cell=cell))
+    old = [evidence("E-0008", "old fact"), evidence("E-0009", "unchanged", cell="A2")]
+    store = ReportingStore(tmp_path)
+    request = ReportRequest(operation="revise_report", instruction="update inputs", baseline_run_id="baseline",
+                            requested_changes={"2.3.1": "use current facts"})
+    store.write_json("Work/runs/revision/baseline/business-state.json", {
+        "evidence_items": [item.model_dump(mode="json") for item in old],
+        "input_changes": {"modified": ["Inputs/example.xlsx"], "added": [], "removed": []},
+    })
+    current = PreparationContext(run_id="revision", request=request,
+                                 evidence_items=[evidence("E-0001", "new fact", "file-new"),
+                                                 evidence("E-0002", "unchanged", "file-new", "A2")])
+    prepared = reconcile_revision_evidence(current, workspace=tmp_path)
+    assert [(item.id, item.fact) for item in prepared.evidence_items] == [("E-0010", "new fact"), ("E-0009", "unchanged")]
+    assert prepared.evidence_items[1] == old[1]
+    changes = json.loads((tmp_path / "Work/runs/revision/revision-input-changes.json").read_text(encoding="utf-8"))
+    assert changes["superseded_evidence_ids"] == ["E-0008"]
+    assert changes["current_evidence"][0]["evidence_id"] == "E-0010"
+    module = ModuleSubmission(module_id="2.3", submodule_narratives={sid: "baseline" for sid in REPORT_TAXONOMY["2.3"].submodules}, claims=[], source_ids=[], unresolved_questions=[], revision=2)
+    state = {"run_id": "revision", "evidence_items": prepared.evidence_items, "revision_input_changes": changes}
+    revision = await prepare_module_revision(workspace=tmp_path, store=store, state=state, workflow_id="revise-report",
+        subject=module, requested_changes=[RequestedModuleChange(id="USER-2.3.1", instruction="update", target_submodule_ids=["2.3.1"])])
+    assert {item.evidence_id for item in revision.revision_input.evidence} == {"E-0009", "E-0010"}
+    assert revision.revision_input.input_changes.superseded_evidence_ids == ["E-0008"]
+    assert "new fact" in revision.revision_input.input_changes.current_evidence[0].content
+    from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
+        CrossOwnerRuntime,
+    )
+
+    modules = {key: ModuleSubmission(module_id=key, submodule_narratives={sid: "baseline" for sid in spec.submodules},
+                                    claims=[], source_ids=[], unresolved_questions=[], revision=2)
+               for key, spec in REPORT_TAXONOMY.items()}
+    cross = CrossOwnerRuntime(tmp_path).prepare({**state, "module_submissions": modules})
+    assert all(packet.input_changes.superseded_evidence_ids == ["E-0008"] for packet in cross["cross_owner_inputs"].values())
+    from manyselves.capabilities.distribution_reporting.runtime.public_entrypoints import (
+        load_public_entrypoint_definitions,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.revision_inputs import (
+        attach_revision_preparation,
+    )
+    from manyselves.kernel.contracts import build_contract_catalog
+
+    _, registry = load_public_entrypoint_definitions()
+    attachment = {"state": {**state, "module_submissions": modules}, "preparation": prepared.model_dump(mode="json")}
+    attachment = build_contract_catalog(registry)["revision_preparation_attachment"].validate(attachment)
+    attached = attach_revision_preparation(attachment, workspace=tmp_path)
+    assert attached["module_submissions"] == modules
+    assert attached["revision_input_changes"] == changes
+    assert [item.id for item in attached["evidence_items"]] == ["E-0010", "E-0009"]
 
 
 def _seed_reviewed_baseline(workspace: Path, *, refs_in_child: bool = False):
@@ -262,6 +378,7 @@ def test_revision_aggregate_retains_current_module_review_references(tmp_path):
                                     baseline_run_id="original", requested_changes={"2.3.1": "clarify"})
     refs = {"2.1": "Work/runs/baseline/reviews/module/cross-r1/2.1/completion-r2.json"}
     state["module_review_completion_refs"] = refs
+    state["input_snapshot_ref"] = "Work/runs/baseline/input-snapshot.json"
     context = prepare_revision_aggregate(state, store=ReportingStore(tmp_path))
     edited = EditedReportSubmission(
         title="Report", assessment_background="Background", findings_overview="Findings",
@@ -271,6 +388,9 @@ def test_revision_aggregate_retains_current_module_review_references(tmp_path):
     )
     tail = project_aggregate_existing_tail_state(AggregateExistingHandoff(context=context, edited_report=edited))
     assert tail["module_review_completion_refs"] == refs
+    assert tail["input_snapshot_ref"] == state["input_snapshot_ref"]
+    assert tail["preparation_refs"] == state["preparation_refs"]
+    assert tail["full_report"] is True
 
 
 @pytest.mark.asyncio
@@ -377,3 +497,45 @@ async def test_requested_module_revision_paths_keep_untouched_baseline(tmp_path)
     assert aggregate.structured_modules["2.1"].revision == 2
     assert aggregate.evidence_items == []
     assert aggregate.source_format == "structured_module"
+
+
+def test_revision_photo_ids_keep_duplicate_occurrences_and_reserve_retired_ids(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
+        PreparationContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        EvidenceItem,
+        PhotoAsset,
+        SourceLocation,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.revision_inputs import (
+        reconcile_revision_evidence,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
+
+    def evidence(eid, photo, row):
+        return EvidenceItem(id=eid, subject="fixture", fact=f"fact {row}", photo_refs=[photo],
+                            source=SourceLocation(file_id="file", path=Path("Inputs/image.xlsx"), row=row))
+    def photo(pid, eid):
+        return PhotoAsset(id=pid, path=Path(f"Work/assets/{pid}.png"), sha256="a" * 64,
+                          media_type="image/png", source_member="same-image.png", primary_evidence_id=eid)
+    old = [evidence("E-0007", "P-0004", 1), evidence("E-0008", "P-0005", 2)]
+    old_photos = [photo("P-0004", "E-0007"), photo("P-0005", "E-0008")]
+    ReportingStore(tmp_path).write_json("Work/runs/revision/baseline/business-state.json", {
+        "evidence_items": [item.model_dump(mode="json") for item in old],
+        "photo_assets": [item.model_dump(mode="json") for item in old_photos], "input_changes": {},
+    })
+    retired = evidence("E-0099", "P-0088", 99)
+    SourceLedger(tmp_path, "revision").register_many([dict(kind="project_evidence", evidence_id=retired.id,
+        title=retired.subject, locator="Inputs/old.xlsx", content=retired.model_dump_json())])
+    SourceLedger(tmp_path, "revision").register_many([dict(kind="project_evidence", evidence_id="E-0098",
+        title="plain source", locator="Inputs/plain.txt", content="plain-text project-source content")])
+    request = ReportRequest(operation="revise_report", instruction="update", baseline_run_id="baseline",
+                            requested_changes={"2.3.1": "update"})
+    current = PreparationContext(run_id="revision", request=request,
+        evidence_items=[evidence(f"E-{i:04d}", f"P-{i:04d}", i) for i in (1, 2, 3)],
+        photo_assets=[photo(f"P-{i:04d}", f"E-{i:04d}") for i in (1, 2, 3)])
+    result = reconcile_revision_evidence(current, workspace=tmp_path)
+    assert [item.id for item in result.evidence_items] == ["E-0007", "E-0008", "E-0100"]
+    assert [item.id for item in result.photo_assets] == ["P-0004", "P-0005", "P-0089"]
+    assert [item.primary_evidence_id for item in result.photo_assets] == ["E-0007", "E-0008", "E-0100"]

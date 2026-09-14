@@ -395,7 +395,19 @@ def project_aggregate_existing_tail_state(
 
     handoff = AggregateExistingHandoff.model_validate(value)
     context = handoff.context
+    preparation_state = {}
+    if context.preparation_context is not None:
+        from .entrypoint_tools import build_reporting_state
+        from .models.entrypoint import ReportingRunContext
+
+        preparation_state = build_reporting_state(ReportingRunContext(
+            run_id=context.run_id, request=context.request,
+            preparation_context=context.preparation_context,
+        ))
+        # Initial revision targets do not narrow the complete aggregate delivery.
+        preparation_state["full_report"] = True
     return {
+        **preparation_state,
         "run_id": context.run_id,
         "request": context.request,
         "edited_report": handoff.edited_report,
@@ -404,6 +416,7 @@ def project_aggregate_existing_tail_state(
         "evidence_items": context.evidence_items,
         "photo_assets": context.photo_assets,
         "module_review_completion_refs": context.module_review_completion_refs,
+        "revision_input_changes": context.revision_input_changes,
         "aggregate_source_format": context.source_format,
         "aggregate_source_manifest_ref": context.source_manifest_ref,
         "aggregate_integrity_report_ref": context.integrity_report_ref,

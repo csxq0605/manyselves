@@ -18,12 +18,13 @@ from .input_snapshot import RunInputSnapshotStore
 from .models.agentic import ModuleSubmission
 from .models.aggregate_existing import AggregateExistingPreparationInput
 from .models.entrypoint import ReportingRunInitializerInput
-from .models.inputs import RequestedModuleChange, ReviewCompletionRecord
+from .models.inputs import RequestedModuleChange, ReviewCompletionRecord, RevisionInputChanges
 from .models.module_lane import (
     DeclarativeModuleRevisionAgentResult,
     DeclarativeModuleRevisionPreparation,
     DeclarativeModuleRuntimeLaneContext,
 )
+from .models.preparation import PreparationContext
 from .models.reporting import REPORT_MODULE_IDS, ReportRequest
 from .module_revision_tools import accept_module_revision, prepare_module_revision
 from .storage import ReportingStore
@@ -80,11 +81,18 @@ def _copy_tree_with_rebase(source: Path, target: Path, *, old: str, new: str) ->
             except json.JSONDecodeError:
                 continue
             path.write_text(
-                json.dumps(_rebase(payload, old, new), ensure_ascii=False),
+                json.dumps(_rebase_business(payload, old, new), ensure_ascii=False),
                 encoding="utf-8",
             )
         else:
             path.write_text(_rebase_lines(text, old, new), encoding="utf-8")
+
+
+def _rebase_business(value: Any, old: str, new: str) -> Any:
+    """Old source references stay bound to archived old bytes after an input edit."""
+    value = _rebase(value, f"{old}/baseline", f"{new}/baseline/inherited")
+    value = _rebase(value, f"{old}/frozen-project", f"{new}/baseline/frozen-project")
+    return _rebase(value, old, new)
 
 
 def _rebase_lines(text: str, old: str, new: str) -> str:
@@ -99,7 +107,7 @@ def _rebase_lines(text: str, old: str, new: str) -> str:
         except json.JSONDecodeError:
             out.append(line)
             continue
-        out.append(json.dumps(_rebase(payload, old, new), ensure_ascii=False) + ("\n" if line.endswith("\n") else ""))
+        out.append(json.dumps(_rebase_business(payload, old, new), ensure_ascii=False) + ("\n" if line.endswith("\n") else ""))
     return "".join(out)
 
 
@@ -124,35 +132,57 @@ def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
                      and set(item.get("module_submissions", {})) == set(REPORT_MODULE_IDS)), None)
     if baseline is None:
         raise ValueError("baseline Run has no complete five-module business snapshot")
-    modules = _rebase(
+    modules = _rebase_business(
         {key: ModuleSubmission.model_validate(raw).model_dump(mode="json")
          for key, raw in baseline["module_submissions"].items()},
         old,
         new,
     )
-    snapshots.fork(baseline_id, run_id)
+    current_inputs = snapshots.freeze(run_id)
+    baseline_inputs = snapshots.load(baseline_id)
+    previous_files = {item.logical_ref.as_posix(): item.sha256 for item in baseline_inputs.files}
+    current_files = {item.logical_ref.as_posix(): item.sha256 for item in current_inputs.files}
+    input_changes = {
+        "added": sorted(current_files.keys() - previous_files.keys()),
+        "removed": sorted(previous_files.keys() - current_files.keys()),
+        "modified": sorted(key for key in current_files.keys() & previous_files.keys()
+                           if current_files[key] != previous_files[key]),
+    }
+    # Successive revisions retain earlier archived bytes as well as this baseline.
+    inherited = workspace / old / "baseline"
+    if inherited.is_dir():
+        _copy_tree_with_rebase(inherited, workspace / new / "baseline/inherited", old=old, new=new)
+    # Retain the old bytes as provenance; the active snapshot belongs to this request.
+    for item in baseline_inputs.files:
+        target = workspace / new / "baseline/frozen-project" / item.logical_ref
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(workspace / item.snapshot_ref, target)
     # These directories contain data, not execution cursors, reviews, usage, or conversations.
     for name in ("assets", "indexes", "sources", "templates", "preparation", "source-index"):
         source = workspace / old / name
         if source.is_dir():
-            _copy_tree_with_rebase(source, workspace / new / name, old=old, new=new)
+            target_name = "baseline/preparation" if name == "preparation" and any(input_changes.values()) else name
+            _copy_tree_with_rebase(source, workspace / new / target_name, old=old, new=new)
     for name in ("evidence.jsonl", "photo-manifest.json", "context/photo-manifest.json", "ledgers/sources.json", "template-provenance.json"):
         source = workspace / old / name
         if source.is_file():
             target = workspace / new / name
             target.parent.mkdir(parents=True, exist_ok=True)
             if source.suffix == ".json":
-                store.write_json(f"{new}/{name}", _rebase(json.loads(source.read_text(encoding="utf-8")), old, new))
+                store.write_json(f"{new}/{name}", _rebase_business(json.loads(source.read_text(encoding="utf-8")), old, new))
             elif source.suffix == ".jsonl":
                 target.write_text(_rebase_lines(source.read_text(encoding="utf-8"), old, new), encoding="utf-8")
             else:
                 shutil.copyfile(source, target)
-    state = _rebase({key: deepcopy(baseline[key]) for key in BUSINESS_KEYS if key in baseline}, old, new)
+    state = _rebase_business({key: deepcopy(baseline[key]) for key in BUSINESS_KEYS if key in baseline}, old, new)
     # Keep baseline prose; only workspace path bindings move to the new Run.
     state["module_submissions"] = modules
     state.update(run_id=run_id, request=request.model_dump(mode="json"), resume=False,
                  requested_modules=request.target_modules, full_report=True,
                  baseline_run_id=baseline_id, revision_targets=dict(request.requested_changes))
+    state.update(input_changes=input_changes,
+                 input_snapshot_ref=f"{new}/input-snapshot.json",
+                 input_snapshot_digest=current_inputs.inventory_digest)
     for key, module in modules.items():
         store.write_json(f"{new}/modules/{key}-r{module['revision']}.json", module)
     completion_refs = _materialize_baseline_module_review_completions(
@@ -307,16 +337,26 @@ def prepare_revision_aggregate(value: Any, *, store: ReportingStore):
     """Project the revised modules plus all untouched baseline modules to the editor."""
     state = dict(value)
     request = ReportRequest.model_validate(state["request"])
-    return AggregateExistingTools(workspace=store.workspace, input_snapshot=None, store=store).prepare_from_modules(
+    context = AggregateExistingTools(workspace=store.workspace, input_snapshot=None, store=store).prepare_from_modules(
         AggregateExistingPreparationInput(run_id=state["run_id"], request=request),
         {key: ModuleSubmission.model_validate(raw) for key, raw in state["module_submissions"].items()},
         module_review_completion_refs=dict(state.get("module_review_completion_refs") or {}),
     )
+    preparation_fields = PreparationContext.model_fields
+    preparation = PreparationContext.model_validate({key: value for key, value in state.items() if key in preparation_fields})
+    return context.model_copy(update={
+        "preparation_context": preparation,
+        "revision_input_changes": RevisionInputChanges.model_validate(state["revision_input_changes"])
+        if state.get("revision_input_changes") else None,
+    })
 
 
 def build_report_revision_tools(workspace: Path) -> dict[str, Any]:
+    from .revision_inputs import build_revision_input_tools
+
     store = ReportingStore(workspace)
     return {
+        **build_revision_input_tools(workspace),
         "prepare-report-revision": partial(prepare_report_revision, workspace=workspace),
         "module-has-requested-revision": module_has_requested_revision,
         "prepare-requested-module-revision": partial(prepare_requested_module_revision, store=store),

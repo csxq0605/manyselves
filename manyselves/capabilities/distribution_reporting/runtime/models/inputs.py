@@ -1102,6 +1102,14 @@ class CrossOwnerRelatedModuleView(StrictModel):
         return self
 
 
+class RevisionInputChanges(StrictModel):
+    """Parsed current facts and retired evidence identities, never user-authored claims."""
+
+    files: dict[str, list[str]] = Field(default_factory=dict)
+    superseded_evidence_ids: list[str] = Field(default_factory=list)
+    current_evidence: list[ReviewEvidenceExcerpt] = Field(default_factory=list)
+
+
 class CrossOwnerInput(StrictModel):
     """Typed input for one fixed Cross-owner reviewer.
 
@@ -1111,6 +1119,10 @@ class CrossOwnerInput(StrictModel):
     """
 
     kind: Literal["cross_owner_input"] = "cross_owner_input"
+    input_changes: RevisionInputChanges | None = Field(
+        default=None,
+        description="Current parsed input changes. Check linked prose against these facts; superseded E IDs describe the old baseline only.",
+    )
     phase: Literal["initial", "recheck"] = Field(
         description="Whether this is the owner's initial review or its bound recheck."
     )
@@ -1534,6 +1546,14 @@ class RequestedModuleChange(StrictModel):
 
 class ModuleRevisionInput(StrictModel):
     kind: Literal["module_revision_input"] = "module_revision_input"
+    input_changes: RevisionInputChanges | None = Field(
+        default=None,
+        description="Current parsed input changes. Use applicable new evidence for the assigned edits and replace obsolete evidence bindings.",
+    )
+    evidence: list[ReviewEvidenceExcerpt] = Field(
+        default_factory=list,
+        description="Current project facts applicable to assigned subsections, including new or replaced inputs.",
+    )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
         description="Responsibility module being revised."

@@ -36,6 +36,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
     DeclarativeModuleRuntimeLaneContext,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceItem,
     UserSupplement,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
@@ -56,6 +57,21 @@ class ModuleRevisionPreparationError(ValueError):
 
 class ModuleRevisionAcceptanceError(ValueError):
     """Expected acceptance failure translated by the Core compatibility layer."""
+
+
+def _revision_evidence(state: Mapping[str, Any], module_id: str, targets: set[str]) -> dict[str, Any]:
+    from .research.project_evidence import project_evidence_locator
+
+    items = [EvidenceItem.model_validate(item) for item in state.get("evidence_items", [])]
+    return {
+        "input_changes": state.get("revision_input_changes"),
+        "evidence": [
+            {"evidence_id": item.id, "title": item.subject,
+             "locator": project_evidence_locator(item), "content": item.model_dump_json()}
+            for item in items
+            if item.module_id in {None, module_id} and item.submodule_id in {None, *targets}
+        ],
+    }
 
 
 def _context(value: Any) -> DeclarativeModuleRuntimeLaneContext:
@@ -136,6 +152,7 @@ async def prepare_module_revision(
         )
     revision_input = ModuleRevisionInput(
         run_id=state["run_id"],
+        **_revision_evidence(state, subject.module_id, targets),
         module_id=subject.module_id,
         subject_ref=(
             f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{subject.revision}.json"
@@ -244,6 +261,7 @@ def prepare_current_module_revision(
     revision = subject.revision + 1
     revision_input = ModuleRevisionInput(
         run_id=run_id,
+        **_revision_evidence(context.reporting_state, context.module_id, targets),
         module_id=context.module_id,
         subject_ref=subject_ref,
         subject=module_content_view(subject, targets),

@@ -7,7 +7,8 @@ from typing import Literal
 from pydantic import Field
 
 from .agentic import EditedReportSubmission, ModuleSubmission
-from .inputs import AggregateEditorInput
+from .inputs import AggregateEditorInput, RevisionInputChanges
+from .preparation import PreparationContext
 from .reporting import EvidenceItem, PhotoAsset, ReportingModel, ReportRequest
 
 ModuleId = Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
@@ -33,6 +34,8 @@ class AggregateExistingContext(ReportingModel):
     evidence_items: list[EvidenceItem] = Field(default_factory=list)
     photo_assets: list[PhotoAsset] = Field(default_factory=list)
     module_review_completion_refs: dict[ModuleId, str] = Field(default_factory=dict)
+    preparation_context: PreparationContext | None = None
+    revision_input_changes: RevisionInputChanges | None = None
     source_manifest_ref: str = Field(min_length=1)
     integrity_report_ref: str = Field(min_length=1)
     editor_input_ref: str = Field(min_length=1)

@@ -709,6 +709,11 @@ class CrossOwnerRuntime:
                 owner_module_id=owner_module_id,
                 review_round=review_round,
             )
+            if state.get("revision_input_changes"):
+                contract = CrossOwnerInput.model_validate({
+                    **contract.model_dump(mode="json"),
+                    "input_changes": state["revision_input_changes"],
+                })
             self.store.write_json(ref, contract.model_dump(mode="json"))
             refs[owner_module_id] = ref
             inputs[owner_module_id] = contract

@@ -114,8 +114,7 @@ class PublicReportingWorkflowRuntime:
         request = project_public_entrypoint_input(workflow_id, run_id, values)
         if not isinstance(request, ReportRequest):
             raise TypeError(f"public root does not project a ReportRequest: {workflow_id}")
-        if workflow_id != "revise-report":
-            RunInputSnapshotStore(self.workspace).freeze(run_id)
+        RunInputSnapshotStore(self.workspace).freeze(run_id)
         await self.execute(request, run_id, workflow_id=workflow_id)
         return {"run_id": run_id, "task_id": None}
 

@@ -21,6 +21,8 @@
 - `full_report` 默认 `target_modules=["2.1","2.2","2.3","2.4","2.5"]`。
 - 修改已有报告时使用 `revise_report`，`baseline_run_id` 取用户明确指定的 Run，或对话中已经确认的报告 Run；没有后端自动选择“最近一次”基线的默认值，不得猜测 Run ID。上下文无法唯一确定时，先确认基线。
 - `requested_changes` 以准确小节 ID 为键、用户修改要求为值，例如 `{"2.3.1":"补充既有证据支持的风险说明和可执行建议"}`；初始目标模块由这些键自动推导。Cross 可以继续修改其他相关小节，不能承诺只有指定小节会变化。
+- 修订 Run 在启动时冻结当前 Inputs/Knowledge/Templates；与基线有变动时重新解析当前 Inputs，保留未变证据的编号，为新事实分配新编号，并把变化事实交给作者和 Cross。原 Run 和旧材料保持不变。用户更新文件后必须启动新的修订 Run，不能通过修改目录改变已启动 Run 的输入。
+- 当前入口不会自动把文件变化映射为修改小节。用户仅说“按新资料修订”且未给出可判断的修改主题时，先明确主题或范围；不得编造小节 ID，也不得宣称已经完成输入影响分析。已有明确主题时按报告小节范围传递 requested_changes，并说明这是初始修订范围，Cross 负责后续一致性联动。
 - 独立 `module_report` 的输出不构成五模块全文基线；`revise_report` 使用具有完整五模块业务快照的全文或修订 Run。中断后继续处理属于原 Run 恢复，不调用 `revise_report` 创建新任务。
 - `missing_evidence_policy` 默认 `draft`；只有用户明确要求缺证时暂停、阻断或跳过，才选择 `ask`、`block` 或 `skip`。
 - `cost_control_mode` 默认 `observe`。

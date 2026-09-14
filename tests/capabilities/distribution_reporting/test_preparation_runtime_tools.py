@@ -68,6 +68,20 @@ def test_preparation_tools_do_not_depend_on_legacy_reporting_module() -> None:
     assert "manyselves.core.reporting" not in source
 
 
+def test_revision_coverage_keeps_other_modules_available_to_cross(tmp_path):
+    tools, _ = _tools(tmp_path)
+    context = PreparationContext(run_id="revision", request=ReportRequest(
+        operation="revise_report", instruction="update", baseline_run_id="baseline",
+        requested_changes={"2.3.1": "update"},
+    ), evidence_items=[EvidenceItem(
+        id="E-0001", subject="fixture", fact="linked module fact", module_id="2.1", submodule_id="2.1.1",
+        source=SourceLocation(file_id="fixture", path=Path("Inputs/fixture.txt")),
+    )])
+    result = tools.evaluate_coverage(context)
+    assert result.request.target_modules == ["2.3"]
+    assert result.coverage_matrix.entries["2.1"].submodules["2.1.1"].evidence_ids == ["E-0001"]
+
+
 def test_preparation_implementation_bundle_binds_all_file_tool_ids(
     tmp_path: Path,
 ) -> None:

@@ -1,0 +1,13 @@
+id: revision_preparation_attachment
+version: 1.0.0
+description: Current preparation result attached to the preserved report baseline
+adapter: json_schema
+schema:
+  type: object
+  required: [state, preparation]
+  properties:
+    state:
+      type: object
+    preparation:
+      type: object
+  additionalProperties: false

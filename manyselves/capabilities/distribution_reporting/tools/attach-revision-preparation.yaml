@@ -1,0 +1,10 @@
+id: attach-revision-preparation
+version: 1.0.0
+description: attach revision preparation
+implementation: capability:distribution-reporting:attach-revision-preparation
+input_contract: revision_preparation_attachment
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

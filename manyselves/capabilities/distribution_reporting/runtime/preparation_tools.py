@@ -36,6 +36,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     ProjectManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
     EvidenceItem,
     PhotoAsset,
 )
@@ -276,7 +277,7 @@ class PreparationTools:
                     / "Work"
                     / "runs"
                     / context.run_id
-                    / "assets"
+                    / ("assets/current-inputs" if context.request.operation == "revise_report" else "assets")
                     / result.file_id
                 )
                 for asset in normalized_assets:
@@ -406,8 +407,12 @@ class PreparationTools:
     def evaluate_coverage(self, context: PreparationContext) -> PreparationContext:
         """Evaluate coverage from normalized evidence without readiness policy."""
 
+        request = context.request
+        if request.operation == "revise_report":
+            # Cross and delivery still cover the complete report after a local edit.
+            request = request.model_copy(update={"target_modules": list(REPORT_MODULE_IDS)})
         coverage = evaluate_coverage(
-            context.request,
+            request,
             context.evidence_items,
             mapping_gaps=context.mapping_gaps,
         )
@@ -418,8 +423,9 @@ class PreparationTools:
     def load_special_topic_plan(self, context: PreparationContext) -> PreparationContext:
         """Load the optional Chapter 4 plan for full-report preparation only."""
 
-        if context.request.operation == "full_report":
-            context.special_topic_plan = load_special_topic_plan(self.workspace)
+        if context.request.operation in {"full_report", "revise_report"}:
+            frozen_root = self.workspace / "Work/runs" / context.run_id / "frozen-project"
+            context.special_topic_plan = load_special_topic_plan(frozen_root)
         else:
             context.special_topic_plan = None
         return context

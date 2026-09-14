@@ -90,6 +90,12 @@ def test_full_report_loads_special_topic_plan_before_persist(
         encoding="utf-8",
     )
 
+    from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+        RunInputSnapshotStore,
+    )
+
+    RunInputSnapshotStore(tmp_path).freeze(_context().run_id)
+    (inputs / "专项问题分析.md").write_text("# 专项问题分析\n\n## 4.1 已修改的实时文件\n\n不能进入已冻结 Run。\n", encoding="utf-8")
     result = _tools(tmp_path).load_special_topic_plan(_context())
 
     assert result.special_topic_plan is not None
@@ -97,6 +103,7 @@ def test_full_report_loads_special_topic_plan_before_persist(
     assert [section.section_id for section in result.special_topic_plan.sections] == [
         "4.1"
     ]
+    assert result.special_topic_plan.sections[0].title == "运行约束"
 
     unchanged = _tools(tmp_path).load_special_topic_plan(
         _context(operation="module_report")

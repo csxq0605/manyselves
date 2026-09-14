@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**全文 Run 与 Cross 联动修订 Run 均有真实完成产物；本轮修复专题标题、基线审查证据继承与 Main 修订指引。新代码的 Main/Provider/浏览器验收及 Word 逐页版面验收尚未完成，不宣称整个 PR 已完成**
+> 状态：**正在补齐二次修订对当前新增/替换输入的消费，并执行独立项目的真实全文与修订验收。历史完成记录不代表本轮通过；不宣称整个 PR 已完成**
 
 ## Program
 
@@ -18,13 +18,21 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.101 Revision review provenance, planned headings and Main entrypoint`
+- Current slice: `FA-08/M9.102 Current input evidence in report revisions and real browser acceptance`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `fbcef25 Materialize baseline module review completions for Cross local regression`
-- Program status: `User confirmed Cross-linked changes outside the initially requested subsections are required for consistency. The requested scope selects initial module revision and its independent review; the existing five-owner Cross pipelines may revise related modules before aggregate, Final and Delivery. M9.101 preserves inherited review artifacts outside new Cross paths, carries completion refs through aggregate, and preserves planned Chapter 4 headings`
-- Final real-test status: `Persisted revise-report-6da0b9f015a6425eab43bf7098289432 completed at 2026-09-14 02:01 +08:00 with Cross, Final and Delivery completed and DOCX present. Its initial request targeted 2.3.1; Cross changed ten additional subsections across 2.1/2.2/2.4/2.5, which is intended. This historical Run predates M9.101; it does not validate the new fixes. The earlier no-Cross ae52... Run also completed. Contaminated Run 83b9ceab is not acceptance evidence`
-- Blockers: `Main/Provider/browser acceptance of the M9.101 code and Word page QA remain outstanding. Historical Run artifacts are preserved as observed, including the faulty inherited review pointers in 6da0...`
-- Next automatic action: `Load the verified code into the service for the next authorized Main revision acceptance: use a known complete baseline Run and explicit requested_changes, verify independent module review, Cross-linked revisions, Final/Delivery and intact inherited review proof. Cross changes to related modules are expected; do not require all initially untargeted prose to remain unchanged`
+- HEAD at slice start: `7be103e Fix revision review provenance and preserve planned topic headings`
+- Program status: `M9.102 consumes current frozen inputs for report revisions while retaining baseline prose and historical source bytes. Main derives the initial requested_changes map from the user's intent and confirmed context; automatic file-diff-to-subsection impact planning is not implemented. Cross-linked changes remain required for consistency. Kernel/Compiler/Runtime are unchanged in this slice`
+- Final real-test status: `Fresh independent browser full-report-c5638b41158e47a9a21cf209e77736cf has completed all five module review pipelines and entered Cross. A Provider ReadError interrupted the first attempt; the existing sidebar recovery action resumed the same Run. This is assisted live acceptance, not an uninterrupted autonomous completion. No revision or final delivery verdict yet`
+- Blockers: `Fresh full/revision Provider and delivery acceptance remain in progress; Word page QA remains outstanding. Browser input add/replace is verified. The live service briefly stopped responding during large state transitions; no Run state or Agent result was manually edited`
+- Next automatic action: `Complete the live full-report-c5638b41158e47a9a21cf209e77736cf baseline in isolated project revision-input-acceptance-20260914; use the already uploaded replacement and supplemental test inputs, then launch revise_report from the sidebar Main and verify new evidence consumption, module review, Cross, Final and Delivery. Initial subsection selection remains explicit; automatic input-to-subsection impact planning is not implemented`
+
+### M9.102 ongoing evidence (2026-09-14)
+
+- User clarified that a revision normally follows changed or added information. Characterization reproduced the gap: after editing Inputs, revise_report still forked the baseline bytes. M9.102 freezes current inputs at launch, retains old bytes under baseline/frozen-project, and adds a YAML preparation branch when inventory changes. Existing deterministic preparation parses the current files; a Capability tool preserves unchanged E identities, allocates new IDs after baseline ledger IDs, and records superseded IDs. Kernel/Compiler/Runtime stay business-neutral.
+- Successive-revision characterization also reproduced retired source references resolving to a newer replacement file. Earlier baseline archives are now copied under baseline/inherited and their references rebased before the current baseline is archived. New/unchanged E and P identities preserve continuity without reusing retired ledger IDs; duplicate photo occurrences retain distinct identities.
+- Module revision and Cross input contracts now carry parsed changes and current evidence. Main documents the current limitation: requested_changes selects the initial subsections; it is not an automatic impact-analysis result. User-confirmed Cross linkage remains expected. Preparation references and current input context also need to survive aggregate into Final/Delivery and subsequent revisions.
+- Independent browser project created through the UI: revision-input-acceptance-20260914. Current-code service uses port 9093; existing port 9092 service remains untouched. Main conversation 7b8fb123-a4cf-49e0-9e46-6b27aab96dfe launched full-report-c5638b41158e47a9a21cf209e77736cf with MiMo v2.5. Preparation completed with 331 evidence items including the explicitly fictional REV-DEMO-20260914 test record E-0317. All five modules completed independent review and entered Cross. The sidebar upload flow replaced REV-DEMO-巡检记录.txt (0 complete/3 pending to 2 complete/1 pending) and added REV-DEMO-复核补充.txt (missing review signature, no closure). The active full Run retains its frozen v1 input. No latest delivery verdict yet.
+- Focused checks so far: revision/module-revision/prompt 25 passed; public/Main contracts including all entrypoint compilation 7 passed; preparation and Cross local review 16 passed; revision plus aggregate 29 passed (selections overlap). Additional revision/preparation selection 23 passed; latest revision file 14 passed, latest preparation-runtime file 8 passed, aggregate selection 18 passed. These selections overlap. Changed-Python Ruff, git diff --check, six-entrypoint compilation and offline wheel build pass. Live revision acceptance remains pending.
 
 ### M9.101 evidence (2026-09-14)
 
