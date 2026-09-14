@@ -110,3 +110,10 @@ class PreparationContext(ReportingModel):
     preparation_completion_ref: str | None = None
     evidence_index_ref: str | None = None
     source_ledger_ref: str | None = None
+
+
+class RevisionPreparationAttachment(ReportingModel):
+    """Current typed preparation joined with a preserved report baseline."""
+
+    state: dict[str, Any]
+    preparation: PreparationContext

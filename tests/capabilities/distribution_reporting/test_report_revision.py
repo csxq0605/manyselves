@@ -198,7 +198,8 @@ def test_successive_revisions_keep_retired_source_bytes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_revision_evidence_preserves_ids_and_supplies_new_facts_to_author_and_cross(tmp_path):
+@pytest.mark.parametrize("typed_preparation", [False, True])
+async def test_revision_evidence_preserves_ids_and_supplies_new_facts_to_author_and_cross(tmp_path, typed_preparation):
     from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
         RequestedModuleChange,
     )
@@ -261,7 +262,7 @@ async def test_revision_evidence_preserves_ids_and_supplies_new_facts_to_author_
     from manyselves.kernel.contracts import build_contract_catalog
 
     _, registry = load_public_entrypoint_definitions()
-    attachment = {"state": {**state, "module_submissions": modules}, "preparation": prepared.model_dump(mode="json")}
+    attachment = {"state": {**state, "module_submissions": modules}, "preparation": prepared if typed_preparation else prepared.model_dump(mode="json")}
     attachment = build_contract_catalog(registry)["revision_preparation_attachment"].validate(attachment)
     attached = attach_revision_preparation(attachment, workspace=tmp_path)
     assert attached["module_submissions"] == modules

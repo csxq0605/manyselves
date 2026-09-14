@@ -9,7 +9,7 @@ from typing import Any
 
 from .entrypoint_tools import build_reporting_state
 from .models.entrypoint import ReportingRunContext
-from .models.preparation import PreparationContext
+from .models.preparation import PreparationContext, RevisionPreparationAttachment
 from .models.reporting import EvidenceItem, PhotoAsset
 from .research.project_evidence import project_evidence_locator
 from .source_ledger import SourceLedger
@@ -138,9 +138,10 @@ def reconcile_revision_evidence(value: Any, *, workspace: Path) -> PreparationCo
     )
 
 
-def attach_revision_preparation(value: dict[str, Any], *, workspace: Path) -> dict[str, Any]:
-    state = dict(value["state"])
-    prepared = PreparationContext.model_validate(value["preparation"])
+def attach_revision_preparation(value: Any, *, workspace: Path) -> dict[str, Any]:
+    attachment = RevisionPreparationAttachment.model_validate(value)
+    state = dict(attachment.state)
+    prepared = attachment.preparation
     projection = build_reporting_state(
         ReportingRunContext(
             run_id=prepared.run_id,
