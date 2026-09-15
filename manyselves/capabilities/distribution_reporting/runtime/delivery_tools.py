@@ -70,6 +70,22 @@ def delivery_root(workspace: Path, run_id: str) -> Path:
     return Path(workspace) / "Work" / "runs" / run_id / "delivery"
 
 
+def public_report_stem(state: Mapping[str, Any]) -> str:
+    """Honor request.output_filename; fall back to the canonical report name."""
+
+    request = state.get("request") or {}
+    filename = (
+        request.get("output_filename")
+        if isinstance(request, Mapping)
+        else getattr(request, "output_filename", None)
+    )
+    if filename:
+        stem = Path(str(filename)).stem.strip()
+        if stem:
+            return stem
+    return "配电安全专家咨询报告"
+
+
 def atomic_copy_file(workspace: Path, source: Path, target: Path) -> Path:
     """Copy ordinary file bytes atomically beneath the active workspace."""
 
@@ -192,8 +208,9 @@ class DeliveryTools:
             markdown=delivery_markdown,
             phase="delivery-final",
         )
+        report_stem = public_report_stem(state)
         markdown_path = self.store.write_text(
-            f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.md",
+            f"Work/runs/{state['run_id']}/report/{report_stem}.md",
             delivery_markdown,
         )
         source_index_markdown = ledger.source_index_markdown(
@@ -243,7 +260,7 @@ class DeliveryTools:
         )
         output = (
             self.workspace
-            / f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.docx"
+            / f"Work/runs/{state['run_id']}/report/{report_stem}.docx"
         )
         render_request = RenderRequest(
             run_id=state["run_id"],
@@ -328,14 +345,15 @@ class DeliveryTools:
         source_index_docx_path = context.source_index_docx_path
         output = context.output
 
+        public_stem = public_report_stem(state)
         public_markdown = self.store.write_text(
-            "Outputs/Reports/配电安全专家咨询报告.md",
+            f"Outputs/Reports/{public_stem}.md",
             delivery_markdown,
         )
         public_docx = atomic_copy_file(
             self.workspace,
             output,
-            self.workspace / "Outputs/Reports/配电安全专家咨询报告.docx",
+            self.workspace / f"Outputs/Reports/{public_stem}.docx",
         )
         public_source_index = self.store.write_text(
             "Outputs/Reports/证据与来源索引.md",
@@ -491,7 +509,7 @@ class DeliveryTools:
         final_docx = atomic_copy_file(
             self.workspace,
             output,
-            delivery_dir / "配电安全专家咨询报告.docx",
+            delivery_dir / output.name,
         )
         report_state = atomic_copy_file(
             self.workspace,
