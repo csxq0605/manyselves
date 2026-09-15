@@ -53,7 +53,7 @@ async def test_distribution_demo_main_starts_full_report_without_workflow_discov
         missing_evidence_policy="draft",
         cost_control_mode="observe",
         preparation_mode="deterministic_workers",
-        preparation_concurrency=4,
+        preparation_concurrency=5,
     )
 
     assert tool.name == "run_reporting_workflow"
@@ -74,7 +74,7 @@ async def test_distribution_demo_main_starts_full_report_without_workflow_discov
         "max_provider_attempts": 80,
         "max_total_tokens": 800_000,
         "preparation_mode": "deterministic_workers",
-        "preparation_concurrency": 4,
+        "preparation_concurrency": 5,
     }
     assert conversations.bound == ["full-report-command"]
     assert result["run_id"] == "full-report-command"

@@ -418,7 +418,7 @@ class ReportRequest(ReportingModel):
     preparation_mode: Literal[
         "serial", "deterministic_workers"
     ] = "deterministic_workers"
-    preparation_concurrency: int = Field(default=4, ge=1, le=16)
+    preparation_concurrency: int = Field(default=5, ge=1, le=16)
 
     @field_validator("target_modules")
     @classmethod

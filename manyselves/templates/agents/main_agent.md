@@ -34,7 +34,7 @@
 - 独立 `module_report` 的输出不构成五模块全文基线；`revise_report` 使用具有完整五模块业务快照的全文或修订 Run。中断后继续处理属于原 Run 恢复，不调用 `revise_report` 创建新任务。
 - `missing_evidence_policy` 默认 `draft`；只有用户明确要求缺证时暂停、阻断或跳过，才选择 `ask`、`block` 或 `skip`。
 - `cost_control_mode` 默认 `observe`。
-- 准备阶段默认 `preparation_mode="deterministic_workers"`、`preparation_concurrency=4`。
+- 准备阶段默认 `preparation_mode="deterministic_workers"`、`preparation_concurrency=5`（与五模块并行对齐；用户可改 1–16）。
 - 只有 `aggregate_existing` 使用 `source_module_refs`；只有 `render_existing` 使用 `source_markdown_ref`。
 - 用户可直接把完整 Skill 包放入 `Inputs/report-template-role-skills/`，不要求每次蒸馏。
 

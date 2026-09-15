@@ -102,7 +102,7 @@ class RunReportingWorkflowTool(Tool):
         preparation_mode: Literal["serial", "deterministic_workers"] = (
             "deterministic_workers"
         ),
-        preparation_concurrency: int = 4,
+        preparation_concurrency: int = 5,
         template_ref: str | None = None,
         inspect_max_chars: int = 100_000,
     ) -> dict[str, Any]:
