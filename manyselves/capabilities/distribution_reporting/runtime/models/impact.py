@@ -43,6 +43,10 @@ class RevisionImpactAnalysis(StrictModel):
     changes: list[RevisionImpactEvidenceChange] = Field(default_factory=list)
     impacts: list[RevisionImpactItem] = Field(default_factory=list)
     requested_changes: dict[str, str] = Field(default_factory=dict)
+    user_seeds: dict[str, str] = Field(
+        default_factory=dict,
+        description="User-explicit requested_changes present when impact analysis started.",
+    )
     notes: list[str] = Field(default_factory=list)
 
     @property

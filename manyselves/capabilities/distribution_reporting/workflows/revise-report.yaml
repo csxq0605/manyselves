@@ -17,7 +17,6 @@ state:
   run-id: ''
   reporting-state: {}
   impact-analysis: {}
-  impact-decision: {}
   needs-impact-confirm: false
 actions:
 - id: prepare-report-revision

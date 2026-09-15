@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**本轮当前输入新增/替换驱动的修订已完成真实 Main/Provider/Cross/Word 交付验收。初始范围仍由 Main 根据意图和上下文判断；专业条款、Word 逐页版式和下载性能仍未完整验收，不宣称整个 PR 已完成**
+> 状态：**声明式 Kernel/Runtime 架构主线已落地。revise-report 已具备 impact_mode=auto|confirm 与 impact-analysis.json 业务产物；confirm 不预置 impact-decision，accept_selected 不再回扩旧目标。专业条款核实、Word 逐页版式、下载性能、confirm 模式从零启动验收仍未完成，不宣称整个 PR 已完成**
 
 ## Program
 
@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.104 Accept typed current preparation at the revision join`
+- Current slice: `FA-08/M9.105 Dedicated revise-report impact analysis stage`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `c423092 Carry report requirements and current evidence through Cross revisions`
-- Program status: `M9.102 consumes current frozen inputs for report revisions while retaining baseline prose and historical source bytes. Main derives the initial requested_changes map from the user's intent and confirmed context; automatic file-diff-to-subsection impact planning is not implemented. Cross-linked changes remain required for consistency. Kernel/Compiler/Runtime are unchanged in this slice`
-- Final real-test status: `Full baseline completed and delivered but failed the requested-sample content check: Cross removed the sample before M9.103. After the fixes, revise-report-b6f562d343a54f67bf9608cc3a364289 completed current preparation, target revision, all five Cross branches, aggregate, Final corrections/rechecks and Word delivery. The labelled replacement/addition scenario PASSED in the actual DOCX. Same-Run sidebar recovery was used after the M9.104 contract fix; this was assisted acceptance, not an uninterrupted fresh run`
-- Blockers: `No active acceptance Run. Dedicated input-diff-to-subsection impact planning is absent. Model-recalled standard clauses were not verified against originals; Word page-layout QA and browser download performance remain unverified. This fixture checks TXT replacement/addition, not every input format or arbitrary impact coverage`
-- Next automatic action: `Close out this requested review with the current receipts and explain Main initial scope versus Cross linkage. Preserve the completed independent project and original baseline; do not treat this scoped result as full PR acceptance or silently restart completed runs. Remaining product/content gaps must stay explicit in subsequent scoped work`
+- HEAD at slice start: `4872d98 Honor request.output_filename in full and revise delivery`
+- Program status: `revise_report supports impact_mode=none|auto|confirm. Deterministic build-revision-impact writes reviews/impact-analysis.json; auto continues, confirm WAITING. impact-decision is not preset in initial state (preset {} made request_input treat it as submitted). accept_selected replaces targets instead of re-expanding prior applied impacts; analysis.user_seeds keeps explicit user requested_changes. output_filename honored in delivery. preparation_concurrency default 5; budget defaults 600/30M but cost_control still Capability-unenforced after legacy deletion. Kernel remains business-neutral`
+- Final real-test status: `auto impact run revise-report-3e83b017… produced scoped impact list (2.3.1–2.3.3) and completed delivery after service resume; confirm-mode WAITING and accept_selected narrowing were fixed offline after Codex review and are not yet live-accepted`
+- Blockers: `Impact planning is deterministic, not full-semantic. Word page-layout QA and browser download performance remain unverified. cost_control_mode/max_* are request fields without Capability budget enforcement. confirm-mode and accept_selected lack fresh live acceptance`
+- Next automatic action: `Keep remaining product gaps explicit; do not treat scoped revise-report success as full PR acceptance`
 
 ### M9.104 ongoing evidence (2026-09-14)
 

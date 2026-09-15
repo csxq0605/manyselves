@@ -284,6 +284,12 @@ def build_revision_impact_analysis(value: Any, *, store: ReportingStore) -> Revi
             )
 
     requested_changes = {item.subsection_id: item.suggested_instruction for item in impacts}
+    raw_seeds = request.get("requested_changes") or {}
+    user_seeds: dict[str, str] = {}
+    if isinstance(raw_seeds, dict):
+        for key, text in raw_seeds.items():
+            if isinstance(text, str) and text.strip():
+                user_seeds[str(key)] = text.strip()
     notes = [
         "影响分析基于冻结的基线业务快照与本次修订准备结果，不保证语义上零遗漏。",
         "Cross 仍负责修订后的跨模块一致性联动。",
@@ -299,6 +305,7 @@ def build_revision_impact_analysis(value: Any, *, store: ReportingStore) -> Revi
         changes=change_rows,
         impacts=impacts,
         requested_changes=requested_changes,
+        user_seeds=user_seeds,
         notes=notes,
     )
     impact_ref = f"Work/runs/{run_id}/reviews/impact-analysis.json"
@@ -323,7 +330,7 @@ def impact_needs_confirmation(value: Any) -> bool:
 
 
 def apply_revision_impact(value: Any) -> dict[str, Any]:
-    """Merge accepted impact items into reporting-state requested targets."""
+    """Replace revise-report targets with the accepted impact subset plus user seeds."""
 
     payload = dict(value)
     analysis_raw = payload.get("analysis") or payload
@@ -347,15 +354,29 @@ def apply_revision_impact(value: Any) -> dict[str, Any]:
             raise ValueError(f"impact decision selected unknown subsections: {unknown}")
         selected = {key: item for key, item in selected.items() if key in keep}
 
-    merged = dict(state.get("revision_targets") or {})
-    for subsection_id, item in selected.items():
-        override = (decision.overridden_instructions or {}).get(subsection_id)
-        merged[subsection_id] = (override or item.suggested_instruction).strip()
-
     request = state.get("request") or {}
     if not isinstance(request, dict):
         request = request.model_dump(mode="json")
     request = dict(request)
+    # Seeds are the user's explicit requested_changes captured at impact-build time.
+    # accept_selected must not re-expand to every impact already applied earlier.
+    seeds = dict(analysis.user_seeds or state.get("impact_user_seeds") or {})
+
+    merged: dict[str, str] = {}
+    if decision.action == "accept_all":
+        merged.update({k: v for k, v in seeds.items() if isinstance(v, str) and v.strip()})
+    for subsection_id, item in selected.items():
+        override = (decision.overridden_instructions or {}).get(subsection_id)
+        merged[subsection_id] = (override or item.suggested_instruction).strip()
+    if decision.action == "accept_selected":
+        # Explicit user seeds remain only when the user did not drop them via
+        # an impact item with the same subsection id.
+        for subsection_id, text in seeds.items():
+            if subsection_id in selected:
+                continue
+            if isinstance(text, str) and text.strip():
+                merged[subsection_id] = text.strip()
+
     request["requested_changes"] = dict(merged)
     request["target_modules"] = sorted({".".join(key.split(".")[:2]) for key in merged})
     if not merged:

@@ -109,6 +109,47 @@ def test_apply_impact_accept_selected_and_abort(tmp_path):
         )
 
 
+def test_accept_selected_does_not_reexpand_prior_targets(tmp_path):
+    store = ReportingStore(tmp_path)
+    state = _state(tmp_path)
+    analysis = build_revision_impact_analysis(state, store=store)
+    # Simulate a prior full apply that left 2.1.4 in revision_targets.
+    state = dict(state)
+    state["revision_targets"] = {
+        "2.1.4": "已应用的旧目标",
+        "2.3.1": analysis.requested_changes["2.3.1"],
+    }
+    applied = apply_revision_impact(
+        {
+            "state": state,
+            "analysis": analysis.model_dump(mode="json"),
+            "decision": RevisionImpactDecision(
+                action="accept_selected",
+                selected_subsection_ids=["2.3.1"],
+            ).model_dump(mode="json"),
+        }
+    )
+    assert set(applied["revision_targets"]) == {"2.3.1"}
+    assert "2.1.4" not in applied["revision_targets"]
+
+
+def test_accept_all_keeps_user_seeds_beyond_impacts(tmp_path):
+    store = ReportingStore(tmp_path)
+    state = _state(tmp_path)
+    state["request"]["requested_changes"] = {"2.1.4": "用户额外要求的种子"}
+    analysis = build_revision_impact_analysis(state, store=store)
+    assert analysis.user_seeds == {"2.1.4": "用户额外要求的种子"}
+    applied = apply_revision_impact(
+        {
+            "state": state,
+            "analysis": analysis.model_dump(mode="json"),
+            "decision": {"kind": "revision_impact_decision", "action": "accept_all"},
+        }
+    )
+    assert "2.1.4" in applied["revision_targets"]
+    assert "2.3.1" in applied["revision_targets"]
+
+
 def test_build_impact_analysis_parses_added_removed_lists_and_module_hint():
     from manyselves.capabilities.distribution_reporting.runtime.revision_impact import (
         build_revision_impact_analysis,
@@ -172,3 +213,23 @@ def test_report_request_allows_impact_mode_without_explicit_changes():
             baseline_run_id="baseline-1",
             impact_mode="none",
         )
+
+
+def test_revise_report_does_not_preset_impact_decision_variable():
+    """Pre-seeding impact-decision would make request_input treat {} as a submission."""
+
+    from pathlib import Path
+    import yaml
+
+    workflow_path = (
+        Path(__file__).resolve().parents[3]
+        / "manyselves"
+        / "capabilities"
+        / "distribution_reporting"
+        / "workflows"
+        / "revise-report.yaml"
+    )
+    payload = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    state = payload.get("state") or {}
+    assert "impact-decision" not in state
+    assert "request-impact-decision" in {action["id"] for action in payload["actions"]}
