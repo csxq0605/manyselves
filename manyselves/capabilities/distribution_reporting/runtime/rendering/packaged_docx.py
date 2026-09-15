@@ -16,8 +16,21 @@ def _cells(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
+def _strip_blockquote(line: str) -> str:
+    """Drop a single leading Markdown blockquote marker if present."""
+
+    stripped = line.strip()
+    if stripped.startswith(">"):
+        return stripped[1:].lstrip()
+    return stripped
+
+
+def _is_table_line(line: str) -> bool:
+    return _strip_blockquote(line).startswith("|")
+
+
 def _is_separator(line: str) -> bool:
-    cells = _cells(line)
+    cells = _cells(_strip_blockquote(line))
     return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
 
 
@@ -38,12 +51,12 @@ def _append_markdown(document: Document, report_text: str) -> None:
             document.add_heading(heading.group(2).strip(), level=min(len(heading.group(1)), 4))
             index += 1
             continue
-        if line.startswith("|") and index + 1 < len(lines) and _is_separator(lines[index + 1]):
-            headers = _cells(line)
+        if _is_table_line(line) and index + 1 < len(lines) and _is_separator(lines[index + 1]):
+            headers = _cells(_strip_blockquote(line))
             index += 2
             rows: list[list[str]] = []
-            while index < len(lines) and lines[index].strip().startswith("|"):
-                row = _cells(lines[index])
+            while index < len(lines) and _is_table_line(lines[index]):
+                row = _cells(_strip_blockquote(lines[index]))
                 if len(row) == len(headers):
                     rows.append(row)
                 index += 1
@@ -111,11 +124,11 @@ def _expected_markdown_fragments(report_text: str) -> list[str]:
             fragments.append(numbered_heading.group(1))
             index += 1
             continue
-        if line.startswith("|") and index + 1 < len(lines) and _is_separator(lines[index + 1]):
-            fragments.extend(cell for cell in _cells(line) if cell)
+        if _is_table_line(line) and index + 1 < len(lines) and _is_separator(lines[index + 1]):
+            fragments.extend(cell for cell in _cells(_strip_blockquote(line)) if cell)
             index += 2
-            while index < len(lines) and lines[index].strip().startswith("|"):
-                fragments.extend(cell for cell in _cells(lines[index]) if cell)
+            while index < len(lines) and _is_table_line(lines[index]):
+                fragments.extend(cell for cell in _cells(_strip_blockquote(lines[index])) if cell)
                 index += 1
             continue
         if line.startswith("- "):
