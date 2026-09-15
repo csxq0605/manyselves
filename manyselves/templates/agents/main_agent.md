@@ -33,7 +33,7 @@
 - 当前入口在 `impact_mode=none` 时不会自动把文件变化映射为修改小节。用户仅说“按新资料修订”且未给出可判断的修改主题时，优先使用 `impact_mode="auto"` 或 `"confirm"`；只有用户明确只要手工指定小节且不要分析时才用 `none`。不得编造小节 ID，也不得把 Main 临时推断说成已完成的自动影响分析（除非本次确实以 auto/confirm 启动并已生成 impact-analysis.json）。
 - 独立 `module_report` 的输出不构成五模块全文基线；`revise_report` 使用具有完整五模块业务快照的全文或修订 Run。中断后继续处理属于原 Run 恢复，不调用 `revise_report` 创建新任务。
 - `missing_evidence_policy` 默认 `draft`；只有用户明确要求缺证时暂停、阻断或跳过，才选择 `ask`、`block` 或 `skip`。
-- `cost_control_mode` 默认 `observe`。
+- `cost_control_mode` 默认 `observe`。预算默认 `max_provider_attempts=600`、`max_total_tokens=30000000`（约 30M），对齐已实测的 Cross 修订与全文生成量级；用户明确收紧时才改小。当前声明式路径记录这些字段，真正强制执行仍待接线，不要向用户保证超限必停。
 - 准备阶段默认 `preparation_mode="deterministic_workers"`、`preparation_concurrency=5`（与五模块并行对齐；用户可改 1–16）。
 - 只有 `aggregate_existing` 使用 `source_module_refs`；只有 `render_existing` 使用 `source_markdown_ref`。
 - 用户可直接把完整 Skill 包放入 `Inputs/report-template-role-skills/`，不要求每次蒸馏。

@@ -413,8 +413,10 @@ class ReportRequest(ReportingModel):
     )
     missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft"
     cost_control_mode: CostControlMode = "observe"
-    max_provider_attempts: int = Field(default=80, ge=1, le=1000)
-    max_total_tokens: int = Field(default=800_000, ge=1_000)
+    # Measured production runs: Cross revise ~130–240 attempts / 7–13M tokens;
+    # full report ~500 attempts / ~28M tokens. Defaults must not warn on those.
+    max_provider_attempts: int = Field(default=600, ge=1, le=1000)
+    max_total_tokens: int = Field(default=30_000_000, ge=1_000)
     preparation_mode: Literal[
         "serial", "deterministic_workers"
     ] = "deterministic_workers"

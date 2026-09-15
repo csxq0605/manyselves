@@ -97,8 +97,8 @@ class RunReportingWorkflowTool(Tool):
         user_supplements: list[dict[str, Any]] | None = None,
         missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
         cost_control_mode: CostControlMode = "observe",
-        max_provider_attempts: int = 80,
-        max_total_tokens: int = 800_000,
+        max_provider_attempts: int = 600,
+        max_total_tokens: int = 30_000_000,
         preparation_mode: Literal["serial", "deterministic_workers"] = (
             "deterministic_workers"
         ),

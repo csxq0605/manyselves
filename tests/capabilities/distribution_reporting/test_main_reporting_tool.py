@@ -71,8 +71,8 @@ async def test_distribution_demo_main_starts_full_report_without_workflow_discov
         "user_supplements": [],
         "missing_evidence_policy": "draft",
         "cost_control_mode": "observe",
-        "max_provider_attempts": 80,
-        "max_total_tokens": 800_000,
+        "max_provider_attempts": 600,
+        "max_total_tokens": 30_000_000,
         "preparation_mode": "deterministic_workers",
         "preparation_concurrency": 5,
     }
