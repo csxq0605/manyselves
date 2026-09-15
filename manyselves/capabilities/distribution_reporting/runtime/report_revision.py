@@ -312,6 +312,37 @@ def module_has_requested_revision(value: Any) -> bool:
     )
 
 
+def module_uses_baseline_without_revision(value: Any) -> bool:
+    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+    if context.status != "ready":
+        return False
+    state = context.reporting_state
+    if not state.get("baseline_run_id"):
+        return False
+    module_id = context.module_id
+    if any(target.startswith(module_id + ".") for target in state.get("revision_targets", {})):
+        return False
+    module = state.get("module_submissions", {}).get(module_id)
+    return module is not None
+
+
+def complete_baseline_module_lane(value: Any) -> DeclarativeModuleRuntimeLaneContext:
+    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+    if context.status != "ready":
+        return context
+    state = context.reporting_state
+    module = ModuleSubmission.model_validate(state["module_submissions"][context.module_id])
+    return context.model_copy(
+        update={
+            "status": "reviewed",
+            "module": module,
+            "revision": None,
+            "error": None,
+            "reporting_state": state,
+        }
+    )
+
+
 async def prepare_requested_module_revision(value: Any, *, store: ReportingStore):
     context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
     state = context.reporting_state
@@ -371,6 +402,8 @@ def build_report_revision_tools(workspace: Path) -> dict[str, Any]:
         **build_revision_input_tools(workspace),
         "prepare-report-revision": partial(prepare_report_revision, workspace=workspace),
         "module-has-requested-revision": module_has_requested_revision,
+        "module-uses-baseline-without-revision": module_uses_baseline_without_revision,
+        "complete-baseline-module-lane": complete_baseline_module_lane,
         "prepare-requested-module-revision": partial(prepare_requested_module_revision, store=store),
         "accept-requested-module-revision": partial(accept_requested_module_revision, store=store),
         "prepare-revision-aggregate": partial(prepare_revision_aggregate, store=store),

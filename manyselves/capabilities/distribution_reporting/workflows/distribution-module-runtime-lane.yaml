@@ -53,7 +53,27 @@ actions:
     variable: requested-revision
     operator: truthy
   then: prepare-requested-module-revision
+  otherwise: module-uses-baseline-without-revision
+- id: module-uses-baseline-without-revision
+  kind: invoke_tool
+  tool: module-uses-baseline-without-revision
+  input_variable: lane-context
+  output_variable: skip-to-baseline
+- id: choose-baseline-skip
+  kind: if
+  condition:
+    variable: skip-to-baseline
+    operator: truthy
+  then: complete-baseline-module-lane
   otherwise: module-lane-retries-preflight-revision
+- id: complete-baseline-module-lane
+  kind: invoke_tool
+  tool: complete-baseline-module-lane
+  input_variable: lane-context
+  output_variable: lane-context
+- id: complete-baseline-module-outcome
+  kind: goto
+  target: complete-current-module-lane
 - id: prepare-requested-module-revision
   kind: invoke_tool
   tool: prepare-requested-module-revision

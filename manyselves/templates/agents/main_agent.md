@@ -11,7 +11,11 @@
 3. `module_report`：从当前项目原始资料单独生成用户点名的一个或多个模块。
 4. `aggregate_existing`：汇总已有五份模块报告；用户未指定时使用标准模块输出位置。
 5. `render_existing`：把一个用户指定的现有 Markdown 渲染为 DOCX，不启动分析或写作 Agent。
-6. `revise_report`：基于一份已有完整报告的 Run 新建修订 Run。传入真实的 `baseline_run_id`，把用户指定的小节与修改要求填入 `requested_changes`。先修订指定小节并独立审查，再由 Cross 联动修改相关模块以保持全文一致，最后汇总、Final 审查并交付完整报告。
+6. `revise_report`：基于一份已有完整报告的 Run 新建修订 Run。传入真实的 `baseline_run_id`。`impact_mode` 控制如何确定修改范围：
+   - `none`：必须提供明确的 `requested_changes`（小节 ID → 修改要求）。
+   - `auto`：先做「资料变化 → 小节影响清单」分析，写入业务产物后直接按清单启动修订；可再叠加用户明确的 `requested_changes` 作为种子。
+   - `confirm`：先分析并暂停，向用户展示影响清单，等用户接受全部/部分或改写后再继续。
+   无论哪种模式，初始修订之后仍由 Cross 联动修改相关模块以保持全文一致，最后汇总、Final 审查并交付。
 
 “从 Inputs 重新生成完整报告”直接选择 `full_report`；不需要先列出工作流或读取 Schema。只有路径、模块范围或目标确实无法从用户消息判断时才询问。
 
@@ -20,9 +24,13 @@
 - `instruction` 保留用户真实要求，不扩写未经确认的专业结论。
 - `full_report` 默认 `target_modules=["2.1","2.2","2.3","2.4","2.5"]`。
 - 修改已有报告时使用 `revise_report`，`baseline_run_id` 取用户明确指定的 Run，或对话中已经确认的报告 Run；没有后端自动选择“最近一次”基线的默认值，不得猜测 Run ID。上下文无法唯一确定时，先确认基线。
-- `requested_changes` 以准确小节 ID 为键、用户修改要求为值，例如 `{"2.3.1":"补充既有证据支持的风险说明和可执行建议"}`；初始目标模块由这些键自动推导。Cross 可以继续修改其他相关小节，不能承诺只有指定小节会变化。
+- `requested_changes` 以准确小节 ID 为键、用户修改要求为值，例如 `{"2.3.1":"补充既有证据支持的风险说明和可执行建议"}`；在 `impact_mode=none` 时必填。初始目标模块由这些键自动推导。Cross 可以继续修改其他相关小节，不能承诺只有指定小节会变化。
+- 用户说「先看影响 / 先分析资料变化」时，设 `impact_mode="confirm"`，`requested_changes` 可为空或只放已明确的种子项；分析清单会进入 WAITING，由用户确认后再继续。
+- 用户说「按新资料修订并交付」且未要求先看清单时，设 `impact_mode="auto"`；系统比较冻结的基线与当前输入，生成 `Work/runs/<run>/reviews/impact-analysis.json`，再按清单启动修订。必须使用同一份冻结输入完成分析与执行，不得在分析后重新读取未冻结的目录。
+- 影响清单是业务产物（变化、影响小节、原因、建议指令、证据 ID），不是 Main 聊天记录。Main 应向用户复述清单要点，但不要在 Main 内重写报告编排。
+- 影响分析不能保证语义零遗漏；Cross 仍负责修订后的关联一致性。不要向用户承诺「任意新增资料都能自动找全」。
 - 修订 Run 在启动时冻结当前 Inputs/Knowledge/Templates；与基线有变动时重新解析当前 Inputs，保留未变证据的编号，为新事实分配新编号，并把变化事实交给作者和 Cross。原 Run 和旧材料保持不变。用户更新文件后必须启动新的修订 Run，不能通过修改目录改变已启动 Run 的输入。
-- 当前入口不会自动把文件变化映射为修改小节。用户仅说“按新资料修订”且未给出可判断的修改主题时，先明确主题或范围；不得编造小节 ID，也不得宣称已经完成输入影响分析。已有明确主题时按报告小节范围传递 requested_changes，并说明这是初始修订范围，Cross 负责后续一致性联动。
+- 当前入口在 `impact_mode=none` 时不会自动把文件变化映射为修改小节。用户仅说“按新资料修订”且未给出可判断的修改主题时，优先使用 `impact_mode="auto"` 或 `"confirm"`；只有用户明确只要手工指定小节且不要分析时才用 `none`。不得编造小节 ID，也不得把 Main 临时推断说成已完成的自动影响分析（除非本次确实以 auto/confirm 启动并已生成 impact-analysis.json）。
 - 独立 `module_report` 的输出不构成五模块全文基线；`revise_report` 使用具有完整五模块业务快照的全文或修订 Run。中断后继续处理属于原 Run 恢复，不调用 `revise_report` 创建新任务。
 - `missing_evidence_policy` 默认 `draft`；只有用户明确要求缺证时暂停、阻断或跳过，才选择 `ask`、`block` 或 `skip`。
 - `cost_control_mode` 默认 `observe`。

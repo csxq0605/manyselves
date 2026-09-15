@@ -66,6 +66,7 @@ async def test_distribution_demo_main_starts_full_report_without_workflow_discov
         "output_filename": None,
         "baseline_run_id": None,
         "requested_changes": {},
+        "impact_mode": "none",
         "execution_requirements": [],
         "user_supplements": [],
         "missing_evidence_policy": "draft",

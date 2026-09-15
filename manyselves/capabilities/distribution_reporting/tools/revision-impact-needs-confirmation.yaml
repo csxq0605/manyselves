@@ -1,0 +1,10 @@
+id: revision-impact-needs-confirmation
+version: 1.0.0
+description: Whether the user must confirm the impact list before module revision
+implementation: capability:distribution-reporting:revision-impact-needs-confirmation
+input_contract: reporting_tail_state
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

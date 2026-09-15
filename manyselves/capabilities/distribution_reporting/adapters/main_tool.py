@@ -65,10 +65,11 @@ class RunReportingWorkflowTool(Tool):
     description = (
         "Start one Distribution Reporting operation selected from "
         "distill_template_skill, full_report, module_report, aggregate_existing, "
-        "render_existing, or revise_report (new Run from baseline_run_id, requested_changes maps "
-        "exact subsection IDs to initial edits, followed by Cross-linked revisions for consistency; "
-        "NOT interruption resume). The operation is projected to its Capability-owned "
-        "file-defined workflow and attached to this Main conversation."
+        "render_existing, or revise_report. revise_report copies baseline_run_id into a "
+        "new Run; requested_changes maps subsection IDs to initial edits; impact_mode=auto "
+        "builds an impact list from current inputs then continues; impact_mode=confirm "
+        "waits for user acceptance of that list. Cross still links consistency revisions. "
+        "NOT interruption resume."
     )
     side_effect = "ordered_state"
 
@@ -91,6 +92,7 @@ class RunReportingWorkflowTool(Tool):
         output_filename: str | None = None,
         baseline_run_id: str | None = None,
         requested_changes: dict[str, str] | None = None,
+        impact_mode: Literal["none", "auto", "confirm"] = "none",
         execution_requirements: list[str] | None = None,
         user_supplements: list[dict[str, Any]] | None = None,
         missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
@@ -129,6 +131,7 @@ class RunReportingWorkflowTool(Tool):
                 "output_filename": output_filename,
                 "baseline_run_id": baseline_run_id,
                 "requested_changes": requested_changes or {},
+                "impact_mode": impact_mode,
                 "execution_requirements": execution_requirements or [],
                 "user_supplements": [
                     UserSupplement.model_validate(item)

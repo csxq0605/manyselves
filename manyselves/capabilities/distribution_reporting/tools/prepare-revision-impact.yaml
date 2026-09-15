@@ -1,0 +1,10 @@
+id: prepare-revision-impact
+version: 1.0.0
+description: Project reporting state before building the revision impact list
+implementation: capability:distribution-reporting:prepare-revision-impact
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

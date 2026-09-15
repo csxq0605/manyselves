@@ -420,12 +420,14 @@ class PublicReportingWorkflowRuntime:
         reporting_store = ReportingStore(self.workspace)
         from .aggregate_existing import build_aggregate_existing_tool_implementations
         from .report_revision import build_report_revision_tools
+        from .revision_impact import bind_revision_impact_tools
 
         implementations = {
             **build_aggregate_existing_tool_implementations(
                 workspace=self.workspace, input_snapshot=self.input_snapshot, store=reporting_store,
             ),
             **build_report_revision_tools(self.workspace),
+            **bind_revision_impact_tools(reporting_store),
             **build_public_entrypoint_tool_implementations(),
             **build_preparation_tool_implementations(
                 workspace=self.workspace,

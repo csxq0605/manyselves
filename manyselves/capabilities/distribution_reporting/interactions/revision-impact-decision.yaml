@@ -1,0 +1,7 @@
+id: revision-impact-decision
+version: 1.0.0
+description: Confirm all, part, or abort after the revision impact list is ready
+interaction_type: decision
+input_contract: revision_impact_decision_input
+title: Revision impact decision
+submit_label: Continue revision

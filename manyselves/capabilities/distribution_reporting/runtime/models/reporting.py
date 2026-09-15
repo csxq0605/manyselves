@@ -399,6 +399,13 @@ class ReportRequest(ReportingModel):
         default_factory=dict,
         description="For revise_report: exact module subsection id to verbatim requested change.",
     )
+    impact_mode: Literal["none", "auto", "confirm"] = Field(
+        default="none",
+        description=(
+            "revise_report only: none uses explicit requested_changes; auto builds the "
+            "impact list and continues; confirm waits for user acceptance of the list."
+        ),
+    )
     execution_requirements: list[str] = Field(default_factory=list)
     user_supplements: list[UserSupplement] = Field(
         default_factory=list,
@@ -426,15 +433,27 @@ class ReportRequest(ReportingModel):
     @model_validator(mode="after")
     def operation_inputs_are_complete(self) -> "ReportRequest":
         if self.operation == "revise_report":
-            if not self.baseline_run_id or not self.requested_changes:
-                raise ValueError("revise_report requires baseline_run_id and requested_changes")
+            if not self.baseline_run_id:
+                raise ValueError("revise_report requires baseline_run_id")
+            if self.impact_mode == "none" and not self.requested_changes:
+                raise ValueError(
+                    "revise_report requires requested_changes unless impact_mode is auto or confirm"
+                )
             for target, instruction in self.requested_changes.items():
                 resolve_submodule(target)
                 if not instruction.strip():
                     raise ValueError("requested change must not be empty")
-            self.target_modules = sorted({".".join(target.split(".")[:2]) for target in self.requested_changes})
+            if self.impact_mode == "none":
+                self.target_modules = sorted(
+                    {".".join(target.split(".")[:2]) for target in self.requested_changes}
+                )
+            else:
+                # Impact analysis may discover additional subsections; compile all lanes.
+                self.target_modules = list(REPORT_MODULE_IDS)
         elif self.baseline_run_id is not None or self.requested_changes:
             raise ValueError("baseline_run_id and requested_changes are only valid for revise_report")
+        elif self.impact_mode != "none":
+            raise ValueError("impact_mode is only valid for revise_report")
         supplement_ids = [item.id for item in self.user_supplements]
         if len(supplement_ids) != len(set(supplement_ids)):
             raise ValueError("user supplement ids must be unique")

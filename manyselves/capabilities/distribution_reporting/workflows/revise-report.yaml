@@ -1,9 +1,11 @@
 id: revise-report
 version: 1.0.0
-description: Copy one business baseline into a new Run, revise assigned subsections, cross-review, aggregate and deliver
+description: Copy one business baseline into a new Run, analyze input impact, revise assigned subsections, cross-review, aggregate and deliver
 tasks:
 - aggregate-existing
 - cross-owner-review
+interactions:
+- revision-impact-decision
 recovery:
 - current-reporting-recovery
 outputs:
@@ -14,6 +16,9 @@ output_contract: distribution_reporting_output
 state:
   run-id: ''
   reporting-state: {}
+  impact-analysis: {}
+  impact-decision: {}
+  needs-impact-confirm: false
 actions:
 - id: prepare-report-revision
   kind: invoke_tool
@@ -33,7 +38,7 @@ actions:
     variable: inputs-changed
     operator: truthy
   then: project-revision-preparation
-  otherwise: run-module-cohort
+  otherwise: impact-mode-check
 - id: project-revision-preparation
   kind: invoke_tool
   tool: project-revision-preparation
@@ -52,6 +57,57 @@ actions:
   input_variables:
     state: reporting-state
     preparation: revision-preparation
+  output_variable: reporting-state
+- id: impact-mode-check
+  kind: invoke_tool
+  tool: revision-impact-mode-enabled
+  input_variable: reporting-state
+  output_variable: impact-enabled
+- id: choose-impact-path
+  kind: if
+  condition:
+    variable: impact-enabled
+    operator: truthy
+  then: build-revision-impact
+  otherwise: run-module-cohort
+- id: build-revision-impact
+  kind: invoke_tool
+  tool: build-revision-impact
+  input_variable: reporting-state
+  output_variable: impact-analysis
+- id: impact-needs-confirmation
+  kind: invoke_tool
+  tool: revision-impact-needs-confirmation
+  input_variable: reporting-state
+  output_variable: needs-impact-confirm
+- id: choose-impact-confirmation
+  kind: if
+  condition:
+    variable: needs-impact-confirm
+    operator: truthy
+  then: request-impact-decision
+  otherwise: apply-impact-auto
+- id: request-impact-decision
+  kind: request_input
+  interaction: revision-impact-decision
+  output_variable: impact-decision
+- id: apply-impact-after-decision
+  kind: invoke_tool
+  tool: apply-revision-impact
+  input_variables:
+    state: reporting-state
+    analysis: impact-analysis
+    decision: impact-decision
+  output_variable: reporting-state
+- id: continue-after-impact-decision
+  kind: goto
+  target: run-module-cohort
+- id: apply-impact-auto
+  kind: invoke_tool
+  tool: apply-revision-impact
+  input_variables:
+    state: reporting-state
+    analysis: impact-analysis
   output_variable: reporting-state
 - id: run-module-cohort
   kind: subworkflow
