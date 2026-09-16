@@ -69,22 +69,29 @@ def attach_module_results(value: Any) -> dict[str, Any]:
         raise TypeError("module result attachment requires module_results")
 
     submissions: dict[str, ModuleSubmission] = {}
-    lane_states: list[Mapping[str, Any]] = []
+    # Each lane carries a full reporting-state snapshot. Only that lane's own
+    # module bindings may be attached; otherwise later lanes overwrite earlier
+    # lanes' completion refs with pre-cohort copies.
+    lane_owned_refs: dict[str, str] = {}
+    lane_owned_submissions: dict[str, Any] = {}
     for result in module_results.values():
-        if isinstance(result, Mapping) and "module" in result:
-            lane_state = result.get("lane_state")
-            if isinstance(lane_state, Mapping):
-                lane_states.append(lane_state)
-            result = result["module"]
-        module = ModuleSubmission.model_validate(result)
+        lane_state = result.get("lane_state") if isinstance(result, Mapping) else None
+        raw_module = result.get("module") if isinstance(result, Mapping) and "module" in result else result
+        module = ModuleSubmission.model_validate(raw_module)
         submissions[module.module_id] = module
+        if isinstance(lane_state, Mapping):
+            refs = lane_state.get("module_review_completion_refs")
+            if isinstance(refs, Mapping) and module.module_id in refs:
+                lane_owned_refs[module.module_id] = refs[module.module_id]
+            specs = lane_state.get("specialist_submissions")
+            if isinstance(specs, Mapping) and module.module_id in specs:
+                lane_owned_submissions[module.module_id] = deepcopy(specs[module.module_id])
 
     attached = deepcopy(dict(reporting_state))
-    for lane_state in lane_states:
-        for state_key in ("specialist_submissions", "module_review_completion_refs"):
-            state_value = lane_state.get(state_key)
-            if isinstance(state_value, Mapping):
-                attached.setdefault(state_key, {}).update(deepcopy(dict(state_value)))
+    if lane_owned_refs:
+        attached.setdefault("module_review_completion_refs", {}).update(lane_owned_refs)
+    if lane_owned_submissions:
+        attached.setdefault("specialist_submissions", {}).update(lane_owned_submissions)
     attached.setdefault("module_submissions", {}).update(submissions)
     return attached
 

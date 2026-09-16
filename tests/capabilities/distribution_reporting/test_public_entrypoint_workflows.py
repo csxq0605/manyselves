@@ -167,6 +167,50 @@ def test_module_result_projection_keeps_typed_submissions() -> None:
     assert attached["module_submissions"] == {"2.4": submission}
 
 
+def test_attach_module_results_does_not_let_later_lanes_overwrite_completion_refs() -> None:
+    """Each lane snapshot still contains pre-cohort refs for other modules."""
+
+    def _module(module_id: str, revision: int) -> ModuleSubmission:
+        return ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"正文 {submodule_id}"
+                for submodule_id in REPORT_TAXONOMY[module_id].submodules
+            },
+            claims=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=revision,
+        )
+
+    stale = "Work/runs/r/reviews/module/baseline/2.3/completion-r1.json"
+    fresh = "Work/runs/r/reviews/module/initial/2.3/completion-r2.json"
+    attached = attach_module_results(
+        {
+            "reporting_state": {
+                "run_id": "r",
+                "module_review_completion_refs": {"2.3": stale},
+            },
+            "module_results": {
+                "2.1": {
+                    "module": _module("2.1", 2),
+                    "lane_state": {"module_review_completion_refs": {"2.3": stale}},
+                },
+                "2.3": {
+                    "module": _module("2.3", 2),
+                    "lane_state": {"module_review_completion_refs": {"2.3": fresh}},
+                },
+                "2.4": {
+                    "module": _module("2.4", 3),
+                    "lane_state": {"module_review_completion_refs": {"2.3": stale}},
+                },
+            },
+        }
+    )
+    assert attached["module_review_completion_refs"]["2.3"] == fresh
+    assert set(attached["module_submissions"]) == {"2.1", "2.3", "2.4"}
+
+
 def _registry_with_existing_workflow_specializers() -> DefinitionRegistry:
     _capability, source = load_distribution_reporting_capability()
     registry = DefinitionRegistry()
