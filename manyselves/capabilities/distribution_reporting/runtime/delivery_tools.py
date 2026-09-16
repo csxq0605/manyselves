@@ -70,8 +70,11 @@ def delivery_root(workspace: Path, run_id: str) -> Path:
     return Path(workspace) / "Work" / "runs" / run_id / "delivery"
 
 
+_INVALID_FILENAME_CHARS = set('<>:"/\\|?*')
+
+
 def public_report_stem(state: Mapping[str, Any]) -> str:
-    """Honor request.output_filename; fall back to the canonical report name."""
+    """Honor a safe request.output_filename; fall back to the canonical name."""
 
     request = state.get("request") or {}
     filename = (
@@ -81,7 +84,14 @@ def public_report_stem(state: Mapping[str, Any]) -> str:
     )
     if filename:
         stem = Path(str(filename)).stem.strip()
-        if stem:
+        # Windows rejects '?' and other reserved characters; corrupted encodings
+        # must not break delivery.
+        if (
+            stem
+            and stem not in {".", ".."}
+            and not any(ch in _INVALID_FILENAME_CHARS for ch in stem)
+            and "\x00" not in stem
+        ):
             return stem
     return "配电安全专家咨询报告"
 
