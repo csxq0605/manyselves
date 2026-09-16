@@ -26,8 +26,6 @@ semantics live in Capability file definitions.
 
 > **One runtime. Many selves.**
 
-![How Manyselves becomes a team](assets/screenshots/workflow.png)
-
 ---
 
 ## Design principles
@@ -64,6 +62,8 @@ Full spec: [`docs/PROJECT_POSITIONING.md`](docs/PROJECT_POSITIONING.md) and
 ---
 
 ## System shape
+
+![Manyselves architecture](assets/diagrams/architecture.svg)
 
 ```text
 Markdown / YAML / JSON Schema / Python Tool references

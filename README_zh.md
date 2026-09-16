@@ -23,8 +23,6 @@ Manyselves 的出发点是：**Agent 团队的边界应写在文档里，而不�
 
 > **One runtime. Many selves.**
 
-![Manyselves 如何成为一支团队](assets/screenshots/workflow.png)
-
 ---
 
 ## 设计原则
@@ -56,32 +54,7 @@ Manyselves 的出发点是：**Agent 团队的边界应写在文档里，而不�
 
 ## 系统形态
 
-```text
-Markdown / YAML / JSON Schema / Python Tool references
-                         │
-                         ▼
-              Definition Loader & Registry
-                         │
-                         ▼
-                  Workflow Compiler
-                         │
-                         ▼
-             Resolved Plan + Stateless Kernel
-                         │
-                         ▼
-           Generic Action / Executor Runtime
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-        Agents          Tools       Interactions
-          │              │              │
-          └──────────────┼──────────────┘
-                         ▼
-              State / Recovery / Events
-                         │
-                         ▼
-        FastAPI / Capability Frontend / Outputs
-```
+![Manyselves 架构](assets/diagrams/architecture.svg)
 
 ---
 

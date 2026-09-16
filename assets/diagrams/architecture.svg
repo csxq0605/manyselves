@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 640" width="920" height="640" role="img" aria-labelledby="title desc">
+  <title id="title">Manyselves architecture</title>
+  <desc id="desc">File definitions load into a registry, compile to a resolved plan, execute on a stateless kernel and generic runtime, dispatch to agents tools and interactions, persist state recovery and events, and surface via FastAPI and capability frontend.</desc>
+  <style>
+    .bg { fill: #090B1A; }
+    .card { fill: #12152b; stroke: #2a2f55; stroke-width: 1; rx: 10; }
+    .accent { fill: #696CF5; }
+    .violet { fill: #9A63F7; }
+    .cyan { fill: #2FD8EF; }
+    .t { fill: #F7F8FF; font: 500 14px -apple-system, 'Segoe UI', sans-serif; }
+    .s { fill: #A8ADCB; font: 400 12px -apple-system, 'Segoe UI', sans-serif; }
+    .h { fill: #F7F8FF; font: 600 16px -apple-system, 'Segoe UI', sans-serif; }
+    .lane { fill: #0e1228; stroke: #2a2f55; stroke-width: 1; rx: 12; }
+    .arrow { stroke: #696CF5; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#696CF5"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="920" height="640" rx="16"/>
+  <text class="h" x="40" y="42">Manyselves — one Kernel, one Runtime, many Capabilities</text>
+  <text class="s" x="40" y="64">File definitions own orchestration. Kernel stays stateless and business-neutral.</text>
+
+  <!-- Definitions -->
+  <rect class="card" x="40" y="90" width="200" height="88"/>
+  <rect class="accent" x="40" y="90" width="6" height="88" rx="3"/>
+  <text class="t" x="60" y="118">File definitions</text>
+  <text class="s" x="60" y="140">Capability · Agent · Task</text>
+  <text class="s" x="60" y="158">Tool · Contract · Workflow</text>
+
+  <!-- Loader -->
+  <rect class="card" x="280" y="90" width="160" height="88"/>
+  <rect class="violet" x="280" y="90" width="6" height="88" rx="3"/>
+  <text class="t" x="300" y="118">Loader &amp; Registry</text>
+  <text class="s" x="300" y="140">Validate refs</text>
+  <text class="s" x="300" y="158">Register definitions</text>
+
+  <!-- Compiler -->
+  <rect class="card" x="480" y="90" width="160" height="88"/>
+  <rect class="cyan" x="480" y="90" width="6" height="88" rx="3"/>
+  <text class="t" x="500" y="118">Compiler</text>
+  <text class="s" x="500" y="140">Resolved Plan</text>
+  <text class="s" x="500" y="158">Frozen for the Run</text>
+
+  <!-- Kernel -->
+  <rect class="card" x="680" y="90" width="200" height="88"/>
+  <rect class="accent" x="680" y="90" width="6" height="88" rx="3"/>
+  <text class="t" x="700" y="118">Stateless Kernel</text>
+  <text class="s" x="700" y="140">Plan + State + Event</text>
+  <text class="s" x="700" y="158">→ New State + Effects</text>
+
+  <path class="arrow" d="M248 134 H272"/>
+  <path class="arrow" d="M448 134 H472"/>
+  <path class="arrow" d="M648 134 H672"/>
+
+  <!-- Generic runtime -->
+  <rect class="lane" x="40" y="220" width="840" height="150"/>
+  <text class="t" x="60" y="248">Generic Action / Executor Runtime</text>
+  <text class="s" x="60" y="268">SetVariable · InvokeTool · InvokeAgent · If / Parallel / Join · RequestInput · PublishResult · …</text>
+
+  <rect class="card" x="80" y="290" width="220" height="56"/>
+  <rect class="violet" x="80" y="290" width="6" height="56" rx="3"/>
+  <text class="t" x="100" y="322">Agents</text>
+
+  <rect class="card" x="350" y="290" width="220" height="56"/>
+  <rect class="cyan" x="350" y="290" width="6" height="56" rx="3"/>
+  <text class="t" x="370" y="322">Tools</text>
+
+  <rect class="card" x="620" y="290" width="220" height="56"/>
+  <rect class="accent" x="620" y="290" width="6" height="56" rx="3"/>
+  <text class="t" x="640" y="322">Interactions</text>
+
+  <path class="arrow" d="M780 186 V220"/>
+
+  <!-- Persistence -->
+  <rect class="card" x="40" y="410" width="400" height="80"/>
+  <rect class="accent" x="40" y="410" width="6" height="80" rx="3"/>
+  <text class="t" x="60" y="440">State · Recovery · Events</text>
+  <text class="s" x="60" y="462">Same-Run resume · WAITING · Conversation</text>
+
+  <!-- Capability domain -->
+  <rect class="card" x="480" y="410" width="400" height="80"/>
+  <rect class="violet" x="480" y="410" width="6" height="80" rx="3"/>
+  <text class="t" x="500" y="440">Capability Domain Runtime</text>
+  <text class="s" x="500" y="462">Models · prompts · deterministic tools · delivery</text>
+
+  <path class="arrow" d="M460 370 V410"/>
+  <path class="arrow" d="M680 370 V410"/>
+
+  <!-- Surface -->
+  <rect class="lane" x="40" y="530" width="840" height="70"/>
+  <text class="t" x="60" y="560">Application surface</text>
+  <text class="s" x="60" y="582">Generic FastAPI · Capability frontend · Outputs / Reports</text>
+
+  <path class="arrow" d="M460 498 V530"/>
+</svg>

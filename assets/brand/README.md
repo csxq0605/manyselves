@@ -11,7 +11,8 @@ skills change.
 - `manyselves-mark-chroma.png`: original generated source retained for provenance.
 - `manyselves-app-icon.png`: deterministic application-icon export.
 - `../screenshots/title.png`: repository banner.
-- `../screenshots/workflow.png`: identity-to-deliverable workflow.
+- `../diagrams/architecture.svg`: current runtime architecture diagram used in README.
+- `../screenshots/workflow.png`: legacy identity-to-deliverable sketch (superseded by architecture.svg).
 
 Run `uv run python scripts/build_brand_assets.py` to rebuild deterministic
 exports after changing the master mark.
