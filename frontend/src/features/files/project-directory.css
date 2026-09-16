@@ -48,7 +48,7 @@
   font-size: 13px;
   gap: 12px;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 10px 24px;
 }
 
 .file-list__pagination > div {
@@ -129,7 +129,7 @@
   font-size: 13px;
   gap: 12px;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 10px 24px;
 }
 
 .output-tabs__pagination > div {

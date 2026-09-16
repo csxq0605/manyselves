@@ -1,12 +1,16 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import type { ApiGateway } from "../../api/gateway";
 import { AppProviders } from "../../app/providers";
 import { HistoryPage } from "./HistoryPage";
+
+function LocationProbe() {
+  return <output data-testid="location">{useLocation().pathname}</output>;
+}
 
 function gatewayWithConversations(count: number): ApiGateway {
   return {
@@ -78,5 +82,45 @@ describe("HistoryPage", () => {
     expect(screen.getByText("Page 1 / 1")).toBeVisible();
     expect(screen.getByRole("button", { name: "\u4e0a\u4e00\u9875" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "\u4e0b\u4e00\u9875" })).toBeDisabled();
+  });
+
+  it("formats conversation timestamps in Asia/Shanghai", async () => {
+    renderHistory(1);
+
+    expect(await screen.findByText("2026-08-05 16:00:00")).toBeVisible();
+  });
+
+  it("puts a newly created history conversation into the shared cache before navigating", async () => {
+    const requestJson = async <T,>(path: string, init?: { readonly method?: string }): Promise<T> => {
+      if (path.startsWith("/api/v1/conversations?") && !init?.method) return {
+        activeSessionId: "session-1",
+        conversations: [{ active: true, name: "Session 1", preview: "", projectId: "project-1", sessionId: "session-1", timestamp: "before" }],
+        projectId: "project-1",
+      } as T;
+      if (path === "/api/v1/conversations" && init?.method === "POST") return {
+        active: true,
+        name: "新对话",
+        preview: "",
+        projectId: "project-1",
+        sessionId: "session-new",
+        timestamp: "now",
+      } as T;
+      throw new Error(`unexpected request: ${path}`);
+    };
+    const gateway = { ...gatewayWithConversations(1), requestJson } as ApiGateway;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 300_000 } } });
+    const user = userEvent.setup();
+    render(<AppProviders queryClient={queryClient}>
+      <MemoryRouter initialEntries={["/projects/project-1/history"]}>
+        <HistoryPage gateway={gateway} projectId="project-1" />
+        <LocationProbe />
+      </MemoryRouter>
+    </AppProviders>);
+    await screen.findByText("Session 1");
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/projects/project-1/conversations/session-new"));
+    expect(queryClient.getQueryData<{ readonly activeSessionId: string }>(["conversations", "project-1", "main"])?.activeSessionId).toBe("session-new");
   });
 });

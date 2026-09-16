@@ -1,6 +1,7 @@
 ﻿import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../../api/gateway";
+import { formatShanghaiDateTime } from "../../app/date-time";
 import { createUuid } from "../../app/uuid";
 import type { RuntimeMessageView } from "../agents/event-reducer";
 import type { ConversationApi } from "../conversations/conversation-api";
@@ -61,9 +62,10 @@ function messageRoleLabel(message: ChatMessage): string {
 function messageMeta(message: ChatMessage) {
   const role = messageRoleLabel(message);
   if (!message.timestamp) return <strong>{role}</strong>;
+  const timestamp = formatShanghaiDateTime(message.timestamp);
   return message.role === "user"
-    ? <><time>{message.timestamp}</time>{" "}<strong>{role}</strong></>
-    : <><strong>{role}</strong>{" "}<time>{message.timestamp}</time></>;
+    ? <><time dateTime={message.timestamp}>{timestamp}</time>{" "}<strong>{role}</strong></>
+    : <><strong>{role}</strong>{" "}<time dateTime={message.timestamp}>{timestamp}</time></>;
 }
 
 function isPreCheckpoint(message: ChatMessage): boolean {
@@ -287,7 +289,9 @@ export function MessageList({
                 <ol aria-label="运行态记录" className="agent-runtime__list">
                   {runtimeTraces.map((message) => (
                     <li key={message.id}>
-                      <time>{message.timestamp ?? "—"}</time>
+                      <time dateTime={message.timestamp ?? undefined}>
+                        {message.timestamp ? formatShanghaiDateTime(message.timestamp) : "—"}
+                      </time>
                       <strong>{runtimeTraceLabel(message)}</strong>
                       <span>{message.content || "—"}</span>
                     </li>
@@ -350,7 +354,7 @@ export function MessageList({
             <li className="message message--assistant message--live" key={`live-${message.id}`}>
               <header className="message__meta">
                 <strong>{message.agentId}</strong>
-                <time>{message.timestamp}</time>
+                <time dateTime={message.timestamp}>{formatShanghaiDateTime(message.timestamp)}</time>
               </header>
               <p className="message__bubble">{message.content || "正在生成…"}</p>
               <small>{message.status === "streaming" ? "流式生成中" : "已完成"}</small>

@@ -22,6 +22,7 @@ export interface ConversationWorkspaceProps {
   readonly agentId: string;
   readonly gateway: ApiGateway;
   readonly liveMessages?: readonly RuntimeMessageView[] | undefined;
+  readonly onRequestedSessionMissing?: (() => void) | undefined;
   readonly onSessionChanged?: ((sessionId: string) => void) | undefined;
   readonly projectId: string;
   readonly projectName?: string | undefined;
@@ -36,6 +37,7 @@ export function ConversationWorkspace({
   agentId,
   gateway,
   liveMessages = [],
+  onRequestedSessionMissing,
   onSessionChanged,
   projectId,
   projectName,
@@ -46,6 +48,7 @@ export function ConversationWorkspace({
   const fileApi = useMemo(() => createFileApi(gateway), [gateway]);
   const workflowApi = useMemo(() => createWorkflowApi(gateway), [gateway]);
   const [messageStore] = useState(() => createConversationMessageStore());
+  const clearActiveSession = useConversationStore((state) => state.clearActiveSession);
   const setActiveSession = useConversationStore((state) => state.setActiveSession);
   const activationAttemptRef = useRef<{ readonly key: string; readonly promise: ReturnType<typeof api.activate> } | null>(null);
   const [activationError, setActivationError] = useState<string | null>(null);
@@ -53,7 +56,7 @@ export function ConversationWorkspace({
   const conversations = useQuery({
     queryFn: () => api.list(projectId, agentId),
     queryKey: ["conversations", projectId, agentId],
-    placeholderData: (previousData) => previousData,  // 切换时保留之前的数据
+    staleTime: 300_000,
   });
   const activeSessionId = conversations.data?.activeSessionId ?? null;
   const sessionReady = !requestedSessionId || requestedSessionId === activeSessionId;
@@ -61,7 +64,6 @@ export function ConversationWorkspace({
     enabled: activeSessionId !== null && sessionReady,
     queryFn: () => api.messages(projectId, agentId),
     queryKey: ["conversation-messages", projectId, agentId, activeSessionId],
-    placeholderData: (previousData) => previousData,  // 切换时保留之前的数据
   });
   const runtime = useQuery({
     enabled: typeof gateway.bootstrap === "function",
@@ -96,27 +98,17 @@ export function ConversationWorkspace({
   const requestedSessionMissing = Boolean(
     requestedSessionId
     && conversations.data
+    && conversations.data.projectId === projectId
     && !conversations.data.conversations.some((item) => item.sessionId === requestedSessionId)
-    && conversations.isSuccess  // 确保查询成功，而不是正在加载
+    && conversations.isSuccess
+    && !conversations.isFetching
   );
 
-  // 如果请求的会话不属于当前项目，清空 localStorage 并导航到项目首页
   useEffect(() => {
-    if (requestedSessionMissing && requestedSessionId && projectId) {
-      const savedState = localStorage.getItem("manyselves-active-conversation");
-      if (savedState) {
-        try {
-          const parsed = JSON.parse(savedState);
-          if (parsed.state?.activeSessionIds) {
-            delete parsed.state.activeSessionIds[projectId];
-            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
-          }
-        } catch {
-          localStorage.removeItem("manyselves-active-conversation");
-        }
-      }
-    }
-  }, [requestedSessionMissing, requestedSessionId, projectId]);
+    if (!requestedSessionMissing) return;
+    clearActiveSession(projectId);
+    onRequestedSessionMissing?.();
+  }, [clearActiveSession, onRequestedSessionMissing, projectId, requestedSessionMissing]);
   const hasMessages = Boolean(messages.data?.messages.length || activeLiveMessages.length);
 
   // Save active session to global state when it changes
@@ -187,7 +179,6 @@ export function ConversationWorkspace({
           : null}
       </div>
       <div className="conversation-workspace__main">
-        {requestedSessionMissing ? <p role="alert">该会话不属于当前项目</p> : null}
         {activationError ? <p role="alert">{activationError}</p> : null}
         {requestedSessionId && conversations.data && !requestedSessionMissing && !sessionReady ? <p role="status">正在切换会话…</p> : null}
         {sessionReady && activeSessionId && messages.isPending ? <p role="status">正在加载会话历史…</p> : null}

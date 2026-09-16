@@ -2,7 +2,7 @@
 
 import json
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -158,6 +158,8 @@ class TestMessagePersistence:
         assert msgs[0]["role"] == "user"
         assert msgs[0]["content"] == "Hello"
         assert msgs[1]["role"] == "agent"
+        assert msgs[0]["ts"].endswith("Z")
+        assert datetime.fromisoformat(msgs[0]["ts"].replace("Z", "+00:00")).tzinfo == timezone.utc
 
     def test_messages_isolated_per_session(self, store: ConversationStore):
         """Messages in different sessions should be isolated."""

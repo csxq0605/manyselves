@@ -25,6 +25,13 @@ def test_compose_has_one_api_replica_and_persistent_data() -> None:
     ]
 
 
+def test_compose_does_not_shadow_api_bootstrap_assets() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
+    volumes = compose["services"]["api"]["volumes"]
+
+    assert all(":/app/deploy/config" not in volume for volume in volumes)
+
+
 def test_nginx_disables_sse_buffering_and_caches_safely() -> None:
     config = Path("deploy/nginx/default.conf").read_text("utf-8")
     assert "proxy_buffering off" in config
@@ -73,6 +80,30 @@ def test_compose_maps_prefixed_provider_keys_to_runtime_environment() -> None:
     assert environment["ANTHROPIC_API_KEY"] == "${MANYSELVES_ANTHROPIC_API_KEY:-}"
     assert environment["DEEPSEEK_API_KEY"] == "${MANYSELVES_DEEPSEEK_API_KEY:-}"
     assert environment["OPENROUTER_API_KEY"] == "${MANYSELVES_OPENROUTER_API_KEY:-}"
+
+
+def test_compose_enables_three_default_isolated_accounts() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
+    environment = compose["services"]["api"]["environment"]
+
+    assert environment["MANYSELVES_ACCOUNTS_FILE"] == (
+        "${MANYSELVES_ACCOUNTS_FILE:-/data/manyselves/.manyselves/accounts.yaml}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_ADMIN_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_ADMIN_PASSWORD:-yuanxi@2026}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD:-yuanxi@2026}"
+    )
+    assert environment["MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD"] == (
+        "${MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD:-yuanxi@2026}"
+    )
+
+    example = Path("deploy/env.example").read_text("utf-8")
+    assert "MANYSELVES_ACCOUNTS_FILE=/data/manyselves/.manyselves/accounts.yaml" in example
+    assert "MANYSELVES_ACCOUNT_ADMIN_PASSWORD=yuanxi@2026" in example
+    assert "MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD=yuanxi@2026" in example
+    assert "MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD=yuanxi@2026" in example
 
 
 def test_cent_os_docs_cover_selinux_volume_labeling() -> None:

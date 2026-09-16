@@ -13,7 +13,9 @@ RUN groupadd --system manyselves && useradd --system --gid manyselves --home-dir
 WORKDIR /app
 COPY --from=builder --chown=manyselves:manyselves /app/.venv /app/.venv
 COPY --from=builder --chown=manyselves:manyselves /app/manyselves /app/manyselves
-COPY --chown=manyselves:manyselves --chmod=755 deploy/api/entrypoint.sh deploy/api/healthcheck.py deploy/api/init_config.py /app/deploy/api/
+COPY --chown=manyselves:manyselves --chmod=755 deploy/api/entrypoint.sh deploy/api/healthcheck.py deploy/api/init_config.py scripts/init_multi_account_data.py /app/deploy/api/
+COPY --chown=manyselves:manyselves deploy/accounts.example.yaml /app/deploy/config/accounts.yaml
+COPY --chown=manyselves:manyselves deploy/config/manyselves.account-default.yaml /app/deploy/config/manyselves.account-default.yaml
 ENV PATH="/app/.venv/bin:$PATH" DATA_ROOT=/data/manyselves PYTHONUNBUFFERED=1
 USER manyselves
 EXPOSE 9000

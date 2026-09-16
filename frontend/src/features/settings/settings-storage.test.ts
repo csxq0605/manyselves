@@ -78,4 +78,20 @@ describe("browser settings storage", () => {
       savedUrl: "",
     })).toBe("https://page.example");
   });
+
+  it("upgrades a previously saved same-origin root URL when the app is mounted below that origin", () => {
+    expect(resolveServerUrl({
+      deploymentUrl: "https://page.example/manyselves",
+      origin: "https://page.example",
+      savedUrl: "https://page.example/",
+    })).toBe("https://page.example/manyselves");
+  });
+
+  it("preserves an explicitly saved server on a different origin", () => {
+    expect(resolveServerUrl({
+      deploymentUrl: "https://page.example/manyselves",
+      origin: "https://page.example",
+      savedUrl: "https://api.example/",
+    })).toBe("https://api.example");
+  });
 });

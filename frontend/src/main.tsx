@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { AuthenticatedApp } from "./app/AuthenticatedApp";
 import { getOrCreateBrowserClientId } from "./app/client-config";
+import { resolveWebDeployment } from "./app/deployment-path";
 import { AppProviders } from "./app/providers";
 import { AuthGate } from "./features/auth/AuthGate";
 import { createAuthApi } from "./features/auth/auth-api";
@@ -22,8 +23,16 @@ if (!rootElement) {
   throw new Error("Manyselves root element is missing");
 }
 
+const webDeployment = resolveWebDeployment({
+  assetBaseUrl: import.meta.env.BASE_URL,
+  origin: window.location.origin,
+  pathname: window.location.pathname,
+});
+const defaultServerUrl = window.manyselvesDesktop
+  ? "http://192.168.8.28:9090"
+  : webDeployment.serverUrl;
 const browserSettingsStorage = createBrowserSettingsStorage({
-  ...(window.manyselvesDesktop ? { defaultServerUrl: "http://192.168.8.28:9090" } : {}),
+  defaultServerUrl,
   localStorage: window.localStorage,
   root: document.documentElement,
 });
@@ -31,6 +40,7 @@ const settingsStorage = browserSettingsStorage;
 const savedConnection = settingsStorage.loadConnection();
 settingsStorage.loadPreferences();
 const baseUrl = resolveServerUrl({
+  deploymentUrl: defaultServerUrl,
   environmentUrl: import.meta.env.VITE_API_BASE_URL,
   origin: window.location.origin,
   savedUrl: savedConnection.serverUrl,
@@ -55,7 +65,7 @@ const platform = window.manyselvesDesktop
 createRoot(rootElement).render(
   <StrictMode>
     <AppProviders>
-      <BrowserRouter><AuthGate api={authApi}><AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gatewayOptions={gatewayOptions} platform={platform} settingsStorage={settingsStorage} /></AuthGate></BrowserRouter>
+      <BrowserRouter basename={webDeployment.routerBasename}><AuthGate api={authApi}><AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gatewayOptions={gatewayOptions} platform={platform} settingsStorage={settingsStorage} /></AuthGate></BrowserRouter>
     </AppProviders>
   </StrictMode>,
 );

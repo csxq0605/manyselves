@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
+import { formatShanghaiDateTime } from "../../app/date-time";
 import { useConversationStore } from "../../store/conversation-store";
 import { createConversationApi } from "../conversations/conversation-api";
+import { cacheCreatedConversation } from "../conversations/conversation-cache";
 import "./history-page.css";
 
 const historyPageSize = 20;
@@ -28,13 +30,9 @@ export interface HistoryPageProps {
   readonly projectId: string;
 }
 
-function formatDate(timestamp: string): string {
-  const date = new Date(timestamp);
-  return date.toLocaleString("zh-CN", { hour12: false });
-}
-
 export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const api = useMemo(() => createConversationApi(gateway), [gateway]);
   const setActiveSession = useConversationStore((state) => state.setActiveSession);
   const [pagination, setPagination] = useState({ page: 0, projectId });
@@ -69,6 +67,7 @@ export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
   async function createNewConversation() {
     try {
       const created = await api.create(projectId, copy.newConversation, "main");
+      await cacheCreatedConversation(queryClient, projectId, "main", created);
       setActiveSession(projectId, created.sessionId);
       navigate(`/projects/${encodeURIComponent(projectId)}/conversations/${created.sessionId}`);
     } catch (error) {
@@ -125,7 +124,7 @@ export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
                         <p className="history-page__item-preview">{conversation.preview}</p>
                       ) : null}
                       <time className="history-page__item-time" dateTime={conversation.timestamp}>
-                        {formatDate(conversation.timestamp)}
+                        {formatShanghaiDateTime(conversation.timestamp)}
                       </time>
                     </div>
                     {conversation.active ? (

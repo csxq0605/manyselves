@@ -1,8 +1,11 @@
 version: 1
 accounts:
-  - id: account-a
-    username: account-a
-    passwordEnv: MANYSELVES_ACCOUNT_A_PASSWORD
-  - id: account-b
-    username: account-b
-    passwordEnv: MANYSELVES_ACCOUNT_B_PASSWORD
+  - id: admin
+    username: admin
+    passwordEnv: MANYSELVES_ACCOUNT_ADMIN_PASSWORD
+  - id: yuanxi_001
+    username: yuanxi_001
+    passwordEnv: MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD
+  - id: yuanxi_002
+    username: yuanxi_002
+    passwordEnv: MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD
