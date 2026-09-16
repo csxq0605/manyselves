@@ -8,24 +8,124 @@
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
+[![Built with PyQt6](https://img.shields.io/badge/built%20with-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [中文](README_zh.md)
 
 </div>
 
-## What is Manyselves?
+## Philosophy
 
-Manyselves is a local runtime for teams of AI agents whose identities, boundaries,
-skills, and handoffs live in documents. Change the definitions, keep the same
-workspace, and you get a different team.
+**Agent team boundaries belong in documents, not in another bespoke app.**
 
-The runtime supplies the durable parts: Main conversation, project file tree,
-document preview, task routing, tools, checkpoints, provider integration, and
-local artifacts. A power-distribution reporting team ships as a working example.
+Swap identity, skill, and handoff definitions and the same runtime becomes a
+different team. The runtime owns only the durable generic parts—conversation,
+files, routing, checkpoints, providers, and artifacts. Orchestration and role
+semantics live in Capability file definitions.
 
-**How to use it:** see the [Operation Manual](docs/OPERATION_MANUAL.md) (Chinese)
-for startup, the six report operations, revision / impact analysis, and defaults.
+> **One runtime. Many selves.**
+
+![How Manyselves becomes a team](assets/screenshots/workflow.png)
+
+---
+
+## Design principles
+
+1. **File-defined**  
+   Capabilities, Agents, Tasks, Tools, Contracts, Workflows, and Recovery are
+   declared in Markdown / YAML / Schema. Flow lives in files, not private
+   `if/for` orchestration.
+
+2. **Stateless Kernel + one Compiler/Runtime**  
+   A single compile-and-execute semantics:
+
+   ```text
+   Plan + State + Event  →  New State + Effects
+   ```
+
+   The Kernel does not know providers, report chapters, or domain fields.
+   Capabilities must not copy a second state machine.
+
+3. **Capability-owned domain runtime**  
+   Domain models, validation, prompts, deterministic tools, rendering, and
+   delivery belong to the Capability; the generic layer only schedules them.
+
+4. **Recoverable and observable**  
+   The same Run can WAITING / resume; conversations, tool results, events, and
+   artifacts stay traceable.
+
+5. **Users talk to Main only**  
+   Specialists, auditors, reviewers, and editors collaborate on one timeline.
+
+Full spec: [`docs/PROJECT_POSITIONING.md`](docs/PROJECT_POSITIONING.md) and
+[`AGENTS.md`](AGENTS.md).
+
+---
+
+## System shape
+
+```text
+Markdown / YAML / JSON Schema / Python Tool references
+                         │
+                         ▼
+              Definition Loader & Registry
+                         │
+                         ▼
+                  Workflow Compiler
+                         │
+                         ▼
+             Resolved Plan + Stateless Kernel
+                         │
+                         ▼
+           Generic Action / Executor Runtime
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+        Agents          Tools       Interactions
+          │              │              │
+          └──────────────┼──────────────┘
+                         ▼
+              State / Recovery / Events
+                         │
+                         ▼
+        FastAPI / Capability Frontend / Outputs
+```
+
+---
+
+## What is in this repository
+
+| Path | Contents |
+|---|---|
+| `manyselves/kernel/` | Stateless Kernel: definitions, contracts, pure transitions, ports |
+| `manyselves/runtime/` | Generic Agent/Tool/Conversation/Interaction/Recovery/Event execution |
+| `manyselves/capabilities/` | Capability packages (`distribution_reporting`) |
+| `manyselves/application/` | Generic Capability/Workflow/Run lifecycle |
+| `manyselves/webapi/` | Generic FastAPI |
+| `manyselves/frontend/` | Schema/State/Event/Output-driven React |
+| `manyselves/templates/` | Agent identity and report skill documents |
+| `docs/` | Positioning, architecture, deployment, internal status ([index](docs/README.md)) |
+
+### Bundled Capability: power-distribution reporting
+
+A production-grade reporting team: evidence intake → five module lanes →
+responsibility audit → Cross/Chief → Final → Word/index delivery, plus targeted
+revision of an existing complete report (impact analysis
+`impact_mode=auto|confirm`).
+
+It is an example of what the runtime can host, not the product boundary.
+
+---
+
+## Runtime capabilities
+
+- **One Main surface** — users talk to Main only
+- **Local project workspace** — inputs, knowledge, state, and outputs on disk
+- **Document context** — preview, `@` references, Markdown rendering
+- **Reliable execution** — streaming, checkpoints, same-run recovery
+- **Multiple LLM providers** — Anthropic, OpenAI, DeepSeek, and compatible APIs
+- **Extensible delivery** — documents, review records, ledgers, state snapshots
 
 ---
 
@@ -41,69 +141,28 @@ uv sync
 uv run manyselves
 ```
 
-### Local web (demo / acceptance)
+Local web:
 
 ```bash
-.venv\Scripts\python.exe run_web.py --host 127.0.0.1 --port 9092 --data-dir <workspace-with-projects>
+.venv\Scripts\python.exe run_web.py --host 127.0.0.1 --port 9092 --data-dir <workspace>
 ```
 
-Open <http://127.0.0.1:9092/>, sign in, pick a project, and talk to Main.
+Canonical app config: repository-root `manyselves.config.yaml`.
 
-Details: [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md).
-
----
-
-## Talk to Main only
-
-| You say | Operation |
-|---|---|
-| Generate a full report from project inputs | `full_report` |
-| Write only selected modules | `module_report` |
-| Aggregate five existing module reports | `aggregate_existing` |
-| Render existing Markdown as Word | `render_existing` |
-| Revise an existing complete report | `revise_report` |
-
-Revision can start from named subsections, or from an **impact analysis** of
-changed inputs (`impact_mode=confirm` / `auto`). See the
-[operation manual](docs/OPERATION_MANUAL.md).
-
----
-
-## Runtime capabilities
-
-- **One Main surface** — specialists, auditors, and editors report on one timeline
-- **Local project workspace** — inputs, knowledge, state, and outputs stay on disk
-- **Document context** — preview, `@` references, Markdown in conversation
-- **Resumable execution** — streaming, checkpoints, same-run recovery
-- **Multiple LLM providers** — Anthropic, OpenAI, DeepSeek, and compatible APIs
-
----
-
-## Configuration
-
-Repository-root `manyselves.config.yaml` is the canonical app config. Project
-state and deliverables stay inside the selected project.
-
-```yaml
-agents:
-  defaults:
-    model: "anthropic/claude-sonnet-4.5"
-    temperature: 0.1
-    max_tool_iterations: 200
-```
-
-More: [docs/README.md](docs/README.md).
+Day-to-day operation (six report operations, revision, defaults): see the
+[Operation Manual](docs/OPERATION_MANUAL.md).
 
 ---
 
 ## Docs
 
-| Need | Open |
+| Purpose | Document |
 |---|---|
 | Operation manual | [docs/OPERATION_MANUAL.md](docs/OPERATION_MANUAL.md) |
-| Docs index | [docs/README.md](docs/README.md) |
+| Product & architecture positioning | [docs/PROJECT_POSITIONING.md](docs/PROJECT_POSITIONING.md) |
+| Architecture convergence plan | [docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md](docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md) |
 | Architecture rules (dev / agents) | [AGENTS.md](AGENTS.md) |
-| Local web details | [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) |
+| Docs index | [docs/README.md](docs/README.md) |
 
 ---
 
