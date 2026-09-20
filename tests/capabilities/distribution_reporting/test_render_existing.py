@@ -1,10 +1,12 @@
 """Focused characterization for the file-defined render-existing entrypoint."""
 
+import io
 import json
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from docx import Document
 
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
@@ -14,6 +16,9 @@ from manyselves.capabilities.distribution_reporting.adapters.runtime import (
 )
 from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
     RenderExistingWorkflowRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.rendering.handoff_docx import (
+    PackagedV2DocxCore,
 )
 from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.definitions import DefinitionKind
@@ -114,6 +119,66 @@ async def test_render_existing_starts_through_the_generic_host(
         index for index, event in enumerate(events) if event["kind"] == "workflow.completed"
     )
     assert prepare_started < completed
+
+
+@pytest.mark.asyncio
+async def test_render_existing_publishes_openable_docx_with_content_warnings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "Inputs" / "approved.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Approved\n\nThis approved paragraph must survive.\n", encoding="utf-8")
+
+    def render_without_approved_prose(
+        self,
+        report_text: str,
+        *,
+        filename: str | None = None,
+        report_model=None,
+    ) -> tuple[str, bytes]:
+        del self, report_text, report_model
+        document = Document()
+        buffer = io.BytesIO()
+        document.save(buffer)
+        return filename or "report.docx", buffer.getvalue()
+
+    monkeypatch.setattr(
+        PackagedV2DocxCore,
+        "render_approved_prose",
+        render_without_approved_prose,
+    )
+    binding = DistributionReportingRuntimeBinding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
+
+    started = await binding.start(
+        UUID("50000000-0000-4000-8000-000000000012"),
+        "render-existing",
+        {
+            "operation": "render_existing",
+            "instruction": "Render even when content verification warns.",
+            "source_markdown_ref": "Inputs/approved.md",
+            "output_filename": "warning.docx",
+        },
+    )
+
+    run_id = started["run_id"]
+    result = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/render-result.json").read_text(encoding="utf-8")
+    )
+    assert binding.get_run(run_id)["run"]["status"] == "completed"
+    assert (tmp_path / "Outputs/Reports/warning.docx").is_file()
+    assert result["protected_prose_verified"] is False
+    assert result["validation_warnings"]
+    assert "omitted approved Markdown content" in result["validation_warnings"][0]
 
 
 @pytest.mark.asyncio

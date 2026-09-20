@@ -43,7 +43,6 @@ deploy/config/manyselves.config.yaml
 *.zip
 
 # ─── Deploy runtime artifacts (keep scripts/configs) ─────
-deploy/backup/
 deploy/backups/
 deploy/data/
 deploy/restore-smoke/

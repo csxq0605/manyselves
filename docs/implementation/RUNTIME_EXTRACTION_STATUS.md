@@ -11,20 +11,27 @@
 - Repository: `csxq0605/manyselves`
 - Plan base: `agent/declarative-runtime-plan`
 - Implementation branch: `agent/declarative-runtime-implementation`
-- Draft PR: <https://github.com/csxq0605/manyselves/pull/3>
+- Review PR: <https://github.com/csxq0605/manyselves/pull/4>
 - Governing architecture: [`../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 - Execution protocol: [`../CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.105 Dedicated revise-report impact analysis stage`
+- Current slice: `FA-08/M9.106 PR #4 main-only commit reconciliation`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `4872d98 Honor request.output_filename in full and revise delivery`
+- HEAD at slice start: `0865498 Clean merge leftovers and restore RUN_LOCAL guide`
 - Program status: `revise_report supports impact_mode=none|auto|confirm. Deterministic build-revision-impact writes reviews/impact-analysis.json; auto continues, confirm WAITING. impact-decision is not preset in initial state (preset {} made request_input treat it as submitted). accept_selected replaces targets instead of re-expanding prior applied impacts; analysis.user_seeds keeps explicit user requested_changes. output_filename honored in delivery. preparation_concurrency default 5; budget defaults 600/30M but cost_control still Capability-unenforced after legacy deletion. Kernel remains business-neutral`
 - Final real-test status: `auto impact run revise-report-3e83b017… produced scoped impact list (2.3.1–2.3.3) and completed delivery after service resume; confirm-mode WAITING and accept_selected narrowing were fixed offline after Codex review and are not yet live-accepted`
 - Blockers: `Impact planning is deterministic, not full-semantic. Word page-layout QA and browser download performance remain unverified. cost_control_mode/max_* are request fields without Capability budget enforcement. confirm-mode and accept_selected lack fresh live acceptance`
-- Next automatic action: `Keep remaining product gaps explicit; do not treat scoped revise-report success as full PR acceptance`
+- Next automatic action: `Push the reconciled PR #4 cleanup, keep remaining live-acceptance gaps explicit, and do not treat scoped revise-report success as complete professional acceptance`
+
+### M9.106 PR #4 main-only reconciliation (2026-09-20)
+
+- Audited the 24 commits that were reachable from `main@488d1e2` but not the implementation branch before its main merge (`29b5d60`): 20 content commits and four merge commits. Useful deployment, upload, folder-tree, directory-ZIP, subpath, conversation-routing, timestamp, version and durable Chief semantics remain; obsolete legacy `core/reporting` implementations and superseded architecture-status prose are not restored.
+- Restored the required `79ca5ef` delivery policy in the Capability-owned rendering path. A DOCX that cannot be opened by Word/WPS remains a hard failure. Missing approved prose/title or unresolved content tokens now produce `validation_warnings`, set `protected_prose_verified=false`, and do not block publication. Both full delivery and `render_existing` persist the warnings in render results/logs; project-relative render refs serialize with portable `/` separators.
+- Reconciled concrete main-merge defects: directory ZIP downloads now declare `application/zip` on Windows; `.gitignore` no longer hides the tracked `deploy/backup/` source directory; generic project setup tests create Capability-owned Outputs children explicitly; the retained rootless Docker/Podman and CentOS SELinux instructions now live in `docs/RUNNING.md`; deployment tests follow the dynamic subpath server URL instead of the obsolete hard-coded frontend literal.
+- Focused validation: render/delivery selection `16 passed`; broader conversations/Chief/revision-impact/render/delivery selection `69 passed`; deployment contract `9 passed`; project-file affected selection `27 passed, 1 deselected` (the deselected Windows open-descriptor replacement case is unchanged by this slice and fails because Windows prevents replacing an open file). Changed Python Ruff, compileall, `git diff --check`, and a no-isolation wheel build pass. No full-suite regression or new Provider/browser run was performed.
 
 ### M9.104 ongoing evidence (2026-09-14)
 

@@ -856,6 +856,7 @@ async def test_outputs_writes_uploads_and_directory_mutations_are_forbidden(api)
     client, _, root = api
     headers = await acquire_controller(client)
     output = root / "p1" / "Outputs" / "Reports" / "report.txt"
+    output.parent.mkdir(parents=True)
     output.write_text("generated", encoding="utf-8")
     output_revision = hashlib.sha256(b"generated").hexdigest()
     directory_revision = WorkspaceFiles(root / "p1").entry("Outputs/Reports").revision
@@ -953,6 +954,8 @@ async def test_file_routes_hide_non_page_roots_but_keep_output_directories_visib
     """The browser API must retain Outputs children while never exposing Work or metadata."""
     client, _, root = api
     (root / "p1" / "Work" / "private.json").write_text("secret", encoding="utf-8")
+    for name in ("Reports", "Modules", "Reviews"):
+        (root / "p1" / "Outputs" / name).mkdir()
 
     tree = await client.get("/api/v1/projects/p1/files/tree")
     hidden = await client.get(
