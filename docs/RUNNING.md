@@ -264,6 +264,48 @@ sudo install -d -m 0750 /srv/manyselves/data
 
 The container process must be able to write this directory. The Compose volume uses `:Z` for SELinux-enabled hosts.
 
+### Select one non-root container engine
+
+Choose exactly one engine path before extracting a release. Run every extraction and Compose command below from that configured service-account session. Mixing root-owned and rootless engine contexts splits images, networks, and persistent-file ownership.
+
+For the normal Docker daemon, add the dedicated service account to the Docker group, start a fresh login session, and verify access:
+
+```bash
+sudo usermod -aG docker manyselves
+sudo -iu manyselves
+id -nG
+docker info
+```
+
+The docker group is equivalent to root-level control of the host. If that privilege is not acceptable, use rootless Docker instead:
+
+```bash
+sudo loginctl enable-linger manyselves
+sudo -iu manyselves
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+test -d "$XDG_RUNTIME_DIR"
+systemctl --user is-active default.target
+dockerd-rootless-setuptool.sh install
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+docker context create manyselves-rootless --docker "host=$DOCKER_HOST"
+docker context use manyselves-rootless
+docker info
+```
+
+Keep DOCKER_HOST in the service-account environment according to the rootless Docker installer instructions.
+
+For rootless Podman, enable the service account's systemd session and verify the engine from the same login shell:
+
+```bash
+sudo loginctl enable-linger manyselves
+sudo -iu manyselves
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+test -d "$XDG_RUNTIME_DIR"
+podman info
+```
+
+CentOS/RHEL deployments use the `:Z` volume label in `deploy/compose.yaml`. Keep one `MANYSELVES_DATA_DIR=/srv/manyselves/data` directory per Compose project so SELinux ownership remains isolated.
+
 ### Validate and start
 
 ```bash

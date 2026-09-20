@@ -57,7 +57,8 @@ def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
     assert "MANYSELVES_ACCESS_TOKEN" not in environment
     assert '["http://192.168.8.28:9090"]' in compose
     assert "EXPOSE 9090" in web_dockerfile
-    assert 'defaultServerUrl: "http://192.168.8.28:9090"' in frontend_main
+    assert "resolveWebDeployment" in frontend_main
+    assert "webDeployment.serverUrl" in frontend_main
 
 
 def test_deploy_env_example_uses_parseable_json_origins(monkeypatch) -> None:
@@ -107,7 +108,7 @@ def test_compose_enables_three_default_isolated_accounts() -> None:
 
 
 def test_cent_os_docs_cover_selinux_volume_labeling() -> None:
-    docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
+    docs = Path("docs/RUNNING.md").read_text("utf-8")
 
     assert "CentOS" in docs
     assert "SELinux" in docs
@@ -116,7 +117,7 @@ def test_cent_os_docs_cover_selinux_volume_labeling() -> None:
 
 
 def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:
-    docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
+    docs = Path("docs/RUNNING.md").read_text("utf-8")
     rootless_docker = docs.split("If that privilege is not acceptable", 1)[1].split(
         "Keep DOCKER_HOST", 1
     )[0]

@@ -53,8 +53,8 @@ from .delivery_tools import atomic_copy_file
 from .input_snapshot import RunInputSnapshotStore
 from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
-from .rendering.packaged_docx import verify_rendered_markdown
 from .rendering.pds_docx_renderer import PdsDocxRenderer
+from .rendering.rendered_docx_validator import validate_rendered_markdown_docx
 from .storage import ReportingStore
 from .template_resolver import resolve_report_template
 
@@ -194,7 +194,12 @@ def _render_document(
         ) as temporary:
             temporary.write(rendered_buffer.getvalue())
             temporary_path = Path(temporary.name)
-        verify_rendered_markdown(temporary_path, markdown)
+        validation_warnings = validate_rendered_markdown_docx(
+            temporary_path,
+            markdown,
+            expected_title=title,
+            reject_unresolved_tokens=True,
+        )
         temporary_path.replace(output)
         temporary_path = None
     finally:
@@ -209,7 +214,8 @@ def _render_document(
         source_snapshot_ref=value.source_snapshot_ref,
         output_ref=value.output_ref,
         render_log_ref=render_log_ref,
-        protected_prose_verified=True,
+        protected_prose_verified=not validation_warnings,
+        validation_warnings=validation_warnings,
     )
     store.write_json(render_log_ref.as_posix(), result.model_dump(mode="json"))
     store.write_json(
