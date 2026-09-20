@@ -243,7 +243,7 @@ Characterization 不是永久保留旧类结构。它用于把应保留的业务
 ```text
 base: agent/declarative-runtime-plan
 head: agent/declarative-runtime-implementation
-Draft PR: one long-lived PR
+PR: one long-lived PR; keep it Draft during implementation and mark it ready only after the merge-scope checks pass
 ```
 
 每个架构切片独立提交和推送。`docs/implementation/RUNTIME_EXTRACTION_STATUS.md` 是唯一跨会话实施状态；它不是运行时状态，也不应复制 Event Log。

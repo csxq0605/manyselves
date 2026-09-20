@@ -28,7 +28,7 @@ Codex 必须：
 ```text
 base: agent/declarative-runtime-plan
 head: agent/declarative-runtime-implementation
-PR: one long-lived Draft PR
+PR: one long-lived PR; keep it Draft during implementation and mark it ready only after the merge-scope checks pass
 ```
 
 每个切片可以有一个或多个聚焦提交。不得为了永久保留双路径而使用 Feature Flag；代码回退依靠提交。不得未经明确要求合并 PR。
@@ -130,7 +130,7 @@ uv run pytest -q <focused-and-affected-tests> --maxfail=3
 - 更新差异矩阵和下一动作；
 - `git diff --check`；
 - 创建并推送聚焦提交；
-- 更新 Draft PR；
+- 更新长期 PR；
 - 自动继续。
 
 ## 7. 实时差异监控
@@ -171,7 +171,7 @@ uv run pytest -q <focused-and-affected-tests> --maxfail=3
 
 只有 `FA-00`～`FA-07` 自动部分全部通过后才执行一次真实测试。交接必须只要求用户操作网页版 Demo，并包含：
 
-- 分支、提交、Draft PR；
+- 分支、提交、PR 状态；
 - 启动和登录；
 - Provider/Model 设置；
 - 中立 Capability 的输入、运行和输出；

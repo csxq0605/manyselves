@@ -4,7 +4,7 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**声明式 Kernel/Runtime 架构主线已落地。revise-report 已具备 impact_mode=auto|confirm 与 impact-analysis.json 业务产物；confirm 不预置 impact-decision，accept_selected 不再回扩旧目标。专业条款核实、Word 逐页版式、下载性能、confirm 模式从零启动验收仍未完成，不宣称整个 PR 已完成**
+> 状态：**声明式 Kernel/Runtime 架构主线和 PR #4 合并范围已完成，用户已明确授权合并。revise-report 已具备 impact_mode=auto|confirm 与 impact-analysis.json 业务产物；DOCX 内容校验警告不阻断发布。专业条款核实、Word 逐页版式、下载性能、confirm 模式从零启动验收仍未完成；PR 合并不代表这些产品验收项已经通过**
 
 ## Program
 
@@ -18,13 +18,20 @@
 ## Current position
 
 - Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.106 PR #4 main-only commit reconciliation`
+- Current slice: `FA-08/M9.107 PR #4 merge closeout and documentation consistency audit`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `0865498 Clean merge leftovers and restore RUN_LOCAL guide`
+- PR head at slice start: `d03978f Reconcile main fixes for PR 4`
 - Program status: `revise_report supports impact_mode=none|auto|confirm. Deterministic build-revision-impact writes reviews/impact-analysis.json; auto continues, confirm WAITING. impact-decision is not preset in initial state (preset {} made request_input treat it as submitted). accept_selected replaces targets instead of re-expanding prior applied impacts; analysis.user_seeds keeps explicit user requested_changes. output_filename honored in delivery. preparation_concurrency default 5; budget defaults 600/30M but cost_control still Capability-unenforced after legacy deletion. Kernel remains business-neutral`
 - Final real-test status: `auto impact run revise-report-3e83b017… produced scoped impact list (2.3.1–2.3.3) and completed delivery after service resume; confirm-mode WAITING and accept_selected narrowing were fixed offline after Codex review and are not yet live-accepted`
 - Blockers: `Impact planning is deterministic, not full-semantic. Word page-layout QA and browser download performance remain unverified. cost_control_mode/max_* are request fields without Capability budget enforcement. confirm-mode and accept_selected lack fresh live acceptance`
-- Next automatic action: `Push the reconciled PR #4 cleanup, keep remaining live-acceptance gaps explicit, and do not treat scoped revise-report success as complete professional acceptance`
+- Next automatic action: `Continue the explicitly listed product-acceptance work after merge; do not infer professional content, Word page-layout, browser performance, live confirm-mode or cost-enforcement acceptance from the merge`
+
+### M9.107 PR #4 merge closeout (2026-09-20)
+
+- The user explicitly authorized merging PR #4 after the main-only reconciliation. GitHub reported the PR open, non-draft and mergeable with head `d03978f`; no GitHub status checks or workflow runs were configured for that head.
+- Audited every tracked Markdown document plus the two active DOCX-renderer definition copies for current-state wording. Current documentation now distinguishes merge readiness from the remaining product-acceptance gaps and states the required DOCX behavior: openability failures block, while approved-content/title/token defects publish with warnings.
+- Repaired the documentation index after `docs/deployment/` was removed, corrected the actual top-level `frontend/` path in both READMEs, removed the stale current action to push PR #4, and made the long-lived PR guidance distinguish Draft implementation work from ready-for-merge state. Historical slice records remain historical evidence rather than current status.
+- Repository-local Markdown link validation reports zero missing local targets. Documentation consistency checks, focused DOCX render/delivery tests, deployment tests, affected project-file tests, Ruff, compileall, frontend checks/build, wheel build and diff checks are recorded in M9.106 and the PR body; no full-suite or new live Provider/browser acceptance is implied.
 
 ### M9.106 PR #4 main-only reconciliation (2026-09-20)
 
@@ -239,7 +246,7 @@
 - `report-declarative-33ed40175b` 曾在真实 Provider、真实项目和浏览器中完成并交付，证明旧兼容式声明路径的业务能力；
 - 该历史 Run 不证明移除 Legacy 宿主、ReportingFacade 和 `core/reporting` 混合边界后的最终路径。
 
-详细历史提交、测试数字和旧发现保留在 Git history 与 Draft PR；不再把数百行历史流水复制进当前状态文件。
+详细历史提交、测试数字和旧发现保留在 Git history 与 PR history；不再把数百行历史流水复制进当前状态文件。
 
 ## Current slice evidence
 
