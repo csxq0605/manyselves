@@ -4,7 +4,7 @@
 >
 > 目标：把现有实现收敛为一个 Stateless Kernel、一个通用 Compiler/Runtime、一个文件定义系统、多个 Capability-owned Domain Runtime、一个通用 FastAPI 运行接口，以及按 Capability 独立组合的产品前端
 >
-> 当前状态：重新开放，尚未完成；见 [`../implementation/RUNTIME_EXTRACTION_STATUS.md`](../implementation/RUNTIME_EXTRACTION_STATUS.md)
+> 当前状态：已完成并合并；最终结论见 [`../implementation/RUNTIME_EXTRACTION_STATUS.md`](../implementation/RUNTIME_EXTRACTION_STATUS.md)
 >
 > 原 `WP-00`～`WP-12`：作为已完成的抽取历史保留在 Git 中，不再定义最终完成条件
 

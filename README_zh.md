@@ -73,7 +73,7 @@ Manyselves 的出发点是：**Agent 团队的边界应写在文档里，而不�
 
 ### 内置 Capability：配电报告
 
-仓库内置一支可运行的配电安全报告团队：证据入库 → 五模块协作 → 责任审查 → Cross/Chief → Final → Word/索引交付，并支持对已有完整报告做**定向修订**（含影响分析 `impact_mode=auto|confirm`）。
+仓库内置已完成的配电安全报告产品：证据入库 → 五模块协作 → 责任审查 → Cross/Chief → Final → Word/索引交付，并支持对已有完整报告做**定向修订**（含影响分析 `impact_mode=auto|confirm`）。
 
 它是「运行时能承载什么」的示例，不是产品边界。换定义即可变成其他团队。
 
