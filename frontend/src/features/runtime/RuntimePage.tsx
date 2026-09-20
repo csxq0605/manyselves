@@ -1,11 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
 import { createProjectApi } from "../projects/project-api";
-import { useProjectActivation } from "../projects/use-project-activation";
+import {
+  reportingRunStage,
+  reportingRunStepSummary,
+  reportingWorkflowLabel,
+} from "../reporting/reporting-run-presentation";
+import { createWorkflowApi, type WorkflowRunResponse } from "../runs/workflow-api";
 import "./runtime-page.css";
 
 type RuntimeSnapshot = components["schemas"]["RuntimeSnapshotResponse"];
@@ -13,14 +18,16 @@ type RuntimeSnapshot = components["schemas"]["RuntimeSnapshotResponse"];
 class RuntimeProjectMismatchError extends Error {}
 
 const copy = {
-  activeTasks: "\u8fdb\u884c\u4e2d\u4efb\u52a1",
+  activeRuns: "进行中运行",
   agentStatus: "Agent \u72b6\u6001",
   agentStatusMetric: "Agent \u5728\u7ebf\u72b6\u6001",
   cockpit: "\u8fd0\u884c\u9a7e\u9a76\u8231",
-  currentTask: "\u5f53\u524d\u4efb\u52a1",
+  collaborationTasks: "对话协作任务",
+  declarativeRuns: "声明式运行",
   emptyErrors: "\u5f53\u524d\u6ca1\u6709\u9519\u8bef",
   emptyQueue: "\u961f\u5217\u4e3a\u7a7a",
-  emptyTasks: "\u5f53\u524d\u6ca1\u6709\u8fd0\u884c\u4e2d\u7684\u4efb\u52a1",
+  emptyRuns: "当前没有声明式运行",
+  emptyTasks: "当前没有对话协作任务",
   emptyTools: "\u6682\u65e0\u5de5\u5177\u8c03\u7528",
   errors: "\u9519\u8bef",
   invalidRuntimeRoute: "\u8fd0\u884c\u6001\u8def\u7531\u65e0\u6548",
@@ -33,7 +40,7 @@ const copy = {
   queues: "\u7b49\u5f85\u961f\u5217",
   ready: "\u8fd0\u884c\u670d\u52a1\u5c31\u7eea",
   runtimeLoadFailed: "\u8fd0\u884c\u6001\u52a0\u8f7d\u5931\u8d25",
-  taskCompletion: "\u4efb\u52a1\u5b8c\u6210\u5ea6",
+  runCompletion: "运行完成度",
   title: "\u8fd0\u884c\u6001",
   toolAndErrors: "\u5de5\u5177\u4e0e\u9519\u8bef",
   tools: "\u5de5\u5177\u8c03\u7528",
@@ -42,6 +49,7 @@ const copy = {
 };
 
 export interface RuntimePageProps {
+  readonly runs?: readonly WorkflowRunResponse[];
   readonly snapshot: RuntimeSnapshot;
 }
 
@@ -58,12 +66,13 @@ function statusWithBlocking(status: string, blocking: boolean): string {
   return blocking ? `${status} · \u963b\u585e` : status;
 }
 
-export function RuntimePage({ snapshot }: RuntimePageProps) {
+export function RuntimePage({ runs = [], snapshot }: RuntimePageProps) {
   const activeTasks = snapshot.tasks.filter((task) => !isComplete(task.status));
+  const activeRuns = runs.filter((run) => run.run.active || run.run.status === "waiting");
+  const completedRuns = runs.filter((run) => isComplete(run.run.status));
   const runningTools = snapshot.tools.filter((tool) => tool.status === "running");
   const failedTools = snapshot.tools.filter((tool) => tool.status === "failed");
   const debugErrors = snapshot.debug.filter((entry) => entry.status.toLowerCase() === "error");
-  const completedTasks = snapshot.tasks.length - activeTasks.length;
   const agentCount = Object.keys(snapshot.agent_statuses).length;
   const errorCount = failedTools.length + debugErrors.length;
 
@@ -81,13 +90,13 @@ export function RuntimePage({ snapshot }: RuntimePageProps) {
 
       <div className="runtime-page__summary" aria-label={"\u8fd0\u884c\u603b\u89c8"}>
         <article className="runtime-page__metric">
-          <span>{copy.activeTasks}</span>
-          <strong>{activeTasks.length}</strong>
-          <small>{activeTasks.length} {"\u4e2a\u4efb\u52a1\u8fdb\u884c\u4e2d"}</small>
+          <span>{copy.activeRuns}</span>
+          <strong>{activeRuns.length}</strong>
+          <small>{activeRuns.length} 个运行进行中</small>
         </article>
         <article className="runtime-page__metric">
-          <span>{copy.taskCompletion}</span>
-          <strong>{completedTasks} / {snapshot.tasks.length}</strong>
+          <span>{copy.runCompletion}</span>
+          <strong>{completedRuns.length} / {runs.length}</strong>
         </article>
         <article className="runtime-page__metric">
           <span>{copy.agentStatusMetric}</span>
@@ -99,9 +108,28 @@ export function RuntimePage({ snapshot }: RuntimePageProps) {
         </article>
       </div>
 
+      <section className="operations-card runtime-page__runs" aria-labelledby="runtime-workflow-runs">
+        <h2 id="runtime-workflow-runs">{copy.declarativeRuns}</h2>
+        {runs.length === 0 ? <p className="operations-empty">{copy.emptyRuns}</p> : (
+          <ul className="runtime-run-list">
+            {runs.map((run) => <li key={run.run.runId}>
+              <div className="runtime-run-list__heading">
+                <strong>{reportingWorkflowLabel(run.run.workflowId)}</strong>
+                <span className={`runtime-run-list__status runtime-run-list__status--${run.run.status}`}>
+                  {run.run.status}
+                </span>
+              </div>
+              <span className="runtime-run-list__stage">{reportingRunStage(run)}</span>
+              <small>{reportingRunStepSummary(run)}</small>
+              <code>{run.run.runId}</code>
+            </li>)}
+          </ul>
+        )}
+      </section>
+
       <div className="runtime-page__grid">
         <section className="operations-card operations-card--focus" aria-labelledby="runtime-current-task">
-          <h2 id="runtime-current-task">{copy.currentTask}</h2>
+          <h2 id="runtime-current-task">{copy.collaborationTasks}</h2>
           {activeTasks.length === 0 ? <p className="operations-empty">{copy.emptyTasks}</p> : (
             <ul className="operations-list">
               {activeTasks.map((task) => <li key={task.task_id}>
@@ -135,7 +163,7 @@ export function RuntimePage({ snapshot }: RuntimePageProps) {
           )}
         </section>
 
-        <section className="operations-card" aria-labelledby="runtime-tools">
+        <section className="operations-card operations-card--tools" aria-labelledby="runtime-tools">
           <h2 id="runtime-tools">{copy.tools}</h2>
           {snapshot.tools.length === 0 ? <p className="operations-empty">{copy.emptyTools}</p> : (
             <ul className="operations-list">
@@ -162,11 +190,41 @@ export function RuntimePage({ snapshot }: RuntimePageProps) {
 
 export function RuntimeRoutePage({ gateway }: { readonly gateway: ApiGateway }) {
   const { projectId } = useParams();
+  const queryClient = useQueryClient();
   const projectApi = useMemo(() => createProjectApi(gateway), [gateway]);
+  const workflowApi = useMemo(() => createWorkflowApi(gateway), [gateway]);
   const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
   const routeProject = projects.data?.find((project) => project.id === projectId);
-  const activation = useProjectActivation(projectId, routeProject, projectApi);
-  const projectReady = activation.isReady;
+  const activation = useQuery({
+    enabled: Boolean(projectId && routeProject && !routeProject.active),
+    queryFn: async () => {
+      const activated = await projectApi.activate(projectId!);
+      queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
+        current?.map((project) => ({ ...project, active: project.id === activated.id }))
+      ));
+      queryClient.removeQueries({ queryKey: ["conversations"] });
+      queryClient.removeQueries({ queryKey: ["conversation-messages"] });
+      const savedState = localStorage.getItem("manyselves-active-conversation");
+      if (savedState) {
+        try {
+          const parsed = JSON.parse(savedState);
+          if (parsed.state?.activeSessionIds) {
+            const currentProjectSessionId = parsed.state.activeSessionIds[projectId!];
+            parsed.state.activeSessionIds = currentProjectSessionId
+              ? { [projectId!]: currentProjectSessionId }
+              : {};
+            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
+          }
+        } catch {
+          localStorage.removeItem("manyselves-active-conversation");
+        }
+      }
+      return activated;
+    },
+    queryKey: ["project-activation", projectId, routeProject?.revision],
+    retry: false,
+  });
+  const projectReady = Boolean(routeProject?.active || activation.isSuccess);
   const runtime = useQuery({
     enabled: projectReady,
     queryFn: async () => {
@@ -176,16 +234,22 @@ export function RuntimeRoutePage({ gateway }: { readonly gateway: ApiGateway }) 
     },
     queryKey: ["runtime", projectId],
   });
+  const runs = useQuery({
+    enabled: projectReady,
+    queryFn: () => workflowApi.listRuns(),
+    queryKey: ["runs", "runtime", projectId],
+    refetchInterval: 5_000,
+  });
 
   if (!projectId) return <p role="alert">{copy.invalidRuntimeRoute}</p>;
   if (projects.isPending) return <p role="status">{copy.loadingProjects}</p>;
   if (projects.isError || !routeProject) return <p role="alert">{copy.projectUnavailable}</p>;
   if (!projectReady) return activation.isError ? <p role="alert">{copy.projectActivationFailed}</p> : <p role="status">{copy.projectSwitching}</p>;
-  if (runtime.isPending) return <p role="status">{copy.loadingRuntime}</p>;
-  if (runtime.isError) return (
+  if (runtime.isPending || runs.isPending) return <p role="status">{copy.loadingRuntime}</p>;
+  if (runtime.isError || runs.isError) return (
     <p role="alert">
       {runtime.error instanceof RuntimeProjectMismatchError ? copy.projectMismatch : copy.runtimeLoadFailed}
     </p>
   );
-  return <RuntimePage snapshot={runtime.data} />;
+  return <RuntimePage runs={runs.data.runs} snapshot={runtime.data} />;
 }

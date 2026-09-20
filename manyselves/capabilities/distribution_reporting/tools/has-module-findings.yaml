@@ -1,0 +1,9 @@
+id: has-module-findings
+version: 1.0.0
+description: Select the revision branch from typed module findings
+implementation: capability:distribution-reporting:has-module-findings
+input_contract: module_review_finding_submission
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+model_visible: false

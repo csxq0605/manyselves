@@ -17,6 +17,7 @@ describe("conversation layout CSS", () => {
     expect(workspace).toContain("height: 100dvh");
     expect(workspace).toContain("max-height: 100dvh");
     expect(workspace).toContain("overflow: hidden");
+    expect(workspace).toContain("grid-template-rows: auto minmax(0, 1fr) auto auto");
     expect(main).toContain("flex-direction: column");
     expect(main).toContain("overflow-y: auto");
     expect(main).toContain("overscroll-behavior: contain");
@@ -29,12 +30,27 @@ describe("conversation layout CSS", () => {
     expect(messageList).not.toContain("align-self: flex-end");
   });
 
-  it("keeps the floating agent runtime panel compact and internally scrollable", () => {
+  it("keeps the inline agent runtime panel compact and internally scrollable", () => {
+    const runtime = cssBlock(".agent-runtime");
     const runtimeList = cssBlock(".agent-runtime__list");
 
+    expect(runtime).not.toContain("position: fixed");
+    expect(runtime).toContain("position: static");
     expect(runtimeList).toContain("max-height: min(260px, 42dvh)");
     expect(runtimeList).toContain("overflow-y: auto");
     expect(runtimeList).toContain("overscroll-behavior: contain");
     expect(runtimeList).toContain("scrollbar-gutter: stable");
+  });
+
+  it("places conversation actions in their own row instead of over the composer", () => {
+    const overflow = cssBlock(".conversation-overflow");
+
+    expect(overflow).toContain("position: relative");
+    expect(overflow).not.toContain("position: absolute");
+  });
+
+  it("uses the same phone breakpoint as the project shell", () => {
+    expect(css).toContain("@media (max-width: 520px)");
+    expect(css).not.toContain("@media (max-width: 700px)");
   });
 });

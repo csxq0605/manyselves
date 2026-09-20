@@ -1,0 +1,5 @@
+id: declarative_final_recheck_agent_result
+version: 1.0.0
+description: Typed result returned by one affected-only Final recheck Agent invocation
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_review:DeclarativeFinalRecheckAgentResult

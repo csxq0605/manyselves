@@ -10,7 +10,7 @@ from pydantic import (
 )
 
 from ...config.schema import CredentialSource
-from ...core.providers.factory import ALL_PROVIDER_TYPES
+from ...runtime.providers.factory import ALL_PROVIDER_TYPES
 
 
 class ProviderSettingsResponse(BaseModel):

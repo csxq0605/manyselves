@@ -2,7 +2,7 @@
 
 import pytest
 
-from manyselves.core.tools.exec_tools import ALLOWED_COMMANDS, ExecTool
+from manyselves.runtime.tools.exec_tools import ALLOWED_COMMANDS, ExecTool
 
 
 @pytest.fixture
@@ -37,13 +37,18 @@ async def test_bash_requires_description(temp_dir):
 
 
 @pytest.mark.asyncio
-async def test_exec_rejects_isolated_expert_document(temp_dir):
+async def test_exec_has_no_capability_specific_filename_policy(temp_dir):
+    templates = temp_dir / "Templates"
+    templates.mkdir()
+    (templates / "配电安全专家咨询报告(专家优化版).docx").write_text("document")
     tool = ExecTool(working_dir=temp_dir)
-    with pytest.raises(PermissionError, match="EXPERT_TEMPLATE_AGENT_ACCESS_FORBIDDEN"):
-        await tool(
-            command="cat 'Templates/配电安全专家咨询报告(专家优化版).docx'",
-            command_description="Attempt isolated read",
-        )
+    result = await tool(
+        command="cat 'Templates/配电安全专家咨询报告(专家优化版).docx'",
+        command_description="Read a Capability-neutral path",
+    )
+
+    assert result["returncode"] == 0
+    assert result["stdout"].strip() == "document"
 
 
 @pytest.mark.asyncio
@@ -74,8 +79,8 @@ async def test_ls_long_format_filters_internal_metadata(temp_dir):
     (temp_dir / "keep.txt").write_text("x")
     tool = ExecTool(working_dir=temp_dir)
     result = await tool(command="ls -la", command_description="List long")
-    lines = [l for l in result["stdout"].splitlines() if l.strip()]
-    names = {l.split()[-1].split(" -> ")[0] for l in lines}
+    lines = [line for line in result["stdout"].splitlines() if line.strip()]
+    names = {line.split()[-1].split(" -> ")[0] for line in lines}
     assert "keep.txt" in names
     assert ".manyselves" not in names
 
@@ -87,7 +92,11 @@ async def test_ls_filters_symlink_into_metadata(temp_dir):
     (temp_dir / "real.csv").write_text("x")
     tool = ExecTool(working_dir=temp_dir)
     result = await tool(command="ls -la", command_description="List long")
-    names = {l.split()[-1].split(" -> ")[0] for l in result["stdout"].splitlines() if l.strip()}
+    names = {
+        line.split()[-1].split(" -> ")[0]
+        for line in result["stdout"].splitlines()
+        if line.strip()
+    }
     assert "real.csv" in names
     assert "sneaky" not in names
 

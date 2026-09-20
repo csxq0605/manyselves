@@ -1,0 +1,10 @@
+id: revision-inputs-changed
+version: 1.0.0
+description: revision inputs changed
+implementation: capability:distribution-reporting:revision-inputs-changed
+input_contract: reporting_tail_state
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

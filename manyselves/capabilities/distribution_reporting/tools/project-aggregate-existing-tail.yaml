@@ -1,0 +1,10 @@
+id: project-aggregate-existing-tail
+version: 1.0.0
+description: Project the aggregate handoff into the existing Final and Delivery state shape
+implementation: capability:distribution-reporting:project-aggregate-existing-tail
+input_contract: aggregate_existing_handoff
+output_contract: reporting_tail_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

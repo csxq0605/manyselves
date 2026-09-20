@@ -1,0 +1,10 @@
+id: module-lane-can-review
+version: 1.0.0
+description: Route an authored module to its existing review lifecycle
+implementation: capability:distribution-reporting:module-lane-can-review
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,10 @@
+id: prepare-current-final-recheck
+version: 1.0.0
+description: Prepare one affected Final chapter recheck lane from the common revised subject
+implementation: capability:distribution-reporting:prepare-current-final-recheck
+input_contract: reporting_tool_input
+output_contract: declarative_final_recheck_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

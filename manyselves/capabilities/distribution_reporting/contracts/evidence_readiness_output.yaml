@@ -1,0 +1,5 @@
+id: evidence_readiness_output
+version: 1.0.0
+description: Published Distribution evidence readiness result
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.evidence_readiness:EvidenceReadinessState

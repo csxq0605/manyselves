@@ -1,0 +1,10 @@
+id: search_project_evidence
+version: 1.0.0
+description: Current Reporting tool declaration for search_project_evidence
+implementation: capability:distribution-reporting:search_project_evidence
+input_contract: query_limit_tool_input
+output_contract: reporting_tool_output
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: true

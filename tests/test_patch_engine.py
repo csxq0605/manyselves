@@ -1,4 +1,4 @@
-from manyselves.core.tools.patch_engine import (
+from manyselves.runtime.tools.patch_engine import (
     apply_chunks,
     apply_patch_to_text,
     parse_patch,

@@ -1,0 +1,6 @@
+id: module_revision_input
+version: 1.0.0
+description: Current Reporting module_revision_input contract
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.inputs:ModuleRevisionInput
+

@@ -1,0 +1,11 @@
+id: cross-owner-review
+version: 1.0.0
+description: Owner-scoped cross-module review
+agent: cross-module-reviewer
+objective: Review cross-module relations for the fixed owner.
+input_contract: cross_owner_input
+output_contract: cross_owner_finding_submission
+tools:
+- submit_result
+recovery: current-reporting-recovery
+

@@ -1,0 +1,66 @@
+id: distribution-final-chief-revision-1-lane
+version: 1.0.0
+description: File-defined affected Final Chief revision lane for report Chapter 1
+tasks:
+- final-chief-chapter-revision
+recovery:
+- current-reporting-recovery
+input_contract: declarative_final_review_cycle_context
+output_contract: declarative_final_chief_revision_outcome
+state:
+  review: {}
+  chapter-id: "1"
+  final-chief-revision-context: {}
+  should-invoke-final-chief-revision: false
+  final-chief-revision-conversation: {}
+  final-chief-revision-agent-result: {}
+  completed-final-chief-revision: {}
+actions:
+- id: prepare-current-final-chief-revision
+  kind: invoke_tool
+  tool: prepare-current-final-chief-revision
+  input_variables:
+    review: review
+    chapter_id: chapter-id
+  output_variable: final-chief-revision-context
+- id: final-chief-revision-requires-agent
+  kind: invoke_tool
+  tool: final-chief-revision-requires-agent
+  input_variable: final-chief-revision-context
+  output_variable: should-invoke-final-chief-revision
+- id: choose-final-chief-revision-source
+  kind: if
+  condition:
+    variable: should-invoke-final-chief-revision
+    operator: truthy
+  then: create-final-chief-revision-conversation
+  otherwise: complete-current-final-chief-revision
+- id: create-final-chief-revision-conversation
+  kind: create_conversation
+  agent: chief-editor
+  conversation_key: chief-chapter-1
+  mode: run
+  output_variable: final-chief-revision-conversation
+- id: invoke-final-chief-revision-agent
+  kind: invoke_agent
+  agent: chief-editor
+  task: final-chief-chapter-revision
+  conversation_variable: final-chief-revision-conversation
+  input_variable: final-chief-revision-context
+  output_variable: final-chief-revision-agent-result
+- id: accept-current-final-chief-revision
+  kind: invoke_tool
+  tool: accept-current-final-chief-revision
+  input_variables:
+    context: final-chief-revision-context
+    result: final-chief-revision-agent-result
+  output_variable: final-chief-revision-context
+- id: complete-current-final-chief-revision
+  kind: invoke_tool
+  tool: complete-current-final-chief-revision
+  input_variable: final-chief-revision-context
+  output_variable: completed-final-chief-revision
+- id: finish-final-chief-revision-lane
+  kind: end_workflow
+  output_variable: completed-final-chief-revision
+  output_name: result

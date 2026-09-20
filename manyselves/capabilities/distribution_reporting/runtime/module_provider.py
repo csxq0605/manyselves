@@ -1,0 +1,830 @@
+"""Provider composition for the file-defined module Author and Reviewer tasks.
+
+The module bridges own prompts and typed result decoding.  This module owns the
+remaining Capability composition boundary: it resolves the account-scoped
+Provider resources, builds the declared Capability tools, and gives the
+generic Agent execution service one stable session per Conversation.
+
+Artifact, task-correlation, and recovery objects are injected ports.  They are
+deliberately not constructed or reimplemented here; the existing owner of
+those concerns may pass its concrete objects through the
+``ModuleProviderDependencies`` value.  The existing ``RunToolResultIndex`` is
+passed through the same value and is used by the moved artifact readers for
+completed-result reuse.  Provider-attempt recovery beyond the current bridge
+remains outside this initial-turn slice.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any, Protocol
+
+from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
+    build_tool_recovery_callback,
+)
+from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
+    ListResultPartsTool,
+    QueryPeerTool,
+    ReplyPeerTool,
+    ReportBlockedTool,
+    ReportGapTool,
+    SubmitResultTool,
+    WriteResultPartTool,
+)
+from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
+    ProviderTaskAttempt,
+    load_completed_agent_result,
+    reporting_identity_key,
+)
+from manyselves.capabilities.distribution_reporting.runtime.continuation_progress import (
+    ReportingContinuationProgressObserver,
+)
+from manyselves.capabilities.distribution_reporting.runtime.cross_module_revision_input import (
+    project_cross_owner_local_module_agent_input,
+    project_cross_owner_module_revision_agent_input,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    TaskEnvelope,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+    ModuleAuthoringInput,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+    DeclarativeModuleRuntimeLaneContext,
+    envelope_for_output_contract,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+    CompletedResultLoader,
+    ModuleAuthoringAgentBridge,
+)
+from manyselves.capabilities.distribution_reporting.runtime.module_reviewer_bridge import (
+    ModuleReviewerAgentBridge,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.evidence_memory import (
+    EvidenceResearchMemory,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.reference_library import (
+    ReferenceLibrary,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.web import (
+    DisabledWebResearchBackend,
+    WebResearchBackend,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research_tools import (
+    OpenProjectSourceTool,
+    OpenReferenceTool,
+    OpenWebSourceTool,
+    PublishResearchNoteTool,
+    SearchProjectEvidenceTool,
+    SearchReferenceLibraryTool,
+    WebSearchTool,
+)
+from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+    SourceLedger,
+)
+from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+)
+from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
+from manyselves.runtime.agent_execution import (
+    AgentExecutionService,
+    AgentSessionLoop,
+)
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
+from manyselves.runtime.loops.agent_loop import AgentLoop
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
+from manyselves.runtime.services import RuntimeServicesView
+from manyselves.runtime.tools.document_tool import InspectDocumentTool
+from manyselves.runtime.tools.registry import Tool, ToolRegistry
+from manyselves.runtime.tools.result_memory import RunToolResultIndex
+
+from .artifact_access import compile_agent_access, scoped_gateway
+from .contracts.submissions import submission_schema
+from .module_provider_tools import (
+    CalculateTool,
+    _IndexedInspectImageTool,
+    _IndexedOpenArtifactTool,
+    _IndexedOpenToolResultTool,
+    _IndexedSearchTextTool,
+)
+from .module_runtime import CapabilityModuleRuntime, SessionFactory
+from .state.parallel import TaskCorrelation
+from .template_access import reject_forbidden_agent_document
+
+LoopBuilder = Callable[..., AgentSessionLoop]
+RecoveryCallback = Callable[[str, dict[str, Any]], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleProviderDependencies:
+    """Existing runtime-owned objects passed into module Tool composition.
+
+    The values intentionally remain opaque to this Capability boundary.  In
+    particular, this type does not import or recreate the legacy
+    ``ArtifactGateway``, ``TaskCorrelation`` or any recovery persistence
+    implementation.
+    """
+
+    artifact_gateway: Any | None = None
+    artifact_access: Any | None = None
+    result_index: RunToolResultIndex | None = None
+    task_correlation: Any | None = None
+    recovery_event_callback: RecoveryCallback | None = None
+    tool_implementations: Mapping[str, Tool] = field(default_factory=dict)
+    web_backend: WebResearchBackend | None = None
+    research_guard: Callable[[], None] | None = None
+
+
+class ModuleProviderToolBuilder(Protocol):
+    def __call__(
+        self,
+        workspace: Path,
+        *,
+        envelope: TaskEnvelope,
+        module_id: str,
+        session_id: str,
+        workflow_id: str,
+        bus: MessageBus,
+        store: ReportingStore,
+        global_knowledge_root: Path | None,
+        tool_names: Sequence[str],
+        expected_part_ids: Sequence[str],
+        dependencies: ModuleProviderDependencies,
+    ) -> ToolRegistry: ...
+
+
+def _module_result_part_ids(
+    workspace: Path,
+    envelope: TaskEnvelope,
+) -> list[str]:
+    """Read the already-written typed Author input when it is available."""
+
+    if envelope.input_contract_ref:
+        path = workspace / envelope.input_contract_ref
+        if path.is_file():
+            try:
+                value = ModuleAuthoringInput.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                pass
+            else:
+                return list(value.required_submodule_ids)
+    return list(envelope.target_submodule_ids)
+
+
+def build_module_provider_tools(
+    workspace: Path,
+    *,
+    envelope: TaskEnvelope,
+    module_id: str,
+    session_id: str,
+    workflow_id: str,
+    bus: MessageBus,
+    store: ReportingStore,
+    global_knowledge_root: Path | None,
+    tool_names: Sequence[str],
+    expected_part_ids: Sequence[str],
+    dependencies: ModuleProviderDependencies,
+) -> ToolRegistry:
+    """Build the declared Module tool set from Capability-owned implementations.
+
+    The artifact gateway/access and existing result index are injected through
+    ``dependencies``; when present, this function assembles the moved
+    ``inspect_image``, ``open_artifact``, ``open_tool_result`` and ``search_text``
+    readers with completed-result reuse.  ``calculate`` is always assembled
+    locally.  A missing declared dependency or tool implementation is reported
+    rather than silently omitted.
+    """
+
+    workspace = Path(workspace).resolve()
+    ledger = SourceLedger(workspace, envelope.run_id)
+    evidence_memory = EvidenceResearchMemory(workspace, envelope.run_id, module_id)
+    library = ReferenceLibrary(workspace, global_root=global_knowledge_root)
+    web_backend = dependencies.web_backend or DisabledWebResearchBackend()
+
+    allowed_outputs = list(envelope.allowed_outputs)
+    evidence_binding_required = bool(
+        {"module_submission", "module_revision_submission"} & set(allowed_outputs)
+    )
+    available: dict[str, Tool] = {
+        "search_project_evidence": SearchProjectEvidenceTool(
+            workspace,
+            ledger,
+            dependencies.research_guard,
+            evidence_memory,
+            run_id=envelope.run_id,
+        ),
+        "open_project_source": OpenProjectSourceTool(
+            workspace,
+            ledger,
+            dependencies.research_guard,
+            evidence_memory,
+            run_id=envelope.run_id,
+        ),
+        "search_reference_library": SearchReferenceLibraryTool(library, ledger),
+        "open_reference": OpenReferenceTool(library, ledger),
+        "web_search": WebSearchTool(web_backend),
+        "open_web_source": OpenWebSourceTool(web_backend, ledger),
+        "inspect_document": InspectDocumentTool(
+            workspace,
+            path_validator=reject_forbidden_agent_document,
+        ),
+        "calculate": CalculateTool(),
+        "publish_research_note": PublishResearchNoteTool(
+            workspace,
+            bus,
+            workflow_id,
+            envelope.run_id,
+            envelope.task_id,
+            envelope.agent_id,
+        ),
+        "query_peer": QueryPeerTool(
+            bus,
+            envelope.task_id,
+            envelope.agent_id,
+            session_id,
+            workflow_id,
+        ),
+        "reply_peer": ReplyPeerTool(bus, envelope.agent_id, workflow_id),
+        "write_result_part": WriteResultPartTool(
+            envelope.run_id,
+            envelope.task_id,
+            envelope.revision,
+            store,
+            list(expected_part_ids),
+            evidence_binding_required=evidence_binding_required,
+        ),
+        "list_result_parts": ListResultPartsTool(
+            envelope.run_id,
+            envelope.task_id,
+            envelope.revision,
+            store,
+            list(expected_part_ids),
+            evidence_binding_required=evidence_binding_required,
+        ),
+        "submit_result": SubmitResultTool(
+            envelope.agent_id,
+            session_id,
+            envelope.run_id,
+            envelope.task_id,
+            store,
+            bus,
+            workflow_id,
+            allowed_outputs=allowed_outputs,
+            revision=envelope.revision,
+            input_contract_kind=envelope.input_contract_kind,
+            input_contract_ref=envelope.input_contract_ref,
+            submission_schemas={
+                kind: submission_schema(kind) for kind in allowed_outputs
+            },
+            task_correlation=dependencies.task_correlation,
+            recovery_event_callback=dependencies.recovery_event_callback,
+        ),
+        "report_blocked": ReportBlockedTool(
+            envelope.agent_id,
+            session_id,
+            envelope.run_id,
+            envelope.task_id,
+            store,
+            bus,
+            workflow_id,
+            task_correlation=dependencies.task_correlation,
+        ),
+        "report_gap": ReportGapTool(
+            envelope.agent_id,
+            envelope.run_id,
+            envelope.task_id,
+            store,
+            bus,
+            workflow_id,
+        ),
+    }
+    if dependencies.artifact_gateway is not None and dependencies.result_index is not None:
+        artifact_access = dependencies.artifact_access
+        capabilities = tuple(getattr(artifact_access, "capabilities", ()) or ())
+        allowed_refs = tuple(getattr(artifact_access, "readable_refs", ()) or ())
+        photo_map = getattr(artifact_access, "photo_map", None)
+        photo_refs = photo_map() if callable(photo_map) else {}
+        large_artifact_reader = envelope.agent_id in {
+            "cross-module-reviewer",
+            "chief-editor",
+            "chief-editor-auditor",
+        }
+        audit_artifact_reader = envelope.agent_id == "evidence-auditor"
+        default_limit = 160_000 if large_artifact_reader else 8_000 if audit_artifact_reader else 4_000
+        minimum_limit = 160_000 if envelope.agent_id in {
+            "cross-module-reviewer",
+            "chief-editor",
+        } else 1
+        maximum_limit = 160_000 if large_artifact_reader else 8_000
+        available.update(
+            {
+                "inspect_image": _IndexedInspectImageTool(
+                    workspace,
+                    gateway=dependencies.artifact_gateway,
+                    capabilities=capabilities,
+                    allowed_refs=allowed_refs,
+                    photo_refs=photo_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "open_artifact": _IndexedOpenArtifactTool(
+                    dependencies.artifact_gateway,
+                    default_limit=default_limit,
+                    minimum_limit=minimum_limit,
+                    maximum_limit=maximum_limit,
+                    allowed_refs=allowed_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "open_tool_result": _IndexedOpenToolResultTool(
+                    dependencies.artifact_gateway,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+                "search_text": _IndexedSearchTextTool(
+                    dependencies.artifact_gateway,
+                    dependencies.research_guard,
+                    allowed_refs=allowed_refs,
+                    result_index=dependencies.result_index,
+                    task_id=envelope.task_id,
+                ),
+            }
+        )
+    available.update(dependencies.tool_implementations)
+
+    missing = [name for name in tool_names if name not in available]
+    if missing:
+        raise ValueError(
+            "module Provider composition requires explicit implementations for: "
+            + ", ".join(missing)
+        )
+
+    registry = ToolRegistry()
+    for name in tool_names:
+        registry.register(available[name])
+    # Truncation envelopes advertise this Runtime-owned continuation reader.
+    # It only opens opaque tool-result refs under the existing scoped gateway;
+    # it does not add a Capability tool or grant another public artifact path.
+    if (
+        dependencies.artifact_gateway is not None
+        and dependencies.result_index is not None
+        and "open_tool_result" not in tool_names
+    ):
+        registry.register(available["open_tool_result"])
+    if "submit_result" in tool_names and allowed_outputs:
+        registry._schema_cache["submit_result"] = submission_schema(allowed_outputs[0])
+    return registry
+
+
+class ModuleProviderRuntime:
+    """Invoke module Author and Reviewer turns through one generic service."""
+
+    workflow_id = "public-reporting"
+    agent_ids = (
+        "module-2.1-specialist",
+        "module-2.2-specialist",
+        "module-2.3-specialist",
+        "module-2.4-specialist",
+        "module-2.5-specialist",
+        "evidence-auditor",
+    )
+
+    def __init__(
+        self,
+        services: RuntimeServicesView,
+        *,
+        store: ReportingStore | None = None,
+        execution: AgentExecutionService | None = None,
+        loop_builder: LoopBuilder = AgentLoop,
+        dependencies: ModuleProviderDependencies | None = None,
+        tool_builder: ModuleProviderToolBuilder = build_module_provider_tools,
+    ) -> None:
+        if services.workspace is None:
+            raise ValueError("module Provider composition requires a workspace")
+        self.services = services
+        self.workspace = Path(services.workspace).resolve()
+        self.store = store or ReportingStore(self.workspace)
+        self.execution = execution or AgentExecutionService(services.bus)
+        self.loop_builder = loop_builder
+        self.dependencies = dependencies or ModuleProviderDependencies()
+        self.tool_builder = tool_builder
+        self._artifact_root = ArtifactGateway(
+            self.workspace,
+            ArtifactGrant("root", "root", "workflow", "root"),
+        )
+        self.agent_invokers: dict[str, AgentInvoker] = {
+            agent_id: self for agent_id in self.agent_ids
+        }
+
+    async def close(self) -> None:
+        await self.execution.close_workflow(self.workflow_id)
+
+    async def invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    @staticmethod
+    def _context(
+        value: Any,
+        task: TaskDefinition,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if isinstance(value, DeclarativeModuleRuntimeLaneContext):
+            return value
+        if task.input_contract == "declarative_cross_owner_runtime_context":
+            if task.output_contract in {
+                "declarative_module_review_agent_result",
+                "declarative_module_recheck_agent_result",
+            }:
+                return project_cross_owner_local_module_agent_input(value)
+            return project_cross_owner_module_revision_agent_input(value)
+        return DeclarativeModuleRuntimeLaneContext.model_validate(value)
+
+    @staticmethod
+    def _task_tools(
+        task: TaskDefinition,
+    ) -> list[str]:
+        if task.input_contract != "declarative_cross_owner_runtime_context":
+            return list(task.tools)
+        return [
+            tool
+            for tool in task.tools
+            if tool not in {"open_artifact", "search_text"}
+        ]
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        context = self._context(value, task)
+        envelope = self._envelope(context, task)
+        if envelope is None:
+            raise ValueError("module Provider turn requires a prepared TaskEnvelope")
+
+        task_attempt: ProviderTaskAttempt | None = None
+        if not isinstance(self.dependencies.task_correlation, TaskCorrelation):
+            session_id = conversation.external_session_id or (
+                f"{self.workflow_id}:{conversation.key.value}"
+            )
+            task_attempt = ProviderTaskAttempt.acquire(
+                self.workspace,
+                envelope,
+                workflow_id=self.workflow_id,
+                identity_key=reporting_identity_key(
+                    agent.id,
+                    conversation.key.value,
+                ),
+                session_id=session_id,
+            )
+        try:
+            bridge = self._bridge(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+                task_attempt=task_attempt,
+            )
+            if recovery_policy is None:
+                return await bridge.invoke(
+                    agent,
+                    task,
+                    context,
+                    conversation,
+                    task_id=task_id,
+                )
+            return await bridge.invoke_with_recovery(
+                agent,
+                task,
+                context,
+                conversation,
+                task_id=task_id,
+                recovery_policy=recovery_policy,
+            )
+        finally:
+            if task_attempt is not None:
+                task_attempt.close()
+
+    def _bridge(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
+        task_attempt: ProviderTaskAttempt | None = None,
+    ) -> ModuleAuthoringAgentBridge | ModuleReviewerAgentBridge:
+        context = self._context(value, task)
+        envelope = self._envelope(context, task)
+        if envelope is None:
+            raise ValueError("module Provider turn requires a prepared TaskEnvelope")
+        session_id = conversation.external_session_id or (
+            f"{self.workflow_id}:{conversation.key.value}"
+        )
+        runtime_id = f"{self.workflow_id}:{agent.id}:{conversation.key.value}"
+        base_dependencies = (
+            replace(
+                self.dependencies,
+                task_correlation=task_attempt.correlation,
+            )
+            if task_attempt is not None
+            else self.dependencies
+        )
+        task_tools = self._task_tools(task)
+        dependencies = self._compose_artifact_dependencies(
+            agent,
+            envelope,
+            session_id=session_id,
+            task_tools=task_tools,
+            base_dependencies=base_dependencies,
+        )
+        recovery_driver = (
+            AgentRecoveryDriver(recovery_policy)
+            if recovery_policy is not None
+            else None
+        )
+        if (
+            recovery_driver is not None
+            and dependencies.recovery_event_callback is None
+        ):
+            dependencies = replace(
+                dependencies,
+                recovery_event_callback=build_tool_recovery_callback(
+                    recovery_driver
+                ),
+            )
+        tool_names = task_tools
+        if dependencies.artifact_access is not None and (
+            dependencies.artifact_gateway is not None
+            and dependencies.result_index is not None
+            and self.dependencies.artifact_gateway is None
+            and self.dependencies.artifact_access is None
+            and self.dependencies.result_index is None
+        ):
+            tool_names = list(dependencies.artifact_access.tool_names)
+        tools = self.tool_builder(
+            self.workspace,
+            envelope=envelope,
+            module_id=context.module_id,
+            session_id=session_id,
+            workflow_id=self.workflow_id,
+            bus=self.services.bus,
+            store=self.store,
+            global_knowledge_root=self.services.global_knowledge_root,
+            tool_names=tool_names,
+            expected_part_ids=_module_result_part_ids(self.workspace, envelope),
+            dependencies=dependencies,
+        )
+        loop_kwargs = {
+            "agent_type": runtime_id,
+            "workspace": self.workspace,
+            "tools": tools,
+            "bus": self.services.bus,
+            "config": self.services.agent_defaults,
+            "llm_provider": self.services.active_provider,
+            "system_prompt": agent.instructions,
+            "usage_run_id": str(context.reporting_state["run_id"]),
+            "usage_task_id": task_id,
+        }
+        if dependencies.artifact_gateway is not None:
+            loop_kwargs["artifact_gateway"] = dependencies.artifact_gateway
+        session_factory = ProviderAgentSessionFactory(
+            loop_builder=self.loop_builder,
+            loop_kwargs=loop_kwargs,
+            persist_handoff_summary=True,
+        )
+        existing = self.execution.session(self.workflow_id, conversation.key.value)
+        if existing is not None:
+            session_factory.reconfigure(existing.loop)
+        if self._is_reviewer(agent, task):
+            return ModuleReviewerAgentBridge(
+                self.workspace,
+                execution=self.execution,
+                session_factory=lambda _runtime_id: session_factory(),
+                workflow_id=self.workflow_id,
+                completed_result_loader=self._completed_result_loader(
+                    task_attempt=task_attempt,
+                    expected=dependencies.task_correlation,
+                ),
+                terminal_task_attempt_id=(
+                    dependencies.task_correlation.task_attempt_id
+                    if isinstance(dependencies.task_correlation, TaskCorrelation)
+                    else None
+                ),
+                recovery_driver=recovery_driver,
+                progress_observer=ReportingContinuationProgressObserver(
+                    self.workspace,
+                    envelope,
+                ).observe,
+            )
+        return ModuleAuthoringAgentBridge(
+            self.workspace,
+            execution=self.execution,
+            session_factory=lambda _runtime_id: session_factory(),
+            workflow_id=self.workflow_id,
+            completed_result_loader=self._completed_result_loader(
+                task_attempt=task_attempt,
+                expected=dependencies.task_correlation,
+            ),
+            terminal_task_attempt_id=(
+                dependencies.task_correlation.task_attempt_id
+                if isinstance(dependencies.task_correlation, TaskCorrelation)
+                else None
+            ),
+            recovery_driver=recovery_driver,
+            progress_observer=ReportingContinuationProgressObserver(
+                self.workspace,
+                envelope,
+            ).observe,
+        )
+
+    def _completed_result_loader(
+        self,
+        *,
+        task_attempt: ProviderTaskAttempt | None,
+        expected: Any,
+    ) -> CompletedResultLoader | None:
+        """Reuse a persisted result only when the caller supplied its identity.
+
+        The Provider composition cannot derive a ``TaskCorrelation`` from a
+        run id or task name.  The existing owner must inject the complete
+        correlation, including its current lease and attempt identity; the
+        Capability helper then performs the existing store lookup and result
+        validation.
+        """
+
+        if task_attempt is not None:
+            return task_attempt.load_completed_or_activate
+        if not isinstance(expected, TaskCorrelation):
+            return None
+        return lambda: load_completed_agent_result(self.workspace, expected)
+
+    def _compose_artifact_dependencies(
+        self,
+        agent: AgentDefinition,
+        envelope: TaskEnvelope,
+        *,
+        session_id: str,
+        task_tools: Sequence[str],
+        base_dependencies: ModuleProviderDependencies | None = None,
+    ) -> ModuleProviderDependencies:
+        """Resolve existing artifact resources for one prepared Provider task.
+
+        Explicit dependencies remain a compatibility injection point for the
+        focused/offline callers that own their gateway or result index.  The
+        production-shaped path has no such injection, so it mechanically
+        follows the existing gateway/access/index composition using only the
+        prepared envelope and typed input contract.
+        """
+
+        base = base_dependencies or self.dependencies
+        if (
+            base.artifact_gateway is not None
+            or base.artifact_access is not None
+            or base.result_index is not None
+        ):
+            return base
+        gateway = scoped_gateway(
+            self._artifact_root,
+            workflow_id=self.workflow_id,
+            envelope=envelope,
+            agent_id=agent.id,
+            session_id=session_id,
+        )
+        access_envelope = envelope.model_copy(
+            update={"allowed_tools": list(task_tools)}
+        )
+        access = compile_agent_access(
+            agent,
+            access_envelope,
+            gateway=gateway,
+        )
+        result_index = RunToolResultIndex(self.workspace, envelope.run_id)
+        return replace(
+            base,
+            artifact_gateway=gateway,
+            artifact_access=access,
+            result_index=result_index,
+        )
+
+    @staticmethod
+    def _envelope(
+        context: DeclarativeModuleRuntimeLaneContext,
+        task: TaskDefinition,
+    ) -> TaskEnvelope | None:
+        return envelope_for_output_contract(context, task.output_contract)
+
+    @staticmethod
+    def _is_reviewer(agent: AgentDefinition, task: TaskDefinition) -> bool:
+        return agent.id == "evidence-auditor" or task.output_contract in {
+            "declarative_module_review_agent_result",
+            "declarative_module_recheck_agent_result",
+            "module_review_finding_submission",
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleProviderComposition:
+    """The provider composition and its Capability public-runtime binding."""
+
+    provider: ModuleProviderRuntime
+    module_runtime: CapabilityModuleRuntime
+    agent_invokers: Mapping[str, AgentInvoker]
+    dependencies: ModuleProviderDependencies
+
+
+def build_module_provider_composition(
+    services: RuntimeServicesView,
+    *,
+    agent_session_factory: SessionFactory | None = None,
+    execution: AgentExecutionService | None = None,
+    loop_builder: LoopBuilder = AgentLoop,
+    store: ReportingStore | None = None,
+    dependencies: ModuleProviderDependencies | None = None,
+    tool_builder: ModuleProviderToolBuilder = build_module_provider_tools,
+) -> ModuleProviderComposition:
+    """Compose a CapabilityModuleRuntime with Provider-backed Agent invokers."""
+
+    provider = ModuleProviderRuntime(
+        services,
+        store=store,
+        execution=execution,
+        loop_builder=loop_builder,
+        dependencies=dependencies,
+        tool_builder=tool_builder,
+    )
+    resolved_store = provider.store
+    resolved_dependencies = provider.dependencies
+    module_runtime = CapabilityModuleRuntime(
+        provider.workspace,
+        store=resolved_store,
+        agent_execution=provider.execution,
+        agent_session_factory=agent_session_factory,
+        agent_invokers=provider.agent_invokers,
+        global_root=services.global_knowledge_root,
+    )
+    return ModuleProviderComposition(
+        provider=provider,
+        module_runtime=module_runtime,
+        agent_invokers=provider.agent_invokers,
+        dependencies=resolved_dependencies,
+    )
+
+
+__all__ = [
+    "ModuleProviderComposition",
+    "ModuleProviderDependencies",
+    "ModuleProviderRuntime",
+    "build_module_provider_composition",
+    "build_module_provider_tools",
+]

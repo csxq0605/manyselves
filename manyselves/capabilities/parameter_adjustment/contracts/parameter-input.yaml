@@ -1,0 +1,12 @@
+id: parameter-input
+version: 1.0.0
+description: One integer parameter supplied to the neutral workflow
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    value:
+      type: integer
+  required:
+  - value
+  additionalProperties: false

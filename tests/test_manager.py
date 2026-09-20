@@ -1,16 +1,17 @@
 """Tests for loop manager (agent lifecycle coordination)."""
 
-import inspect
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from manyselves.config.schema import ApiConfig, AppConfig
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.loops.manager import LoopManager
 from manyselves.interfaces.types import AgentType
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.loops.manager import LoopManager
+from manyselves.runtime.tools.registry import Tool
 
 
 @pytest.fixture
@@ -68,6 +69,16 @@ def test_manager_loop_lookup_uses_string_id(manager):
     ]
 
 
+def test_manager_registers_an_application_tool_on_an_existing_agent_loop(manager):
+    loop = SimpleNamespace(tools=manager._create_tools_for_agent("main"))
+    manager._loops["main"] = loop
+    tool = Tool()
+    tool.name = "application-tool"
+
+    assert manager.register_agent_tool("main", tool) is True
+    assert loop.tools.get("application-tool") is tool
+
+
 def test_subscribes_to_restart(manager):
     assert manager.is_running is False
     # Verify bus subscription
@@ -84,45 +95,20 @@ def test_create_tools_for_main(manager):
     # MAIN delegates — it does not get the exec/shell tool.
     assert "exec" not in tool_names
     assert "send_to_agent" not in tool_names
-    assert "run_reporting_workflow" in tool_names
-    assert "cancel_reporting_workflow" in tool_names
-    assert "get_reporting_workflow_status" in tool_names
-    assert "resume_reporting_workflow" in tool_names
-    assert "revise_reporting_workflow" in tool_names
-    assert "project_skill_evolution" in tool_names
-    assert "run_product_skill_maintainer" in tool_names
+    assert "run_reporting_workflow" not in tool_names
+    assert "cancel_reporting_workflow" not in tool_names
+    assert "get_reporting_workflow_status" not in tool_names
+    assert "resume_reporting_workflow" not in tool_names
+    assert "revise_reporting_workflow" not in tool_names
+    assert "project_skill_evolution" not in tool_names
+    assert "run_product_skill_maintainer" not in tool_names
     assert "product_skill_evolution" not in tool_names
     assert "respond" not in tool_names
-    reporting_schema = next(
-        definition["input_schema"]
-        for definition in tools.get_definitions()
-        if definition["name"] == "run_reporting_workflow"
-    )
-    assert "operation" in reporting_schema["required"]
-    assert set(reporting_schema["properties"]["operation"]["enum"]) == {
-        "distill_template_skill",
-        "full_report",
-        "module_report",
-        "aggregate_existing",
-        "render_existing",
-    }
-    assert {
-        "execution_mode",
-        "authoring_granularity",
-        "module_lane_concurrency",
-        "submodule_task_concurrency",
-        "submodule_batch_size",
-    }.isdisjoint(reporting_schema["properties"])
-    reporting_tool = tools.get("run_reporting_workflow")
-    assert reporting_tool is not None
-    assert "authoring_granularity" not in inspect.signature(
-        reporting_tool.__call__
-    ).parameters
 
 
 def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
     with patch(
-        "manyselves.core.loops.manager.PDFParseTool.is_available", return_value=False
+        "manyselves.runtime.loops.manager.PDFParseTool.is_available", return_value=False
     ):
         tools = manager._create_tools_for_agent(AgentType.MAIN)
 
@@ -147,7 +133,7 @@ def test_create_tools_write_dirs_main(manager, workspace):
 
 
 @pytest.mark.asyncio
-@patch("manyselves.core.loops.manager.ProviderFactory")
+@patch("manyselves.runtime.loops.manager.ProviderFactory")
 async def test_start_creates_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider
@@ -157,18 +143,10 @@ async def test_start_creates_loops(mock_factory, manager):
     assert set(manager._loops) == {"main"}
     system_prompt = manager._loops["main"]._system_prompt_override
     assert system_prompt is not None
-    assert '<agent_identity name="main-agent">' in system_prompt
-    assert "五路决策" in system_prompt
-    for operation in (
-        "distill_template_skill",
-        "full_report",
-        "module_report",
-        "aggregate_existing",
-        "render_existing",
-    ):
-        assert operation in system_prompt
-    assert "五个模块分别以" in system_prompt
-    assert "小节级 Agent、Task、Session 或 Lane" in system_prompt
+    assert "配电安全服务 Demo" in system_prompt
+    assert "run_reporting_workflow" in system_prompt
+    assert "<agent_identity" not in system_prompt
+    assert "manage_workflows" not in system_prompt
     assert all(
         legacy not in manager._loops
         for legacy in ("data_analysis", "plotting", "theory", "report")
@@ -178,7 +156,7 @@ async def test_start_creates_loops(mock_factory, manager):
 
 
 @pytest.mark.asyncio
-@patch("manyselves.core.loops.manager.ProviderFactory")
+@patch("manyselves.runtime.loops.manager.ProviderFactory")
 async def test_stop_clears_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider

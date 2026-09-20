@@ -1,0 +1,10 @@
+id: complete-current-chief-chapter
+version: 1.0.0
+description: Complete one Chief chapter lane with its typed outcome
+implementation: capability:distribution-reporting:complete-current-chief-chapter
+input_contract: declarative_chief_chapter_context
+output_contract: declarative_chief_chapter_outcome
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

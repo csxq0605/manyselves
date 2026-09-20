@@ -1,0 +1,7 @@
+id: module-main-exception-decision
+version: 1.0.0
+description: Continue, return, or stop one explicit module exception requested by Main
+interaction_type: decision
+input_contract: declarative_main_exception_user_input
+title: Module exception decision
+submit_label: Continue workflow

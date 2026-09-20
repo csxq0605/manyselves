@@ -13,17 +13,50 @@ export interface OutputTabsProps {
   readonly onPreview: (entry: FileEntry) => void;
 }
 
-const OUTPUT_TABS = [
-  { label: "Modules", path: "Outputs/Modules" },
-  { label: "Reports", path: "Outputs/Reports" },
-  { label: "Reviews", path: "Outputs/Reviews" },
-] as const;
+interface OutputTab {
+  readonly label: string;
+  readonly path: string;
+}
+
+const OUTPUT_ROOT = "Outputs";
 const PAGE_SIZE = 20;
 
 function entriesForTab(entries: readonly FileEntry[], tabPath: string): FileEntry[] {
   return entries
-    .filter((entry) => entry.kind === "file" && entry.path.startsWith(`${tabPath}/`))
+    .filter((entry) => {
+      if (entry.kind !== "file") return false;
+      if (tabPath === OUTPUT_ROOT) {
+        return entry.path.startsWith(`${OUTPUT_ROOT}/`)
+          && !entry.path.slice(OUTPUT_ROOT.length + 1).includes("/");
+      }
+      return entry.path.startsWith(`${tabPath}/`);
+    })
     .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function outputTabs(entries: readonly FileEntry[]): OutputTab[] {
+  const paths = new Map<string, string>();
+  for (const entry of entries) {
+    if (!entry.path.startsWith(`${OUTPUT_ROOT}/`)) continue;
+    const relative = entry.path.slice(OUTPUT_ROOT.length + 1);
+    const [category, child] = relative.split("/", 2);
+    if (!category) continue;
+    if (entry.kind === "directory" && child === undefined) {
+      paths.set(entry.path, entry.name);
+    } else if (entry.kind === "file") {
+      if (child === undefined) paths.set(OUTPUT_ROOT, "Files");
+      else paths.set(`${OUTPUT_ROOT}/${category}`, category);
+    }
+  }
+  return Array.from(paths, ([path, label]) => ({ label, path })).sort((left, right) => {
+    if (left.path === OUTPUT_ROOT) return -1;
+    if (right.path === OUTPUT_ROOT) return 1;
+    return left.label.localeCompare(right.label);
+  });
+}
+
+function tabDomId(tab: OutputTab): string {
+  return encodeURIComponent(tab.path).replaceAll("%", "-");
 }
 
 export function OutputTabs({
@@ -34,16 +67,19 @@ export function OutputTabs({
   onEdit,
   onPreview,
 }: OutputTabsProps) {
-  const [activePath, setActivePath] = useState<(typeof OUTPUT_TABS)[number]["path"]>("Outputs/Modules");
+  const tabs = useMemo(() => outputTabs(entries), [entries]);
+  const [activePath, setActivePath] = useState<string>("");
   const [pages, setPages] = useState<Record<string, number>>({});
   const grouped = useMemo(() => Object.fromEntries(
-    OUTPUT_TABS.map((tab) => [tab.path, entriesForTab(entries, tab.path)]),
-  ) as Record<(typeof OUTPUT_TABS)[number]["path"], FileEntry[]>, [entries]);
-  const activeTab = OUTPUT_TABS.find((tab) => tab.path === activePath) ?? OUTPUT_TABS[0];
+    tabs.map((tab) => [tab.path, entriesForTab(entries, tab.path)]),
+  ) as Record<string, FileEntry[]>, [entries, tabs]);
+  const activeTab = tabs.find((tab) => tab.path === activePath) ?? tabs[0];
+  if (!activeTab) return null;
   const activeEntries = grouped[activeTab.path] ?? [];
   const page = pages[activeTab.path] ?? 0;
   const totalPages = Math.max(1, Math.ceil(activeEntries.length / PAGE_SIZE));
   const boundedPage = Math.min(page, totalPages - 1);
+  const activeTabPath = activeTab.path;
   const visibleEntries = activeEntries.slice(
     boundedPage * PAGE_SIZE,
     boundedPage * PAGE_SIZE + PAGE_SIZE,
@@ -52,22 +88,23 @@ export function OutputTabs({
   function setActivePage(nextPage: number) {
     setPages((current) => ({
       ...current,
-      [activeTab.path]: Math.max(0, Math.min(totalPages - 1, nextPage)),
+      [activeTabPath]: Math.max(0, Math.min(totalPages - 1, nextPage)),
     }));
   }
 
   return (
     <section className="output-tabs">
       <div aria-label="Output categories" className="output-tabs__tablist" role="tablist">
-        {OUTPUT_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const selected = tab.path === activeTab.path;
           const count = grouped[tab.path]?.length ?? 0;
+          const domId = tabDomId(tab);
           return (
             <button
-              aria-controls={`output-panel-${tab.label}`}
+              aria-controls={`output-panel-${domId}`}
               aria-selected={selected}
               className={selected ? "output-tabs__tab output-tabs__tab--active" : "output-tabs__tab"}
-              id={`output-tab-${tab.label}`}
+              id={`output-tab-${domId}`}
               key={tab.path}
               onClick={() => setActivePath(tab.path)}
               role="tab"
@@ -81,9 +118,9 @@ export function OutputTabs({
       </div>
 
       <div
-        aria-labelledby={`output-tab-${activeTab.label}`}
+        aria-labelledby={`output-tab-${tabDomId(activeTab)}`}
         className="output-tabs__panel"
-        id={`output-panel-${activeTab.label}`}
+        id={`output-panel-${tabDomId(activeTab)}`}
         role="tabpanel"
       >
         <div aria-label={`${activeTab.label} output scroll area`} className="output-tabs__viewport" role="region">

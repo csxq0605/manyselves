@@ -1,0 +1,29 @@
+id: render-existing
+version: 1.0.0
+description: Render one existing project Markdown artifact through the Generic Host
+outputs:
+- render-existing-result
+recovery: []
+input_contract: public_render_existing_input
+input_variable: render-request
+output_contract: render_existing_output
+state:
+  run-id: ''
+actions:
+- id: prepare-render
+  kind: invoke_tool
+  tool: prepare-render-existing
+  input_variables:
+    request: render-request
+    run_id: run-id
+  output_variable: render-context
+- id: render-document
+  kind: invoke_tool
+  tool: render-existing
+  input_variable: render-context
+  output_variable: render-result
+- id: finish-render
+  kind: end_workflow
+  output_variable: render-result
+  output_name: result
+  output_contract: render_existing_output

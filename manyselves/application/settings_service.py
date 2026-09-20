@@ -10,8 +10,8 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..core.providers.base import Message
-from ..core.providers.factory import ProviderFactory
+from ..runtime.providers.base import Message
+from ..runtime.providers.factory import ProviderFactory
 from .async_ownership import await_owned
 from .errors import RuntimeConsistencyFailedError
 

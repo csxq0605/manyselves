@@ -18,8 +18,8 @@ from manyselves.application.runtime_host import RuntimeHost
 from manyselves.application.settings_service import SettingsService
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
-from manyselves.core.loops import LoopManager, MessageBus
 from manyselves.interfaces.types import Checkpoint, UserMessage
+from manyselves.runtime.loops import LoopManager, MessageBus
 
 
 class _FakeConfigManager:
@@ -151,6 +151,11 @@ class _ProviderLoopBoundary:
         self.start_calls = 0
         self.stop_calls = 0
         self.running = False
+        self.registered_tools: list[tuple[str, object]] = []
+
+    def register_agent_tool(self, agent_id: str, tool: object) -> bool:
+        self.registered_tools.append((agent_id, tool))
+        return True
 
     async def start(self) -> None:
         self.start_calls += 1
@@ -370,19 +375,24 @@ async def test_start_wires_the_created_loop_manager_into_backend(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_missing_provider_keys_raise_typed_startup_error(tmp_path: Path) -> None:
-    """Provider validation must fail before workspace setup or task creation."""
+async def test_missing_provider_keys_allow_runtime_start_for_ui_configuration(
+    tmp_path: Path,
+) -> None:
+    """The runtime must start so a user can configure a provider in the UI."""
     events: list[str] = []
     host, _, _, created = _host(events, valid_config=False)
 
-    with pytest.raises(RuntimeStartupError) as raised:
-        await host.start(tmp_path)
+    await host.start(tmp_path)
 
-    assert raised.value.code == "NO_PROVIDER_KEYS"
-    assert str(raised.value) == "No API keys configured."
-    assert events == []
-    assert created == []
-    assert host.is_ready is False
+    assert events == [
+        "project:logging",
+        "project:structure",
+        "bus:start",
+        "loops:start",
+    ]
+    assert len(created) == 1
+    assert host.is_ready is True
+    await host.stop()
 
 
 @pytest.mark.asyncio
@@ -721,12 +731,10 @@ async def test_partial_start_consumes_one_shot_host_lifecycle(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_no_provider_failure_can_retry_before_lifecycle_is_consumed(tmp_path: Path) -> None:
-    """Desktop configuration may add a key and retry after validation failure."""
+async def test_provider_key_can_be_added_after_runtime_start(tmp_path: Path) -> None:
+    """Adding a provider after startup must not create a second runtime."""
     host, _, _, created = _host([], valid_config=False)
-    with pytest.raises(RuntimeStartupError) as raised:
-        await host.start(tmp_path)
-    assert raised.value.code == "NO_PROVIDER_KEYS"
+    await host.start(tmp_path)
 
     config = cast(_FakeConfigManager, host.config_manager)
     config.valid = True
@@ -1004,6 +1012,29 @@ async def test_replace_loop_manager_uses_factory_and_keeps_shared_bus(
         assert bus.shutdown_calls == 0
     finally:
         await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_replace_loop_manager_replays_application_tool_factory(
+    tmp_path: Path,
+) -> None:
+    host, _, _, _, created, _, _ = _provider_runtime(
+        tmp_path,
+        [_LoopControl(), _LoopControl()],
+    )
+    await host.start(tmp_path / "workspace")
+
+    host.register_agent_tool_factory(
+        "main",
+        "run_reporting_workflow",
+        lambda: object(),
+    )
+    await host.replace_loop_manager()
+
+    assert created[0].registered_tools[0][0] == "main"
+    assert created[1].registered_tools[0][0] == "main"
+
+    await host.stop()
 
 
 @pytest.mark.asyncio
@@ -1364,18 +1395,21 @@ async def test_to_thread_non_abandoning_joins_worker_before_rethrowing_cancellat
 
 
 @pytest.mark.asyncio
-async def test_manyselves_app_keeps_false_for_missing_provider_keys(tmp_path: Path) -> None:
-    """The desktop compatibility layer must retain its legacy boolean outcome."""
+async def test_manyselves_app_starts_without_provider_keys_for_ui_configuration(
+    tmp_path: Path,
+) -> None:
+    """The desktop shell must open so provider settings remain reachable."""
     from manyselves.app import ManyselvesApp
 
-    host, _, _, _ = _host([], valid_config=False)
+    host, _, _, created = _host([], valid_config=False)
     desktop = ManyselvesApp(runtime_host=host)
 
-    assert await desktop.startup(tmp_path) is False
+    assert await desktop.startup(tmp_path) is True
     assert desktop.config_manager is host.config_manager
     assert desktop.bus is host.bus
     assert desktop.backend is host.backend
-    assert desktop.loop_manager is None
+    assert desktop.loop_manager is created[0]
+    await desktop.shutdown()
 
 
 @pytest.mark.asyncio

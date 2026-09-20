@@ -1,0 +1,5 @@
+id: reporting_preparation_attachment
+version: 1.0.0
+description: Join a Reporting run context with deterministic preparation output
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:ReportingPreparationAttachment

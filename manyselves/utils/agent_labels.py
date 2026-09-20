@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 from ..interfaces.types import AgentId, AgentType, normalize_agent_id
@@ -21,13 +20,6 @@ def _get_qicon(agent_type: str, color: str | None = None, size: int = 16) -> QIc
 
 AGENT_LABELS: dict[str, dict[str, str]] = {
     "main": {"name": "Main"},
-    "template-distiller": {"name": "Template Distiller"},
-    "evidence-auditor": {"name": "Evidence Auditor"},
-    "cross-module-reviewer": {"name": "Cross-module Reviewer"},
-    "chief-editor": {"name": "Chief Editor"},
-    "chief-editor-auditor": {"name": "Final Report Auditor"},
-    "report-renderer": {"name": "Render"},
-    "render": {"name": "Render"},
     # Compatibility labels for historical task/message records; these are not
     # offered by the current Main-only GUI selector.
     "data_analysis": {"name": "Data Analysis"},
@@ -58,28 +50,9 @@ def get_agent_name(agent_type: AgentId | AgentType) -> str:
     role_key, separator, session_id = agent_key.partition("--session-")
     if role_key in AGENT_LABELS:
         name = AGENT_LABELS[role_key]["name"]
-    elif role_key.startswith("module-") and role_key.endswith("-specialist"):
-        module_id = role_key.removeprefix("module-").removesuffix("-specialist")
-        name = f"Module {module_id} Specialist"
-    elif role_key.startswith("module-auditor-2."):
-        name = f"Module {role_key.removeprefix('module-auditor-')} Auditor"
-    elif role_key.startswith("cross-owner-2."):
-        name = f"Cross {role_key.removeprefix('cross-owner-')} Owner"
-    elif role_key.startswith("chief-chapter-"):
-        name = f"Chief Chapter {role_key.removeprefix('chief-chapter-')}"
-    elif role_key.startswith("final-chapter-"):
-        name = f"Final Chapter {role_key.removeprefix('final-chapter-')} Auditor"
     else:
         name = role_key.replace("_", " ").replace("-", " ").title() or "Agent"
     if separator:
-        module_lane = session_id.split("--", 1)[0]
-        if role_key in {"cross-module-reviewer", "evidence-auditor"} and re.fullmatch(
-            r"2\.[1-5]", module_lane
-        ):
-            return f"{name} {module_lane}"
-        chapter_match = re.fullmatch(r"chapter-([134])", module_lane)
-        if role_key in {"chief-editor", "chief-editor-auditor"} and chapter_match:
-            return f"{name} Chapter {chapter_match.group(1)}"
         return f"{name} · {session_id[-4:]}"
     return name
 

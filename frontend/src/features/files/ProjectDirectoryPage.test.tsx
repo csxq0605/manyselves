@@ -206,6 +206,35 @@ describe("section capabilities", () => {
 });
 
 describe("ProjectDirectoryPage", () => {
+  it("derives output categories from the project tree instead of Reporting folder names", async () => {
+    const genericEntries: FileEntry[] = [
+      {
+        kind: "directory",
+        modifiedAt: "2026-08-04T00:00:00Z",
+        name: "Deliverables",
+        path: "Outputs/Deliverables",
+        revision: "f".repeat(64),
+        size: null,
+      },
+      {
+        kind: "file",
+        modifiedAt: "2026-08-04T00:00:00Z",
+        name: "result.json",
+        path: "Outputs/Deliverables/result.json",
+        revision: "9".repeat(64),
+        size: 42,
+      },
+    ];
+
+    renderDirectory("outputs", fileApi({ listTree: async () => genericEntries }));
+
+    expect(await screen.findByRole("tab", { name: /Deliverables\s*1/ })).toBeVisible();
+    expect(screen.getByText("result.json")).toBeVisible();
+    expect(screen.queryByRole("tab", { name: /Modules/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Reports/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+  });
+
   it("renders outputs as paginated tabs inside a bounded scroll panel", async () => {
     const user = userEvent.setup();
     renderDirectory("outputs", fileApi({ listTree: async () => paginatedOutputEntries }));
@@ -242,7 +271,6 @@ describe("ProjectDirectoryPage", () => {
 
     expect(await screen.findByRole("region", { name: "Inputs file scroll area" })).toHaveClass("file-list__viewport");
     expect(screen.getByText("input-01.md")).toBeVisible();
-    expect(screen.getByText("input-01.md").closest("li")).toHaveStyle({ paddingInlineStart: "18px" });
     expect(screen.queryByText("input-21.md")).not.toBeInTheDocument();
     expect(screen.getByText("Page 1 / 2")).toBeVisible();
 
@@ -313,20 +341,24 @@ describe("ProjectDirectoryPage", () => {
 
   it("downloads a generated skill folder as a ZIP", async () => {
     const download = vi.fn().mockResolvedValue(new Blob(["archive"]));
+    const sourceUrl = "/api/v1/projects/project-1/files/download?path=Inputs%2Freport-template-role-skills";
+    const downloadUrl = vi.fn().mockReturnValue(sourceUrl);
     const saveDownload = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderDirectory(
       "inputs",
-      fileApi({ listTree: async () => templateSkillEntries, download }),
+      fileApi({ listTree: async () => templateSkillEntries, download, downloadUrl }),
       { ...platform(), saveDownload },
     );
 
     await user.click(await screen.findByRole("button", { name: "下载 report-template-role-skills" }));
 
     expect(download).toHaveBeenCalledWith("project-1", "Inputs/report-template-role-skills");
+    expect(downloadUrl).toHaveBeenCalledWith("project-1", "Inputs/report-template-role-skills");
     expect(saveDownload).toHaveBeenCalledWith({
       blob: expect.any(Blob),
       suggestedName: "report-template-role-skills.zip",
+      sourceUrl,
     });
   });
 

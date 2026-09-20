@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from manyselves.core.tools.artifact_tools import (
+from manyselves.runtime.tools.artifact_tools import (
     OpenArtifactTool,
     OpenToolResultTool,
     SearchTextTool,

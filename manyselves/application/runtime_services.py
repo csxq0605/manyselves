@@ -1,0 +1,63 @@
+"""Business-neutral resources projected from one account RuntimeHost.
+
+This module is intentionally an internal composition boundary.  It only
+forwards resources that the account-scoped RuntimeHost already owns; it does
+not select providers, build tools, interpret workflows, or add lifecycle
+policies.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from ..runtime.services import RuntimeServicesView
+
+if TYPE_CHECKING:
+    from ..runtime.providers.base import LLMProvider
+    from .runtime_host import RuntimeHost
+
+
+def build_runtime_services_view(host: RuntimeHost) -> RuntimeServicesView:
+    """Project existing Host resources without creating a second runtime owner.
+
+    ``LoopManager`` normally exposes the selected provider through its Main
+    loop.  During degraded startup no Main loop is created, so the existing
+    provider-manager selection is read as a fallback.  A missing active
+    provider remains ``None`` and is not converted into a new lifecycle policy.
+    Provider/defaults are resolved on access because settings can replace the
+    Host's LoopManager without replacing active Workflow bindings or Runs.
+    """
+
+    return RuntimeServicesView(
+        workspace=host.workspace,
+        bus=host.bus,
+        active_provider=None,
+        agent_defaults=host.config_manager.config.agents.defaults,
+        global_knowledge_root=getattr(host, "global_knowledge_root", None),
+        resolve_provider=lambda: _active_provider(host),
+        resolve_defaults=lambda: host.config_manager.config.agents.defaults,
+    )
+
+
+def _active_provider(host: RuntimeHost) -> LLMProvider | None:
+    manager = host.loop_manager
+    main_loop = manager.get_loop("main") if manager is not None else None
+
+    provider = getattr(main_loop, "llm_provider", None)
+    if provider is None:
+        provider_manager = (
+            getattr(manager, "_provider_manager", None)
+            if manager is not None
+            else None
+        )
+        if provider_manager is not None:
+            try:
+                provider = provider_manager.get_active_provider()
+            except ValueError:
+                # ProviderManager's existing no-active-provider/degraded mode.
+                provider = None
+
+    return provider
+
+
+__all__ = ["build_runtime_services_view"]

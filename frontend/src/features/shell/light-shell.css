@@ -1,11 +1,12 @@
 :root { background: #f7f7f5; color: #202123; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; }
 button, input, textarea { font: inherit; }
 button, a { touch-action: manipulation; }
 :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .light-app { background: #f7f7f5; display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 100vh; }
 .skip-link { background: #fff; color: #202123; left: 12px; padding: 8px 10px; position: fixed; top: -48px; z-index: 10; }
 .skip-link:focus { top: 12px; }
-.sidebar { background: #f1f1ef; border-right: 1px solid #dcddd9; box-sizing: border-box; display: flex; flex-direction: column; min-height: 100dvh; padding: 13px 9px 16px; }
+.sidebar { background: #f1f1ef; border-right: 1px solid #dcddd9; box-sizing: border-box; display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; padding: 13px 9px 16px; position: sticky; top: 0; z-index: 4; }
 .project-home__eyebrow { color: #6b6f76; font-family: "SFMono-Regular", Cascadia Mono, monospace; font-size: 10px; letter-spacing: .08em; }
 .sidebar__top { display: grid; gap: 12px; margin: 0 3px 46px; }
 .sidebar a { align-items: center; border-radius: 10px; color: #202123; display: flex; gap: 12px; min-height: 38px; padding: 7px 11px; text-decoration: none; }
@@ -56,5 +57,6 @@ button, a { touch-action: manipulation; }
 .project-dialog h3 { margin: 0; }
 .project-dialog label { display: grid; font-size: 13px; gap: 5px; }
 .project-dialog input, .project-dialog textarea { border: 1px solid #c8c9c5; border-radius: 4px; padding: 7px; }
-@media (max-width: 700px) { .light-app { display: block; } .sidebar { border-bottom: 1px solid #dcddd9; border-right: 0; min-height: auto; } .sidebar__top { margin-bottom: 20px; } .sidebar__projects { max-height: 45vh; overflow: auto; } .sidebar__account { margin-top: 10px; } .light-app__outlet { padding: 28px 20px; } .light-app__outlet--conversation { padding: 0; } }
+@media (max-width: 900px) and (min-width: 521px) { .light-app { grid-template-columns: 250px minmax(0, 1fr); } .light-app__outlet { padding: 28px 24px; } .light-app__outlet--conversation { padding: 0; } }
+@media (max-width: 520px) { .light-app { display: block; } .sidebar { border-bottom: 1px solid #dcddd9; border-right: 0; height: auto; min-height: auto; overflow: visible; position: static; } .sidebar__top { margin-bottom: 20px; } .sidebar__projects { max-height: 45vh; overflow: auto; } .sidebar__account { margin-top: 10px; } .light-app__outlet { padding: 28px 20px; } .light-app__outlet--conversation { padding: 0; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition-duration: 0ms !important; } }

@@ -1,0 +1,10 @@
+id: prepare-render-existing
+version: 1.0.0
+description: Freeze the source and materialize the selected report template
+implementation: capability:distribution-reporting:prepare-render-existing
+input_contract: render_existing_prepare_input
+output_contract: render_existing_context
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

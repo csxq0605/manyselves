@@ -1,0 +1,10 @@
+id: apply-evidence-decision
+version: 1.0.0
+description: Apply the submitted readiness decision to the current Run state
+implementation: capability:distribution-reporting:apply-evidence-decision
+input_contract: evidence_decision_application
+output_contract: evidence_readiness_state
+side_effect: pure_read
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,168 @@
+id: distribution-module-cohort
+version: 1.0.0
+description: File-defined parallel Join for the five Reporting module lanes
+tasks:
+- module-2.1-revision
+- module-2.2-revision
+- module-2.3-revision
+- module-2.4-revision
+- module-2.5-revision
+recovery:
+- current-reporting-recovery
+input_contract: distribution_reporting_input
+output_contract: declarative_module_cohort_output
+parameters:
+- max_concurrency
+state:
+  module-inputs: {}
+  lane-outcomes: {}
+  module-id-2.1: "2.1"
+  module-id-2.2: "2.2"
+  module-id-2.3: "2.3"
+  module-id-2.4: "2.4"
+  module-id-2.5: "2.5"
+actions:
+- id: prepare-module-cohort
+  kind: invoke_tool
+  tool: prepare-module-cohort
+  input_variable: module-inputs
+  output_variable: prepared-module-inputs
+- id: module-cohort
+  kind: parallel
+  branches:
+    "2.1": execute-module-2.1
+    "2.2": execute-module-2.2
+    "2.3": execute-module-2.3
+    "2.4": execute-module-2.4
+    "2.5": execute-module-2.5
+  join: join-module-cohort
+  max_concurrency: "{max_concurrency}"
+- id: execute-module-2.1
+  kind: subworkflow
+  workflow: distribution-module-2.1-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.1
+    lane-outcomes: lane-outcomes
+  child_output_name: result
+  output_variable: outcome-2.1
+- id: complete-module-2.1-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.2
+  kind: subworkflow
+  workflow: distribution-module-2.2-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.2
+    lane-outcomes: lane-outcomes
+  child_output_name: result
+  output_variable: outcome-2.2
+- id: complete-module-2.2-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.3
+  kind: subworkflow
+  workflow: distribution-module-2.3-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.3
+    lane-outcomes: lane-outcomes
+  child_output_name: result
+  output_variable: outcome-2.3
+- id: complete-module-2.3-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.4
+  kind: subworkflow
+  workflow: distribution-module-2.4-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.4
+    lane-outcomes: lane-outcomes
+  child_output_name: result
+  output_variable: outcome-2.4
+- id: complete-module-2.4-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.5
+  kind: subworkflow
+  workflow: distribution-module-2.5-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.5
+    lane-outcomes: lane-outcomes
+  child_output_name: result
+  output_variable: outcome-2.5
+- id: complete-module-2.5-branch
+  kind: goto
+  target: join-module-cohort
+- id: join-module-cohort
+  kind: join
+  parallel: module-cohort
+  inputs:
+    "2.1": outcome-2.1
+    "2.2": outcome-2.2
+    "2.3": outcome-2.3
+    "2.4": outcome-2.4
+    "2.5": outcome-2.5
+  output_variable: module-outcomes
+- id: resume-module-2.1-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.1-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.1
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.1
+- id: resume-module-2.2-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.2-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.2
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.2
+- id: resume-module-2.3-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.3-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.3
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.3
+- id: resume-module-2.4-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.4-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.4
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.4
+- id: resume-module-2.5-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.5-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.5
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.5
+- id: reduce-module-cohort
+  kind: invoke_tool
+  tool: reduce-module-cohort
+  input_variables:
+    "2.1": outcome-2.1
+    "2.2": outcome-2.2
+    "2.3": outcome-2.3
+    "2.4": outcome-2.4
+    "2.5": outcome-2.5
+  output_variable: completed-modules
+- id: finish-module-cohort
+  kind: end_workflow
+  output_variable: completed-modules
+  output_name: result

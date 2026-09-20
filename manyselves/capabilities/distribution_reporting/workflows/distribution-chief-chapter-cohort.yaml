@@ -1,0 +1,83 @@
+id: distribution-chief-chapter-cohort
+version: 1.0.0
+description: File-defined parallel Join for the Chief report chapter lanes
+tasks:
+- chief-chapter-edit
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+  chapter-id-1: "1"
+  chapter-id-3: "3"
+  chapter-id-4: "4"
+  prepared-chief-state: {}
+  chief-chapter-outcomes: {}
+  completed-chief-state: {}
+actions:
+- id: prepare-chief-chapter-cohort
+  kind: invoke_tool
+  tool: prepare-chief-chapter-cohort
+  input_variable: reporting-state
+  output_variable: prepared-chief-state
+- id: chief-chapter-cohort
+  kind: parallel
+  branches:
+    "1": execute-chief-chapter-1
+    "3": execute-chief-chapter-3
+    "4": execute-chief-chapter-4
+  join: join-chief-chapter-cohort
+  max_concurrency: 3
+- id: execute-chief-chapter-1
+  kind: subworkflow
+  workflow: distribution-chief-chapter-1-lane
+  input_variables:
+    reporting-state: prepared-chief-state
+    chapter-id: chapter-id-1
+  child_output_name: result
+  output_variable: outcome-1
+- id: complete-chief-chapter-1-branch
+  kind: goto
+  target: join-chief-chapter-cohort
+- id: execute-chief-chapter-3
+  kind: subworkflow
+  workflow: distribution-chief-chapter-3-lane
+  input_variables:
+    reporting-state: prepared-chief-state
+    chapter-id: chapter-id-3
+  child_output_name: result
+  output_variable: outcome-3
+- id: complete-chief-chapter-3-branch
+  kind: goto
+  target: join-chief-chapter-cohort
+- id: execute-chief-chapter-4
+  kind: subworkflow
+  workflow: distribution-chief-chapter-4-lane
+  input_variables:
+    reporting-state: prepared-chief-state
+    chapter-id: chapter-id-4
+  child_output_name: result
+  output_variable: outcome-4
+- id: complete-chief-chapter-4-branch
+  kind: goto
+  target: join-chief-chapter-cohort
+- id: join-chief-chapter-cohort
+  kind: join
+  parallel: chief-chapter-cohort
+  inputs:
+    "1": outcome-1
+    "3": outcome-3
+    "4": outcome-4
+  output_variable: chief-chapter-outcomes
+- id: reduce-chief-chapter-cohort
+  kind: invoke_tool
+  tool: reduce-chief-chapter-cohort
+  input_variables:
+    state: prepared-chief-state
+    outcomes: chief-chapter-outcomes
+  output_variable: completed-chief-state
+- id: finish-chief-chapter-cohort
+  kind: end_workflow
+  output_variable: completed-chief-state
+  output_name: result

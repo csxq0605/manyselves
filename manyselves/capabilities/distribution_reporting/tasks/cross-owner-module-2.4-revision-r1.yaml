@@ -1,0 +1,26 @@
+id: cross-owner-module-2.4-revision-r1
+version: 1.0.0
+description: Run the prepared module 2.4 Cross revision through the generic Agent port
+agent: module-2.4-specialist
+objective: Apply the prepared Cross owner findings through the exact Reporting envelope.
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_revision_agent_result
+tools:
+- search_project_evidence
+- open_project_source
+- search_reference_library
+- open_reference
+- web_search
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- publish_research_note
+- query_peer
+- reply_peer
+- report_gap
+- write_result_part
+- list_result_parts
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery

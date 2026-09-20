@@ -1,0 +1,5 @@
+id: declarative_cross_owner_recheck_agent_result
+version: 1.0.0
+description: Typed result from one original Cross owner recheck Agent action
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.cross_owner:DeclarativeCrossOwnerRecheckAgentResult

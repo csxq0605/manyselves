@@ -1,0 +1,7 @@
+id: readiness_route
+version: 1.0.0
+description: Generic workflow route selected by the readiness Capability Tool
+adapter: json_schema
+schema:
+  type: string
+  enum: [continue, ask, block, prepare, stop]

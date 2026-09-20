@@ -1,0 +1,10 @@
+id: complete-baseline-module-lane
+version: 1.0.0
+description: Keep an untouched baseline module and mark the lane reviewed for cohort join
+implementation: capability:distribution-reporting:complete-baseline-module-lane
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

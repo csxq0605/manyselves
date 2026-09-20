@@ -1,0 +1,6 @@
+id: citation_plan
+version: 1.0.0
+description: Reporting adapter boundary for citation_plan
+adapter: json_schema
+schema: {}
+

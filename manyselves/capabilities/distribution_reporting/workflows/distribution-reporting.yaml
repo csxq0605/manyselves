@@ -1,0 +1,65 @@
+id: distribution-reporting
+version: 1.0.0
+description: Declarative top-level Reporting stage orchestration
+tasks:
+- module-initial-review
+- module-2.1-revision
+- module-2.2-revision
+- module-2.3-revision
+- module-2.4-revision
+- module-2.5-revision
+- module-recheck
+- cross-owner-review
+- chief-chapter-edit
+- final-chapter-review
+recovery:
+- current-reporting-recovery
+input_contract: distribution_reporting_input
+input_variable: reporting-state
+output_contract: distribution_reporting_output
+state:
+  reporting-state: {}
+  preparation-context: {}
+  preparation-complete: false
+  full-report: false
+actions:
+- id: choose-preparation-entry
+  kind: if
+  condition:
+    variable: preparation-complete
+    operator: truthy
+  then: run-module-cohort
+  otherwise: run-reporting-preparation
+- id: run-reporting-preparation
+  kind: subworkflow
+  workflow: distribution-reporting-preparation
+  input_variable: preparation-context
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-module-cohort
+  kind: subworkflow
+  workflow: distribution-module-cohort
+  input_variable: reporting-state
+  child_input_variable: module-inputs
+  child_output_name: result
+  output_variable: reporting-state
+- id: select-reporting-tail
+  kind: if
+  condition:
+    variable: full-report
+    operator: truthy
+  then: run-reporting-tail
+  otherwise: finish-reporting
+- id: run-reporting-tail
+  kind: subworkflow
+  workflow: distribution-reporting-tail
+  input_variable: reporting-state
+  child_input_variable: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: finish-reporting
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result
+  output_contract: distribution_reporting_output

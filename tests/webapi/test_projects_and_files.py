@@ -13,6 +13,8 @@ import pytest
 
 from manyselves.application.preview_service import PreviewService
 from manyselves.application.workspace_files import WorkspaceFiles
+from manyselves.config.schema import AgentDefaults
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import files as file_routes
@@ -26,11 +28,20 @@ class SwitchableRuntimeHost:
     def __init__(self) -> None:
         self.is_ready = False
         self.workspace: Path | None = None
+        self.bus = MessageBus()
+        self.global_knowledge_root = None
+        self.config_manager = SimpleNamespace(
+            config=SimpleNamespace(
+                agents=SimpleNamespace(defaults=AgentDefaults()),
+            )
+        )
         self.statuses = {"main": "idle"}
         self.failed_calls = 0
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: dict(self.statuses),
             get_agent_session_id=lambda agent_id: None,
+            get_loop=lambda _agent_id: None,
+            _provider_manager=None,
         )
 
     async def start(self, workspace: Path) -> None:
@@ -221,6 +232,34 @@ async def test_project_activation_requires_idle_runtime(api) -> None:
     host.statuses = {"main": "thinking"}
 
     response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+
+
+@pytest.mark.asyncio
+async def test_project_activation_keeps_active_generic_run_in_original_workspace(api) -> None:
+    """A detached Generic Host run must not be orphaned by project activation."""
+
+    client, host, _ = api
+    headers = await acquire_controller(client)
+    await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json=project_create_payload("p2"),
+    )
+    binding = host.app.state.workflow_projection._runtime_bindings.require(  # noqa: SLF001
+        "distribution-reporting"
+    )
+    release = asyncio.Event()
+    task = asyncio.create_task(release.wait())
+    binding._detached_runs._tasks.add(task)  # noqa: SLF001
+    try:
+        response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+    finally:
+        release.set()
+        await task
+        binding._detached_runs._tasks.discard(task)  # noqa: SLF001
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUNTIME_BUSY"
@@ -817,6 +856,7 @@ async def test_outputs_writes_uploads_and_directory_mutations_are_forbidden(api)
     client, _, root = api
     headers = await acquire_controller(client)
     output = root / "p1" / "Outputs" / "Reports" / "report.txt"
+    output.parent.mkdir(parents=True)
     output.write_text("generated", encoding="utf-8")
     output_revision = hashlib.sha256(b"generated").hexdigest()
     directory_revision = WorkspaceFiles(root / "p1").entry("Outputs/Reports").revision
@@ -914,6 +954,8 @@ async def test_file_routes_hide_non_page_roots_but_keep_output_directories_visib
     """The browser API must retain Outputs children while never exposing Work or metadata."""
     client, _, root = api
     (root / "p1" / "Work" / "private.json").write_text("secret", encoding="utf-8")
+    for name in ("Reports", "Modules", "Reviews"):
+        (root / "p1" / "Outputs" / name).mkdir()
 
     tree = await client.get("/api/v1/projects/p1/files/tree")
     hidden = await client.get(

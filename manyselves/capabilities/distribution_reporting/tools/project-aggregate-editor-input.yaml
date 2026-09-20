@@ -1,0 +1,10 @@
+id: project-aggregate-editor-input
+version: 1.0.0
+description: Project the prepared aggregate context into the Agent input contract
+implementation: capability:distribution-reporting:project-aggregate-editor-input
+input_contract: aggregate_existing_context
+output_contract: aggregate_editor_input
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

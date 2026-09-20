@@ -1,0 +1,6 @@
+id: module_lane_bindings
+version: 1.0.0
+description: Reporting adapter boundary for module_lane_bindings
+adapter: json_schema
+schema:
+  type: object

@@ -16,12 +16,16 @@ from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
-from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
+from ..application.runtime_services import build_runtime_services_view
+from ..application.workflow_projection import WorkflowProjectionFacade
+from ..capabilities.distribution_reporting.adapters.main_tool import (
+    attach_main_reporting_tool,
+)
 from ..config import ConfigManager
-from ..core.loops.bus import MessageBus
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
+from ..runtime.loops.bus import MessageBus
 from .accounts import AccountCatalog
 from .events.broker import EventBroker
 from .events.mapper import EventContext
@@ -40,21 +44,21 @@ class TenantRuntime:
     runtime_facade: RuntimeFacade
     project_registry: ProjectRegistry
     conversation_service: ConversationService
-    reporting_facade: ReportingFacade
     python_run_service: PythonRunService
     maintenance_service: MaintenanceService
     global_knowledge_service: GlobalKnowledgeService
     event_broker: EventBroker
     event_store: EventStore
+    workflow_projection: WorkflowProjectionFacade
 
     async def close(self) -> None:
         """Stop only this account's producers, services, broker, and bus."""
 
         await self.runtime_facade.begin_shutdown()
+        await self.workflow_projection.close()
         stop_producers = getattr(self.runtime_host, "stop_producers", None)
         if callable(stop_producers):
             await stop_producers()
-        await self.reporting_facade.close()
         await self.python_run_service.close()
         await self.conversation_service.close()
         await self.event_broker.close()
@@ -63,6 +67,22 @@ class TenantRuntime:
             await stop_bus()
         else:
             await self.runtime_host.stop()
+
+    async def rebind_workflow_projection(self, workspace: Path) -> None:
+        """Replace project-scoped Capability runtimes after Host activation."""
+
+        previous = self.workflow_projection
+        replacement = WorkflowProjectionFacade(
+            workspace,
+            build_runtime_services_view(self.runtime_host),
+        )
+        await previous.close()
+        self.workflow_projection = replacement
+        attach_main_reporting_tool(
+            self.runtime_host,
+            projection_resolver=lambda: self.workflow_projection,
+            conversation_resolver=lambda: self.conversation_service,
+        )
 
 
 TenantFactory = Callable[[str, Path, WebSettings], Awaitable[TenantRuntime]]
@@ -129,7 +149,10 @@ async def start_tenant_runtime(
     await host.start(workspace)
     bus = getattr(host, "bus", None) or MessageBus()
     conversations = ConversationService(workspace, facade=facade, bus=bus)
-    reporting = ReportingFacade.from_runtime(host, workspace=workspace)
+    workflow_projection = WorkflowProjectionFacade(
+        workspace,
+        build_runtime_services_view(host),
+    )
     python_runs = PythonRunService(
         workspace,
         bus=bus,
@@ -139,7 +162,7 @@ async def start_tenant_runtime(
     maintenance = MaintenanceService(
         facade,
         conversations,
-        reporting,
+        workflow_projection,
         python_runs,
         config_manager=manager,
     )
@@ -184,7 +207,7 @@ async def start_tenant_runtime(
     event_store = EventStore(tenant_settings.event_db_path)
     _attach_event_persistence(broker, event_store)
     broker.start()
-    return TenantRuntime(
+    runtime = TenantRuntime(
         account_id=account_id,
         data_root=data_root,
         web_settings=tenant_settings,
@@ -192,13 +215,19 @@ async def start_tenant_runtime(
         runtime_facade=facade,
         project_registry=registry,
         conversation_service=conversations,
-        reporting_facade=reporting,
         python_run_service=python_runs,
         maintenance_service=maintenance,
         global_knowledge_service=global_knowledge,
         event_broker=broker,
         event_store=event_store,
+        workflow_projection=workflow_projection,
     )
+    attach_main_reporting_tool(
+        host,
+        projection_resolver=lambda: runtime.workflow_projection,
+        conversation_resolver=lambda: runtime.conversation_service,
+    )
+    return runtime
 
 
 class TenantRuntimeManager:

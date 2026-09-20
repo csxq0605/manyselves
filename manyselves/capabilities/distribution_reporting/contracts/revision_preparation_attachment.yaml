@@ -1,0 +1,5 @@
+id: revision_preparation_attachment
+version: 1.0.0
+description: Current preparation result attached to the preserved report baseline
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.preparation:RevisionPreparationAttachment

@@ -1,0 +1,12 @@
+id: name-input
+version: 1.0.0
+description: One user name
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    name:
+      type: string
+  required:
+  - name
+  additionalProperties: false

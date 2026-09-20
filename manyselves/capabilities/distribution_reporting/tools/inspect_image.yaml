@@ -1,0 +1,10 @@
+id: inspect_image
+version: 1.0.0
+description: Current Reporting tool declaration for inspect_image
+implementation: capability:distribution-reporting:inspect_image
+input_contract: inspect_image_tool_input
+output_contract: reporting_tool_output
+side_effect: pure_read
+parallel_safe: true
+reuse_result: true
+model_visible: true

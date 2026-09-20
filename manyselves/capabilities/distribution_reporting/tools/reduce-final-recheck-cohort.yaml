@@ -1,0 +1,10 @@
+id: reduce-final-recheck-cohort
+version: 1.0.0
+description: Reduce affected Final recheck outcomes and update pending findings
+implementation: capability:distribution-reporting:reduce-final-recheck-cohort
+input_contract: reporting_tool_input
+output_contract: declarative_final_review_cycle_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,69 @@
+id: distribution-chief-chapter-lane
+version: 1.0.0
+description: Reusable current Chief editor lane bound to one report chapter
+tasks:
+- chief-chapter-edit
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: declarative_chief_chapter_outcome
+parameters:
+- chapter_id
+- conversation_key
+state:
+  reporting-state: {}
+  chapter-id: "{chapter_id}"
+  prepared-chief-lane: {}
+  should-invoke-chief-chapter: false
+  chief-chapter-conversation: {}
+  chief-chapter-agent-result: {}
+  completed-chief-lane: {}
+actions:
+- id: prepare-chief-chapter-lane
+  kind: invoke_tool
+  tool: prepare-current-chief-chapter
+  input_variables:
+    state: reporting-state
+    chapter_id: chapter-id
+  output_variable: prepared-chief-lane
+- id: chief-chapter-lane-requires-agent
+  kind: invoke_tool
+  tool: chief-chapter-requires-agent
+  input_variable: prepared-chief-lane
+  output_variable: should-invoke-chief-chapter
+- id: choose-chief-chapter-source
+  kind: if
+  condition:
+    variable: should-invoke-chief-chapter
+    operator: truthy
+  then: create-chief-chapter-conversation
+  otherwise: complete-chief-chapter-lane
+- id: create-chief-chapter-conversation
+  kind: create_conversation
+  agent: chief-editor
+  conversation_key: "{conversation_key}"
+  mode: run
+  output_variable: chief-chapter-conversation
+- id: invoke-chief-chapter-agent
+  kind: invoke_agent
+  agent: chief-editor
+  task: chief-chapter-edit
+  conversation_variable: chief-chapter-conversation
+  input_variable: prepared-chief-lane
+  output_variable: chief-chapter-agent-result
+- id: accept-chief-chapter-lane
+  kind: invoke_tool
+  tool: accept-current-chief-chapter
+  input_variables:
+    context: prepared-chief-lane
+    result: chief-chapter-agent-result
+  output_variable: prepared-chief-lane
+- id: complete-chief-chapter-lane
+  kind: invoke_tool
+  tool: complete-current-chief-chapter
+  input_variable: prepared-chief-lane
+  output_variable: completed-chief-lane
+- id: finish-chief-chapter-lane
+  kind: end_workflow
+  output_variable: completed-chief-lane
+  output_name: result

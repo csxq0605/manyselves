@@ -1,0 +1,12 @@
+id: parameter-adjustment
+version: 1.0.0
+description: Neutral declarative parameter adjustment capability
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+recovery: ./recovery
+entrypoints:
+- parameter-adjustment
+runtime: manyselves.capabilities.parameter_adjustment.adapters.runtime:build_runtime_binding

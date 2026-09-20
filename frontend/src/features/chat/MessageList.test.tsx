@@ -25,7 +25,7 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
 }
 
 describe("MessageList", () => {
-  it("moves tool call records into a floating runtime panel instead of the chat stream", async () => {
+  it("moves tool call records into an inline runtime panel instead of the chat stream", async () => {
     const user = userEvent.setup();
     render(
       <MessageList
@@ -49,7 +49,7 @@ describe("MessageList", () => {
     expect(screen.getByRole("list", { name: "运行态记录" })).toHaveTextContent("tool_result");
   });
 
-  it("summarizes agent status and task progress inside the floating runtime panel", async () => {
+  it("summarizes agent status and task progress inside the inline runtime panel", async () => {
     const user = userEvent.setup();
     render(
       <MessageList

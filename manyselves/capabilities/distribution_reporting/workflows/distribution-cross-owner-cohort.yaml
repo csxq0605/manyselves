@@ -1,0 +1,103 @@
+id: distribution-cross-owner-cohort
+version: 1.0.0
+description: File-defined parallel Join for the five Cross owner pipelines
+tasks:
+- cross-owner-review
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+  owner-id-2.1: "2.1"
+  owner-id-2.2: "2.2"
+  owner-id-2.3: "2.3"
+  owner-id-2.4: "2.4"
+  owner-id-2.5: "2.5"
+actions:
+- id: prepare-cross-owner-cohort
+  kind: invoke_tool
+  tool: prepare-cross-owner-cohort
+  input_variable: reporting-state
+  output_variable: prepared-cross-state
+- id: cross-owner-cohort
+  kind: parallel
+  branches:
+    "2.1": execute-cross-owner-2.1
+    "2.2": execute-cross-owner-2.2
+    "2.3": execute-cross-owner-2.3
+    "2.4": execute-cross-owner-2.4
+    "2.5": execute-cross-owner-2.5
+  join: join-cross-owner-cohort
+  max_concurrency: 5
+- id: execute-cross-owner-2.1
+  kind: subworkflow
+  workflow: distribution-cross-owner-2.1-pipeline
+  input_variables:
+    reporting-state: prepared-cross-state
+  child_output_name: result
+  output_variable: outcome-2.1
+- id: complete-cross-owner-2.1-branch
+  kind: goto
+  target: join-cross-owner-cohort
+- id: execute-cross-owner-2.2
+  kind: subworkflow
+  workflow: distribution-cross-owner-2.2-pipeline
+  input_variables:
+    reporting-state: prepared-cross-state
+  child_output_name: result
+  output_variable: outcome-2.2
+- id: complete-cross-owner-2.2-branch
+  kind: goto
+  target: join-cross-owner-cohort
+- id: execute-cross-owner-2.3
+  kind: subworkflow
+  workflow: distribution-cross-owner-2.3-pipeline
+  input_variables:
+    reporting-state: prepared-cross-state
+  child_output_name: result
+  output_variable: outcome-2.3
+- id: complete-cross-owner-2.3-branch
+  kind: goto
+  target: join-cross-owner-cohort
+- id: execute-cross-owner-2.4
+  kind: subworkflow
+  workflow: distribution-cross-owner-2.4-pipeline
+  input_variables:
+    reporting-state: prepared-cross-state
+  child_output_name: result
+  output_variable: outcome-2.4
+- id: complete-cross-owner-2.4-branch
+  kind: goto
+  target: join-cross-owner-cohort
+- id: execute-cross-owner-2.5
+  kind: subworkflow
+  workflow: distribution-cross-owner-2.5-pipeline
+  input_variables:
+    reporting-state: prepared-cross-state
+  child_output_name: result
+  output_variable: outcome-2.5
+- id: complete-cross-owner-2.5-branch
+  kind: goto
+  target: join-cross-owner-cohort
+- id: join-cross-owner-cohort
+  kind: join
+  parallel: cross-owner-cohort
+  inputs:
+    "2.1": outcome-2.1
+    "2.2": outcome-2.2
+    "2.3": outcome-2.3
+    "2.4": outcome-2.4
+    "2.5": outcome-2.5
+  output_variable: cross-owner-outcomes
+- id: reduce-cross-owner-cohort
+  kind: invoke_tool
+  tool: reduce-cross-owner-cohort
+  input_variables:
+    state: prepared-cross-state
+    outcomes: cross-owner-outcomes
+  output_variable: completed-cross-state
+- id: finish-cross-owner-cohort
+  kind: end_workflow
+  output_variable: completed-cross-state
+  output_name: result

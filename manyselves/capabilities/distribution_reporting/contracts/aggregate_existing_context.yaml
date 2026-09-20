@@ -1,0 +1,5 @@
+id: aggregate_existing_context
+version: 1.0.0
+description: Frozen source context for the aggregate-existing Capability workflow
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing:AggregateExistingContext

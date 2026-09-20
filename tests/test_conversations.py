@@ -186,6 +186,41 @@ class TestMessagePersistence:
         assert len(data_msgs) == 1
         assert data_msgs[0]["content"] == "Data msg"
 
+    @pytest.mark.parametrize(
+        ("agent_id", "directory_name"),
+        [
+            (
+                "public-reporting:module-2.1-specialist:specialist-2.1",
+                "public-reporting%3Amodule-2.1-specialist%3Aspecialist-2.1",
+            ),
+            ("literal%agent", "literal%25agent"),
+            ("slash/agent", "slash%2Fagent"),
+            (r"backslash\agent", "backslash%5Cagent"),
+            ("CON.txt", "%43ON.txt"),
+            ("trailing-dot.", "trailing-dot%2E"),
+            ("main", "main"),
+        ],
+    )
+    def test_runtime_agent_id_round_trips_through_portable_directory(
+        self,
+        tmp_path: Path,
+        agent_id: str,
+        directory_name: str,
+    ) -> None:
+        """Logical Runtime Agent ids survive a portable filesystem boundary."""
+
+        store = ConversationStore(tmp_path)
+        store.append_message(agent_id, "agent", "draft completed")
+        session_id = store.get_current_session_id(agent_id)
+
+        reloaded = ConversationStore(tmp_path)
+
+        assert reloaded.get_current_session_id(agent_id) == session_id
+        assert reloaded.load_messages(agent_id)[0]["content"] == "draft completed"
+        assert agent_id in reloaded.get_agent_types_with_history()
+        encoded_directory = store._dir / directory_name
+        assert (encoded_directory / f"{session_id}.jsonl").is_file()
+
     def test_tool_call_round_trip(self, store: ConversationStore):
         """append_tool_call and append_tool_result should be readable."""
         store.append_tool_call("main", "read", {"path": "test.py"}, extra={"summary": "Read"})

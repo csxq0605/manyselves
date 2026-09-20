@@ -1,0 +1,5 @@
+id: declarative_final_chapter_outcome
+version: 1.0.0
+description: Terminal outcome for one drained Final initial chapter branch
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_chapter:DeclarativeFinalChapterOutcome

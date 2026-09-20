@@ -6,6 +6,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
@@ -22,7 +23,6 @@ from .errors import (
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
-from .legacy_runtime_adapter import LegacyRuntimeAdapter
 from .models import (
     AcceptedCommand,
     EditResendCommand,
@@ -34,6 +34,7 @@ from .models import (
     SendMessageCommand,
 )
 from .runtime_host import RuntimeHost
+from .runtime_snapshot_adapter import RuntimeSnapshotAdapter
 from .runtime_state import RuntimeStateProjection
 
 CommandResponse = AcceptedCommand | RollbackResult
@@ -132,7 +133,7 @@ class RuntimeFacade:
         host: RuntimeHost,
         *,
         leases: ControlLeaseService | None = None,
-        adapter: LegacyRuntimeAdapter | None = None,
+        adapter: RuntimeSnapshotAdapter | None = None,
         state: RuntimeStateProjection | None = None,
         command_cache_size: int = 256,
     ) -> None:
@@ -140,7 +141,7 @@ class RuntimeFacade:
             raise ValueError("Command cache size must be positive")
         self._host = host
         self.leases = leases or ControlLeaseService()
-        self._adapter = adapter or LegacyRuntimeAdapter(host, state=state)
+        self._adapter = adapter or RuntimeSnapshotAdapter(host, state=state)
         self._command_cache_size = command_cache_size
         self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()
@@ -196,9 +197,9 @@ class RuntimeFacade:
         *,
         lease_token: str,
         resolve_workspace: Callable[[], Path],
-        commit: Callable[[], ActivationResponseT],
-        rollback: Callable[[], None],
-        reconcile: Callable[[Path], None],
+        commit: Callable[[], ActivationResponseT | Awaitable[ActivationResponseT]],
+        rollback: Callable[[], None | Awaitable[None]],
+        reconcile: Callable[[Path], None | Awaitable[None]],
     ) -> ActivationResponseT:
         """Resolve, switch, and commit project state as one serialized transaction."""
         async with self._mutation_lock:
@@ -213,7 +214,8 @@ class RuntimeFacade:
             previous_workspace = self._host.workspace
             await self._host.switch_workspace(workspace)
             try:
-                return commit()
+                committed = commit()
+                return await committed if isawaitable(committed) else committed
             except BaseException as commit_error:
                 if previous_workspace is not None:
                     try:
@@ -225,7 +227,9 @@ class RuntimeFacade:
                 actual_workspace = self._host.workspace
                 if self._host.is_ready and actual_workspace == previous_workspace:
                     try:
-                        rollback()
+                        rolled_back = rollback()
+                        if isawaitable(rolled_back):
+                            await rolled_back
                     except BaseException as rollback_error:
                         commit_error.add_note(
                             f"Activation state rollback failed: {rollback_error!r}"
@@ -233,7 +237,9 @@ class RuntimeFacade:
                         await self._host.mark_failed()
                 elif self._host.is_ready and actual_workspace is not None:
                     try:
-                        reconcile(actual_workspace)
+                        reconciled = reconcile(actual_workspace)
+                        if isawaitable(reconciled):
+                            await reconciled
                     except BaseException as reconcile_error:
                         commit_error.add_note(
                             f"Activation state reconciliation failed: {reconcile_error!r}"

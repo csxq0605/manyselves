@@ -1,0 +1,12 @@
+id: calculate_tool_input
+version: 1.0.0
+description: Provider input for the Reporting calculator
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    expression:
+      type: string
+      description: Arithmetic expression containing numbers and operators only.
+  required: [expression]
+  additionalProperties: false

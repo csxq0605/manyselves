@@ -205,9 +205,11 @@ function ScopedProjectDirectoryPage({
     try {
       if (!platform) throw new Error("platform unavailable");
       const blob = await resolvedApi.download(activeProjectId, entry.path);
+      const sourceUrl = resolvedApi.downloadUrl?.(activeProjectId, entry.path);
       await platform.saveDownload({
         blob,
         suggestedName: entry.kind === "directory" ? `${entry.name}.zip` : entry.name,
+        ...(sourceUrl === undefined ? {} : { sourceUrl }),
       });
     } catch {
       setOperationError(entry.kind === "directory" ? "文件夹下载失败" : "文件下载失败");

@@ -1,0 +1,10 @@
+id: cross-owner-initial-has-findings
+version: 1.0.0
+description: Route accepted Cross owner findings to the original module Author
+implementation: capability:distribution-reporting:cross-owner-initial-has-findings
+input_contract: declarative_cross_owner_runtime_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

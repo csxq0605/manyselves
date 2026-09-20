@@ -1,0 +1,14 @@
+id: final-chief-chapter-revision
+version: 1.2.0
+description: Revise only the assigned Final chapter findings through the Chief editor
+agent: chief-editor
+objective: Apply the assigned Final findings to the current chapter subject and return changed durable part refs.
+input_contract: declarative_final_chief_revision_context
+output_contract: declarative_final_chief_revision_agent_result
+tools:
+- open_artifact
+- search_text
+- write_result_part
+- list_result_parts
+- submit_result
+recovery: current-reporting-recovery

@@ -1,0 +1,103 @@
+id: module-report
+version: 1.0.0
+description: Public selected-module Reporting workflow without cross, chief, final or delivery stages
+tasks: []
+recovery: []
+outputs:
+- distribution-reporting-result
+input_contract: public_module_report_input
+input_variable: request
+output_contract: distribution_reporting_output
+state:
+  run-id: ''
+  run-context: {}
+  preparation-input: {}
+  prepared-preparation: {}
+  context-with-preparation: {}
+  readiness-input: {}
+  readiness-state: {}
+  readiness-preparation: {}
+  context-with-readiness: {}
+  reporting-state: {}
+  module-results: {}
+  reporting-state-with-modules: {}
+actions:
+- id: initialize-module-report
+  kind: invoke_tool
+  tool: initialize-reporting-run
+  input_variables:
+    run_id: run-id
+    request: request
+  output_variable: run-context
+- id: project-preparation-for-module-report
+  kind: invoke_tool
+  tool: project-preparation-context
+  input_variable: run-context
+  output_variable: preparation-input
+- id: run-reporting-preparation
+  kind: subworkflow
+  workflow: distribution-reporting-preparation
+  input_variable: preparation-input
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: prepared-preparation
+- id: attach-reporting-preparation
+  kind: invoke_tool
+  tool: attach-reporting-preparation
+  input_variables:
+    context: run-context
+    preparation: prepared-preparation
+  output_variable: context-with-preparation
+- id: project-preparation-for-readiness
+  kind: invoke_tool
+  tool: project-preparation-context
+  input_variable: context-with-preparation
+  output_variable: readiness-input
+- id: run-evidence-readiness
+  kind: subworkflow
+  workflow: distribution-evidence-readiness
+  input_variable: readiness-input
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: readiness-state
+- id: attach-readiness-preparation
+  kind: invoke_tool
+  tool: attach-readiness-preparation
+  input_variable: readiness-state
+  output_variable: readiness-preparation
+- id: attach-readiness-to-context
+  kind: invoke_tool
+  tool: attach-reporting-preparation
+  input_variables:
+    context: context-with-preparation
+    preparation: readiness-preparation
+  output_variable: context-with-readiness
+- id: build-reporting-state
+  kind: invoke_tool
+  tool: build-reporting-state
+  input_variable: context-with-readiness
+  output_variable: reporting-state
+- id: run-module-cohort
+  kind: subworkflow
+  workflow: distribution-module-cohort
+  input_variable: reporting-state
+  child_input_variable: module-inputs
+  child_output_name: result
+  output_variable: module-results
+- id: attach-module-results
+  kind: invoke_tool
+  tool: attach-module-results
+  input_variables:
+    reporting_state: reporting-state
+    module_results: module-results
+  output_variable: reporting-state-with-modules
+- id: publish-module-report
+  kind: publish_result
+  output: distribution-reporting-result
+  input_variable: reporting-state-with-modules
+  output_name: result
+- id: finish-module-report
+  kind: end_workflow
+  output_variable: reporting-state-with-modules
+  output_name: result
+  output_contract: distribution_reporting_output

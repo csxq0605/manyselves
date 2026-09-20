@@ -1,0 +1,30 @@
+id: distribution-report-delivery
+version: 1.0.0
+description: File-defined Render, Publish/materialization, and Delivery completion sequence
+tasks: []
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+actions:
+- id: prepare-render-delivery
+  kind: invoke_tool
+  tool: prepare-render-delivery
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: publish-materialize-delivery
+  kind: invoke_tool
+  tool: publish-materialize-delivery
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: complete-delivery
+  kind: invoke_tool
+  tool: complete-delivery
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: finish-report-delivery
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result

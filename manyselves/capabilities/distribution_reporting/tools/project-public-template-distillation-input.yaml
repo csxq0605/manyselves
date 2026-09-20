@@ -1,0 +1,10 @@
+id: project-public-template-distillation-input
+version: 1.0.0
+description: Project public template input into its internal typed task input
+implementation: capability:distribution-reporting:project-public-template-distillation-input
+input_contract: public_template_distillation_initializer_input
+output_contract: template_distillation_input
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

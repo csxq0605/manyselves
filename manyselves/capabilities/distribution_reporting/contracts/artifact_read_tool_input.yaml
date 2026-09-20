@@ -1,0 +1,12 @@
+id: artifact_read_tool_input
+version: 1.0.0
+description: Provider input for bounded artifact reads
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    ref: {type: string}
+    offset: {type: integer, minimum: 0}
+    limit: {type: [integer, 'null'], minimum: 1}
+  required: [ref]
+  additionalProperties: false

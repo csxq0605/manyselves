@@ -1,0 +1,6 @@
+id: reporting_tool_input
+version: 1.0.0
+description: Reporting adapter boundary for reporting_tool_input
+adapter: json_schema
+schema: {}
+

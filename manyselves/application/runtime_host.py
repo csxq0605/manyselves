@@ -5,18 +5,20 @@ from collections.abc import Callable
 from contextlib import suppress
 from enum import Enum, auto
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from ..config import ConfigManager
-from ..core.loops import LoopManager, MessageBus
 from ..core.project_structure import ensure_project_structure
+from ..runtime.loops import LoopManager, MessageBus
 from ..utils import add_project_logging
 from .backend_api import BackendAPIImpl
 from .errors import RuntimeStartupError
 
 LoopManagerFactory = Callable[[Path, ConfigManager, MessageBus], LoopManager]
 WorkspaceInitializer = Callable[[Path], None]
+AgentToolFactory = Callable[[], Any]
 
 
 class _LifecycleState(Enum):
@@ -58,6 +60,7 @@ class RuntimeHost:
         self._orderly_shutdown_draining = False
         self._state = _LifecycleState.NEW
         self._lifecycle_lock = asyncio.Lock()
+        self._agent_tool_factories: dict[tuple[str, str], AgentToolFactory] = {}
 
     @classmethod
     def create(cls, config_manager: ConfigManager | None = None) -> "RuntimeHost":
@@ -83,9 +86,24 @@ class RuntimeHost:
         """Loop manager created for the selected workspace, if any."""
         return self._loop_manager
 
+    def register_agent_tool_factory(
+        self,
+        agent_id: str,
+        tool_name: str,
+        factory: AgentToolFactory,
+    ) -> bool:
+        """Keep one Application tool available across provider-loop replacements."""
+
+        self._agent_tool_factories[(agent_id, tool_name)] = factory
+        manager = self._loop_manager
+        register = getattr(manager, "register_agent_tool", None)
+        if not callable(register):
+            return False
+        return bool(register(agent_id, factory()))
+
     @property
     def global_knowledge_root(self) -> Path | None:
-        """Optional server-global knowledge root shared by reporting runtimes."""
+        """Optional server-global knowledge root shared by Capability runtimes."""
         return self._global_knowledge_root
 
     def set_global_knowledge_root(self, root: Path | None) -> None:
@@ -344,6 +362,10 @@ class RuntimeHost:
         self._loop_manager = manager
         self._workspace = workspace
         self.backend.set_loop_manager(manager)
+        register = getattr(manager, "register_agent_tool", None)
+        if callable(register):
+            for (agent_id, _tool_name), factory in self._agent_tool_factories.items():
+                register(agent_id, factory())
 
     async def _discard_bound_manager(self) -> BaseException | None:
         """Clear a candidate only after stop confirms that it no longer owns work."""

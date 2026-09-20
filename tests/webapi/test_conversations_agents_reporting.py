@@ -1,8 +1,9 @@
-"""HTTP contracts for conversations, Agent commands, reporting, and operations."""
+"""HTTP contracts for conversations, Agent commands, workflows, and operations."""
 
 import asyncio
 import json
 import os
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,9 +14,9 @@ import pytest
 
 from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
+from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
-from manyselves.core.loops.bus import MessageBus
 from manyselves.core.preset_sync import SyncError
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -23,6 +24,33 @@ from manyselves.interfaces.types import (
     Error,
     SystemNotice,
     UserMessage,
+)
+from manyselves.kernel.contracts import build_contract_adapter
+from manyselves.kernel.definitions import (
+    ContractDefinition,
+    DefinitionRegistry,
+    InteractionDefinition,
+    ToolDefinition,
+    WorkflowDefinition,
+)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
+from manyselves.kernel.workflow import (
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    resume_waiting_input,
+)
+from manyselves.runtime.capability_binding import RuntimeBindingCatalog
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.run_lifecycle import (
+    DetachedRunTaskOwner,
+    StartAwareFileWorkflowStateStore,
+)
+from manyselves.runtime.workflow_host import (
+    FileWorkflowEventSink,
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeEvent,
+    WorkflowRuntimeHost,
 )
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
@@ -142,67 +170,6 @@ class _Backend:
         self.debug_modes[agent_type] = enabled
 
 
-class _ReportingController:
-    def __init__(self, workspace: Path) -> None:
-        self.service = SimpleNamespace(workspace=workspace)
-        self._tasks: dict[str, asyncio.Task] = {}
-        self.calls: list[tuple[str, object]] = []
-        self.live_runs: set[str] = set()
-
-    def start(self, request) -> dict:
-        self.calls.append(("start", request))
-        self.live_runs.add("report-new")
-        run_root = self.service.workspace / "Work/runs/report-new"
-        run_root.mkdir(parents=True, exist_ok=True)
-        (run_root / "request.json").write_text(
-            json.dumps(request.model_dump(mode="json")), encoding="utf-8"
-        )
-        return {"status": "running", "run_id": "report-new", "task_id": "task-new"}
-
-    def status(self, run_id: str) -> dict:
-        if run_id in self.live_runs:
-            return {
-                "status": "running",
-                "run_id": run_id,
-                "active": True,
-                "source": "live",
-                "task_id": "task-new",
-            }
-        return {
-            "status": "completed",
-            "run_id": run_id,
-            "active": False,
-            "source": "persisted",
-            "task_id": "persisted-task",
-        }
-
-    def cancel(self, run_id: str) -> bool:
-        self.calls.append(("cancel", run_id))
-        return True
-
-    def resume_decision(self, decision_id: str, action: str, supplements: list | None) -> dict:
-        self.calls.append(("resume_decision", (decision_id, action, supplements)))
-        return {"status": "running", "run_id": "report-existing", "task_id": "task-resume"}
-
-    def resume_run(self, run_id: str, **kwargs) -> dict:
-        self.calls.append(("resume_run", (run_id, kwargs)))
-        return {"status": "running", "run_id": run_id, "task_id": "task-resume"}
-
-    def revise(self, request) -> dict:
-        self.calls.append(("revise", request))
-        return {"status": "running", "run_id": "report-revision", "task_id": "task-revision"}
-
-
-class _ToolRegistry:
-    def __init__(self, controller: _ReportingController) -> None:
-        self.controller = controller
-
-    def get(self, name: str):
-        if name == "run_reporting_workflow":
-            return SimpleNamespace(controller=self.controller)
-        return None
-
-
 class ResourceRuntimeHost:
     """Lifecycle host with a real bus and existing persistence boundaries."""
 
@@ -213,7 +180,6 @@ class ResourceRuntimeHost:
         self.bus = MessageBus()
         self.config_manager = SimpleNamespace(config=config, save_config=lambda: None)
         self.backend = _Backend(self)
-        self.reporting_controller: _ReportingController | None = None
         self.manager_factory_calls = 0
         self.replace_calls: list[bool] = []
         self.replace_error: BaseException | None = None
@@ -246,23 +212,19 @@ class ResourceRuntimeHost:
         )
 
     def _get_loop(self, agent_id: str):
-        if agent_id != "main" or self.reporting_controller is None:
+        if agent_id != "main":
             return None
         loop = self._loops.get(agent_id)
         if loop is None:
             loop = SimpleNamespace(
-                tools=_ToolRegistry(self.reporting_controller),
                 _current_session_id=None,
                 _conversation_history=[],
             )
             self._loops[agent_id] = loop
-        else:
-            loop.tools = _ToolRegistry(self.reporting_controller)
         return loop
 
     async def start(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
-        self.reporting_controller = _ReportingController(self.workspace)
         self.is_ready = True
         self._bus_task = asyncio.create_task(self.bus.process_queue())
 
@@ -274,7 +236,6 @@ class ResourceRuntimeHost:
 
     async def switch_workspace(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
-        self.reporting_controller = _ReportingController(self.workspace)
 
     async def replace_loop_manager(self, *, recovery: bool = False) -> None:
         self.replace_calls.append(recovery)
@@ -378,6 +339,28 @@ async def test_conversation_round_trip_preserves_store_format(resources) -> None
 
     listed = await client.get("/api/v1/conversations")
     assert listed.json()["projectId"] == "project-1"
+    assert any(item["sessionId"] == session_id for item in listed.json()["conversations"])
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_conversation_survives_store_reload(resources) -> None:
+    """An API-created empty Main conversation remains the active listed session after reload."""
+    client, host, workspace, _ = resources
+
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "agentId": "main", "name": "Empty"},
+    )
+    session_id = created.json()["sessionId"]
+    host.app.state.conversation_service.rebind(workspace)
+
+    listed = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["activeSessionId"] == session_id
     assert any(item["sessionId"] == session_id for item in listed.json()["conversations"])
 
 
@@ -977,922 +960,6 @@ async def test_conversation_compensation_failure_fails_runtime_closed(
 
 
 @pytest.mark.asyncio
-async def test_resource_services_close_owned_callbacks_and_reporting_tasks(resources) -> None:
-    _, host, _, _ = resources
-    task = asyncio.create_task(asyncio.Event().wait())
-    watcher = asyncio.create_task(asyncio.Event().wait())
-    host.reporting_controller._tasks["pending"] = task
-    host.reporting_controller._status_watchers = {"pending": watcher}
-
-    await host.app.state.reporting_facade.close()
-    await host.app.state.conversation_service.close()
-
-    assert task.done()
-    assert watcher.done()
-
-
-@pytest.mark.asyncio
-async def test_shutdown_stops_producers_before_draining_resource_consumers(tmp_path: Path) -> None:
-    config = AppConfig()
-    host = ResourceRuntimeHost(config)
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    events: list[str] = []
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        events.append("producers")
-
-    async def stop_bus() -> None:
-        events.append("bus")
-        await original_stop()
-
-    async def legacy_stop() -> None:
-        events.append("legacy-stop")
-        await original_stop()
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-    host.stop = legacy_stop
-    async with app.router.lifespan_context(app):
-        reporting_close = app.state.reporting_facade.close
-        python_close = app.state.python_run_service.close
-        conversation_close = app.state.conversation_service.close
-
-        async def close_reporting() -> None:
-            events.append("reporting")
-            await reporting_close()
-
-        async def close_python() -> None:
-            events.append("python")
-            await python_close()
-
-        async def close_conversations() -> None:
-            events.append("conversations")
-            await conversation_close()
-
-        app.state.reporting_facade.close = close_reporting
-        app.state.python_run_service.close = close_python
-        app.state.conversation_service.close = close_conversations
-
-    assert events == ["producers", "reporting", "python", "conversations", "bus"]
-
-
-@pytest.mark.asyncio
-async def test_shutdown_retries_one_transient_producer_stop_before_draining(
-    tmp_path: Path,
-) -> None:
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    events: list[str] = []
-    attempts = 0
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        nonlocal attempts
-        attempts += 1
-        events.append(f"producers-{attempts}")
-        if attempts == 1:
-            raise RuntimeError("transient producer stop")
-
-    async def stop_bus() -> None:
-        events.append("bus")
-        await original_stop()
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-    async with app.router.lifespan_context(app):
-        reporting_close = app.state.reporting_facade.close
-        python_close = app.state.python_run_service.close
-        conversation_close = app.state.conversation_service.close
-
-        async def close_reporting() -> None:
-            events.append("reporting")
-            await reporting_close()
-
-        async def close_python() -> None:
-            events.append("python")
-            await python_close()
-
-        async def close_conversations() -> None:
-            events.append("conversations")
-            await conversation_close()
-
-        app.state.reporting_facade.close = close_reporting
-        app.state.python_run_service.close = close_python
-        app.state.conversation_service.close = close_conversations
-
-    assert events == [
-        "producers-1",
-        "producers-2",
-        "reporting",
-        "python",
-        "conversations",
-        "bus",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_shutdown_cancellation_waits_for_definite_producer_cleanup_then_propagates(
-    tmp_path: Path,
-) -> None:
-    """Caller cancellation must neither cancel owned cleanup nor disappear."""
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    entered = asyncio.Event()
-    leave = asyncio.Event()
-    producer_started = asyncio.Event()
-    producer_release = asyncio.Event()
-    attempts = 0
-    events: list[str] = []
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        nonlocal attempts
-        attempts += 1
-        events.append("producer-start")
-        producer_started.set()
-        await producer_release.wait()
-        events.append("producer-complete")
-
-    async def stop_bus() -> None:
-        events.append("bus")
-        await original_stop()
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    async def run_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            reporting_close = app.state.reporting_facade.close
-            python_close = app.state.python_run_service.close
-            conversation_close = app.state.conversation_service.close
-
-            async def close_reporting() -> None:
-                events.append("reporting")
-                await reporting_close()
-
-            async def close_python() -> None:
-                events.append("python")
-                await python_close()
-
-            async def close_conversations() -> None:
-                events.append("conversations")
-                await conversation_close()
-
-            app.state.reporting_facade.close = close_reporting
-            app.state.python_run_service.close = close_python
-            app.state.conversation_service.close = close_conversations
-            entered.set()
-            await leave.wait()
-
-    task = asyncio.create_task(run_lifespan())
-    await entered.wait()
-    leave.set()
-    await producer_started.wait()
-    task.cancel()
-    producer_release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert attempts == 1
-    assert events == [
-        "producer-start",
-        "producer-complete",
-        "reporting",
-        "python",
-        "conversations",
-        "bus",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_shutdown_cancellation_during_begin_establishes_orderly_drain_before_stop(
-    tmp_path: Path,
-) -> None:
-    """A queued event must remain durable when cancellation lands at the mutation lock."""
-    host = ResourceRuntimeHost(AppConfig())
-    host.persistence_ready = True
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    ready = asyncio.Event()
-    leave = asyncio.Event()
-    begin_waiting = asyncio.Event()
-    events: list[str] = []
-    state: dict[str, object] = {}
-    original_stop = host.stop
-
-    async def begin_orderly_shutdown() -> None:
-        events.append("orderly-grant")
-
-    async def stop_producers() -> None:
-        service = app.state.conversation_service
-        events.append("producers")
-        await _eventually(
-            lambda: any(
-                item.get("content") == "accepted-before-shutdown"
-                for item in service.messages("main")
-            )
-        )
-        host.persistence_ready = False
-
-    async def stop_bus() -> None:
-        events.append("bus")
-        await original_stop()
-
-    host.begin_orderly_shutdown = begin_orderly_shutdown
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    async def run_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            facade = app.state.runtime_facade
-            service = app.state.conversation_service
-            await service.create("Shutdown", "main")
-            original_begin = facade.begin_shutdown
-
-            async def begin_shutdown() -> None:
-                begin_waiting.set()
-                await original_begin()
-                events.append("begin-complete")
-
-            facade.begin_shutdown = begin_shutdown
-            for name, resource in (
-                ("reporting", app.state.reporting_facade),
-                ("python", app.state.python_run_service),
-                ("conversations", service),
-            ):
-                original_close = resource.close
-
-                async def close_resource(*, stage: str = name, close=original_close) -> None:
-                    await close()
-                    events.append(stage)
-
-                resource.close = close_resource
-            state["facade"] = facade
-            state["service"] = service
-            await facade._mutation_lock.acquire()  # noqa: SLF001
-            ready.set()
-            await leave.wait()
-
-    task = asyncio.create_task(run_lifespan())
-    await ready.wait()
-    leave.set()
-    await begin_waiting.wait()
-    await asyncio.sleep(0)
-    await host.bus.publish(
-        UserMessage(
-            agent_type="main",
-            content="accepted-before-shutdown",
-            message_id="shutdown-message",
-        )
-    )
-    service = state["service"]
-    assert hasattr(service, "_pending_writes")
-    await _eventually(lambda: service._pending_writes == 1)  # type: ignore[attr-defined]  # noqa: SLF001
-    task.cancel()
-    await asyncio.sleep(0)
-    facade = state["facade"]
-    assert hasattr(facade, "_mutation_lock")
-    facade._mutation_lock.release()  # type: ignore[attr-defined]  # noqa: SLF001
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert events == [
-        "orderly-grant",
-        "begin-complete",
-        "producers",
-        "reporting",
-        "python",
-        "conversations",
-        "bus",
-    ]
-    assert service._pending_writes == 0  # type: ignore[attr-defined]  # noqa: SLF001
-    assert any(
-        item.get("content") == "accepted-before-shutdown"
-        for item in service.messages("main")  # type: ignore[attr-defined]
-    )
-    assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("cancelled_stage", ["reporting", "python", "conversations"])
-async def test_shutdown_cancellation_during_resource_close_finishes_pipeline_once(
-    tmp_path: Path,
-    cancelled_stage: str,
-) -> None:
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    ready = asyncio.Event()
-    leave = asyncio.Event()
-    stage_started = asyncio.Event()
-    stage_release = asyncio.Event()
-    events: list[str] = []
-    state: dict[str, object] = {}
-    original_closes: list[object] = []
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        events.append("producers")
-
-    async def stop_bus() -> None:
-        events.append("bus-start")
-        await original_stop()
-        events.append("bus-complete")
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    async def run_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            reporting_task = asyncio.create_task(asyncio.Event().wait())
-            reporting_watcher = asyncio.create_task(asyncio.Event().wait())
-            host.reporting_controller._tasks["shutdown-task"] = reporting_task
-            host.reporting_controller._status_watchers = {"shutdown-task": reporting_watcher}
-            workspace = app.state.python_run_service.workspace
-            script = workspace / "shutdown-process.py"
-            script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
-            operation = app.state.python_run_service.start(
-                UUID("03000000-0000-4000-8000-000000000001"),
-                "shutdown-process.py",
-                [],
-            )
-            await operation.launch_ready.wait()
-            await host.bus.publish(
-                UserMessage(
-                    agent_type="main",
-                    content="persist-before-close",
-                    message_id="resource-close-message",
-                )
-            )
-            await _eventually(
-                lambda: any(
-                    item.get("content") == "persist-before-close"
-                    for item in app.state.conversation_service.messages("main")
-                )
-            )
-
-            for name, resource in (
-                ("reporting", app.state.reporting_facade),
-                ("python", app.state.python_run_service),
-                ("conversations", app.state.conversation_service),
-            ):
-                original_close = resource.close
-                original_closes.append(original_close)
-
-                async def close_resource(*, stage: str = name, close=original_close) -> None:
-                    events.append(f"{stage}-start")
-                    if stage == cancelled_stage:
-                        stage_started.set()
-                        await stage_release.wait()
-                    await close()
-                    events.append(f"{stage}-complete")
-
-                resource.close = close_resource
-
-            state.update(
-                reporting_task=reporting_task,
-                reporting_watcher=reporting_watcher,
-                operation=operation,
-                conversation_service=app.state.conversation_service,
-            )
-            ready.set()
-            await leave.wait()
-
-    task = asyncio.create_task(run_lifespan())
-    await ready.wait()
-    leave.set()
-    await stage_started.wait()
-    task.cancel()
-    task.cancel()
-    stage_release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    try:
-        assert events == [
-            "producers",
-            "reporting-start",
-            "reporting-complete",
-            "python-start",
-            "python-complete",
-            "conversations-start",
-            "conversations-complete",
-            "bus-start",
-            "bus-complete",
-        ]
-        assert state["reporting_task"].done()  # type: ignore[union-attr]
-        assert state["reporting_watcher"].done()  # type: ignore[union-attr]
-        operation = state["operation"]
-        assert operation.task is not None and operation.task.done()  # type: ignore[union-attr]
-        assert operation.process is None  # type: ignore[union-attr]
-        conversation_service = state["conversation_service"]
-        assert conversation_service._closed is True  # type: ignore[union-attr]  # noqa: SLF001
-        assert conversation_service._pending_writes == 0  # type: ignore[union-attr]  # noqa: SLF001
-        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-    finally:
-        for close in original_closes:
-            await close()  # type: ignore[operator]
-        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
-            await original_stop()
-
-
-@pytest.mark.asyncio
-async def test_shutdown_cancellation_during_stop_bus_finishes_bus_once(tmp_path: Path) -> None:
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    ready = asyncio.Event()
-    leave = asyncio.Event()
-    bus_started = asyncio.Event()
-    bus_release = asyncio.Event()
-    bus_attempts = 0
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        return None
-
-    async def stop_bus() -> None:
-        nonlocal bus_attempts
-        bus_attempts += 1
-        bus_started.set()
-        await bus_release.wait()
-        await original_stop()
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    async def run_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            ready.set()
-            await leave.wait()
-
-    task = asyncio.create_task(run_lifespan())
-    await ready.wait()
-    leave.set()
-    await bus_started.wait()
-    task.cancel()
-    task.cancel()
-    bus_release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    try:
-        assert bus_attempts == 1
-        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-    finally:
-        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
-            await original_stop()
-
-
-@pytest.mark.asyncio
-async def test_shutdown_cancellation_during_legacy_stop_finishes_host_once(tmp_path: Path) -> None:
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    ready = asyncio.Event()
-    leave = asyncio.Event()
-    stop_started = asyncio.Event()
-    stop_release = asyncio.Event()
-    stop_attempts = 0
-    original_stop = host.stop
-
-    async def legacy_stop() -> None:
-        nonlocal stop_attempts
-        stop_attempts += 1
-        stop_started.set()
-        await stop_release.wait()
-        await original_stop()
-
-    host.stop = legacy_stop
-
-    async def run_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            ready.set()
-            await leave.wait()
-
-    task = asyncio.create_task(run_lifespan())
-    await ready.wait()
-    leave.set()
-    await stop_started.wait()
-    task.cancel()
-    stop_release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    try:
-        assert stop_attempts == 1
-        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-    finally:
-        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
-            await original_stop()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("failed_stage", "error_type"),
-    [
-        (stage, error_type)
-        for stage in (
-            "begin",
-            "producers",
-            "reporting",
-            "python",
-            "conversations",
-            "broker",
-            "bus",
-        )
-        for error_type in (RuntimeError, asyncio.CancelledError)
-    ],
-)
-async def test_shutdown_owned_stage_failure_stops_before_dependencies(
-    tmp_path: Path,
-    failed_stage: str,
-    error_type: type[BaseException],
-) -> None:
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    events: list[str] = []
-    originals: dict[str, object] = {"host_stop": host.stop}
-
-    def fail_or_continue(stage: str) -> None:
-        events.append(stage)
-        if stage == failed_stage:
-            raise error_type(f"owned {stage} failure")
-
-    async def stop_producers() -> None:
-        fail_or_continue("producers")
-
-    async def stop_bus() -> None:
-        fail_or_continue("bus")
-        await originals["host_stop"]()  # type: ignore[operator]
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    expected_error = (
-        pytest.raises(asyncio.CancelledError)
-        if error_type is asyncio.CancelledError
-        else pytest.raises(RuntimeError, match=f"owned {failed_stage} failure")
-    )
-    try:
-        with expected_error:
-            async with app.router.lifespan_context(app):
-                facade = app.state.runtime_facade
-                original_begin = facade.begin_shutdown
-                originals["begin"] = original_begin
-
-                async def begin_shutdown() -> None:
-                    fail_or_continue("begin")
-                    await original_begin()
-
-                facade.begin_shutdown = begin_shutdown
-                for name, resource in (
-                    ("reporting", app.state.reporting_facade),
-                    ("python", app.state.python_run_service),
-                    ("conversations", app.state.conversation_service),
-                    ("broker", app.state.event_broker),
-                ):
-                    original_close = resource.close
-                    originals[name] = original_close
-
-                    async def close_resource(*, stage: str = name, close=original_close) -> None:
-                        fail_or_continue(stage)
-                        await close()
-
-                    resource.close = close_resource
-
-        expected = ["begin"]
-        if failed_stage != "begin":
-            expected.append("producers")
-            if failed_stage == "producers":
-                expected.append("producers")
-            else:
-                for stage in ("reporting", "python", "conversations", "broker"):
-                    expected.append(stage)
-                if failed_stage == "bus":
-                    expected.append("bus")
-        assert events == expected
-        assert host._bus_task is not None and not host._bus_task.done()  # noqa: SLF001
-    finally:
-        reporting = getattr(app.state, "reporting_facade", None)
-        python_runs = getattr(app.state, "python_run_service", None)
-        conversations = getattr(app.state, "conversation_service", None)
-        broker = getattr(app.state, "event_broker", None)
-        if reporting is not None and "reporting" in originals:
-            await originals["reporting"]()  # type: ignore[operator]
-        if python_runs is not None and "python" in originals:
-            await originals["python"]()  # type: ignore[operator]
-        if conversations is not None and "conversations" in originals:
-            await originals["conversations"]()  # type: ignore[operator]
-        if broker is not None and "broker" in originals:
-            await originals["broker"]()  # type: ignore[operator]
-        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
-            await originals["host_stop"]()  # type: ignore[operator]
-
-
-@pytest.mark.asyncio
-async def test_shutdown_retries_producer_self_cancellation_without_cancelling_caller(
-    tmp_path: Path,
-) -> None:
-    """A cancelled cleanup task is an owned failure, not caller cancellation."""
-    host = ResourceRuntimeHost(AppConfig())
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = lambda: host
-    host.app = app
-    attempts = 0
-    original_stop = host.stop
-
-    async def stop_producers() -> None:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise asyncio.CancelledError
-
-    async def stop_bus() -> None:
-        await original_stop()
-
-    host.stop_producers = stop_producers
-    host.stop_bus = stop_bus
-
-    async with app.router.lifespan_context(app):
-        pass
-
-    assert attempts == 2
-    assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-
-
-@pytest.mark.asyncio
-async def test_failed_normal_shutdown_blocks_new_runtime_until_cleanup_finishes(
-    tmp_path: Path,
-) -> None:
-    hosts: list[ResourceRuntimeHost] = []
-    release_cleanup = False
-    old_broker = None
-
-    def build_host() -> ResourceRuntimeHost:
-        if hosts:
-            assert old_broker is not None and old_broker._closed is True  # noqa: SLF001
-            assert hosts[0]._bus_task is not None and hosts[0]._bus_task.done()  # noqa: SLF001
-        host = ResourceRuntimeHost(AppConfig())
-        hosts.append(host)
-        return host
-
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = build_host
-
-    with pytest.raises(RuntimeError, match="producer stop failed"):
-        async with app.router.lifespan_context(app):
-            old_host = app.state.runtime_host
-            old_broker = app.state.event_broker
-            original_stop = old_host.stop
-
-            async def stop_producers() -> None:
-                if not release_cleanup:
-                    raise RuntimeError("producer stop failed")
-
-            async def stop_bus() -> None:
-                await original_stop()
-
-            old_host.stop_producers = stop_producers
-            old_host.stop_bus = stop_bus
-
-    assert len(hosts) == 1
-    assert app.state._lifecycle_cleanup_pending is not None  # noqa: SLF001
-    assert app.state._lifecycle_cleanup_pending.host is old_host  # noqa: SLF001
-    assert app.state._lifecycle_cleanup_pending.broker is old_broker  # noqa: SLF001
-    assert old_broker._closed is False  # noqa: SLF001
-    assert old_host._bus_task is not None and not old_host._bus_task.done()  # noqa: SLF001
-    assert app.state.lifecycle_active is False
-
-    with pytest.raises(RuntimeError, match="Previous lifespan cleanup is incomplete"):
-        async with app.router.lifespan_context(app):
-            pass
-    assert len(hosts) == 1
-
-    release_cleanup = True
-    async with app.router.lifespan_context(app):
-        assert len(hosts) == 2
-        assert app.state.runtime_host is not old_host
-
-
-@pytest.mark.asyncio
-async def test_failed_service_close_attempts_safe_siblings_and_retries_only_pending_stages(
-    tmp_path: Path,
-) -> None:
-    hosts: list[ResourceRuntimeHost] = []
-    events: list[str] = []
-
-    def build_host() -> ResourceRuntimeHost:
-        if hosts:
-            assert events == [
-                "reporting",
-                "python",
-                "conversations",
-                "broker",
-                "reporting",
-                "bus",
-            ]
-        host = ResourceRuntimeHost(AppConfig())
-        hosts.append(host)
-        return host
-
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = build_host
-    reporting_calls = 0
-
-    with pytest.raises(RuntimeError, match="reporting close failed"):
-        async with app.router.lifespan_context(app):
-            host = app.state.runtime_host
-            original_stop = host.stop
-
-            async def stop_producers() -> None:
-                return None
-
-            async def stop_bus() -> None:
-                events.append("bus")
-                await original_stop()
-
-            host.stop_producers = stop_producers
-            host.stop_bus = stop_bus
-            for name, resource in (
-                ("reporting", app.state.reporting_facade),
-                ("python", app.state.python_run_service),
-                ("conversations", app.state.conversation_service),
-                ("broker", app.state.event_broker),
-            ):
-                original_close = resource.close
-
-                async def close_resource(*, stage: str = name, close=original_close) -> None:
-                    nonlocal reporting_calls
-                    events.append(stage)
-                    if stage == "reporting":
-                        reporting_calls += 1
-                        if reporting_calls == 1:
-                            raise RuntimeError("reporting close failed")
-                    await close()
-
-                resource.close = close_resource
-
-    assert events == ["reporting", "python", "conversations", "broker"]
-    assert app.state._lifecycle_cleanup_pending is not None  # noqa: SLF001
-    assert hosts[0]._bus_task is not None and not hosts[0]._bus_task.done()  # noqa: SLF001
-
-    async with app.router.lifespan_context(app):
-        assert len(hosts) == 2
-
-    assert app.state._lifecycle_cleanup_pending is None  # noqa: SLF001
-
-
-@pytest.mark.asyncio
-async def test_cancelled_pending_shutdown_cleanup_finishes_before_propagating_cancellation(
-    tmp_path: Path,
-) -> None:
-    hosts: list[ResourceRuntimeHost] = []
-    close_started = asyncio.Event()
-    close_release = asyncio.Event()
-    new_host_built = asyncio.Event()
-
-    def build_host() -> ResourceRuntimeHost:
-        if hosts:
-            new_host_built.set()
-        host = ResourceRuntimeHost(AppConfig())
-        hosts.append(host)
-        return host
-
-    app = create_app(
-        WebSettings(
-            data_root=tmp_path,
-            initial_project_id="project-1",
-        )
-    )
-    app.dependency_overrides[get_runtime_host] = build_host
-
-    with pytest.raises(RuntimeError, match="reporting close failed"):
-        async with app.router.lifespan_context(app):
-            host = app.state.runtime_host
-            original_stop = host.stop
-            reporting = app.state.reporting_facade
-            original_reporting_close = reporting.close
-
-            async def stop_producers() -> None:
-                return None
-
-            async def stop_bus() -> None:
-                await original_stop()
-
-            async def fail_reporting_close() -> None:
-                raise RuntimeError("reporting close failed")
-
-            host.stop_producers = stop_producers
-            host.stop_bus = stop_bus
-            reporting.close = fail_reporting_close
-
-    async def finish_reporting_close() -> None:
-        close_started.set()
-        await close_release.wait()
-        await original_reporting_close()
-
-    reporting.close = finish_reporting_close
-
-    async def retry_lifespan() -> None:
-        async with app.router.lifespan_context(app):
-            pass
-
-    retry = asyncio.create_task(retry_lifespan())
-    while not close_started.is_set() and not new_host_built.is_set():
-        await asyncio.sleep(0)
-    assert new_host_built.is_set() is False
-    retry.cancel()
-    retry.cancel()
-    await asyncio.sleep(0)
-
-    assert retry.done() is False
-    assert len(hosts) == 1
-
-    close_release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await retry
-
-    assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
-    assert app.state._lifecycle_cleanup_pending is None  # noqa: SLF001
-    assert app.state.lifecycle_active is False
-    assert len(hosts) == 1
-
-
-@pytest.mark.asyncio
 async def test_project_activation_rebinds_project_scoped_resource_services(resources) -> None:
     client, host, original_workspace, _ = resources
     created_project = await client.post(
@@ -1908,7 +975,7 @@ async def test_project_activation_rebinds_project_scoped_resource_services(resou
     assert created_conversation.status_code == 201
     assert host.workspace == target_workspace.resolve()
     assert host.app.state.conversation_service.workspace == target_workspace.resolve()
-    assert host.app.state.reporting_facade.workspace == target_workspace.resolve()
+    assert host.app.state.workflow_projection.workspace == target_workspace.resolve()
     assert host.app.state.python_run_service.workspace == target_workspace.resolve()
     assert (target_workspace / ".manyselves/conversations/sessions.json").is_file()
     assert not (original_workspace / ".manyselves/conversations/sessions.json").exists()
@@ -2850,259 +1917,438 @@ async def test_combined_provider_fields_require_active_provider(resources, field
 
 
 @pytest.mark.asyncio
-async def test_reporting_snapshot_covers_durable_state_and_output_metadata(resources) -> None:
-    client, _, workspace, _ = resources
-    run_id = "report-existing"
-    run_root = workspace / "Work/runs" / run_id
-    (run_root / "decisions").mkdir(parents=True)
-    (workspace / "Outputs/Reports").mkdir(parents=True, exist_ok=True)
-    (workspace / "Work/runs" / f"{run_id}.json").write_text(
-        json.dumps(
+async def test_generic_workflow_routes_project_the_file_defined_reporting_run(
+    resources,
+) -> None:
+    client, host, _, _ = resources
+
+    capabilities = await client.get("/api/v1/capabilities")
+    workflows = await client.get("/api/v1/workflows")
+    schema = await client.get(
+        "/api/v1/workflows/full-report/input-schema"
+    )
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000010"},
+        json={
+            "workflowId": "full-report",
+            "input": {"instruction": "Generate report"},
+        },
+    )
+    assert started.status_code == 202, started.json()
+    run_id = started.json()["runId"]
+    snapshot = await client.get(f"/api/v1/runs/{run_id}")
+    outputs = await client.get(f"/api/v1/runs/{run_id}/outputs")
+    cost = await client.get(f"/api/v1/runs/{run_id}/cost")
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["capabilities"][0]["id"] == "distribution-reporting"
+    assert workflows.status_code == 200
+    assert any(
+        item["id"] == "full-report" and item["runnable"]
+        for item in workflows.json()["workflows"]
+    )
+    assert "instruction" in schema.json()["schema"]["properties"]
+    assert snapshot.json()["run"]["workflowId"] == "full-report"
+    assert outputs.json() == {"runId": run_id, "outputs": []}
+    assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_generic_runs_are_scoped_to_the_main_conversation_that_started_them(
+    resources,
+) -> None:
+    client, _, _, _ = resources
+    first = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "First"},
+    )
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
+        json={
+            "workflowId": "parameter-adjustment",
+            "input": {"value": 4},
+        },
+    )
+    second = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "Second"},
+    )
+
+    first_runs = await client.get(
+        "/api/v1/runs",
+        params={"conversationId": first.json()["sessionId"]},
+    )
+    second_runs = await client.get(
+        "/api/v1/runs",
+        params={"conversationId": second.json()["sessionId"]},
+    )
+    project_runs = await client.get("/api/v1/runs")
+
+    assert started.status_code == 202
+    assert [item["run"]["runId"] for item in first_runs.json()["runs"]] == [
+        started.json()["runId"]
+    ]
+    assert second_runs.json()["runs"] == []
+    assert started.json()["runId"] in {
+        item["run"]["runId"] for item in project_runs.json()["runs"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_generic_workflow_routes_execute_the_second_production_capability(
+    resources,
+) -> None:
+    client, _, _, _ = resources
+
+    capabilities = await client.get("/api/v1/capabilities")
+    schema = await client.get(
+        "/api/v1/workflows/parameter-adjustment/input-schema"
+    )
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000012"},
+        json={
+            "workflowId": "parameter-adjustment",
+            "input": {"value": 4},
+        },
+    )
+    run_id = started.json()["runId"]
+    snapshot = await client.get(f"/api/v1/runs/{run_id}")
+    outputs = await client.get(f"/api/v1/runs/{run_id}/outputs")
+    cost = await client.get(f"/api/v1/runs/{run_id}/cost")
+
+    assert [item["id"] for item in capabilities.json()["capabilities"]] == [
+        "distribution-reporting",
+        "parameter-adjustment",
+    ]
+    assert schema.status_code == 200
+    assert schema.json()["contractId"] == "parameter-input"
+    assert "value" in schema.json()["schema"]["properties"]
+    assert started.status_code == 202
+    assert snapshot.status_code == 200
+    assert snapshot.json()["run"]["capabilityId"] == "parameter-adjustment"
+    assert snapshot.json()["run"]["status"] == "completed"
+    assert outputs.json() == {
+        "runId": run_id,
+        "outputs": [
             {
-                "run_id": run_id,
-                "status": "needs_user_decision",
-                "output_paths": ["Outputs/Reports/report.docx"],
-                "decision_id": "decision-1",
+                "id": "result",
+                "kind": "value",
+                "value": 10,
+                "path": None,
+                "exists": None,
+                "size": None,
             }
-        ),
-        encoding="utf-8",
-    )
-    (run_root / "workflow-state.json").write_text(
-        json.dumps({"run_id": run_id, "activity": "coverage", "status": "blocked"}),
-        encoding="utf-8",
-    )
-    (run_root / "decisions/decision-1.json").write_text(
-        json.dumps({"decision_id": "decision-1", "status": "pending"}), encoding="utf-8"
-    )
-    (run_root / "revision-request.json").write_text(
-        json.dumps({"baseline_version_id": "version-1", "feedback": "fix"}), encoding="utf-8"
-    )
-    (run_root / "evidence-choice.json").write_text(
-        json.dumps({"selected_action": "supplement"}), encoding="utf-8"
-    )
-    (workspace / "Outputs/Reports/report.docx").write_bytes(b"docx")
-
-    response = await client.get(f"/api/v1/reporting/runs/{run_id}")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["run"]["status"] == "completed"
-    assert body["run"]["active"] is False
-    assert body["run"]["source"] == "persisted"
-    assert body["state"]["activity"] == "coverage"
-    assert body["waitingInput"][0]["decision_id"] == "decision-1"
-    assert body["checkpoint"]["status"] == "blocked"
-    assert body["evidence"]["selected_action"] == "supplement"
-    assert body["revision"]["baseline_version_id"] == "version-1"
-    assert body["outputs"][0]["path"] == "Outputs/Reports/report.docx"
-    assert body["outputs"][0]["size"] == 4
-    assert body["outputs"][0]["exists"] is True
+        ],
+    }
+    assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
+    assert cost.json()["usage"]["totals"]["total_tokens"] == 0
 
 
 @pytest.mark.asyncio
-async def test_reporting_persisted_inactive_status_is_explicit(resources) -> None:
-    client, _, workspace, _ = resources
-    (workspace / "Work/runs").mkdir(parents=True, exist_ok=True)
-    (workspace / "Work/runs/inactive.json").write_text(
-        json.dumps({"run_id": "inactive", "status": "needs_user_decision"}),
-        encoding="utf-8",
-    )
-
-    response = await client.get("/api/v1/reporting/runs/inactive")
-
-    assert response.status_code == 200
-    assert response.json()["run"]["status"] == "completed"
-    assert response.json()["run"]["active"] is False
-    assert response.json()["run"]["source"] == "persisted"
-    assert response.json()["run"]["task_id"] == "persisted-task"
-
-
-@pytest.mark.asyncio
-async def test_reporting_malformed_persisted_state_is_not_silently_empty(resources) -> None:
-    client, _, workspace, _ = resources
-    (workspace / "Work/runs").mkdir(parents=True, exist_ok=True)
-    (workspace / "Work/runs/broken.json").write_text("{broken", encoding="utf-8")
-
-    response = await client.get("/api/v1/reporting/runs/broken")
-
-    assert response.status_code == 500
-    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "request_text",
-    ["{broken", "[]"],
-    ids=["malformed", "non-object"],
-)
-async def test_reporting_request_artifact_must_be_a_valid_json_object(
-    resources, request_text: str
-) -> None:
-    """A request-backed run must validate the artifact that recognizes it."""
-    client, _, workspace, _ = resources
-    root = workspace / "Work/runs/request-only"
-    root.mkdir(parents=True)
-    (root / "request.json").write_text(request_text, encoding="utf-8")
-
-    response = await client.get("/api/v1/reporting/runs/request-only")
-
-    assert response.status_code == 500
-    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
-async def test_reporting_rejects_symlinked_run_directory(resources, tmp_path: Path) -> None:
-    client, _, workspace, _ = resources
-    outside = tmp_path / "outside-run"
-    outside.mkdir()
-    (outside / "workflow-state.json").write_text(
-        json.dumps({"run_id": "escaped", "status": "completed"}), encoding="utf-8"
-    )
-    runs = workspace / "Work/runs"
-    runs.mkdir(parents=True, exist_ok=True)
-    (runs / "escaped").symlink_to(outside, target_is_directory=True)
-
-    response = await client.get("/api/v1/reporting/runs/escaped")
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
-
-
-@pytest.mark.asyncio
-async def test_reporting_empty_run_directory_is_not_a_run(resources) -> None:
-    client, _, workspace, _ = resources
-    (workspace / "Work/runs/empty").mkdir(parents=True, exist_ok=True)
-
-    response = await client.get("/api/v1/reporting/runs/empty")
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
-async def test_reporting_rejects_symlinked_runs_root(resources, tmp_path: Path) -> None:
-    client, _, workspace, _ = resources
-    runs = workspace / "Work/runs"
-    if runs.exists():
-        runs.rmdir()
-    outside = tmp_path / "outside-runs"
-    outside.mkdir()
-    (outside / "escaped.json").write_text(
-        json.dumps({"run_id": "escaped", "status": "completed"}), encoding="utf-8"
-    )
-    runs.symlink_to(outside, target_is_directory=True)
-
-    response = await client.get("/api/v1/reporting/runs/escaped")
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
-async def test_reporting_rejects_symlinked_decisions_directory(resources, tmp_path: Path) -> None:
-    client, _, workspace, _ = resources
-    root = workspace / "Work/runs/run-decisions"
-    root.mkdir(parents=True)
-    (root / "workflow-state.json").write_text(
-        json.dumps({"run_id": "run-decisions", "status": "blocked"}), encoding="utf-8"
-    )
-    outside = tmp_path / "outside-decisions"
-    outside.mkdir()
-    (outside / "secret.json").write_text(
-        json.dumps({"decision_id": "secret", "status": "pending"}), encoding="utf-8"
-    )
-    (root / "decisions").symlink_to(outside, target_is_directory=True)
-
-    response = await client.get("/api/v1/reporting/runs/run-decisions")
-
-    assert response.status_code == 500
-    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
-
-
-@pytest.mark.asyncio
-async def test_reporting_named_start_command_returns_accepted(resources) -> None:
-    client, host, _, _ = resources
-
-    response = await client.post(
-        "/api/v1/reporting/runs",
-        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000001"},
-        json={"instruction": "Generate report", "operation": "full_report"},
-    )
-
-    assert response.status_code == 202
-    assert response.json()["status"] == "accepted"
-    assert response.json()["runId"] == "report-new"
-    assert host.reporting_controller is not None
-    assert host.reporting_controller.calls[0][0] == "start"
-
-
-@pytest.mark.asyncio
-async def test_fresh_reporting_run_is_immediately_queryable_listed_and_cancellable(
+async def test_generic_workflow_run_is_visible_only_in_its_active_project(
     resources,
 ) -> None:
-    client, _, _, _ = resources
-    accepted = await client.post(
-        "/api/v1/reporting/runs",
-        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000011"},
-        json={"instruction": "Generate report", "operation": "full_report"},
+    client, _, project_one, _ = resources
+    data_root = project_one.parent
+    created = await client.post(
+        "/api/v1/projects",
+        json={"projectId": "p2", "displayName": "p2", "description": ""},
     )
-    run_id = accepted.json()["runId"]
-
-    snapshot = await client.get(f"/api/v1/reporting/runs/{run_id}")
-    listed = await client.get("/api/v1/reporting/runs")
-    cancelled = await client.post(
-        f"/api/v1/reporting/runs/{run_id}/cancel",
-        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000012"},
+    activated_p2 = await client.post("/api/v1/projects/p2/activate")
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
+        json={
+            "workflowId": "parameter-adjustment",
+            "input": {"value": 4},
+        },
     )
+    run_id = started.json()["runId"]
+    visible_in_p2 = await client.get(f"/api/v1/runs/{run_id}")
+    FileWorkflowEventSink(data_root / "p2").append(
+        WorkflowRuntimeEvent(
+            kind="workflow.completed",
+            run_id=run_id,
+            workflow_id="parameter-adjustment",
+        )
+    )
+    events_in_p2 = await client.get(f"/api/v1/runs/{run_id}/events")
 
-    assert accepted.status_code == 202
-    assert snapshot.status_code == 200
-    assert snapshot.json()["run"]["status"] == "running"
-    assert any(item["run_id"] == run_id for item in listed.json()["runs"])
-    assert cancelled.status_code == 202
+    assert created.status_code == 201
+    assert activated_p2.status_code == 200
+    assert started.status_code == 202
+    assert visible_in_p2.status_code == 200
+    assert events_in_p2.status_code == 200
+    assert events_in_p2.json()["events"][-1] == {
+        "kind": "workflow.completed",
+        "runId": run_id,
+        "workflowId": "parameter-adjustment",
+        "actionId": None,
+        "error": None,
+        "data": {},
+    }
+    assert (data_root / "p2/Work/runs" / run_id / "runtime-state.json").is_file()
+    assert not (project_one / "Work/runs" / run_id).exists()
+
+    activated_p1 = await client.post("/api/v1/projects/project-1/activate")
+    hidden_in_p1 = await client.get(f"/api/v1/runs/{run_id}")
+    hidden_events_in_p1 = await client.get(f"/api/v1/runs/{run_id}/events")
+
+    assert activated_p1.status_code == 200
+    assert hidden_in_p1.status_code == 404
+    assert hidden_in_p1.json()["error"]["code"] == "WORKFLOW_RESOURCE_NOT_FOUND"
+    assert hidden_events_in_p1.status_code == 404
+    assert hidden_events_in_p1.json()["error"]["code"] == "WORKFLOW_RESOURCE_NOT_FOUND"
+    assert (data_root / "p2/Work/runs" / run_id / "runtime-state.json").is_file()
+    assert not (project_one / "Work/runs" / run_id).exists()
 
 
 @pytest.mark.asyncio
-async def test_live_reporting_run_without_artifacts_is_queryable_and_listed(
+async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling(
     resources,
 ) -> None:
-    client, host, _, _ = resources
-    run_id = "live-only"
-    host.reporting_controller.live_runs.add(run_id)
-    host.reporting_controller._tasks[run_id] = asyncio.create_task(  # noqa: SLF001
-        asyncio.Event().wait()
+    client, host, workspace, _ = resources
+    definitions = DefinitionRegistry()
+    answer_contract = ContractDefinition(
+        id="http-nested-answer",
+        version="1.0.0",
+        description="One nested text answer",
+        adapter="json_schema",
+        schema={"type": "string"},
     )
-
-    snapshot = await client.get(f"/api/v1/reporting/runs/{run_id}")
-    listed = await client.get("/api/v1/reporting/runs")
-    cancelled = await client.post(
-        f"/api/v1/reporting/runs/{run_id}/cancel",
-        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000013"},
+    number_contract = ContractDefinition(
+        id="http-nested-number",
+        version="1.0.0",
+        description="One integer",
+        adapter="json_schema",
+        schema={"type": "integer"},
     )
-
-    assert snapshot.status_code == 200
-    assert snapshot.json()["run"]["source"] == "live"
-    assert any(item["run_id"] == run_id for item in listed.json()["runs"])
-    assert cancelled.status_code == 202
-
-
-@pytest.mark.asyncio
-async def test_reporting_cancel_missing_run_returns_not_found(resources) -> None:
-    client, _, _, _ = resources
-
-    response = await client.post(
-        "/api/v1/reporting/runs/missing/cancel",
-        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000002"},
+    definitions.register(answer_contract)
+    definitions.register(number_contract)
+    definitions.register(
+        InteractionDefinition(
+            id="http-nested-interaction",
+            version="1.0.0",
+            description="Collect one nested answer",
+            input_contract=answer_contract.id,
+            title="Nested answer",
+        )
     )
+    definitions.register(
+        ToolDefinition(
+            id="http-double",
+            version="1.0.0",
+            description="Double one integer",
+            implementation="fixture:http-double",
+            input_contract=number_contract.id,
+            output_contract=number_contract.id,
+        )
+    )
+    child = WorkflowDefinition(
+        id="http-waiting-child",
+        version="1.0.0",
+        description="Nested child waiting through the generic HTTP projection",
+        interactions=["http-nested-interaction"],
+        state={"input": "seed"},
+        actions=[
+            {
+                "id": "ask-http-child",
+                "kind": "request_input",
+                "interaction": "http-nested-interaction",
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish-http-child",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="http-parallel-waiting-parent",
+        version="1.0.0",
+        description="Parallel parent used by the real generic HTTP routes",
+        state={"left-input": "left-seed", "right-input": 5},
+        actions=[
+            {
+                "id": "http-parallel",
+                "kind": "parallel",
+                "branches": {"left": "http-left", "right": "http-right"},
+                "join": "http-join",
+            },
+            {
+                "id": "http-left",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "left-input",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "left-output",
+            },
+            {"id": "http-left-done", "kind": "goto", "target": "http-join"},
+            {
+                "id": "http-right",
+                "kind": "invoke_tool",
+                "tool": "http-double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "http-right-done", "kind": "goto", "target": "http-join"},
+            {
+                "id": "http-join",
+                "kind": "join",
+                "parallel": "http-parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "http-finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    definitions.register(child)
+    definitions.register(parent)
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(parent, definitions)
+    contracts = {
+        definition.id: build_contract_adapter(definition)
+        for definition in (answer_contract, number_contract)
+    }
+    right_calls = 0
 
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
+    def double(value: int) -> int:
+        nonlocal right_calls
+        right_calls += 1
+        return value * 2
+
+    store = StartAwareFileWorkflowStateStore(workspace)
+    events = InMemoryWorkflowEventSink()
+    runtime_host = WorkflowRuntimeHost(executors, store, events)
+    context = RuntimeContext(
+        tools={"http-double": double},
+        contracts=contracts,
+        definitions=definitions,
+        subworkflows=plan.subworkflow_plans,
+    )
+    run_id = "report-declarative-http-nested"
+    waiting = await runtime_host.execute(
+        plan,
+        WorkflowState.for_plan(run_id, plan),
+        context,
+    )
+    owner = DetachedRunTaskOwner()
+
+    class _NestedWorkflowBinding:
+        capability_id = "distribution-reporting"
+
+        @property
+        def active(self) -> bool:
+            return owner.active
+
+        async def provide_input(
+            self,
+            _command_id: UUID,
+            current_run_id: str,
+            *,
+            input_id: str | None,
+            values: object,
+        ) -> dict[str, object]:
+            if input_id is None:
+                raise ValueError("nested workflow input id is required")
+            current_plan = store.load_plan(current_run_id)
+            resumed = resume_waiting_input(
+                current_plan,
+                store.load(current_run_id),
+                input_id=input_id,
+                values=values,
+                contracts=contracts,
+                subworkflows=current_plan.subworkflow_plans,
+            )
+            return await owner.accept_after_persisted_state(
+                run_id=current_run_id,
+                state_store=store,
+                operation=runtime_host.execute(current_plan, resumed, context),
+            )
+
+        def get_run(self, current_run_id: str) -> dict[str, object]:
+            state = store.load(current_run_id)
+            return {
+                "run": {
+                    "run_id": current_run_id,
+                    "capability_id": self.capability_id,
+                    "workflow_id": state.workflow_id,
+                    "status": state.status.value,
+                    "active": state.status
+                    in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                    "task_id": None,
+                },
+                "state": state.model_dump(mode="json"),
+                "waiting_input": (
+                    [state.waiting_input] if state.waiting_input is not None else []
+                ),
+            }
+
+        async def close(self) -> None:
+            await owner.close()
+
+    bindings = RuntimeBindingCatalog()
+    bindings.register(_NestedWorkflowBinding())
+    projection = WorkflowProjectionFacade(
+        workspace,
+        runtime_services=None,
+        runtime_bindings=bindings,
+    )
+    previous_projection = host.app.state.workflow_projection
+    host.app.state.workflow_projection = projection
+    try:
+        projected_waiting = await client.get(f"/api/v1/runs/{run_id}")
+        submitted = await client.post(
+            f"/api/v1/runs/{run_id}/input",
+            headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000014"},
+            json={"inputId": "ask-http-child", "values": "Ada"},
+        )
+        await projection.close()
+        projected_completed = await client.get(f"/api/v1/runs/{run_id}")
+    finally:
+        host.app.state.workflow_projection = previous_projection
+    completed = store.load(run_id)
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert projected_waiting.status_code == 200
+    assert projected_waiting.json()["waitingInput"][0]["path"] == [
+        {
+            "kind": "parallel",
+            "action_id": "http-parallel",
+            "branch_id": "left",
+        },
+        {
+            "kind": "subworkflow",
+            "action_id": "http-left",
+            "workflow_id": child.id,
+        },
+    ]
+    assert submitted.status_code == 202
+    assert submitted.json()["runId"] == run_id
+    assert projected_completed.status_code == 200
+    assert projected_completed.json()["run"]["runId"] == run_id
+    assert projected_completed.json()["run"]["status"] == "completed"
+    assert completed.outputs == {"result": {"left": "Ada", "right": 10}}
+    assert completed.parallel_states["http-parallel"]["right"]["status"] == "completed"
+    assert right_calls == 1
+    assert len(
+        [
+            event
+            for event in events.events
+            if event.kind == "action.started" and event.action_id == "http-right"
+        ]
+    ) == 1
 
 
-@pytest.mark.asyncio
 @pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
 async def test_python_run_is_project_scoped_bounded_and_queryable(resources) -> None:
     client, host, workspace, _ = resources
@@ -3861,6 +3107,7 @@ async def test_maintenance_refuses_dangling_symlinked_config_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="POSIX fsync path contract")
 async def test_maintenance_flushes_authoritative_workspace_without_following_symlinks(
     resources, tmp_path: Path, monkeypatch
 ) -> None:
@@ -3887,8 +3134,22 @@ async def test_maintenance_flushes_authoritative_workspace_without_following_sym
 
     def record_fsync(descriptor: int) -> None:
         try:
-            flushed.add(Path(os.readlink(f"/proc/self/fd/{descriptor}")).resolve())
-        except OSError:
+            proc_fd = Path(f"/proc/self/fd/{descriptor}")
+            if proc_fd.exists():
+                target = Path(os.readlink(proc_fd))
+            else:
+                import fcntl
+
+                if sys.platform != "darwin":
+                    raise OSError("no fd path resolver for this POSIX platform")
+                raw_path = fcntl.fcntl(
+                    descriptor,
+                    fcntl.F_GETPATH,
+                    b"\0" * 1024,
+                )
+                target = Path(raw_path.rstrip(b"\0").decode())
+            flushed.add(target.resolve())
+        except (AttributeError, OSError):
             pass
 
     monkeypatch.setattr(os, "fsync", record_fsync)

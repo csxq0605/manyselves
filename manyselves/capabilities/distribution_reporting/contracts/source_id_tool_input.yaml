@@ -1,0 +1,10 @@
+id: source_id_tool_input
+version: 1.0.0
+description: Provider input for opening one project source
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    source_id: {type: string}
+  required: [source_id]
+  additionalProperties: false

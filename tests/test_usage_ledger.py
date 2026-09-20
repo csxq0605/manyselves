@@ -2,7 +2,7 @@ import json
 import multiprocessing
 from pathlib import Path
 
-from manyselves.core.usage_ledger import RoundReason, UsageLedger
+from manyselves.runtime.usage_ledger import RoundReason, UsageLedger
 
 
 def _append_usage_rows(workspace: str, worker: int, count: int) -> None:

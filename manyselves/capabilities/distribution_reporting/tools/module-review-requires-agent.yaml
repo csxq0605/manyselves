@@ -1,0 +1,10 @@
+id: module-review-requires-agent
+version: 1.0.0
+description: Route a prepared module review to its declared Agent or persisted progress
+implementation: capability:distribution-reporting:module-review-requires-agent
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

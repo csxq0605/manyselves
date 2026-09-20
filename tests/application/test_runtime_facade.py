@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 from manyselves.application.control import ControlLeaseRequired, ControlLeaseService
 from manyselves.application.errors import CommandIdConflictError, RuntimeNotReadyError
-from manyselves.application.legacy_runtime_adapter import LegacyRuntimeAdapter
 from manyselves.application.models import (
     AcceptedCommand,
     InterruptCommand,
@@ -24,6 +23,7 @@ from manyselves.application.models import (
     SendMessageCommand,
 )
 from manyselves.application.runtime_facade import RuntimeFacade
+from manyselves.application.runtime_snapshot_adapter import RuntimeSnapshotAdapter
 from manyselves.application.runtime_state import RuntimeStateProjection
 from manyselves.interfaces.types import (
     ApiDebugMessage,
@@ -209,7 +209,7 @@ def test_runtime_snapshot_projects_real_queue_tool_debug_and_checkpoint_state() 
         workspace=Path("/workspace"),
         loop_manager=manager,
     )
-    snapshot = LegacyRuntimeAdapter(host, state=projection).snapshot(
+    snapshot = RuntimeSnapshotAdapter(host, state=projection).snapshot(
         controller_client_id="browser"
     )
 
@@ -754,14 +754,16 @@ def test_snapshot_when_ready_uses_adapter_and_hides_expired_controller(tmp_path:
     assert facade.snapshot().controller_client_id is None
 
 
-def test_legacy_adapter_uses_public_loop_manager_queries_only(tmp_path: Path) -> None:
+def test_runtime_snapshot_adapter_uses_public_loop_manager_queries_only(
+    tmp_path: Path,
+) -> None:
     host = make_host(workspace=tmp_path)
-    adapter = LegacyRuntimeAdapter(host)
+    adapter = RuntimeSnapshotAdapter(host)
 
     snapshot = adapter.snapshot(controller_client_id="browser-1")
 
     assert snapshot.active_session_id == "session-1"
-    source = inspect.getsource(LegacyRuntimeAdapter)
+    source = inspect.getsource(RuntimeSnapshotAdapter)
     assert "_task_board" not in source
     assert "_conversation_history" not in source
     assert "_current_session_id" not in source

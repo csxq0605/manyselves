@@ -1,0 +1,5 @@
+id: template_skill_submission
+version: 1.0.0
+description: Fourteen complete role and chapter Skills distilled from one template
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:TemplateSkillSubmission

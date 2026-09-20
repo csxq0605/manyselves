@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.prompts.loader import PromptLoader
+from manyselves.runtime.prompts.loader import PromptLoader
 
 
 @pytest.fixture
@@ -45,6 +45,8 @@ def test_fallback_for_missing_file(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
     result = loader.load_prompt("nonexistent_agent")
     assert "nonexistent_agent" in result
+    assert "reporting" not in result.lower()
+    assert "power-distribution" not in result.lower()
 
 
 def test_fallback_built_in_types(agents_dir):
@@ -81,28 +83,12 @@ def test_get_filename_normalizes_hyphens_for_task_roles(agents_dir):
     assert loader._get_filename("evidence-auditor") == "evidence_auditor_agent.md"
 
 
-def test_packaged_main_prompt_routes_distribution_reports_through_workflow_tool():
+def test_packaged_main_prompt_preserves_distribution_demo_entrypoint():
     prompt = PromptLoader().load_prompt("main")
 
+    assert "配电安全服务 Demo" in prompt
     assert "run_reporting_workflow" in prompt
-    assert "resume_reporting_workflow" in prompt
-    assert "当前 run" in prompt
-    assert "历史 Outputs" in prompt
-    assert "配电报告" in prompt
-    assert "不得先自行遍历资料" in prompt
-    assert 'operation="distill_template_skill"' in prompt
-    assert 'operation="full_report"' in prompt
-    assert 'operation="module_report"' in prompt
-    assert 'operation="aggregate_existing"' in prompt
-    assert 'operation="render_existing"' in prompt
-    assert "五份 2.x 文件属于第 4 路" in prompt
-    assert "已有产物启动契约（不是新的 operation）" in prompt
-    assert "resume_reporting_workflow(run_id=原run_id)" in prompt
-    assert 'missing_evidence_policy="draft"' in prompt
-    assert "不自动跳过缺失步骤" in prompt
-    assert "这不是一种新的“再次审计 operation”" in prompt
-    assert "未修改模块沿用上一轮审查，不得重新读取正文" in prompt
-    assert "只有五份孤立模块文件、没有可恢复 run/checkpoint" in prompt
-    assert "target_modules" in prompt
-    assert "不得改用新报告入口" in prompt
-    assert "automated physics experiment" not in prompt.lower()
+    assert "不需要先列出工作流或读取 Schema" in prompt
+    assert "当前尚未完成" in prompt
+    assert "不要承诺完成后主动汇报" in prompt
+    assert "Kernel 保持无状态且业务无关" in prompt

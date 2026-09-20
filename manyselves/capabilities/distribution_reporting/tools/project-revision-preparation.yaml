@@ -1,0 +1,10 @@
+id: project-revision-preparation
+version: 1.0.0
+description: project revision preparation
+implementation: capability:distribution-reporting:project-revision-preparation
+input_contract: reporting_tail_state
+output_contract: preparation_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,10 @@
+id: accept-current-module-preflight-revision
+version: 1.0.0
+description: Accept and persist the original Author correction before semantic review
+implementation: capability:distribution-reporting:accept-current-module-preflight-revision
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

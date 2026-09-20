@@ -1,0 +1,10 @@
+id: prepare-current-chief-chapter
+version: 1.0.0
+description: Prepare or recover one Chief chapter lane
+implementation: capability:distribution-reporting:prepare-current-chief-chapter
+input_contract: reporting_tool_input
+output_contract: declarative_chief_chapter_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

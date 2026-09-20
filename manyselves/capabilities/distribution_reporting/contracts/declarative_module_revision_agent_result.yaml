@@ -1,0 +1,5 @@
+id: declarative_module_revision_agent_result
+version: 1.0.0
+description: Typed current module revision Agent invocation result
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.module_lane:DeclarativeModuleRevisionAgentResult

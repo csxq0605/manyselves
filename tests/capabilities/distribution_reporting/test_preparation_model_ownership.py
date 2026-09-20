@@ -1,0 +1,272 @@
+import ast
+import json
+import subprocess
+import sys
+from importlib import import_module
+from importlib.util import find_spec
+from pathlib import Path
+
+import pytest
+from pydantic import TypeAdapter
+
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
+from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
+from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
+
+PREPARATION_MODULE = (
+    "manyselves.capabilities.distribution_reporting.runtime.models.preparation"
+)
+REPORTING_MODULE = (
+    "manyselves.capabilities.distribution_reporting.runtime.models.reporting"
+)
+
+CONTRACT_MODELS = {
+    "project_manifest": (PREPARATION_MODULE, "ProjectManifest"),
+    "parsed_artifacts": (PREPARATION_MODULE, "ParsedArtifacts"),
+    "evidence_items": (REPORTING_MODULE, "EvidenceItems"),
+    "coverage_matrix": (REPORTING_MODULE, "CoverageMatrix"),
+    "output_artifacts": (REPORTING_MODULE, "OutputArtifacts"),
+}
+
+
+def test_preparation_models_import_without_core_reporting() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    f"import {PREPARATION_MODULE} as preparation",
+                    f"import {REPORTING_MODULE} as reporting",
+                    "print(json.dumps({",
+                    "    'preparation': preparation.__name__,",
+                    "    'reporting': reporting.__name__,",
+                    "    'core_reporting': sorted(",
+                    "        name for name in sys.modules",
+                    "        if name.startswith('manyselves.core.reporting')",
+                    "    ),",
+                    "}))",
+                )
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "preparation": PREPARATION_MODULE,
+        "reporting": REPORTING_MODULE,
+        "core_reporting": [],
+    }
+
+
+def test_preparation_models_are_physically_capability_owned() -> None:
+    preparation = import_module(PREPARATION_MODULE)
+    reporting = import_module(REPORTING_MODULE)
+
+    for model_name in (
+        "ManifestFile",
+        "ProjectManifest",
+        "ParsedArtifact",
+        "FilePreparationResult",
+        "MappingGap",
+        "MappingResult",
+    ):
+        assert getattr(preparation, model_name).__module__ == PREPARATION_MODULE
+
+    source = Path(preparation.__file__).read_text(encoding="utf-8")
+    imports = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert all(
+        not any(
+            name.name.startswith("manyselves.core.reporting")
+            for name in node.names
+        )
+        if isinstance(node, ast.Import)
+        else not (node.module or "").startswith("manyselves.core.reporting")
+        for node in imports
+    )
+
+    for model_name in ("ManifestFile", "ProjectManifest", "ParsedArtifact"):
+        assert model_name not in vars(reporting)
+
+    def has_spec(name: str) -> bool:
+        try:
+            return find_spec(name) is not None
+        except ModuleNotFoundError:
+            return False
+
+    assert not has_spec("manyselves.core.reporting.preparation")
+    assert not has_spec("manyselves.core.reporting.mappers.common")
+
+
+def test_preparation_models_preserve_nested_round_trip_and_extra_forbid() -> None:
+    preparation = import_module(PREPARATION_MODULE)
+    reporting = import_module(REPORTING_MODULE)
+
+    manifest_file = preparation.ManifestFile(
+        id="file-1",
+        path=Path("Inputs/source.txt"),
+        sha256="source-id",
+        media_type="text/plain",
+        purpose="supporting",
+    )
+    manifest = preparation.ProjectManifest(files=[manifest_file])
+    parsed = preparation.ParsedArtifact(
+        id="artifact-1",
+        kind="text",
+        source=reporting.SourceLocation(
+            file_id="file-1",
+            path=Path("Inputs/source.txt"),
+        ),
+        payload={"text": "evidence"},
+    )
+    file_result = preparation.FilePreparationResult(
+        manifest_order=0,
+        file_id="file-1",
+        source_path=Path("Inputs/source.txt"),
+        source_sha256="0" * 64,
+        status="parsed",
+        parsed_artifacts=[parsed],
+        mapping_gaps=[{"code": "raw-gap", "custom": True}],
+    )
+    gap = preparation.MappingGap(code="missing", message="missing source")
+    mapping = preparation.MappingResult(evidence_items=[], gaps=[gap])
+
+    for value in (manifest, parsed, file_result, gap, mapping):
+        assert type(value).model_validate(value.model_dump(mode="json")) == value
+        with pytest.raises(ValueError):
+            type(value).model_validate({**value.model_dump(mode="json"), "extra": True})
+
+
+def test_preparation_models_serialize_project_paths_as_canonical_refs() -> None:
+    preparation = import_module(PREPARATION_MODULE)
+    reporting = import_module(REPORTING_MODULE)
+    project_path = Path("Inputs") / "S4-6评估总表.xlsx"
+    snapshot_path = (
+        Path("Work")
+        / "runs"
+        / "reporting-1"
+        / "frozen-project"
+        / project_path
+    )
+
+    manifest_file = preparation.ManifestFile(
+        id="file-s4-6",
+        path=project_path,
+        snapshot_ref=snapshot_path,
+        sha256="a" * 64,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    file_result = preparation.FilePreparationResult(
+        manifest_order=0,
+        file_id="file-s4-6",
+        source_path=project_path,
+        source_sha256="a" * 64,
+        status="parsed",
+        parsed_artifacts=[
+            preparation.ParsedArtifact(
+                id="artifact-s4-6",
+                kind="workbook",
+                source=reporting.SourceLocation(
+                    file_id="file-s4-6",
+                    path=project_path,
+                ),
+                payload={},
+            )
+        ],
+    )
+
+    assert manifest_file.model_dump(mode="json") == {
+        "id": "file-s4-6",
+        "path": "Inputs/S4-6评估总表.xlsx",
+        "sha256": "a" * 64,
+        "media_type": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        "purpose": None,
+        "snapshot_ref": (
+            "Work/runs/reporting-1/frozen-project/Inputs/S4-6评估总表.xlsx"
+        ),
+        "parse_status": "pending",
+        "error": None,
+    }
+    dumped_result = file_result.model_dump(mode="json")
+    assert dumped_result["source_path"] == "Inputs/S4-6评估总表.xlsx"
+    assert dumped_result["parsed_artifacts"][0]["source"]["path"] == (
+        "Inputs/S4-6评估总表.xlsx"
+    )
+    assert isinstance(manifest_file.model_dump(mode="python")["path"], Path)
+    assert isinstance(file_result.model_dump(mode="python")["source_path"], Path)
+    assert isinstance(
+        file_result.model_dump(mode="python")["parsed_artifacts"][0]["source"][
+            "path"
+        ],
+        Path,
+    )
+
+    restored_evidence = reporting.EvidenceItem.model_validate(
+        {
+            "id": "E-S4-6",
+            "subject": "source ledger compatibility",
+            "fact": "legacy Windows path is accepted and re-emitted canonically",
+            "source": {
+                "file_id": "file-s4-6",
+                "path": r"Inputs\S4-6评估总表.xlsx",
+            },
+        }
+    )
+    assert restored_evidence.model_dump(mode="json")["source"]["path"] == (
+        "Inputs/S4-6评估总表.xlsx"
+    )
+
+
+def test_preparation_contract_catalog_uses_typed_models_and_collection_shapes() -> None:
+    _, registry = load_distribution_reporting_capability()
+    contracts = build_contract_catalog(registry)
+    preparation = import_module(PREPARATION_MODULE)
+    reporting = import_module(REPORTING_MODULE)
+
+    assert preparation.ParsedArtifacts == list[preparation.ParsedArtifact]
+    assert reporting.EvidenceItems == list[reporting.EvidenceItem]
+    assert reporting.OutputArtifacts == list[reporting.OutputArtifact]
+
+    valid_values = {
+        "project_manifest": {"files": []},
+        "parsed_artifacts": [],
+        "evidence_items": [],
+        "coverage_matrix": {"entries": {}},
+        "output_artifacts": [],
+    }
+    for contract_id, (module_name, model_name) in CONTRACT_MODELS.items():
+        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
+        model_type = getattr(import_module(module_name), model_name)
+        assert isinstance(definition, ContractDefinition)
+        assert definition.adapter == "pydantic"
+        assert definition.model == f"{module_name}:{model_name}"
+        assert contracts[contract_id].json_schema() == TypeAdapter(
+            model_type
+        ).json_schema()
+        contracts[contract_id].validate(valid_values[contract_id])
+
+    for contract_id in ("parsed_artifacts", "evidence_items", "output_artifacts"):
+        assert contracts[contract_id].json_schema()["type"] == "array"
+        with pytest.raises(ContractValidationError):
+            contracts[contract_id].validate({})
+    for contract_id in ("project_manifest", "coverage_matrix"):
+        assert contracts[contract_id].json_schema()["type"] == "object"
+        with pytest.raises(ContractValidationError):
+            contracts[contract_id].validate([])
+
+    report_request = registry.require(DefinitionKind.CONTRACT, "report_request")
+    assert isinstance(report_request, ContractDefinition)
+    assert report_request.adapter == "json_schema"
+    assert report_request.schema_ == {}

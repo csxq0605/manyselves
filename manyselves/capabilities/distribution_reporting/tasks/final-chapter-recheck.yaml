@@ -1,0 +1,10 @@
+id: final-chapter-recheck
+version: 1.0.0
+description: Recheck only the revised Final chapter findings through the original Auditor
+agent: chief-editor-auditor
+objective: Recheck the assigned Final findings against the common reduced chapter subject and return lane-local verdicts.
+input_contract: declarative_final_recheck_context
+output_contract: declarative_final_recheck_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

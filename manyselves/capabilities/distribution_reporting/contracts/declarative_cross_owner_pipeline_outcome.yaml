@@ -1,0 +1,5 @@
+id: declarative_cross_owner_pipeline_outcome
+version: 1.0.0
+description: Typed outcome of one file-defined Cross owner pipeline
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.cross_owner:DeclarativeCrossOwnerPipelineOutcome

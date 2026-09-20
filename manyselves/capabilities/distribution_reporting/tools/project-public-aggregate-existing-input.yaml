@@ -1,0 +1,10 @@
+id: project-public-aggregate-existing-input
+version: 1.0.0
+description: Project public aggregate-existing input into its internal typed task input
+implementation: capability:distribution-reporting:project-public-aggregate-existing-input
+input_contract: public_aggregate_existing_initializer_input
+output_contract: aggregate_existing_input
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

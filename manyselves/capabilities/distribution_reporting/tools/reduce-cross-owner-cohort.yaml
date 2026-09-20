@@ -1,0 +1,10 @@
+id: reduce-cross-owner-cohort
+version: 1.0.0
+description: Reduce five drained Cross owner outcomes into Reporting state
+implementation: capability:distribution-reporting:reduce-cross-owner-cohort
+input_contract: reporting_tool_input
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,5 @@
+id: revision_impact_decision_input
+version: 1.0.0
+description: User confirmation of all or part of the revision impact list
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.impact:RevisionImpactDecision

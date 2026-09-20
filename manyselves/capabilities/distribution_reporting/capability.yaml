@@ -1,0 +1,19 @@
+id: distribution-reporting
+version: 1.0.0
+description: Declarative distribution reporting capability
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+recovery: ./recovery
+interactions: ./interactions
+outputs: ./outputs
+entrypoints:
+- full-report
+- module-report
+- revise-report
+- aggregate-existing
+- render-existing
+- distill-template-skill
+runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

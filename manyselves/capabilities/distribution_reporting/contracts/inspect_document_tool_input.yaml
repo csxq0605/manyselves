@@ -1,0 +1,11 @@
+id: inspect_document_tool_input
+version: 1.0.0
+description: Provider input for bounded document inspection
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    path: {type: string, description: Project-relative file path.}
+    max_chars: {type: integer, minimum: 1}
+  required: [path]
+  additionalProperties: false

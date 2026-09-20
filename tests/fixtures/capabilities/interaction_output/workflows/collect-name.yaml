@@ -1,0 +1,22 @@
+id: collect-name
+version: 1.0.0
+description: Collect and publish one user name
+interactions:
+- request-name
+outputs:
+- name-result
+output_contract: name-input
+actions:
+- id: ask-name
+  kind: request_input
+  interaction: request-name
+  output_variable: supplied-name
+- id: publish-name
+  kind: publish_result
+  output: name-result
+  input_variable: supplied-name
+  output_name: result
+- id: finish
+  kind: end_workflow
+  output_variable: supplied-name
+  output_name: result

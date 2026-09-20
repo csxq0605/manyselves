@@ -250,6 +250,55 @@
         "title": "BootstrapSnapshot",
         "type": "object"
       },
+      "CapabilityListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilitySummary"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "capabilities"
+        ],
+        "title": "CapabilityListResponse",
+        "type": "object"
+      },
+      "CapabilitySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "workflowIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflowids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "description",
+          "workflowIds"
+        ],
+        "title": "CapabilitySummary",
+        "type": "object"
+      },
       "ConversationActiveSessionResponse": {
         "properties": {
           "activeSessionId": {
@@ -2353,373 +2402,6 @@
         "title": "RenameEntryRequest",
         "type": "object"
       },
-      "ReportingAcceptedResponse": {
-        "properties": {
-          "commandId": {
-            "format": "uuid",
-            "title": "Commandid",
-            "type": "string"
-          },
-          "runId": {
-            "title": "Runid",
-            "type": "string"
-          },
-          "status": {
-            "const": "accepted",
-            "default": "accepted",
-            "title": "Status",
-            "type": "string"
-          },
-          "taskId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Taskid"
-          }
-        },
-        "required": [
-          "commandId",
-          "runId"
-        ],
-        "title": "ReportingAcceptedResponse",
-        "type": "object"
-      },
-      "ReportingDecisionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "action": {
-            "enum": [
-              "supplement",
-              "draft",
-              "skip",
-              "stop"
-            ],
-            "title": "Action",
-            "type": "string"
-          },
-          "supplements": {
-            "items": {
-              "$ref": "#/components/schemas/UserSupplement"
-            },
-            "title": "Supplements",
-            "type": "array"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "title": "ReportingDecisionRequest",
-        "type": "object"
-      },
-      "ReportingListResponse": {
-        "properties": {
-          "runs": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Runs",
-            "type": "array"
-          }
-        },
-        "required": [
-          "runs"
-        ],
-        "title": "ReportingListResponse",
-        "type": "object"
-      },
-      "ReportingResumeRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "maxProviderAttempts": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Maxproviderattempts"
-          },
-          "maxTotalTokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Maxtotaltokens"
-          },
-          "supplements": {
-            "items": {
-              "$ref": "#/components/schemas/UserSupplement"
-            },
-            "title": "Supplements",
-            "type": "array"
-          }
-        },
-        "title": "ReportingResumeRequest",
-        "type": "object"
-      },
-      "ReportingRevisionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "baselineVersionId": {
-            "title": "Baselineversionid",
-            "type": "string"
-          },
-          "feedback": {
-            "title": "Feedback",
-            "type": "string"
-          },
-          "maxProviderAttempts": {
-            "default": 40,
-            "title": "Maxproviderattempts",
-            "type": "integer"
-          },
-          "maxTotalTokens": {
-            "default": 400000,
-            "title": "Maxtotaltokens",
-            "type": "integer"
-          },
-          "promoteSkillId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Promoteskillid"
-          },
-          "promoteToSkill": {
-            "default": false,
-            "title": "Promotetoskill",
-            "type": "boolean"
-          },
-          "targetClaimIds": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Targetclaimids",
-            "type": "array"
-          },
-          "targetModuleIds": {
-            "items": {
-              "enum": [
-                "2.1",
-                "2.2",
-                "2.3",
-                "2.4",
-                "2.5"
-              ],
-              "type": "string"
-            },
-            "title": "Targetmoduleids",
-            "type": "array"
-          },
-          "targetSubmoduleIds": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Targetsubmoduleids",
-            "type": "array"
-          },
-          "userSupplements": {
-            "items": {
-              "$ref": "#/components/schemas/UserSupplement"
-            },
-            "title": "Usersupplements",
-            "type": "array"
-          }
-        },
-        "required": [
-          "baselineVersionId",
-          "feedback",
-          "targetModuleIds"
-        ],
-        "title": "ReportingRevisionRequest",
-        "type": "object"
-      },
-      "ReportingSnapshotResponse": {
-        "properties": {
-          "checkpoint": {
-            "additionalProperties": true,
-            "title": "Checkpoint",
-            "type": "object"
-          },
-          "evidence": {
-            "additionalProperties": true,
-            "title": "Evidence",
-            "type": "object"
-          },
-          "outputs": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Outputs",
-            "type": "array"
-          },
-          "revision": {
-            "additionalProperties": true,
-            "title": "Revision",
-            "type": "object"
-          },
-          "run": {
-            "additionalProperties": true,
-            "title": "Run",
-            "type": "object"
-          },
-          "state": {
-            "additionalProperties": true,
-            "title": "State",
-            "type": "object"
-          },
-          "waitingInput": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Waitinginput",
-            "type": "array"
-          }
-        },
-        "required": [
-          "run",
-          "state",
-          "waitingInput",
-          "checkpoint",
-          "evidence",
-          "revision",
-          "outputs"
-        ],
-        "title": "ReportingSnapshotResponse",
-        "type": "object"
-      },
-      "ReportingStartRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "executionRequirements": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Executionrequirements",
-            "type": "array"
-          },
-          "instruction": {
-            "minLength": 1,
-            "title": "Instruction",
-            "type": "string"
-          },
-          "maxProviderAttempts": {
-            "default": 80,
-            "title": "Maxproviderattempts",
-            "type": "integer"
-          },
-          "maxTotalTokens": {
-            "default": 800000,
-            "title": "Maxtotaltokens",
-            "type": "integer"
-          },
-          "missingEvidencePolicy": {
-            "default": "draft",
-            "enum": [
-              "ask",
-              "block",
-              "skip",
-              "draft"
-            ],
-            "title": "Missingevidencepolicy",
-            "type": "string"
-          },
-          "operation": {
-            "default": "full_report",
-            "enum": [
-              "distill_template_skill",
-              "full_report",
-              "module_report",
-              "aggregate_existing",
-              "render_existing"
-            ],
-            "title": "Operation",
-            "type": "string"
-          },
-          "outputFilename": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Outputfilename"
-          },
-          "sourceMarkdownRef": {
-            "anyOf": [
-              {
-                "format": "path",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sourcemarkdownref"
-          },
-          "sourceModuleRefs": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "format": "path",
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sourcemodulerefs"
-          },
-          "targetModules": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Targetmodules"
-          },
-          "userSupplements": {
-            "items": {
-              "$ref": "#/components/schemas/UserSupplement"
-            },
-            "title": "Usersupplements",
-            "type": "array"
-          }
-        },
-        "required": [
-          "instruction"
-        ],
-        "title": "ReportingStartRequest",
-        "type": "object"
-      },
       "RollbackRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3444,71 +3126,461 @@
         "title": "UnsupportedFilePreview",
         "type": "object"
       },
-      "UserSupplement": {
+      "WorkflowCostResponse": {
         "additionalProperties": false,
-        "description": "One scoped, auditable user fact or instruction added to the current run.",
         "properties": {
-          "content": {
-            "description": "Exact user-confirmed fact or instruction without inferred additions.",
-            "minLength": 1,
-            "title": "Content",
+          "runId": {
+            "title": "Runid",
             "type": "string"
           },
-          "id": {
-            "description": "Stable current-run supplement id used by supersedes.",
-            "pattern": "^US-[A-Za-z0-9._-]+$",
-            "title": "Id",
-            "type": "string"
-          },
-          "scope": {
-            "default": "run",
-            "description": "Run-wide or explicitly targeted applicability boundary.",
-            "enum": [
-              "run",
-              "module",
-              "submodule",
-              "claim",
-              "final_section"
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "runId",
+          "usage"
+        ],
+        "title": "WorkflowCostResponse",
+        "type": "object"
+      },
+      "WorkflowEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Scope",
+            "title": "Actionid"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "kind": {
+            "title": "Kind",
             "type": "string"
           },
-          "stages": {
-            "description": "Only workflow stages allowed to consume this supplement.",
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "workflowId"
+        ],
+        "title": "WorkflowEvent",
+        "type": "object"
+      },
+      "WorkflowEventListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
             "items": {
-              "enum": [
-                "module_authoring",
-                "module_review",
-                "cross_review",
-                "chief_edit",
-                "final_review"
-              ],
-              "type": "string"
+              "$ref": "#/components/schemas/WorkflowEvent"
             },
-            "title": "Stages",
+            "title": "Events",
             "type": "array"
           },
-          "supersedes": {
-            "description": "Earlier supplement ids replaced by this one while preserving audit history.",
-            "items": {
-              "type": "string"
-            },
-            "title": "Supersedes",
-            "type": "array"
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "events"
+        ],
+        "title": "WorkflowEventListResponse",
+        "type": "object"
+      },
+      "WorkflowInputSchemaResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "contractId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contractid"
           },
-          "target_ids": {
-            "description": "Required module, submodule, Claim, or final-section ids outside run scope.",
+          "schema": {
+            "additionalProperties": true,
+            "title": "Schema",
+            "type": "object"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "contractId",
+          "schema"
+        ],
+        "title": "WorkflowInputSchemaResponse",
+        "type": "object"
+      },
+      "WorkflowListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "workflows": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/WorkflowSummary"
             },
-            "title": "Target Ids",
+            "title": "Workflows",
             "type": "array"
           }
         },
         "required": [
-          "content"
+          "workflows"
         ],
-        "title": "UserSupplement",
+        "title": "WorkflowListResponse",
+        "type": "object"
+      },
+      "WorkflowOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "exists": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exists"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "artifact",
+              "value"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "WorkflowOutput",
+        "type": "object"
+      },
+      "WorkflowOutputListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowOutput"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "outputs"
+        ],
+        "title": "WorkflowOutputListResponse",
+        "type": "object"
+      },
+      "WorkflowRunAcceptedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilityId": {
+            "title": "Capabilityid",
+            "type": "string"
+          },
+          "commandId": {
+            "format": "uuid",
+            "title": "Commandid",
+            "type": "string"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          },
+          "taskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskid"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commandId",
+          "runId",
+          "capabilityId",
+          "workflowId"
+        ],
+        "title": "WorkflowRunAcceptedResponse",
+        "type": "object"
+      },
+      "WorkflowRunInputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inputId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputid"
+          },
+          "values": {
+            "title": "Values"
+          }
+        },
+        "title": "WorkflowRunInputRequest",
+        "type": "object"
+      },
+      "WorkflowRunListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "WorkflowRunListResponse",
+        "type": "object"
+      },
+      "WorkflowRunResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/WorkflowRunSummary"
+          },
+          "state": {
+            "additionalProperties": true,
+            "title": "State",
+            "type": "object"
+          },
+          "waitingInput": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Waitinginput",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "state",
+          "waitingInput"
+        ],
+        "title": "WorkflowRunResponse",
+        "type": "object"
+      },
+      "WorkflowRunStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "title": "Input"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "input"
+        ],
+        "title": "WorkflowRunStartRequest",
+        "type": "object"
+      },
+      "WorkflowRunSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "capabilityId": {
+            "title": "Capabilityid",
+            "type": "string"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "taskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskid"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "capabilityId",
+          "workflowId",
+          "status",
+          "active"
+        ],
+        "title": "WorkflowRunSummary",
+        "type": "object"
+      },
+      "WorkflowSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilityId": {
+            "title": "Capabilityid",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inputContract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputcontract"
+          },
+          "outputContract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputcontract"
+          },
+          "runnable": {
+            "title": "Runnable",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "capabilityId",
+          "version",
+          "description",
+          "inputContract",
+          "outputContract",
+          "runnable"
+        ],
+        "title": "WorkflowSummary",
         "type": "object"
       }
     },
@@ -3531,60 +3603,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/": {
-      "get": {
-        "description": "Serve React SPA for all non-API routes.",
-        "operationId": "get_root",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "full_path",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Full Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "API error"
-          }
-        },
-        "security": [
-          {
-            "SessionCookie": []
-          }
-        ],
-        "summary": "Serve Spa"
-      }
-    },
     "/api/v1/agents": {
       "get": {
         "operationId": "get_api_v1_agents",
@@ -4274,6 +4292,49 @@
           }
         ],
         "summary": "Bootstrap"
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "operationId": "get_api_v1_capabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "List Capabilities"
       }
     },
     "/api/v1/control/lease": {
@@ -6933,156 +6994,34 @@
         "summary": "Upload File"
       }
     },
-    "/api/v1/reporting/decisions/{decision_id}/resume": {
-      "post": {
-        "operationId": "post_api_v1_reporting_decisions_decision_id_resume",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "decision_id",
-            "required": true,
-            "schema": {
-              "title": "Decision Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportingDecisionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "API error"
-          }
-        },
-        "security": [
-          {
-            "ControlLeaseToken": [],
-            "SessionCookie": []
-          }
-        ],
-        "summary": "Resume Decision"
-      }
-    },
-    "/api/v1/reporting/revisions": {
-      "post": {
-        "operationId": "post_api_v1_reporting_revisions",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportingRevisionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "API error"
-          }
-        },
-        "security": [
-          {
-            "ControlLeaseToken": [],
-            "SessionCookie": []
-          }
-        ],
-        "summary": "Revise"
-      }
-    },
-    "/api/v1/reporting/runs": {
+    "/api/v1/runs": {
       "get": {
-        "operationId": "get_api_v1_reporting_runs",
+        "operationId": "get_api_v1_runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "conversationId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Conversationid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportingListResponse"
+                  "$ref": "#/components/schemas/WorkflowRunListResponse"
                 }
               }
             },
@@ -7117,7 +7056,7 @@
         "summary": "List Runs"
       },
       "post": {
-        "operationId": "post_api_v1_reporting_runs",
+        "operationId": "post_api_v1_runs",
         "parameters": [
           {
             "in": "header",
@@ -7134,7 +7073,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReportingStartRequest"
+                "$ref": "#/components/schemas/WorkflowRunStartRequest"
               }
             }
           },
@@ -7145,7 +7084,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                  "$ref": "#/components/schemas/WorkflowRunAcceptedResponse"
                 }
               }
             },
@@ -7181,9 +7120,9 @@
         "summary": "Start Run"
       }
     },
-    "/api/v1/reporting/runs/{run_id}": {
+    "/api/v1/runs/{run_id}": {
       "get": {
-        "operationId": "get_api_v1_reporting_runs_run_id",
+        "operationId": "get_api_v1_runs_run_id",
         "parameters": [
           {
             "in": "path",
@@ -7200,7 +7139,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportingSnapshotResponse"
+                  "$ref": "#/components/schemas/WorkflowRunResponse"
                 }
               }
             },
@@ -7235,9 +7174,117 @@
         "summary": "Get Run"
       }
     },
-    "/api/v1/reporting/runs/{run_id}/cancel": {
+    "/api/v1/runs/{run_id}/cost": {
+      "get": {
+        "operationId": "get_api_v1_runs_run_id_cost",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowCostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Run Cost"
+      }
+    },
+    "/api/v1/runs/{run_id}/events": {
+      "get": {
+        "operationId": "get_api_v1_runs_run_id_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowEventListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Run Events"
+      }
+    },
+    "/api/v1/runs/{run_id}/input": {
       "post": {
-        "operationId": "post_api_v1_reporting_runs_run_id_cancel",
+        "operationId": "post_api_v1_runs_run_id_input",
         "parameters": [
           {
             "in": "path",
@@ -7259,12 +7306,22 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowRunInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                  "$ref": "#/components/schemas/WorkflowRunAcceptedResponse"
                 }
               }
             },
@@ -7297,12 +7354,66 @@
             "SessionCookie": []
           }
         ],
-        "summary": "Cancel Run"
+        "summary": "Provide Run Input"
       }
     },
-    "/api/v1/reporting/runs/{run_id}/resume": {
+    "/api/v1/runs/{run_id}/outputs": {
+      "get": {
+        "operationId": "get_api_v1_runs_run_id_outputs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowOutputListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Run Outputs"
+      }
+    },
+    "/api/v1/runs/{run_id}/resume": {
       "post": {
-        "operationId": "post_api_v1_reporting_runs_run_id_resume",
+        "operationId": "post_api_v1_runs_run_id_resume",
         "parameters": [
           {
             "in": "path",
@@ -7324,22 +7435,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportingResumeRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                  "$ref": "#/components/schemas/WorkflowRunAcceptedResponse"
                 }
               }
             },
@@ -7946,26 +8047,16 @@
         "summary": "Validate Settings"
       }
     },
-    "/{full_path}": {
+    "/api/v1/workflows": {
       "get": {
-        "description": "Serve React SPA for all non-API routes.",
-        "operationId": "get_full_path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "full_path",
-            "required": true,
-            "schema": {
-              "title": "Full Path",
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "get_api_v1_workflows",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7996,7 +8087,61 @@
             "SessionCookie": []
           }
         ],
-        "summary": "Serve Spa"
+        "summary": "List Workflows"
+      }
+    },
+    "/api/v1/workflows/{workflow_id}/input-schema": {
+      "get": {
+        "operationId": "get_api_v1_workflows_workflow_id_input_schema",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowInputSchemaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Workflow Input Schema"
       }
     }
   }

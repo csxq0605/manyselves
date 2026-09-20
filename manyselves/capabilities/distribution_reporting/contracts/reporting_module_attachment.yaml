@@ -1,0 +1,15 @@
+id: reporting_module_attachment
+version: 1.0.0
+description: Join a Reporting state with the selected module cohort results
+adapter: json_schema
+schema:
+  type: object
+  required:
+  - reporting_state
+  - module_results
+  properties:
+    reporting_state:
+      type: object
+    module_results:
+      type: object
+  additionalProperties: false

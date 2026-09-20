@@ -1,0 +1,73 @@
+"""File-backed implementation of the Kernel workflow-state port."""
+
+from pathlib import Path
+
+from manyselves.kernel.workflow import ResolvedPlan, WorkflowState
+
+
+class InMemoryWorkflowStateStore:
+    """Non-persisting store for branch and child execution nested in a parent Run."""
+
+    def __init__(self) -> None:
+        self._states: dict[str, WorkflowState] = {}
+        self._plans: dict[str, ResolvedPlan] = {}
+
+    def save(self, state: WorkflowState) -> None:
+        self._states[state.run_id] = state.model_copy(deep=True)
+
+    def load(self, run_id: str) -> WorkflowState:
+        try:
+            return self._states[run_id].model_copy(deep=True)
+        except KeyError as exc:
+            raise FileNotFoundError(run_id) from exc
+
+    def save_plan(self, run_id: str, plan: ResolvedPlan) -> None:
+        self._plans[run_id] = plan.model_copy(deep=True)
+
+    def load_plan(self, run_id: str) -> ResolvedPlan:
+        try:
+            return self._plans[run_id].model_copy(deep=True)
+        except KeyError as exc:
+            raise FileNotFoundError(run_id) from exc
+
+
+class FileWorkflowStateStore:
+    def __init__(self, workspace: Path) -> None:
+        self._workspace = Path(workspace)
+
+    def save(self, state: WorkflowState) -> None:
+        path = self._state_path(state.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+
+    def load(self, run_id: str) -> WorkflowState:
+        return WorkflowState.model_validate_json(
+            self._state_path(run_id).read_text(encoding="utf-8")
+        )
+
+    def save_plan(self, run_id: str, plan: ResolvedPlan) -> None:
+        path = self._plan_path(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+
+    def load_plan(self, run_id: str) -> ResolvedPlan:
+        return ResolvedPlan.model_validate_json(
+            self._plan_path(run_id).read_text(encoding="utf-8")
+        )
+
+    def list_run_ids(self) -> tuple[str, ...]:
+        """Return persisted root Run ids, newest state file first."""
+
+        paths = (self._workspace / "Work" / "runs").glob("*/runtime-state.json")
+        ordered = sorted(
+            paths,
+            key=lambda path: (path.stat().st_mtime_ns, path.parent.name),
+            reverse=True,
+        )
+        return tuple(path.parent.name for path in ordered)
+
+    def _state_path(self, run_id: str) -> Path:
+        return self._workspace / "Work" / "runs" / run_id / "runtime-state.json"
+
+    def _plan_path(self, run_id: str) -> Path:
+        return self._workspace / "Work" / "runs" / run_id / "resolved-plan.json"

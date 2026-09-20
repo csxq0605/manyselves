@@ -1,0 +1,66 @@
+id: distribution-final-chapter-4-lane
+version: 1.0.0
+description: File-defined Final initial Auditor lane for report Chapter 4
+tasks:
+- final-chapter-review
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: declarative_final_chapter_outcome
+state:
+  reporting-state: {}
+  chapter-id: "4"
+  prepared-final-lane: {}
+  should-invoke-final-chapter: false
+  final-chapter-conversation: {}
+  final-chapter-agent-result: {}
+  completed-final-lane: {}
+actions:
+- id: prepare-current-final-chapter
+  kind: invoke_tool
+  tool: prepare-current-final-chapter
+  input_variables:
+    state: reporting-state
+    chapter_id: chapter-id
+  output_variable: prepared-final-lane
+- id: final-chapter-initial-requires-agent
+  kind: invoke_tool
+  tool: final-chapter-initial-requires-agent
+  input_variable: prepared-final-lane
+  output_variable: should-invoke-final-chapter
+- id: choose-final-chapter-source
+  kind: if
+  condition:
+    variable: should-invoke-final-chapter
+    operator: truthy
+  then: create-final-chapter-conversation
+  otherwise: complete-final-chapter-lane
+- id: create-final-chapter-conversation
+  kind: create_conversation
+  agent: chief-editor-auditor
+  conversation_key: final-chapter-4
+  mode: run
+  output_variable: final-chapter-conversation
+- id: invoke-final-chapter-auditor
+  kind: invoke_agent
+  agent: chief-editor-auditor
+  task: final-chapter-review
+  conversation_variable: final-chapter-conversation
+  input_variable: prepared-final-lane
+  output_variable: final-chapter-agent-result
+- id: accept-final-chapter-initial
+  kind: invoke_tool
+  tool: accept-current-final-chapter-initial
+  input_variables:
+    context: prepared-final-lane
+    result: final-chapter-agent-result
+  output_variable: prepared-final-lane
+- id: complete-final-chapter-lane
+  kind: invoke_tool
+  tool: complete-current-final-chapter
+  input_variable: prepared-final-lane
+  output_variable: completed-final-lane
+- id: finish-final-chapter-lane
+  kind: end_workflow
+  output_variable: completed-final-lane
+  output_name: result

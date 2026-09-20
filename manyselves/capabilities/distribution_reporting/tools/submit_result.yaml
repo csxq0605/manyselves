@@ -1,0 +1,11 @@
+id: submit_result
+version: 1.0.0
+description: Current Reporting tool declaration for submit_result
+implementation: capability:distribution-reporting:submit_result
+input_contract: reporting_tool_input
+output_contract: reporting_tool_output
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: true
+

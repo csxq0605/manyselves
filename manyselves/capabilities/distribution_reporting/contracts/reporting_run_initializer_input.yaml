@@ -1,0 +1,5 @@
+id: reporting_run_initializer_input
+version: 1.0.0
+description: Join a generic Run identity with one Reporting request
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:ReportingRunInitializerInput

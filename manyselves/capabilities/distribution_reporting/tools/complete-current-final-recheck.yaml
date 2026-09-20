@@ -1,0 +1,10 @@
+id: complete-current-final-recheck
+version: 1.0.0
+description: Complete one Final recheck lane with its typed outcome
+implementation: capability:distribution-reporting:complete-current-final-recheck
+input_contract: declarative_final_recheck_context
+output_contract: declarative_final_recheck_outcome
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

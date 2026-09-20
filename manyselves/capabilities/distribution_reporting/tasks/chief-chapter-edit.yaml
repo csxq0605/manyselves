@@ -1,0 +1,14 @@
+id: chief-chapter-edit
+version: 1.1.0
+description: Chapter-scoped chief edit
+agent: chief-editor
+objective: Edit the assigned report chapter.
+input_contract: declarative_chief_chapter_context
+output_contract: declarative_chief_chapter_agent_result
+tools:
+- open_artifact
+- search_text
+- write_result_part
+- list_result_parts
+- submit_result
+recovery: current-reporting-recovery

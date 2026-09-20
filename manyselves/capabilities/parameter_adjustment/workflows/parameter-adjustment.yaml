@@ -1,0 +1,50 @@
+id: parameter-adjustment
+version: 1.0.0
+description: Normalize and raise an integer parameter to at least 10
+tasks:
+- adjust-parameter
+recovery: []
+input_contract: parameter-input
+input_variable: parameters
+output_contract: parameter-value
+max_iterations: 20
+state: {}
+actions:
+- id: normalize
+  kind: invoke_tool
+  tool: normalize-parameter
+  input_variable: parameters
+  output_variable: normalized
+- id: validate
+  kind: validate_contract
+  contract: parameter-value
+  input_variable: normalized
+  output_variable: validated
+- id: choose
+  kind: if
+  condition:
+    variable: validated
+    operator: gte
+    value: 10
+  then: finish
+  otherwise: create-adjuster
+- id: create-adjuster
+  kind: create_conversation
+  agent: parameter-adjuster
+  conversation_key: parameter-adjustment
+  mode: run
+  output_variable: adjuster-conversation
+- id: adjust
+  kind: invoke_agent
+  agent: parameter-adjuster
+  task: adjust-parameter
+  conversation_variable: adjuster-conversation
+  input_variable: parameters
+  output_variable: parameters
+- id: repeat
+  kind: goto
+  target: normalize
+- id: finish
+  kind: end_workflow
+  output_variable: validated
+  output_name: result

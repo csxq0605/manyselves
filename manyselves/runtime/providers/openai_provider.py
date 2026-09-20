@@ -1,0 +1,546 @@
+"""OpenAI-compatible provider.
+
+Handles all providers using the OpenAI Chat Completions API format:
+OpenAI, DeepSeek, Google, OpenRouter, Groq, and custom endpoints.
+"""
+
+import asyncio
+import json
+from typing import Any
+
+from loguru import logger
+from openai import AsyncOpenAI
+
+from .base import (
+    LLMProvider,
+    LLMResponse,
+    LLMStreamChunk,
+    LLMToolCall,
+    Message,
+    annotate_provider_request_failure,
+    build_provider_request_metrics,
+    infer_provider_request_disposition,
+)
+from .defaults import DEFAULT_API_BASES
+
+OPENAI_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
+MIMO_TEXT_MODELS = frozenset({"mimo-v2.5", "mimo-v2.5-pro"})
+
+
+def _value(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _normalized_openai_usage(raw_usage: Any) -> dict[str, int] | None:
+    """Normalize OpenAI and compatible usage to inclusive input-token semantics."""
+
+    if raw_usage is None:
+        return None
+    raw_input = _value(
+        raw_usage,
+        "prompt_tokens",
+        _value(raw_usage, "input_tokens"),
+    )
+    raw_output = _value(
+        raw_usage,
+        "completion_tokens",
+        _value(raw_usage, "output_tokens"),
+    )
+    if raw_input is None and raw_output is None:
+        return None
+    details = _value(raw_usage, "prompt_tokens_details", {}) or {}
+    cached = int(
+        _value(
+            raw_usage,
+            "cache_read_input_tokens",
+            _value(
+                raw_usage,
+                "cached_input_tokens",
+                _value(details, "cached_tokens", 0),
+            ),
+        )
+        or 0
+    )
+    cache_write = int(
+        _value(
+            raw_usage,
+            "cache_creation_input_tokens",
+            _value(raw_usage, "cache_write_input_tokens", 0),
+        )
+        or 0
+    )
+    input_tokens = max(int(raw_input or 0), cached + cache_write)
+    output_tokens = int(raw_output or 0)
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_write,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
+class OpenAICompatProvider(LLMProvider):
+    """Provider for OpenAI-compatible APIs."""
+
+    def __init__(
+        self,
+        api_key: str,
+        api_base: str | None = None,
+        model: str = "gpt-4o",
+        provider_type: str = "openai",
+        extra_headers: dict[str, str] | None = None,
+    ):
+        super().__init__(api_key, api_base, model)
+        self.provider_type = provider_type
+        if api_base is None:
+            api_base = DEFAULT_API_BASES.get(provider_type)
+        # Keep retries visible and bounded in AgentLoop. The SDK default is two
+        # hidden retries, which would multiply application retries and make
+        # cancellation/retry status impossible to explain in the GUI.
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            default_headers=extra_headers,
+            max_retries=0,
+        )
+
+    @property
+    def _is_mimo_text_model(self) -> bool:
+        model = (
+            str(getattr(self, "model", None) or "")
+            .strip()
+            .casefold()
+            .rsplit("/", 1)[-1]
+        )
+        return model in MIMO_TEXT_MODELS
+
+    def _completion_params(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[dict] | None,
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+        response_format: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Build a protocol payload with MiMo-specific capability parameters."""
+
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._convert_messages(messages),
+        }
+        if self._is_mimo_text_model:
+            # MiMo documents thinking as an extra_body extension and applies a
+            # combined reasoning/final-answer completion budget. Temperature is
+            # intentionally omitted because MiMo forces 1.0 while thinking.
+            params["max_completion_tokens"] = max_tokens
+            params["extra_body"] = {"thinking": {"type": "enabled"}}
+        else:
+            params["temperature"] = temperature
+            params["max_tokens"] = max_tokens
+        if stream:
+            params["stream"] = True
+            params["stream_options"] = {"include_usage": True}
+        if tools:
+            params["tools"] = self._convert_tools(tools)
+            params["tool_choice"] = "auto"
+        if response_format is not None:
+            params["response_format"] = response_format
+        return params
+
+    def _convert_messages(self, messages: list[Message]) -> list[dict]:
+        """Convert internal messages to OpenAI Chat Completions format.
+
+        Handles three special message types:
+        1. Assistant messages with tool_calls → message with tool_calls field
+        2. Tool result messages (is_tool_result=True) → "tool" role messages
+        3. Regular messages → simple role/content dicts
+        """
+        openai_messages: list[dict] = []
+
+        for msg in messages:
+            # Assistant message with tool calls
+            if msg.role == "assistant" and msg.tool_calls:
+                tool_calls_api = []
+                for tc in msg.tool_calls:
+                    tool_calls_api.append({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    })
+                assistant_message = {
+                    "role": "assistant",
+                    "content": msg.content or None,
+                    "tool_calls": tool_calls_api,
+                }
+                if self._is_mimo_text_model and msg.thinking:
+                    # Required by MiMo for subsequent turns after a thinking-mode
+                    # assistant tool call; omitting it causes a documented 400.
+                    assistant_message["reasoning_content"] = msg.thinking
+                openai_messages.append(assistant_message)
+                continue
+
+            # Tool result message
+            if msg.is_tool_result:
+                # Guard: find the most recent assistant(tool_calls) by walking
+                # backwards in the already-converted messages.  Multiple tool
+                # results can follow a single assistant(tool_calls), so we
+                # cannot just check openai_messages[-1] — it will be another
+                # tool message for all but the first result.
+                parent_assistant = None
+                for m in reversed(openai_messages):
+                    if m.get("role") == "assistant" and "tool_calls" in m:
+                        parent_assistant = m
+                        break
+
+                if parent_assistant is None:
+                    logger.warning(
+                        "Dropping orphan tool result (tool_call_id=%s): "
+                        "no preceding assistant message with tool_calls. "
+                        "This usually means the conversation was trimmed at a "
+                        "tool-call boundary.",
+                        msg.tool_call_id,
+                    )
+                    continue
+
+                # Verify this tool result belongs to the parent assistant
+                matching = any(
+                    tc["id"] == msg.tool_call_id
+                    for tc in parent_assistant.get("tool_calls", [])
+                )
+                if not matching:
+                    logger.warning(
+                        "Dropping orphan tool result (tool_call_id=%s): "
+                        "does not match any tool_call_id in the preceding "
+                        "assistant message.  Likely trimmed.",
+                        msg.tool_call_id,
+                    )
+                    continue
+
+                openai_messages.append({
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content,
+                })
+                continue
+
+            # Regular message
+            regular_message = {
+                "role": msg.role,
+                "content": msg.content,
+            }
+            if (
+                self._is_mimo_text_model
+                and msg.role == "assistant"
+                and msg.thinking
+            ):
+                regular_message["reasoning_content"] = msg.thinking
+            openai_messages.append(regular_message)
+
+        return openai_messages
+
+    async def chat(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+        reasoning_enabled: bool | None = None,
+    ) -> LLMResponse:
+        """Send chat completion request."""
+        # The generic hint is intentionally not mapped to OpenAI-compatible
+        # endpoints because support is not uniform across those APIs.
+        params = self._completion_params(
+            messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_payload_v1",
+        )
+
+        logger.debug("Sending {} request: model={}, messages={}", self.provider_type, self.model, len(messages))
+
+        try:
+            response = await self.client.chat.completions.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+
+        message = response.choices[0].message
+        content = message.content
+        tool_calls = []
+
+        if message.tool_calls:
+            for call in message.tool_calls:
+                tool_calls.append(LLMToolCall(
+                    id=call.id,
+                    name=call.function.name,
+                    arguments=self._parse_arguments(call.function.arguments),
+                ))
+
+        logger.debug(
+            "{} response: content_length={}, tool_calls={}, prompt_tokens={}, completion_tokens={}",
+            self.provider_type,
+            len(content) if content else 0,
+            len(tool_calls),
+            response.usage.prompt_tokens if response.usage else 0,
+            response.usage.completion_tokens if response.usage else 0,
+        )
+
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            usage=_normalized_openai_usage(response.usage),
+            thinking=_value(message, "reasoning_content"),
+            stop_reason=getattr(response.choices[0], "finish_reason", None),
+            request_metrics=request_metrics,
+        )
+
+    async def chat_structured(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> LLMResponse:
+        """Use MiMo/OpenAI-compatible JSON mode and validate the complete object."""
+
+        params = self._completion_params(
+            messages,
+            tools=None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_json_object_payload_v1",
+        )
+        try:
+            response = await self.client.chat.completions.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+        message = response.choices[0].message
+        content = message.content or ""
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as error:
+            raise ValueError("provider structured output is not valid JSON") from error
+        if not isinstance(parsed, dict):
+            raise ValueError("provider structured output must be a JSON object")
+        return LLMResponse(
+            content=content,
+            usage=_normalized_openai_usage(response.usage),
+            thinking=_value(message, "reasoning_content"),
+            stop_reason=getattr(response.choices[0], "finish_reason", None),
+            request_metrics=request_metrics,
+        )
+
+    def _convert_tools(self, tools: list[dict]) -> list[dict]:
+        """Convert tools to OpenAI function calling format."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                },
+            }
+            for tool in tools
+        ]
+
+    # ------------------------------------------------------------------
+    # Streaming chat
+    # ------------------------------------------------------------------
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+        stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
+    ):
+        """Send streaming chat completion request.
+
+        Yields LLMStreamChunk objects as text arrives.
+        """
+        # Accept the generic hint without sending an unknown wire parameter.
+        params = self._completion_params(
+            messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_stream_payload_v1",
+        )
+
+        idle_timeout = (
+            OPENAI_STREAM_IDLE_TIMEOUT_SECONDS
+            if stream_idle_timeout_seconds is None
+            else stream_idle_timeout_seconds
+        )
+        logger.debug(
+            "Sending {} streaming request: model={}, messages={}, idle_timeout={}s",
+            self.provider_type,
+            self.model,
+            len(messages),
+            idle_timeout,
+        )
+
+        # For tool calls, accumulate the arguments string fragments across chunks
+        # and only parse JSON at the end.
+        accumulated_tool_calls: dict[int, dict[str, Any]] = {}  # index -> {id, name, args_buffer}
+        final_tool_calls: list[LLMToolCall] | None = None
+        final_usage: dict[str, int] | None = None
+        stop_reason: str | None = None
+
+        stream_opened = False
+        try:
+            response = await self.client.chat.completions.create(**params)
+            stream_opened = True
+
+            stream = response.__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        stream.__anext__(),
+                        timeout=idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    logger.warning(
+                        "{} stream produced no application chunk for >{}s",
+                        self.provider_type,
+                        idle_timeout,
+                    )
+                    raise TimeoutError(
+                        "provider stream idle timeout: no application chunk for "
+                        f"{idle_timeout:g}s"
+                    ) from exc
+                chunk_usage = _normalized_openai_usage(
+                    getattr(chunk, "usage", None)
+                )
+                if chunk_usage is not None:
+                    final_usage = chunk_usage
+                delta = chunk.choices[0].delta if chunk.choices else None
+
+                # Text delta
+                if delta and delta.content:
+                    yield LLMStreamChunk(delta=delta.content)
+
+                reasoning_content = _value(delta, "reasoning_content") if delta else None
+                if reasoning_content:
+                    yield LLMStreamChunk(thinking=str(reasoning_content))
+
+                # Tool call deltas (OpenAI streams tool calls incrementally)
+                if delta and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in accumulated_tool_calls:
+                            accumulated_tool_calls[idx] = {
+                                "id": "",
+                                "name": "",
+                                "args_buffer": "",
+                            }
+                        entry = accumulated_tool_calls[idx]
+                        if tc_delta.id:
+                            entry["id"] += tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                entry["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                entry["args_buffer"] += tc_delta.function.arguments
+
+                # Check if stream is done
+                if chunk.choices and chunk.choices[0].finish_reason is not None:
+                    # Build final tool calls from accumulated data
+                    stop_reason = chunk.choices[0].finish_reason
+                    final_tool_calls = None
+                    if accumulated_tool_calls:
+                        final_tool_calls = []
+                        for idx in sorted(accumulated_tool_calls.keys()):
+                            entry = accumulated_tool_calls[idx]
+                            if entry["id"]:
+                                args = {}
+                                if entry["args_buffer"]:
+                                    try:
+                                        args = json.loads(entry["args_buffer"])
+                                    except json.JSONDecodeError:
+                                        logger.warning(
+                                            "Failed to parse streamed tool args: {}",
+                                            entry["args_buffer"][:200],
+                                        )
+                                final_tool_calls.append(LLMToolCall(
+                                    id=entry["id"],
+                                    name=entry["name"],
+                                    arguments=args,
+                                ))
+            yield LLMStreamChunk(
+                delta=None,
+                done=True,
+                tool_calls=final_tool_calls,
+                usage=final_usage,
+                stop_reason=stop_reason,
+                request_metrics=request_metrics,
+            )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("{} streaming error: {}", self.provider_type, exc)
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(
+                    exc,
+                    stream_opened=stream_opened,
+                ),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+
+    def _parse_arguments(self, arguments: str) -> dict:
+        """Parse JSON arguments string."""
+        try:
+            result = json.loads(arguments)
+            if isinstance(result, dict):
+                return result
+            logger.warning("Tool arguments parsed to non-dict type {}: {}", type(result).__name__, arguments)
+            return {}
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse tool arguments: {}", arguments)
+            return {}

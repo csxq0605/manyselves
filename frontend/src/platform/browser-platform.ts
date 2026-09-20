@@ -76,17 +76,18 @@ export function createDomBrowserPlatformDriver(
   return {
     notify: options.notify ?? notifyInBrowser,
     async saveDownload(input) {
-      const objectUrl = createObjectUrl(input.blob);
+      // Embedded browsers can download HTTP attachments but reject blob: downloads.
+      const downloadUrl = input.sourceUrl ?? createObjectUrl(input.blob);
       const anchor = documentRef.createElement("a");
       anchor.download = input.suggestedName;
-      anchor.href = objectUrl;
+      anchor.href = downloadUrl;
       anchor.hidden = true;
       documentRef.body.append(anchor);
       try {
         anchor.click();
       } finally {
         anchor.remove();
-        revokeObjectUrl(objectUrl);
+        if (input.sourceUrl === undefined) revokeObjectUrl(downloadUrl);
       }
     },
     async selectDirectory() {

@@ -1,0 +1,11 @@
+id: parameter-adjustment
+version: 1.0.0
+description: Neutral declarative parameter adjustment test fixture
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+recovery: ./recovery
+entrypoints:
+- parameter-adjustment

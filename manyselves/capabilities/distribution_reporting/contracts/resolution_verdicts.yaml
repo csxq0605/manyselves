@@ -1,0 +1,6 @@
+id: resolution_verdicts
+version: 1.0.0
+description: Reporting adapter boundary for resolution_verdicts
+adapter: json_schema
+schema: {}
+

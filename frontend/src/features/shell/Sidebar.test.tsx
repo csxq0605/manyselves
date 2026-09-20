@@ -38,6 +38,7 @@ describe("Sidebar", () => {
     for (const [name, suffix] of [["输入", "inputs"], ["知识库", "knowledge"], ["输出模板", "templates"], ["输出", "outputs"], ["运行态", "runtime"], ["日志", "logs"]] as const) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", `/projects/energy-team/${suffix}`);
     }
+    expect(screen.queryByRole("link", { name: "工作流" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑 Energy team" })).toBeVisible();
     expect(screen.getByRole("button", { name: "更多 Energy team" })).toBeVisible();
     expect(screen.getByText("alice")).toBeVisible();

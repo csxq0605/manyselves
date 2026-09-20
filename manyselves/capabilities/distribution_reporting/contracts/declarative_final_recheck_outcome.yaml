@@ -1,0 +1,5 @@
+id: declarative_final_recheck_outcome
+version: 1.0.0
+description: Terminal typed result of one affected-only Final recheck lane
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_review:DeclarativeFinalRecheckOutcome

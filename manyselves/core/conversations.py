@@ -12,11 +12,40 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 from loguru import logger
+
 from ..utils.editor_context import parse_editor_context, user_visible_content
 
 _AGENT_TYPES = ["main"]
+_WINDOWS_RESERVED_DIRECTORY_NAMES = {
+    "AUX",
+    "CON",
+    "NUL",
+    "PRN",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def _agent_directory_name(agent_id: str) -> str:
+    """Encode one logical Agent id as a portable directory component."""
+
+    encoded = quote(str(agent_id), safe="-._~")
+    trailing_dots = len(encoded) - len(encoded.rstrip("."))
+    if trailing_dots:
+        encoded = encoded[:-trailing_dots] + "%2E" * trailing_dots
+    stem = encoded.split(".", 1)[0].upper()
+    if stem in _WINDOWS_RESERVED_DIRECTORY_NAMES:
+        encoded = f"%{ord(encoded[0]):02X}{encoded[1:]}"
+    return encoded
+
+
+def _agent_id_from_directory_name(directory_name: str) -> str:
+    """Restore the logical Agent id from its portable directory component."""
+
+    return unquote(directory_name)
 
 
 def _utc_timestamp() -> str:
@@ -93,7 +122,7 @@ class ConversationStore:
         else:
             # Each agent gets its own latest session (or first available)
             for t in _AGENT_TYPES:
-                agent_dir = self._dir / t
+                agent_dir = self._agent_directory(t)
                 if agent_dir.exists():
                     jsonl_files = sorted(agent_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
                     if jsonl_files:
@@ -114,7 +143,7 @@ class ConversationStore:
             return  # No sessions yet — will be created lazily on first message
         # Load latest session for each agent type
         for t in self._known_agent_types():
-            agent_dir = self._dir / t
+            agent_dir = self._agent_directory(t)
             if agent_dir.exists():
                 jsonl_files = sorted(agent_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
                 if jsonl_files:
@@ -126,8 +155,15 @@ class ConversationStore:
         known = set(_AGENT_TYPES)
         known.update(self._current_session_ids)
         if self._dir.exists():
-            known.update(path.name for path in self._dir.iterdir() if path.is_dir())
+            known.update(
+                _agent_id_from_directory_name(path.name)
+                for path in self._dir.iterdir()
+                if path.is_dir()
+            )
         return ["main", *sorted(item for item in known if item != "main")]
+
+    def _agent_directory(self, agent_type: str) -> Path:
+        return self._dir / _agent_directory_name(agent_type)
 
     def _ensure_session(self, agent_type: str) -> None:
         """Lazily create an in-memory session id for the agent.
@@ -166,14 +202,14 @@ class ConversationStore:
 
     def _get_session_file_path(self, agent_type: str) -> Path:
         session_id = self.get_current_session_id(agent_type)
-        agent_dir = self._dir / agent_type
+        agent_dir = self._agent_directory(agent_type)
         agent_dir.mkdir(parents=True, exist_ok=True)
         return agent_dir / f"{session_id}.jsonl"
 
     def _session_user_texts(self, session_id: str, agent_type: str | None = None) -> list[str]:
         texts: list[str] = []
         for agent_type in ([agent_type] if agent_type else _AGENT_TYPES):
-            jsonl_path = self._dir / agent_type / f"{session_id}.jsonl"
+            jsonl_path = self._agent_directory(agent_type) / f"{session_id}.jsonl"
             if not jsonl_path.exists():
                 continue
             try:
@@ -213,7 +249,7 @@ class ConversationStore:
             session_id = s.get("id")
             has_messages = False
             for at in check_agents:
-                jsonl_path = self._dir / at / f"{session_id}.jsonl"
+                jsonl_path = self._agent_directory(at) / f"{session_id}.jsonl"
                 if jsonl_path.exists() and jsonl_path.stat().st_size > 0:
                     has_messages = True
                     break
@@ -265,7 +301,7 @@ class ConversationStore:
         self._save_sessions_metadata(sessions)
 
         for agent_type in self._known_agent_types():
-            f = self._dir / agent_type / f"{session_id}.jsonl"
+            f = self._agent_directory(agent_type) / f"{session_id}.jsonl"
             if f.exists():
                 try:
                     f.unlink()
@@ -315,7 +351,7 @@ class ConversationStore:
     ) -> None:
         self._ensure_session(agent_type)
         session_id = self._current_session_ids[agent_type]
-        path = self._dir / agent_type / f"{session_id}.jsonl"
+        path = self._agent_directory(agent_type) / f"{session_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Save session metadata on first write when this session id is new.
@@ -382,7 +418,7 @@ class ConversationStore:
         """Persist the latest live task snapshot, rewriting the tail snapshot in place."""
         self._ensure_session(agent_type)
         session_id = self._current_session_ids[agent_type]
-        path = self._dir / agent_type / f"{session_id}.jsonl"
+        path = self._agent_directory(agent_type) / f"{session_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
 
         is_new = not path.exists()
@@ -531,7 +567,7 @@ class ConversationStore:
         for agent_type in self._known_agent_types():
             session_id = self._current_session_ids.get(agent_type)
             if session_id:
-                f = self._dir / agent_type / f"{session_id}.jsonl"
+                f = self._agent_directory(agent_type) / f"{session_id}.jsonl"
                 if f.exists():
                     f.unlink()
 
@@ -546,7 +582,7 @@ class ConversationStore:
         for agent_type in self._known_agent_types():
             session_id = self._current_session_ids.get(agent_type)
             if session_id:
-                f = self._dir / agent_type / f"{session_id}.jsonl"
+                f = self._agent_directory(agent_type) / f"{session_id}.jsonl"
                 if f.exists():
                     result.append(agent_type)
         return result

@@ -1,0 +1,277 @@
+id: distribution-cross-owner-local-module-review-lane
+version: 1.0.0
+description: Reusable Cross-triggered local module review lifecycle owned by Reporting
+tasks:
+- cross-owner-runtime-local-review
+- cross-owner-runtime-local-recheck
+- cross-owner-module-2.1-revision-r1
+- cross-owner-module-2.2-revision-r1
+- cross-owner-module-2.3-revision-r1
+- cross-owner-module-2.4-revision-r1
+- cross-owner-module-2.5-revision-r1
+recovery:
+- current-reporting-recovery
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_runtime_context
+parameters:
+- owner_module_id
+- revision_agent_id
+- revision_task_id
+- revision_conversation_key
+- local_review_conversation_key
+state:
+  owner-context: {}
+actions:
+- id: cross-owner-local-review-preflight-needs-revision
+  kind: invoke_tool
+  tool: cross-owner-local-review-preflight-needs-revision
+  input_variable: owner-context
+  output_variable: should-revise-local-preflight
+- id: choose-cross-owner-local-preflight
+  kind: if
+  condition:
+    variable: should-revise-local-preflight
+    operator: truthy
+  then: prepare-current-cross-owner-local-preflight-revision
+  otherwise: cross-owner-local-review-requires-agent
+- id: prepare-current-cross-owner-local-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-local-preflight-revision
+  input_variable: owner-context
+  output_variable: owner-context
+- id: project-current-cross-owner-local-preflight-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-preflight-revision-agent-input
+- id: create-cross-owner-local-preflight-author-conversation
+  kind: create_conversation
+  agent: "{revision_agent_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: cross-owner-local-preflight-author-conversation
+- id: invoke-current-cross-owner-local-preflight-revision
+  kind: invoke_agent
+  agent: "{revision_agent_id}"
+  task: "{revision_task_id}"
+  conversation_variable: cross-owner-local-preflight-author-conversation
+  input_variable: cross-owner-local-preflight-revision-agent-input
+  output_variable: cross-owner-local-preflight-revision-result
+- id: accept-current-cross-owner-local-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-cross-owner-local-preflight-revision
+  input_variables:
+    context: owner-context
+    result: cross-owner-local-preflight-revision-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-local-preflight-revision
+  kind: goto
+  target: prepare-current-cross-owner-local-review
+- id: prepare-current-cross-owner-local-review
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-local-review
+  input_variable: owner-context
+  output_variable: owner-context
+- id: continue-after-cross-owner-local-review-preparation
+  kind: goto
+  target: cross-owner-local-review-preflight-needs-revision
+- id: cross-owner-local-review-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-local-review-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-local-review
+- id: choose-cross-owner-local-review-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-local-review
+    operator: truthy
+  then: project-current-cross-owner-local-review-agent-input
+  otherwise: cross-owner-local-review-needs-revision
+- id: project-current-cross-owner-local-review-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-local-module-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-review-agent-input
+- id: create-cross-owner-local-review-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{local_review_conversation_key}"
+  mode: run
+  output_variable: cross-owner-local-review-conversation
+- id: invoke-current-cross-owner-local-review
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: cross-owner-runtime-local-review
+  conversation_variable: cross-owner-local-review-conversation
+  input_variable: cross-owner-local-review-agent-input
+  output_variable: cross-owner-local-review-result
+- id: accept-current-cross-owner-local-review
+  kind: invoke_tool
+  tool: accept-current-cross-owner-local-review
+  input_variables:
+    context: owner-context
+    result: cross-owner-local-review-result
+  output_variable: owner-context
+- id: cross-owner-local-review-needs-revision
+  kind: invoke_tool
+  tool: cross-owner-local-review-needs-revision
+  input_variable: owner-context
+  output_variable: should-revise-local-module
+- id: choose-cross-owner-local-review-result
+  kind: if
+  condition:
+    variable: should-revise-local-module
+    operator: truthy
+  then: prepare-current-cross-owner-local-module-revision
+  otherwise: finish-cross-owner-local-module-review
+- id: prepare-current-cross-owner-local-module-revision
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-local-module-revision
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-local-revision-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-local-revision-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-local-revision
+- id: choose-cross-owner-local-revision-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-local-revision
+    operator: truthy
+  then: project-current-cross-owner-local-revision-agent-input
+  otherwise: prepare-current-cross-owner-local-module-recheck
+- id: project-current-cross-owner-local-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-revision-agent-input
+- id: create-cross-owner-local-revision-conversation
+  kind: create_conversation
+  agent: "{revision_agent_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: cross-owner-local-revision-conversation
+- id: invoke-current-cross-owner-local-module-revision
+  kind: invoke_agent
+  agent: "{revision_agent_id}"
+  task: "{revision_task_id}"
+  conversation_variable: cross-owner-local-revision-conversation
+  input_variable: cross-owner-local-revision-agent-input
+  output_variable: cross-owner-local-revision-result
+- id: accept-current-cross-owner-local-module-revision
+  kind: invoke_tool
+  tool: accept-current-cross-owner-local-module-revision
+  input_variables:
+    context: owner-context
+    result: cross-owner-local-revision-result
+  output_variable: owner-context
+- id: prepare-current-cross-owner-local-module-recheck
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-local-module-recheck
+  input_variable: owner-context
+  output_variable: owner-context
+- id: continue-after-cross-owner-local-module-recheck-preparation
+  kind: goto
+  target: cross-owner-local-recheck-preflight-needs-revision
+- id: cross-owner-local-recheck-preflight-needs-revision
+  kind: invoke_tool
+  tool: cross-owner-local-review-preflight-needs-revision
+  input_variable: owner-context
+  output_variable: should-revise-local-recheck-preflight
+- id: choose-cross-owner-local-recheck-preflight
+  kind: if
+  condition:
+    variable: should-revise-local-recheck-preflight
+    operator: truthy
+  then: prepare-current-cross-owner-local-recheck-preflight-revision
+  otherwise: cross-owner-local-recheck-requires-agent
+- id: prepare-current-cross-owner-local-recheck-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-local-preflight-revision
+  input_variable: owner-context
+  output_variable: owner-context
+- id: project-current-cross-owner-local-recheck-preflight-revision-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-module-revision-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-recheck-preflight-revision-agent-input
+- id: create-cross-owner-local-recheck-preflight-author-conversation
+  kind: create_conversation
+  agent: "{revision_agent_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: cross-owner-local-recheck-preflight-author-conversation
+- id: invoke-current-cross-owner-local-recheck-preflight-revision
+  kind: invoke_agent
+  agent: "{revision_agent_id}"
+  task: "{revision_task_id}"
+  conversation_variable: cross-owner-local-recheck-preflight-author-conversation
+  input_variable: cross-owner-local-recheck-preflight-revision-agent-input
+  output_variable: cross-owner-local-recheck-preflight-revision-result
+- id: accept-current-cross-owner-local-recheck-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-cross-owner-local-preflight-revision
+  input_variables:
+    context: owner-context
+    result: cross-owner-local-recheck-preflight-revision-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-local-recheck-preflight-revision
+  kind: goto
+  target: prepare-current-cross-owner-local-module-recheck
+- id: cross-owner-local-recheck-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-local-recheck-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-local-recheck
+- id: choose-cross-owner-local-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-local-recheck
+    operator: truthy
+  then: project-current-cross-owner-local-recheck-agent-input
+  otherwise: cross-owner-local-recheck-needs-revision
+- id: project-current-cross-owner-local-recheck-agent-input
+  kind: invoke_tool
+  tool: project-current-cross-owner-local-module-agent-input
+  input_variable: owner-context
+  output_variable: cross-owner-local-recheck-agent-input
+- id: create-cross-owner-local-recheck-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{local_review_conversation_key}"
+  mode: run
+  output_variable: cross-owner-local-recheck-conversation
+- id: invoke-current-cross-owner-local-module-recheck
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: cross-owner-runtime-local-recheck
+  conversation_variable: cross-owner-local-recheck-conversation
+  input_variable: cross-owner-local-recheck-agent-input
+  output_variable: cross-owner-local-recheck-result
+- id: accept-current-cross-owner-local-module-recheck
+  kind: invoke_tool
+  tool: accept-current-cross-owner-local-module-recheck
+  input_variables:
+    context: owner-context
+    result: cross-owner-local-recheck-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-local-module-recheck
+  kind: goto
+  target: cross-owner-local-recheck-needs-revision
+- id: cross-owner-local-recheck-needs-revision
+  kind: invoke_tool
+  tool: cross-owner-local-review-needs-revision
+  input_variable: owner-context
+  output_variable: should-revise-local-module-after-recheck
+- id: choose-cross-owner-local-recheck-result
+  kind: if
+  condition:
+    variable: should-revise-local-module-after-recheck
+    operator: truthy
+  then: prepare-current-cross-owner-local-module-revision
+  otherwise: finish-cross-owner-local-module-review
+- id: finish-cross-owner-local-module-review
+  kind: end_workflow
+  output_variable: owner-context
+  output_name: result

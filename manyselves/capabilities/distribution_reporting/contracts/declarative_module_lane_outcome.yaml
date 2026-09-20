@@ -1,0 +1,5 @@
+id: declarative_module_lane_outcome
+version: 1.0.0
+description: Current Reporting declarative_module_lane_outcome contract
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.module_cohort:DeclarativeModuleLaneOutcome

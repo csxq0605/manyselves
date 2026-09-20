@@ -1,0 +1,10 @@
+id: prepare-revision-aggregate
+version: 1.0.0
+description: Single-baseline revision prepare-revision-aggregate
+implementation: capability:distribution-reporting:prepare-revision-aggregate
+input_contract: reporting_tail_state
+output_contract: aggregate_existing_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

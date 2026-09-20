@@ -1,0 +1,10 @@
+id: reconcile-revision-evidence
+version: 1.0.0
+description: reconcile revision evidence
+implementation: capability:distribution-reporting:reconcile-revision-evidence
+input_contract: preparation_context
+output_contract: preparation_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

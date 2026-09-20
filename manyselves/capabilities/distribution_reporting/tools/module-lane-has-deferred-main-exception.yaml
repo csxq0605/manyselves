@@ -1,0 +1,10 @@
+id: module-lane-has-deferred-main-exception
+version: 1.0.0
+description: Route only a module Lane deferred for its existing Main exception
+implementation: capability:distribution-reporting:module-lane-has-deferred-main-exception
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

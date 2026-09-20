@@ -1,0 +1,10 @@
+id: cross-owner-main-exception-requests-user
+version: 1.0.0
+description: Route Main's explicit user request to the declared Interaction
+implementation: capability:distribution-reporting:cross-owner-main-exception-requests-user
+input_contract: declarative_cross_owner_runtime_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

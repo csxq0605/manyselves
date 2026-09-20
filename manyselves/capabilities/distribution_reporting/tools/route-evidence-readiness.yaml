@@ -1,0 +1,10 @@
+id: route-evidence-readiness
+version: 1.0.0
+description: Select a generic workflow route from readiness state
+implementation: capability:distribution-reporting:route-evidence-readiness
+input_contract: evidence_readiness_state
+output_contract: readiness_route
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,10 @@
+id: cross-owner-main-exception-requires-agent
+version: 1.0.0
+description: Route a prepared Cross exception to Main only when no result exists
+implementation: capability:distribution-reporting:cross-owner-main-exception-requires-agent
+input_contract: declarative_cross_owner_runtime_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

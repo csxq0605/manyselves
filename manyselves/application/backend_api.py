@@ -7,8 +7,8 @@ from typing import Any, Dict
 from loguru import logger
 
 from ..config import ConfigManager
-from ..core.loops import LoopManager, MessageBus
 from ..interfaces.protocol import BackendAPI
+from ..runtime.loops import LoopManager, MessageBus
 from ..utils.editor_context import build_editor_context_prompt
 
 
@@ -156,7 +156,7 @@ class BackendAPIImpl(BackendAPI):
         if self.loop_manager is None:
             return
 
-        from ..core.providers.base import Message as LLMMessage
+        from ..runtime.providers.base import Message as LLMMessage
         loop = self.loop_manager.get_loop(agent_type)
         if loop is None:
             return

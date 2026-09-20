@@ -1,0 +1,7 @@
+id: evidence-readiness-decision
+version: 1.0.0
+description: Decide how to continue when prepared evidence is incomplete
+interaction_type: decision
+input_contract: evidence_decision_input
+title: Evidence readiness decision
+submit_label: Continue workflow

@@ -1,0 +1,5 @@
+id: aggregate_existing_input
+version: 1.0.0
+description: Generic input for preparing an existing-module aggregate run
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.aggregate_existing:AggregateExistingPreparationInput

@@ -1,0 +1,10 @@
+id: route-current-module-after-main-exception
+version: 1.0.0
+description: Apply the accepted module Main decision to the existing revision or recheck state
+implementation: capability:distribution-reporting:route-current-module-after-main-exception
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

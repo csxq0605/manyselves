@@ -1,0 +1,10 @@
+id: normalize-parameter
+version: 1.0.0
+description: Extract the integer value from a parameter object
+implementation: fixture:parameter-adjustment:normalize-parameter
+input_contract: parameter-input
+output_contract: parameter-value
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

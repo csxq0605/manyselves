@@ -1,0 +1,5 @@
+id: public_revise_report_input
+version: 1.0.0
+description: One baseline Run and explicit subsection changes for a new revision Run
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:PublicReviseReportRequest

@@ -1,0 +1,10 @@
+id: report_blocked
+version: 1.0.0
+description: Current Reporting tool declaration for report_blocked
+implementation: capability:distribution-reporting:report_blocked
+input_contract: report_blocked_tool_input
+output_contract: reporting_tool_output
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: true

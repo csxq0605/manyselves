@@ -63,11 +63,12 @@ def test_sidebar_can_switch_to_a_new_run_without_deleting_main(qtbot):
     sidebar = AgentSidebar()
     qtbot.addWidget(sidebar)
     old_runtime = "module-2.4-specialist--session-old"
+    workflow_agent = "workflow-coordinator--session-new"
     sidebar.ensure_agent("main")
-    sidebar.ensure_agent("report-workflow")
+    sidebar.ensure_agent(workflow_agent)
     sidebar.ensure_agent(old_runtime)
 
-    sidebar.retain_agents({"main", "report-workflow"})
+    sidebar.retain_agents({"main", workflow_agent})
 
-    assert sidebar.agent_ids() == ["main", "report-workflow"]
+    assert sidebar.agent_ids() == ["main", workflow_agent]
     assert old_runtime not in sidebar._rows

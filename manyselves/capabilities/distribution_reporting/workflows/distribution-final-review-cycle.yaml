@@ -1,0 +1,76 @@
+id: distribution-final-review-cycle
+version: 1.0.0
+description: Declarative affected-only Final Chief revision and Auditor recheck cycle
+tasks:
+- final-chief-chapter-revision
+- final-chapter-recheck
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+  initial-outcomes: {}
+  review: {}
+  needs-final-review-round: false
+  completed-final-review: {}
+actions:
+- id: start-final-review-cycle
+  kind: invoke_tool
+  tool: start-final-review-cycle
+  input_variables:
+    state: reporting-state
+    outcomes: initial-outcomes
+  output_variable: review
+- id: final-review-needs-round
+  kind: invoke_tool
+  tool: final-review-needs-round
+  input_variable: review
+  output_variable: needs-final-review-round
+- id: choose-final-review-entry
+  kind: if
+  condition:
+    variable: needs-final-review-round
+    operator: truthy
+  then: advance-final-review-round
+  otherwise: complete-final-review
+- id: advance-final-review-round
+  kind: invoke_tool
+  tool: advance-final-review-round
+  input_variable: review
+  output_variable: review
+- id: run-final-chief-revision-cohort
+  kind: subworkflow
+  workflow: distribution-final-chief-revision-cohort
+  input_variables:
+    review: review
+  child_output_name: result
+  output_variable: review
+- id: run-final-recheck-cohort
+  kind: subworkflow
+  workflow: distribution-final-recheck-cohort
+  input_variables:
+    review: review
+  child_output_name: result
+  output_variable: review
+- id: final-review-needs-round-after-recheck
+  kind: invoke_tool
+  tool: final-review-needs-round
+  input_variable: review
+  output_variable: needs-final-review-round
+- id: choose-final-review-next-step
+  kind: if
+  condition:
+    variable: needs-final-review-round
+    operator: truthy
+  then: advance-final-review-round
+  otherwise: complete-final-review
+- id: complete-final-review
+  kind: invoke_tool
+  tool: complete-final-review
+  input_variable: review
+  output_variable: completed-final-review
+- id: finish-final-review-cycle
+  kind: end_workflow
+  output_variable: completed-final-review
+  output_name: result

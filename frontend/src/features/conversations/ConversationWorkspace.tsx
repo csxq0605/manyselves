@@ -8,8 +8,14 @@ import { MessageComposer } from "../chat/MessageComposer";
 import { MessageList, type MessageListRuntimeSummary } from "../chat/MessageList";
 import { createConversationMessageStore } from "../chat/message-store";
 import { createFileApi } from "../files/file-api";
+import { RunInteractionFeed } from "../runs/RunInteractionFeed";
+import { createWorkflowApi } from "../runs/workflow-api";
 import { ConversationActions } from "./ConversationActions";
-import { createConversationApi, type ConversationListSnapshot } from "./conversation-api";
+import {
+  createConversationApi,
+  type ConversationListSnapshot,
+  type ConversationSummary,
+} from "./conversation-api";
 import { ConversationList } from "./ConversationList";
 
 export interface ConversationWorkspaceProps {
@@ -40,6 +46,7 @@ export function ConversationWorkspace({
   const client = useQueryClient();
   const api = useMemo(() => createConversationApi(gateway), [gateway]);
   const fileApi = useMemo(() => createFileApi(gateway), [gateway]);
+  const workflowApi = useMemo(() => createWorkflowApi(gateway), [gateway]);
   const [messageStore] = useState(() => createConversationMessageStore());
   const clearActiveSession = useConversationStore((state) => state.clearActiveSession);
   const setActiveSession = useConversationStore((state) => state.setActiveSession);
@@ -143,16 +150,21 @@ export function ConversationWorkspace({
     return () => { cancelled = true; };
   }, [activeSessionId, agentId, api, client, conversations.data, projectId, requestedSessionId]);
 
-  function refresh(activeId?: string) {
+  function refresh(activeId?: string, conversation?: ConversationSummary) {
     if (activeId) {
-      client.setQueryData<ConversationListSnapshot>(["conversations", projectId, agentId], (current) => current ? {
-        ...current,
+      client.setQueryData<ConversationListSnapshot>(["conversations", projectId, agentId], (current) => ({
         activeSessionId: activeId,
-        conversations: current.conversations.map((item) => ({
+        conversations: conversation ? [
+          { ...conversation, active: true },
+          ...(current?.conversations ?? [])
+            .filter((item) => item.sessionId !== conversation.sessionId)
+            .map((item) => ({ ...item, active: false })),
+        ] : (current?.conversations ?? []).map((item) => ({
           ...item,
           active: item.sessionId === activeId,
         })),
-      } : current);
+        projectId,
+      }));
       onSessionChanged?.(activeId);
     }
     void client.invalidateQueries({ queryKey: ["conversations", projectId, agentId] });
@@ -161,6 +173,11 @@ export function ConversationWorkspace({
 
   return (
     <section aria-label="对话区域" className="conversation-workspace">
+      <div className="conversation-workspace__run">
+        {agentId === "main" && sessionReady && activeSessionId
+          ? <RunInteractionFeed api={workflowApi} conversationId={activeSessionId} projectId={projectId} key={`${projectId}:${activeSessionId}`} />
+          : null}
+      </div>
       <div className="conversation-workspace__main">
         {activationError ? <p role="alert">{activationError}</p> : null}
         {requestedSessionId && conversations.data && !requestedSessionMissing && !sessionReady ? <p role="status">正在切换会话…</p> : null}

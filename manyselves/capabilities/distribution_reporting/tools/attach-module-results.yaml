@@ -1,0 +1,10 @@
+id: attach-module-results
+version: 1.0.0
+description: Attach typed module cohort results to the Reporting state
+implementation: capability:distribution-reporting:attach-module-results
+input_contract: reporting_module_attachment
+output_contract: reporting_tail_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

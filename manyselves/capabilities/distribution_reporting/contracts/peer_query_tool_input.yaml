@@ -1,0 +1,13 @@
+id: peer_query_tool_input
+version: 1.0.0
+description: Provider input for one peer query
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    target_agent: {type: string}
+    question: {type: string}
+    artifact_refs: {type: array, items: {type: string}}
+    target_session_id: {type: [string, 'null']}
+  required: [target_agent, question]
+  additionalProperties: false

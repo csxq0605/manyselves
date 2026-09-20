@@ -1,0 +1,10 @@
+id: accept-current-cross-owner-initial
+version: 1.0.0
+description: Accept one typed Cross owner initial Agent result
+implementation: capability:distribution-reporting:accept-current-cross-owner-initial
+input_contract: reporting_tool_input
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,14 @@
+id: report_gap_tool_input
+version: 1.0.0
+description: Provider input for a Reporting evidence gap
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    gap: {type: string}
+    impact: {type: string}
+    requested_input: {type: [string, 'null']}
+    source_ids: {type: array, items: {type: string}}
+    artifact_refs: {type: array, items: {type: string}}
+  required: [gap, impact]
+  additionalProperties: false

@@ -1,0 +1,27 @@
+id: module-2.1-revision
+version: 1.0.0
+description: Revision by module 2.1 owner
+agent: module-2.1-specialist
+objective: Revise only the assigned module findings.
+input_contract: module_revision_input
+output_contract: module_revision_submission
+tools:
+- search_project_evidence
+- open_project_source
+- search_reference_library
+- open_reference
+- web_search
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- publish_research_note
+- query_peer
+- reply_peer
+- report_gap
+- write_result_part
+- list_result_parts
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery
+

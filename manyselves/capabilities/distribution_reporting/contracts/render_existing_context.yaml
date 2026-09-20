@@ -1,0 +1,5 @@
+id: render_existing_context
+version: 1.0.0
+description: Frozen source and materialized template for deterministic rendering
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.render_existing:RenderExistingContext

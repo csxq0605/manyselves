@@ -1,0 +1,10 @@
+id: accept-current-cross-owner-local-preflight-revision
+version: 1.0.0
+description: Accept one typed Author correction for a Cross local preflight failure
+implementation: capability:distribution-reporting:accept-current-cross-owner-local-preflight-revision
+input_contract: reporting_tool_input
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

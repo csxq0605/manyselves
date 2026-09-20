@@ -1,0 +1,9 @@
+id: reduce-module-cohort
+version: 1.0.0
+description: Publish module results only after all five joined lanes complete
+implementation: capability:distribution-reporting:reduce-module-cohort
+input_contract: declarative_module_cohort_output
+output_contract: declarative_module_cohort_output
+side_effect: pure_read
+parallel_safe: true
+model_visible: false

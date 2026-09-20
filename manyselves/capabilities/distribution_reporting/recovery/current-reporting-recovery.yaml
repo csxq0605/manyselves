@@ -1,0 +1,20 @@
+id: current-reporting-recovery
+version: 1.0.0
+description: Current Reporting agent continuation and correction choices
+rules:
+  provider_error:
+    action: continue
+  natural_language_without_submission:
+    action: correct
+  invalid_structured_output:
+    action: correct
+  max_tokens:
+    action: continue
+  tool_slice_boundary:
+    action: continue
+  tool_contract_error:
+    action: correct
+  no_progress:
+    action: stop
+  completed_tool_result:
+    action: reuse_result

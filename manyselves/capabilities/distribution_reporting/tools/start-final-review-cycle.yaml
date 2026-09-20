@@ -1,0 +1,10 @@
+id: start-final-review-cycle
+version: 1.0.0
+description: Initialize typed Final review-cycle state from the reduced initial Final subject
+implementation: capability:distribution-reporting:start-final-review-cycle
+input_contract: reporting_tool_input
+output_contract: declarative_final_review_cycle_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

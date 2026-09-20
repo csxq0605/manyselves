@@ -1,0 +1,35 @@
+id: aggregate-existing
+version: 1.0.0
+description: Public aggregate-existing wrapper for the Capability aggregate tail
+tasks: []
+recovery: []
+outputs:
+- aggregate-existing-tail-result
+input_contract: public_aggregate_existing_input
+input_variable: request
+output_contract: reporting_tail_state
+state:
+  run-id: ''
+  aggregate-initializer: {}
+  aggregate-input: {}
+  aggregate-output: {}
+actions:
+- id: project-public-aggregate-existing-input
+  kind: invoke_tool
+  tool: project-public-aggregate-existing-input
+  input_variables:
+    run_id: run-id
+    request: request
+  output_variable: aggregate-input
+- id: run-aggregate-existing-tail
+  kind: subworkflow
+  workflow: distribution-aggregate-existing-tail
+  input_variable: aggregate-input
+  child_input_variable: aggregate-input
+  child_output_name: result
+  output_variable: aggregate-output
+- id: finish-aggregate-existing
+  kind: end_workflow
+  output_variable: aggregate-output
+  output_name: result
+  output_contract: reporting_tail_state

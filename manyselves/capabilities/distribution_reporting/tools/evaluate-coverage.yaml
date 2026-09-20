@@ -1,0 +1,10 @@
+id: evaluate-coverage
+version: 1.0.0
+description: Evaluate Reporting coverage without applying readiness policy
+implementation: capability:distribution-reporting:evaluate-coverage
+input_contract: preparation_context
+output_contract: preparation_context
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

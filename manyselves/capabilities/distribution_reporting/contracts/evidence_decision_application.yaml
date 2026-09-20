@@ -1,0 +1,5 @@
+id: evidence_decision_application
+version: 1.0.0
+description: Current readiness state joined with one submitted decision
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.evidence_readiness:EvidenceDecisionApplication

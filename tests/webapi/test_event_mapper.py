@@ -161,7 +161,7 @@ MAPPER_CASES: dict[type[Message], tuple[Message, str]] = {
     ),
     WorkflowMessage: (
         WorkflowMessage(type=MessageType.REPORT, task_id="task-1", sender="report", timestamp=NOW),
-        "reporting.workflow.message",
+        "workflow.message",
     ),
     PeerQueryMessage: (
         PeerQueryMessage(
@@ -173,7 +173,7 @@ MAPPER_CASES: dict[type[Message], tuple[Message, str]] = {
             question="why?",
             timestamp=NOW,
         ),
-        "reporting.peer.query",
+        "workflow.peer.query",
     ),
     PeerReplyMessage: (
         PeerReplyMessage(
@@ -185,21 +185,21 @@ MAPPER_CASES: dict[type[Message], tuple[Message, str]] = {
             answer="because",
             timestamp=NOW,
         ),
-        "reporting.peer.reply",
+        "workflow.peer.reply",
     ),
     ProgressNoteMessage: (
         ProgressNoteMessage(task_id="task-1", sender="analyst", timestamp=NOW),
-        "reporting.progress.changed",
+        "workflow.progress.changed",
     ),
     ResearchNotePublishedMessage: (
         ResearchNotePublishedMessage(
             task_id="task-1", sender="analyst", note_id="note-1", timestamp=NOW
         ),
-        "reporting.research_note.published",
+        "workflow.research_note.published",
     ),
     BlockedNoticeMessage: (
         BlockedNoticeMessage(task_id="task-1", sender="analyst", reason="missing", timestamp=NOW),
-        "reporting.blocked",
+        "workflow.blocked",
     ),
     AgentResultMessage: (
         AgentResultMessage(
@@ -209,7 +209,7 @@ MAPPER_CASES: dict[type[Message], tuple[Message, str]] = {
             result_path="Work/runs/run-1/result.md",
             timestamp=NOW,
         ),
-        "reporting.agent_result.changed",
+        "workflow.agent_result.changed",
     ),
 }
 

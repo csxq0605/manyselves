@@ -1,0 +1,6 @@
+id: aggregate-existing-agent-result
+version: 1.0.0
+description: Result produced by the aggregate-existing Agent slice
+output_type: value
+contract: edited_report_submission
+label: Aggregate existing Agent result

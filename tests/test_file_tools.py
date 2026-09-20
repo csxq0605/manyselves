@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.tools.file_tools import (
+from manyselves.runtime.tools.file_tools import (
     ApplyPatchTool,
     ReadTool,
 )
@@ -46,7 +46,7 @@ async def test_read_file_pdf_rejected(temp_workspace):
 
 
 @pytest.mark.asyncio
-async def test_read_hides_and_rejects_isolated_expert_document(temp_workspace):
+async def test_generic_read_has_no_capability_specific_filename_policy(temp_workspace):
     templates = temp_workspace / "Templates"
     templates.mkdir()
     expert = templates / "配电安全专家咨询报告(专家优化版).docx"
@@ -56,9 +56,10 @@ async def test_read_hides_and_rejects_isolated_expert_document(temp_workspace):
 
     listing = await tool(path="Templates")
     assert "report_template.docx" in listing["files"]
-    assert expert.name not in listing["files"]
-    with pytest.raises(PermissionError, match="EXPERT_TEMPLATE_AGENT_ACCESS_FORBIDDEN"):
-        await tool(path=f"Templates/{expert.name}")
+    assert expert.name in listing["files"]
+    result = await tool(path=f"Templates/{expert.name}")
+    assert result["status"] == "failed"
+    assert result["required_tool"] == "inspect_document"
 
 
 @pytest.mark.asyncio

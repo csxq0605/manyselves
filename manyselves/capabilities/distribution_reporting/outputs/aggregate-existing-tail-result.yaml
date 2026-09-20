@@ -1,0 +1,6 @@
+id: aggregate-existing-tail-result
+version: 1.0.0
+description: Aggregate handoff after Final review and Delivery stages
+output_type: value
+contract: reporting_tail_state
+label: Aggregate existing Final and Delivery result

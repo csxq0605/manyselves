@@ -68,18 +68,7 @@ export function FileList({
   onPreview,
 }: FileListProps) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  const paginationKey = `${capabilities.root}\u0000${entries.map((entry) => entry.path).join("\u0000")}`;
-  const [pagination, setPagination] = useState({ key: paginationKey, page: 0 });
-  const page = pagination.key === paginationKey ? pagination.page : 0;
-  const setPage = (nextPage: number | ((currentPage: number) => number)) => {
-    setPagination((current) => {
-      const currentPage = current.key === paginationKey ? current.page : 0;
-      return {
-        key: paginationKey,
-        page: typeof nextPage === "function" ? nextPage(currentPage) : nextPage,
-      };
-    });
-  };
+  const [page, setPage] = useState(0);
   const orderedEntries = orderAsTree(entries, capabilities.root);
   const rootEntries = orderedEntries.filter((entry) => (
     parentPath(entry.path) === capabilities.root
@@ -143,11 +132,7 @@ export function FileList({
               );
             }
             return (
-              <li
-                className="file-list__row"
-                key={entry.path}
-                style={{ paddingInlineStart: `${18 + depth * 24}px` }}
-              >
+              <li className="file-list__row" key={entry.path} style={{ paddingInlineStart: `${18 + depth * 24}px` }}>
                 <span className="file-list__name">{entry.name}</span>
                 <span className="file-list__size">{entry.size?.toLocaleString() ?? "—"} B</span>
                 <FileRowMenu

@@ -26,9 +26,7 @@ import pytest
 from loguru import logger
 
 from manyselves.config import ConfigManager
-from manyselves.core.loops import LoopManager, MessageBus
 from manyselves.core.project_structure import ensure_project_structure
-from manyselves.core.providers.factory import ProviderFactory
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentType,
@@ -39,6 +37,8 @@ from manyselves.interfaces.types import (
     ToolResult,
     UserMessage,
 )
+from manyselves.runtime.loops import LoopManager, MessageBus
+from manyselves.runtime.providers.factory import ProviderFactory
 
 
 class MessageCollector:

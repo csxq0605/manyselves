@@ -1,0 +1,10 @@
+id: module-lane-retries-preflight-revision
+version: 1.0.0
+description: Route a persisted failed machine-preflight correction back to its declared Author turn
+implementation: capability:distribution-reporting:module-lane-retries-preflight-revision
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

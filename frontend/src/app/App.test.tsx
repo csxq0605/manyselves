@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { EventStreamOptions } from "../api/event-stream";
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
-import { createReportingStore } from "../features/reporting/reporting-store";
 import { App } from "./App";
 import { AppProviders } from "./providers";
 
@@ -108,17 +107,18 @@ describe("App event projection", () => {
     await waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(2));
   });
 
-  it("projects reporting SSE events into the hydrated reporting snapshot", async () => {
+  it("refreshes the generic run projection for workflow events", async () => {
     const bootstrap = vi.fn().mockResolvedValue(bootstrapSnapshot);
     const gateway = { baseUrl: "https://api.example", bootstrap } as unknown as ApiGateway;
-    const reportingStore = createReportingStore("boot-a");
-    reportingStore.getState().hydrateSnapshot("run-1", { checkpoint: { activity: "dispatch", specialist_modules: [], status: "in_progress" }, evidence: {}, outputs: [], revision: {}, run: { active: true, run_id: "run-1", status: "running" }, state: { activity: "dispatch", specialist_modules: [], status: "in_progress" }, waitingInput: [] });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
     let eventStreamOptions: EventStreamOptions | undefined;
 
-    renderApp(<App gateway={gateway} reportingStore={reportingStore} createEventStream={(options) => { eventStreamOptions = options; return { start: async () => undefined, stop: () => undefined }; }} />);
+    renderApp(<App gateway={gateway} createEventStream={(options) => { eventStreamOptions = options; return { start: async () => undefined, stop: () => undefined }; }} />, queryClient);
     await waitFor(() => expect(eventStreamOptions).toBeDefined());
-    eventStreamOptions?.onEvent({ eventId: "boot-a:evt-7", payload: { result_path: "Work/runs/run-1/results/module-2.4.json", run_id: "run-1", sender: "module-2.4-specialist", status: "completed", task_id: "module-2.4" }, schemaVersion: 1, sequence: 7, streamId: "boot-a", timestamp: "2026-08-03T08:00:07Z", type: "reporting.agent_result.changed" });
+    invalidateQueries.mockClear();
+    eventStreamOptions?.onEvent({ eventId: "boot-a:evt-7", payload: { result_path: "Work/runs/run-1/results/module-2.4.json", run_id: "run-1", sender: "module-2.4-specialist", status: "completed", task_id: "module-2.4" }, schemaVersion: 1, sequence: 7, streamId: "boot-a", timestamp: "2026-08-03T08:00:07Z", type: "workflow.agent_result.changed" });
 
-    await waitFor(() => expect(reportingStore.getState().snapshots["run-1"]?.agents["module-2.4-specialist"]?.status).toBe("completed"));
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["runs", "run-1"] }));
   });
 });

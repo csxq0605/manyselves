@@ -1,0 +1,10 @@
+id: prepare-current-module-review
+version: 1.0.0
+description: Prepare the current module Auditor's exact initial TaskEnvelope
+implementation: capability:distribution-reporting:prepare-current-module-review
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

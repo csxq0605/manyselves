@@ -1,0 +1,46 @@
+id: distribution-reporting-tail
+version: 1.0.0
+description: File-defined Cross, Chief, Final, Render and Delivery sequence
+tasks:
+- cross-owner-review
+- chief-chapter-edit
+- final-chapter-review
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+actions:
+- id: run-cross
+  kind: subworkflow
+  workflow: distribution-cross-owner-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-chief
+  kind: subworkflow
+  workflow: distribution-chief-chapter-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-final
+  kind: subworkflow
+  workflow: distribution-final-chapter-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: run-delivery
+  kind: subworkflow
+  workflow: distribution-report-delivery
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
+  output_variable: reporting-state
+- id: finish-reporting-tail
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result

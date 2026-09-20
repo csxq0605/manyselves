@@ -1,0 +1,6 @@
+id: name-result
+version: 1.0.0
+description: Published user name
+output_type: value
+contract: name-input
+label: Name

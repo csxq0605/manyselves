@@ -24,7 +24,7 @@ async def test_config_manager_load_default(temp_config_file):
     config = settings.load_config()
 
     assert isinstance(config, AppConfig)
-    assert config.agents.defaults.provider == "auto"
+    assert config.agents.defaults.provider == "openai"
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_config_manager_reset(temp_config_file):
     config_manager.reset_config()
 
     # Should be back to default
-    assert config_manager.config.agents.defaults.model == "anthropic/claude-sonnet-4.5"
+    assert config_manager.config.agents.defaults.model == "mimo-v2.5-pro"
 
 
 @pytest.mark.asyncio

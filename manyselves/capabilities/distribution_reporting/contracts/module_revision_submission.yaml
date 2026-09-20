@@ -1,0 +1,6 @@
+id: module_revision_submission
+version: 1.0.0
+description: Current Reporting module_revision_submission contract
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:ModuleRevisionSubmission
+

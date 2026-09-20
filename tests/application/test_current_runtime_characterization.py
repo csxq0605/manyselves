@@ -13,9 +13,9 @@ import pytest
 
 from manyselves.app import BackendAPIImpl
 from manyselves.config import ConfigManager
-from manyselves.core.loops import MessageBus
 from manyselves.core.project_structure import ensure_project_structure
 from manyselves.interfaces.types import UserMessage
+from manyselves.runtime.loops import MessageBus
 
 CHECKER = Path(__file__).resolve().parents[2] / "scripts" / "check_phase1_core_freeze.py"
 REPO_ROOT = CHECKER.parent.parent
@@ -88,7 +88,7 @@ REQUIRED_PARITY_IDS = {
 }
 REQUIRED_PARITY_EVIDENCE = {
     "REPORT-010": (
-        "tests/reporting/test_delivery.py::test_delivery_publishes_complete_five_module_package_atomically",
+        "tests/capabilities/distribution_reporting/test_delivery_tools.py::test_publish_materialize_is_capability_owned_for_serialized_delivery_context",
     ),
     "DEPLOY-001": (
         "docs/superpowers/plans/2026-07-31-manyselves-phase1-05-electron-deployment.md",

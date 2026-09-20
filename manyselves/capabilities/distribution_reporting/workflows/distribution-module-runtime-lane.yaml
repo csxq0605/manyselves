@@ -1,0 +1,575 @@
+id: distribution-module-runtime-lane
+version: 1.0.0
+description: Reusable production module Lane bound to current Reporting behavior
+tasks:
+- module-2.1-authoring
+- module-2.2-authoring
+- module-2.3-authoring
+- module-2.4-authoring
+- module-2.5-authoring
+- module-runtime-initial-review
+- module-runtime-recheck
+- module-runtime-main-exception
+- module-2.1-runtime-revision
+- module-2.2-runtime-revision
+- module-2.3-runtime-revision
+- module-2.4-runtime-revision
+- module-2.5-runtime-revision
+interactions:
+- module-main-exception-decision
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: declarative_module_lane_outcome
+parameters:
+- module_id
+- author_id
+- author_task_id
+- author_conversation_key
+- auditor_conversation_key
+- revision_task_id
+- revision_conversation_key
+state:
+  reporting-state: {}
+  module-id: "{module_id}"
+  lane-outcomes: {}
+actions:
+- id: start-current-module-lane
+  kind: invoke_tool
+  tool: start-current-module-lane
+  input_variables:
+    state: reporting-state
+    module_id: module-id
+    lane_outcomes: lane-outcomes
+  output_variable: lane-context
+- id: module-has-requested-revision
+  kind: invoke_tool
+  tool: module-has-requested-revision
+  input_variable: lane-context
+  output_variable: requested-revision
+- id: choose-requested-revision
+  kind: if
+  condition:
+    variable: requested-revision
+    operator: truthy
+  then: prepare-requested-module-revision
+  otherwise: module-uses-baseline-without-revision
+- id: module-uses-baseline-without-revision
+  kind: invoke_tool
+  tool: module-uses-baseline-without-revision
+  input_variable: lane-context
+  output_variable: skip-to-baseline
+- id: choose-baseline-skip
+  kind: if
+  condition:
+    variable: skip-to-baseline
+    operator: truthy
+  then: complete-baseline-module-lane
+  otherwise: module-lane-retries-preflight-revision
+- id: complete-baseline-module-lane
+  kind: invoke_tool
+  tool: complete-baseline-module-lane
+  input_variable: lane-context
+  output_variable: lane-context
+- id: complete-baseline-module-outcome
+  kind: goto
+  target: complete-current-module-lane
+- id: prepare-requested-module-revision
+  kind: invoke_tool
+  tool: prepare-requested-module-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-requested-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: requested-revision-conversation
+- id: invoke-requested-module-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: requested-revision-conversation
+  input_variable: lane-context
+  output_variable: requested-revision-result
+- id: accept-requested-module-revision
+  kind: invoke_tool
+  tool: accept-requested-module-revision
+  input_variables:
+    context: lane-context
+    result: requested-revision-result
+  output_variable: lane-context
+- id: review-requested-revision
+  kind: goto
+  target: prepare-current-module-review
+- id: module-lane-retries-preflight-revision
+  kind: invoke_tool
+  tool: module-lane-retries-preflight-revision
+  input_variable: lane-context
+  output_variable: should-retry-module-preflight-revision
+- id: choose-module-lane-retry
+  kind: if
+  condition:
+    variable: should-retry-module-preflight-revision
+    operator: truthy
+  then: retry-module-preflight-revision-conversation
+  otherwise: module-lane-has-deferred-main-exception
+- id: retry-module-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: retried-module-preflight-revision-conversation
+- id: retry-current-module-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: retried-module-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: retried-module-preflight-revision-agent-result
+- id: accept-retried-module-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: retried-module-preflight-revision-agent-result
+  output_variable: lane-context
+- id: module-preflight-revision-needs-recheck
+  kind: invoke_tool
+  tool: module-preflight-revision-needs-recheck
+  input_variable: lane-context
+  output_variable: should-resume-module-recheck
+- id: choose-module-preflight-revision-return
+  kind: if
+  condition:
+    variable: should-resume-module-recheck
+    operator: truthy
+  then: module-review-needs-recheck
+  otherwise: prepare-current-module-review
+- id: module-lane-has-deferred-main-exception
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-resume-module-main-exception
+- id: choose-module-lane-entry
+  kind: if
+  condition:
+    variable: should-resume-module-main-exception
+    operator: truthy
+  then: prepare-current-module-main-exception
+  otherwise: prepare-current-module-authoring
+- id: prepare-current-module-main-exception
+  kind: invoke_tool
+  tool: prepare-current-module-main-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-main-exception-requires-agent
+  kind: invoke_tool
+  tool: module-main-exception-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-main-exception
+- id: choose-module-main-exception-source
+  kind: if
+  condition:
+    variable: should-invoke-module-main-exception
+    operator: truthy
+  then: create-module-main-exception-conversation
+  otherwise: module-main-exception-requests-user
+- id: create-module-main-exception-conversation
+  kind: create_conversation
+  agent: main-agent
+  conversation_key: main-module-exception
+  mode: run
+  output_variable: module-main-exception-conversation
+- id: invoke-current-module-main-exception
+  kind: invoke_agent
+  agent: main-agent
+  task: module-runtime-main-exception
+  conversation_variable: module-main-exception-conversation
+  input_variable: lane-context
+  output_variable: module-main-exception-agent-result
+- id: accept-current-module-main-exception
+  kind: invoke_tool
+  tool: accept-current-module-main-exception
+  input_variables:
+    context: lane-context
+    result: module-main-exception-agent-result
+  output_variable: lane-context
+- id: continue-after-module-main-exception
+  kind: goto
+  target: module-main-exception-requests-user
+- id: module-main-exception-requests-user
+  kind: invoke_tool
+  tool: module-main-exception-requests-user
+  input_variable: lane-context
+  output_variable: should-request-module-main-input
+- id: choose-module-main-user-input
+  kind: if
+  condition:
+    variable: should-request-module-main-input
+    operator: truthy
+  then: request-module-main-user-input
+  otherwise: route-current-module-after-main-exception
+- id: request-module-main-user-input
+  kind: request_input
+  interaction: module-main-exception-decision
+  output_variable: module-main-exception-user-input
+- id: apply-module-main-user-input
+  kind: invoke_tool
+  tool: apply-current-module-main-exception-user-input
+  input_variables:
+    context: lane-context
+    input: module-main-exception-user-input
+  output_variable: lane-context
+- id: continue-after-module-main-user-input
+  kind: goto
+  target: route-current-module-after-main-exception
+- id: route-current-module-after-main-exception
+  kind: invoke_tool
+  tool: route-current-module-after-main-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: continue-after-routing-module-main-exception
+  kind: goto
+  target: module-review-needs-recheck
+- id: prepare-current-module-authoring
+  kind: invoke_tool
+  tool: prepare-current-module-authoring
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-authoring-requires-agent
+  kind: invoke_tool
+  tool: module-authoring-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-author
+- id: choose-module-authoring-source
+  kind: if
+  condition:
+    variable: should-invoke-module-author
+    operator: truthy
+  then: create-module-author-conversation
+  otherwise: resume-current-module-authoring
+- id: create-module-author-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{author_conversation_key}"
+  mode: run
+  output_variable: module-author-conversation
+- id: invoke-current-module-author
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{author_task_id}"
+  conversation_variable: module-author-conversation
+  input_variable: lane-context
+  output_variable: module-author-result
+- id: accept-current-module-authoring
+  kind: invoke_tool
+  tool: accept-current-module-authoring
+  input_variables:
+    context: lane-context
+    result: module-author-result
+  output_variable: lane-context
+- id: continue-after-module-author
+  kind: goto
+  target: module-lane-can-review
+- id: resume-current-module-authoring
+  kind: invoke_tool
+  tool: resume-current-module-authoring
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-lane-can-review
+  kind: invoke_tool
+  tool: module-lane-can-review
+  input_variable: lane-context
+  output_variable: should-review-module-lane
+- id: choose-module-lane-review
+  kind: if
+  condition:
+    variable: should-review-module-lane
+    operator: truthy
+  then: prepare-current-module-review
+  otherwise: complete-current-module-lane
+- id: prepare-current-module-review
+  kind: invoke_tool
+  tool: prepare-current-module-review
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-review-preflight-needs-revision
+  kind: invoke_tool
+  tool: module-review-preflight-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module-preflight
+- id: choose-module-review-preflight
+  kind: if
+  condition:
+    variable: should-revise-module-preflight
+    operator: truthy
+  then: prepare-current-module-preflight-revision
+  otherwise: module-review-requires-agent
+- id: prepare-current-module-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-module-preflight-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-preflight-revision-conversation
+- id: invoke-current-module-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: module-preflight-revision-agent-result
+- id: accept-current-module-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: module-preflight-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-preflight-revision
+  kind: goto
+  target: prepare-current-module-review
+- id: module-review-requires-agent
+  kind: invoke_tool
+  tool: module-review-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-reviewer
+- id: choose-module-review-source
+  kind: if
+  condition:
+    variable: should-invoke-module-reviewer
+    operator: truthy
+  then: create-module-reviewer-conversation
+  otherwise: resume-current-module-review
+- id: resume-current-module-review
+  kind: invoke_tool
+  tool: resume-current-module-review
+  input_variable: lane-context
+  output_variable: lane-context
+- id: resumed-module-review-requires-agent
+  kind: invoke_tool
+  tool: module-review-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-resumed-module-reviewer
+- id: choose-resumed-module-review-source
+  kind: if
+  condition:
+    variable: should-invoke-resumed-module-reviewer
+    operator: truthy
+  then: create-module-reviewer-conversation
+  otherwise: module-review-needs-recheck
+- id: create-module-reviewer-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{auditor_conversation_key}"
+  mode: run
+  output_variable: module-reviewer-conversation
+- id: invoke-current-module-reviewer
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-runtime-initial-review
+  conversation_variable: module-reviewer-conversation
+  input_variable: lane-context
+  output_variable: module-review-agent-result
+- id: accept-current-module-review
+  kind: invoke_tool
+  tool: accept-current-module-review
+  input_variables:
+    context: lane-context
+    result: module-review-agent-result
+  output_variable: lane-context
+- id: continue-after-module-review
+  kind: goto
+  target: module-review-needs-recheck
+- id: module-review-needs-recheck
+  kind: invoke_tool
+  tool: module-review-needs-recheck
+  input_variable: lane-context
+  output_variable: should-recheck-module
+- id: choose-module-review-recheck
+  kind: if
+  condition:
+    variable: should-recheck-module
+    operator: truthy
+  then: prepare-current-module-recheck
+  otherwise: module-review-needs-revision
+- id: module-review-needs-revision
+  kind: invoke_tool
+  tool: module-review-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module
+- id: choose-module-review-revision
+  kind: if
+  condition:
+    variable: should-revise-module
+    operator: truthy
+  then: prepare-current-module-revision
+  otherwise: complete-current-module-lane
+- id: prepare-current-module-revision
+  kind: invoke_tool
+  tool: prepare-current-module-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-revision-conversation
+- id: invoke-current-module-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-revision-conversation
+  input_variable: lane-context
+  output_variable: module-revision-agent-result
+- id: accept-current-module-revision
+  kind: invoke_tool
+  tool: accept-current-module-revision
+  input_variables:
+    context: lane-context
+    result: module-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-revision
+  kind: goto
+  target: prepare-current-module-author-exception
+- id: prepare-current-module-author-exception
+  kind: invoke_tool
+  tool: prepare-current-module-author-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-author-exception-is-deferred
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-defer-module-author-exception
+- id: choose-after-module-author-exception
+  kind: if
+  condition:
+    variable: should-defer-module-author-exception
+    operator: truthy
+  then: complete-current-module-lane
+  otherwise: prepare-current-module-recheck
+- id: prepare-current-module-recheck
+  kind: invoke_tool
+  tool: prepare-current-module-recheck
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-recheck-preflight-needs-revision
+  kind: invoke_tool
+  tool: module-review-preflight-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module-recheck-preflight
+- id: choose-module-recheck-preflight
+  kind: if
+  condition:
+    variable: should-revise-module-recheck-preflight
+    operator: truthy
+  then: prepare-current-module-recheck-preflight-revision
+  otherwise: module-recheck-requires-agent
+- id: prepare-current-module-recheck-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-module-preflight-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-recheck-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-recheck-preflight-revision-conversation
+- id: invoke-current-module-recheck-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-recheck-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: module-recheck-preflight-revision-agent-result
+- id: accept-current-module-recheck-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: module-recheck-preflight-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-recheck-preflight-revision
+  kind: goto
+  target: prepare-current-module-recheck
+- id: module-recheck-requires-agent
+  kind: invoke_tool
+  tool: module-recheck-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-recheck
+- id: choose-module-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-module-recheck
+    operator: truthy
+  then: create-module-recheck-conversation
+  otherwise: resume-current-module-recheck
+- id: resume-current-module-recheck
+  kind: invoke_tool
+  tool: resume-current-module-recheck
+  input_variable: lane-context
+  output_variable: lane-context
+- id: resumed-module-recheck-requires-agent
+  kind: invoke_tool
+  tool: module-recheck-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-resumed-module-recheck
+- id: choose-resumed-module-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-resumed-module-recheck
+    operator: truthy
+  then: create-module-recheck-conversation
+  otherwise: module-review-needs-recheck
+- id: create-module-recheck-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{auditor_conversation_key}"
+  mode: run
+  output_variable: module-recheck-conversation
+- id: invoke-current-module-recheck
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-runtime-recheck
+  conversation_variable: module-recheck-conversation
+  input_variable: lane-context
+  output_variable: module-recheck-agent-result
+- id: accept-current-module-recheck
+  kind: invoke_tool
+  tool: accept-current-module-recheck
+  input_variables:
+    context: lane-context
+    result: module-recheck-agent-result
+  output_variable: lane-context
+- id: continue-after-module-recheck
+  kind: goto
+  target: module-recheck-exception-is-deferred
+- id: module-recheck-exception-is-deferred
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-defer-module-recheck-exception
+- id: choose-after-module-recheck-exception
+  kind: if
+  condition:
+    variable: should-defer-module-recheck-exception
+    operator: truthy
+  then: complete-current-module-lane
+  otherwise: module-review-needs-recheck
+- id: complete-current-module-lane
+  kind: invoke_tool
+  tool: complete-current-module-lane
+  input_variable: lane-context
+  output_variable: lane-outcome
+- id: finish-module-lane
+  kind: end_workflow
+  output_variable: lane-outcome
+  output_name: result

@@ -1,0 +1,10 @@
+id: prepare-module-cohort
+version: 1.0.0
+description: Prepare Reporting state for the file-defined module Cohort
+implementation: capability:distribution-reporting:prepare-module-cohort
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

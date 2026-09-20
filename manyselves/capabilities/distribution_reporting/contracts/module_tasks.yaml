@@ -1,0 +1,6 @@
+id: module_tasks
+version: 1.0.0
+description: Reporting adapter boundary for module_tasks
+adapter: json_schema
+schema: {}
+

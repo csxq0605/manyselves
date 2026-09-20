@@ -1,0 +1,75 @@
+id: distribution-reporting-preparation
+version: 1.0.0
+description: File-defined deterministic Reporting preparation
+tasks: []
+input_contract: preparation_context
+input_variable: preparation-context
+output_contract: preparation_context
+state:
+  preparation-context: {}
+  resume: false
+actions:
+- id: choose-preparation-path
+  kind: if
+  condition:
+    variable: resume
+    operator: truthy
+  then: restore-preparation-snapshot
+  otherwise: build-manifest
+- id: build-manifest
+  kind: invoke_tool
+  tool: build-manifest
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: prepare-report-taxonomy
+  kind: invoke_tool
+  tool: prepare-report-taxonomy
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: parse-artifacts
+  kind: invoke_tool
+  tool: parse-artifacts
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: normalize-evidence
+  kind: invoke_tool
+  tool: normalize-evidence
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: evaluate-coverage
+  kind: invoke_tool
+  tool: evaluate-coverage
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: load-special-topic-plan
+  kind: invoke_tool
+  tool: load-special-topic-plan
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: persist-preparation-snapshot
+  kind: invoke_tool
+  tool: persist-preparation-snapshot
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: finalize-preparation
+  kind: invoke_tool
+  tool: finalize-preparation
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: skip-restore-after-new-preparation
+  kind: goto
+  target: finish-preparation
+- id: restore-preparation-snapshot
+  kind: invoke_tool
+  tool: restore-preparation-snapshot
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: finalize-preparation-after-restore
+  kind: invoke_tool
+  tool: finalize-preparation
+  input_variable: preparation-context
+  output_variable: preparation-context
+- id: finish-preparation
+  kind: end_workflow
+  output_variable: preparation-context
+  output_name: result

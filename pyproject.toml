@@ -44,6 +44,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "idna>=3.15,<4.0",
     "pillow>=12.3.0,<13.0.0",
+    "jsonschema>=4.23,<5",
 ]
 
 [project.optional-dependencies]
@@ -101,4 +102,3 @@ dev = [
 
 [project.scripts]
 manyselves = "manyselves.__main__:main"
-manyselves-headless = "manyselves.headless_service:main"

@@ -4,26 +4,6 @@
  */
 
 export interface paths {
-    "/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Serve Spa
-         * @description Serve React SPA for all non-API routes.
-         */
-        get: operations["get_root"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -216,6 +196,23 @@ export interface paths {
          * @description Return the first client snapshot from the active runtime facade.
          */
         get: operations["get_api_v1_bootstrap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Capabilities */
+        get: operations["get_api_v1_capabilities"];
         put?: never;
         post?: never;
         delete?: never;
@@ -861,41 +858,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/reporting/decisions/{decision_id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resume Decision */
-        post: operations["post_api_v1_reporting_decisions_decision_id_resume"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/reporting/revisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Revise */
-        post: operations["post_api_v1_reporting_revisions"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/reporting/runs": {
+    "/api/v1/runs": {
         parameters: {
             query?: never;
             header?: never;
@@ -903,17 +866,17 @@ export interface paths {
             cookie?: never;
         };
         /** List Runs */
-        get: operations["get_api_v1_reporting_runs"];
+        get: operations["get_api_v1_runs"];
         put?: never;
         /** Start Run */
-        post: operations["post_api_v1_reporting_runs"];
+        post: operations["post_api_v1_runs"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/reporting/runs/{run_id}": {
+    "/api/v1/runs/{run_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -921,7 +884,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Run */
-        get: operations["get_api_v1_reporting_runs_run_id"];
+        get: operations["get_api_v1_runs_run_id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -930,7 +893,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/reporting/runs/{run_id}/cancel": {
+    "/api/v1/runs/{run_id}/cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Cost */
+        get: operations["get_api_v1_runs_run_id_cost"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Events */
+        get: operations["get_api_v1_runs_run_id_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/input": {
         parameters: {
             query?: never;
             header?: never;
@@ -939,15 +936,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel Run */
-        post: operations["post_api_v1_reporting_runs_run_id_cancel"];
+        /** Provide Run Input */
+        post: operations["post_api_v1_runs_run_id_input"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/reporting/runs/{run_id}/resume": {
+    "/api/v1/runs/{run_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Outputs */
+        get: operations["get_api_v1_runs_run_id_outputs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/resume": {
         parameters: {
             query?: never;
             header?: never;
@@ -957,7 +971,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Resume Run */
-        post: operations["post_api_v1_reporting_runs_run_id_resume"];
+        post: operations["post_api_v1_runs_run_id_resume"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1125,18 +1139,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/{full_path}": {
+    "/api/v1/workflows": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Serve Spa
-         * @description Serve React SPA for all non-API routes.
-         */
-        get: operations["get_full_path"];
+        /** List Workflows */
+        get: operations["get_api_v1_workflows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}/input-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workflow Input Schema */
+        get: operations["get_api_v1_workflows_workflow_id_input_schema"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1253,6 +1281,22 @@ export interface components {
             settings: components["schemas"]["BootstrapSettings"];
             /** Streamid */
             streamId: string;
+        };
+        /** CapabilityListResponse */
+        CapabilityListResponse: {
+            /** Capabilities */
+            capabilities: components["schemas"]["CapabilitySummary"][];
+        };
+        /** CapabilitySummary */
+        CapabilitySummary: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Version */
+            version: string;
+            /** Workflowids */
+            workflowIds: string[];
         };
         /** ConversationActiveSessionResponse */
         ConversationActiveSessionResponse: {
@@ -2035,154 +2079,6 @@ export interface components {
             /** Source */
             source: string;
         };
-        /** ReportingAcceptedResponse */
-        ReportingAcceptedResponse: {
-            /**
-             * Commandid
-             * Format: uuid
-             */
-            commandId: string;
-            /** Runid */
-            runId: string;
-            /**
-             * Status
-             * @default accepted
-             * @constant
-             */
-            status: "accepted";
-            /** Taskid */
-            taskId?: string | null;
-        };
-        /** ReportingDecisionRequest */
-        ReportingDecisionRequest: {
-            /**
-             * Action
-             * @enum {string}
-             */
-            action: "supplement" | "draft" | "skip" | "stop";
-            /** Supplements */
-            supplements?: components["schemas"]["UserSupplement"][];
-        };
-        /** ReportingListResponse */
-        ReportingListResponse: {
-            /** Runs */
-            runs: {
-                [key: string]: unknown;
-            }[];
-        };
-        /** ReportingResumeRequest */
-        ReportingResumeRequest: {
-            /** Maxproviderattempts */
-            maxProviderAttempts?: number | null;
-            /** Maxtotaltokens */
-            maxTotalTokens?: number | null;
-            /** Supplements */
-            supplements?: components["schemas"]["UserSupplement"][];
-        };
-        /** ReportingRevisionRequest */
-        ReportingRevisionRequest: {
-            /** Baselineversionid */
-            baselineVersionId: string;
-            /** Feedback */
-            feedback: string;
-            /**
-             * Maxproviderattempts
-             * @default 40
-             */
-            maxProviderAttempts: number;
-            /**
-             * Maxtotaltokens
-             * @default 400000
-             */
-            maxTotalTokens: number;
-            /** Promoteskillid */
-            promoteSkillId?: string | null;
-            /**
-             * Promotetoskill
-             * @default false
-             */
-            promoteToSkill: boolean;
-            /** Targetclaimids */
-            targetClaimIds?: string[];
-            /** Targetmoduleids */
-            targetModuleIds: ("2.1" | "2.2" | "2.3" | "2.4" | "2.5")[];
-            /** Targetsubmoduleids */
-            targetSubmoduleIds?: string[];
-            /** Usersupplements */
-            userSupplements?: components["schemas"]["UserSupplement"][];
-        };
-        /** ReportingSnapshotResponse */
-        ReportingSnapshotResponse: {
-            /** Checkpoint */
-            checkpoint: {
-                [key: string]: unknown;
-            };
-            /** Evidence */
-            evidence: {
-                [key: string]: unknown;
-            };
-            /** Outputs */
-            outputs: {
-                [key: string]: unknown;
-            }[];
-            /** Revision */
-            revision: {
-                [key: string]: unknown;
-            };
-            /** Run */
-            run: {
-                [key: string]: unknown;
-            };
-            /** State */
-            state: {
-                [key: string]: unknown;
-            };
-            /** Waitinginput */
-            waitingInput: {
-                [key: string]: unknown;
-            }[];
-        };
-        /** ReportingStartRequest */
-        ReportingStartRequest: {
-            /** Executionrequirements */
-            executionRequirements?: string[];
-            /** Instruction */
-            instruction: string;
-            /**
-             * Maxproviderattempts
-             * @default 80
-             */
-            maxProviderAttempts: number;
-            /**
-             * Maxtotaltokens
-             * @default 800000
-             */
-            maxTotalTokens: number;
-            /**
-             * Missingevidencepolicy
-             * @default draft
-             * @enum {string}
-             */
-            missingEvidencePolicy: "ask" | "block" | "skip" | "draft";
-            /**
-             * Operation
-             * @default full_report
-             * @enum {string}
-             */
-            operation: "distill_template_skill" | "full_report" | "module_report" | "aggregate_existing" | "render_existing";
-            /** Outputfilename */
-            outputFilename?: string | null;
-            /** Sourcemarkdownref */
-            sourceMarkdownRef?: string | null;
-            /** Sourcemodulerefs */
-            sourceModuleRefs?: {
-                [key: string]: string;
-            } | null;
-            /** Targetmodules */
-            targetModules?: string[] | null;
-            /** Usersupplements */
-            userSupplements?: components["schemas"]["UserSupplement"][];
-        };
         /** RollbackRequest */
         RollbackRequest: {
             /** Checkpointid */
@@ -2438,43 +2334,164 @@ export interface components {
             /** Size */
             size: number;
         };
-        /**
-         * UserSupplement
-         * @description One scoped, auditable user fact or instruction added to the current run.
-         */
-        UserSupplement: {
+        /** WorkflowCostResponse */
+        WorkflowCostResponse: {
+            /** Runid */
+            runId: string;
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            };
+        };
+        /** WorkflowEvent */
+        WorkflowEvent: {
+            /** Actionid */
+            actionId?: string | null;
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            };
+            /** Error */
+            error?: string | null;
+            /** Kind */
+            kind: string;
+            /** Runid */
+            runId: string;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowEventListResponse */
+        WorkflowEventListResponse: {
+            /** Events */
+            events: components["schemas"]["WorkflowEvent"][];
+            /** Runid */
+            runId: string;
+        };
+        /** WorkflowInputSchemaResponse */
+        WorkflowInputSchemaResponse: {
+            /** Contractid */
+            contractId: string | null;
+            /** Schema */
+            schema: {
+                [key: string]: unknown;
+            };
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowListResponse */
+        WorkflowListResponse: {
+            /** Workflows */
+            workflows: components["schemas"]["WorkflowSummary"][];
+        };
+        /** WorkflowOutput */
+        WorkflowOutput: {
+            /** Exists */
+            exists?: boolean | null;
+            /** Id */
+            id: string;
             /**
-             * Content
-             * @description Exact user-confirmed fact or instruction without inferred additions.
-             */
-            content: string;
-            /**
-             * Id
-             * @description Stable current-run supplement id used by supersedes.
-             */
-            id?: string;
-            /**
-             * Scope
-             * @description Run-wide or explicitly targeted applicability boundary.
-             * @default run
+             * Kind
              * @enum {string}
              */
-            scope: "run" | "module" | "submodule" | "claim" | "final_section";
+            kind: "artifact" | "value";
+            /** Path */
+            path?: string | null;
+            /** Size */
+            size?: number | null;
+            /** Value */
+            value?: unknown;
+        };
+        /** WorkflowOutputListResponse */
+        WorkflowOutputListResponse: {
+            /** Outputs */
+            outputs: components["schemas"]["WorkflowOutput"][];
+            /** Runid */
+            runId: string;
+        };
+        /** WorkflowRunAcceptedResponse */
+        WorkflowRunAcceptedResponse: {
+            /** Capabilityid */
+            capabilityId: string;
             /**
-             * Stages
-             * @description Only workflow stages allowed to consume this supplement.
+             * Commandid
+             * Format: uuid
              */
-            stages?: ("module_authoring" | "module_review" | "cross_review" | "chief_edit" | "final_review")[];
+            commandId: string;
+            /** Runid */
+            runId: string;
             /**
-             * Supersedes
-             * @description Earlier supplement ids replaced by this one while preserving audit history.
+             * Status
+             * @default accepted
+             * @constant
              */
-            supersedes?: string[];
-            /**
-             * Target Ids
-             * @description Required module, submodule, Claim, or final-section ids outside run scope.
-             */
-            target_ids?: string[];
+            status: "accepted";
+            /** Taskid */
+            taskId?: string | null;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowRunInputRequest */
+        WorkflowRunInputRequest: {
+            /** Inputid */
+            inputId?: string | null;
+            /** Values */
+            values?: unknown;
+        };
+        /** WorkflowRunListResponse */
+        WorkflowRunListResponse: {
+            /** Runs */
+            runs: components["schemas"]["WorkflowRunResponse"][];
+        };
+        /** WorkflowRunResponse */
+        WorkflowRunResponse: {
+            run: components["schemas"]["WorkflowRunSummary"];
+            /** State */
+            state: {
+                [key: string]: unknown;
+            };
+            /** Waitinginput */
+            waitingInput: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WorkflowRunStartRequest */
+        WorkflowRunStartRequest: {
+            /** Input */
+            input: unknown;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowRunSummary */
+        WorkflowRunSummary: {
+            /** Active */
+            active: boolean;
+            /** Capabilityid */
+            capabilityId: string;
+            /** Runid */
+            runId: string;
+            /** Status */
+            status: string;
+            /** Taskid */
+            taskId?: string | null;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowSummary */
+        WorkflowSummary: {
+            /** Capabilityid */
+            capabilityId: string;
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Inputcontract */
+            inputContract: string | null;
+            /** Outputcontract */
+            outputContract: string | null;
+            /** Runnable */
+            runnable: boolean;
+            /** Version */
+            version: string;
         };
     };
     responses: never;
@@ -2485,46 +2502,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    get_root: {
-        parameters: {
-            query?: {
-                full_path?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description API error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     get_api_v1_agents: {
         parameters: {
             query?: never;
@@ -3004,6 +2981,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BootstrapSnapshot"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilityListResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -4818,99 +4833,11 @@ export interface operations {
             };
         };
     };
-    post_api_v1_reporting_decisions_decision_id_resume: {
+    get_api_v1_runs: {
         parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
+            query?: {
+                conversationId?: string | null;
             };
-            path: {
-                decision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReportingDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReportingAcceptedResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description API error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    post_api_v1_reporting_revisions: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReportingRevisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReportingAcceptedResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description API error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    get_api_v1_reporting_runs: {
-        parameters: {
-            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -4923,7 +4850,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReportingListResponse"];
+                    "application/json": components["schemas"]["WorkflowRunListResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -4946,7 +4873,7 @@ export interface operations {
             };
         };
     };
-    post_api_v1_reporting_runs: {
+    post_api_v1_runs: {
         parameters: {
             query?: never;
             header: {
@@ -4957,7 +4884,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReportingStartRequest"];
+                "application/json": components["schemas"]["WorkflowRunStartRequest"];
             };
         };
         responses: {
@@ -4967,7 +4894,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReportingAcceptedResponse"];
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -4990,7 +4917,7 @@ export interface operations {
             };
         };
     };
-    get_api_v1_reporting_runs_run_id: {
+    get_api_v1_runs_run_id: {
         parameters: {
             query?: never;
             header?: never;
@@ -5007,7 +4934,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReportingSnapshotResponse"];
+                    "application/json": components["schemas"]["WorkflowRunResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -5030,7 +4957,173 @@ export interface operations {
             };
         };
     };
-    post_api_v1_reporting_runs_run_id_cancel: {
+    get_api_v1_runs_run_id_cost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowCostResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowEventListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_runs_run_id_input: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRunInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_outputs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowOutputListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_runs_run_id_resume: {
         parameters: {
             query?: never;
             header: {
@@ -5049,53 +5142,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReportingAcceptedResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description API error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    post_api_v1_reporting_runs_run_id_resume: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReportingResumeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReportingAcceptedResponse"];
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -5564,12 +5611,50 @@ export interface operations {
             };
         };
     };
-    get_full_path: {
+    get_api_v1_workflows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_workflows_workflow_id_input_schema: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                full_path: string;
+                workflow_id: string;
             };
             cookie?: never;
         };
@@ -5581,7 +5666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkflowInputSchemaResponse"];
                 };
             };
             /** @description Request validation failed */

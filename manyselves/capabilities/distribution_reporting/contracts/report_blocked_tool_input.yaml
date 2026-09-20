@@ -1,0 +1,12 @@
+id: report_blocked_tool_input
+version: 1.0.0
+description: Provider input for a blocked Reporting task
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    reason: {type: string}
+    source_ids: {type: array, items: {type: string}}
+    artifact_refs: {type: array, items: {type: string}}
+  required: [reason]
+  additionalProperties: false

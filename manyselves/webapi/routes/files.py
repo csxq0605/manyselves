@@ -409,10 +409,15 @@ async def download_file(
     }
     if response_status == status.HTTP_206_PARTIAL_CONTENT:
         headers["Content-Range"] = f"bytes {start}-{end}/{opened.size}"
+    media_type = (
+        "application/zip"
+        if opened.name.casefold().endswith(".zip")
+        else mimetypes.guess_type(opened.name)[0] or "application/octet-stream"
+    )
     return StreamingResponse(
         _stream_download(opened, start, length),
         status_code=response_status,
-        media_type=mimetypes.guess_type(opened.name)[0] or "application/octet-stream",
+        media_type=media_type,
         headers=headers,
     )
 

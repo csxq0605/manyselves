@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.tools.exec_tools import ExecTool
-from manyselves.core.tools.file_tools import ApplyPatchTool, ReadTool
-from manyselves.core.tools.registry import ToolRegistry
+from manyselves.runtime.tools.exec_tools import ExecTool
+from manyselves.runtime.tools.file_tools import ApplyPatchTool, ReadTool
+from manyselves.runtime.tools.registry import ToolRegistry
 
 
 def _workspace():

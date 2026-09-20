@@ -1,0 +1,7 @@
+id: cross-owner-main-exception-decision
+version: 1.0.0
+description: Continue, return, or stop one explicit Cross exception requested by Main
+interaction_type: decision
+input_contract: declarative_main_exception_user_input
+title: Cross exception decision
+submit_label: Continue workflow

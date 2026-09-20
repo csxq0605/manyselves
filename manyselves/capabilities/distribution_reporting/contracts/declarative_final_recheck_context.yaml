@@ -1,0 +1,5 @@
+id: declarative_final_recheck_context
+version: 1.0.0
+description: Typed context for one affected-only Final recheck lane
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_review:DeclarativeFinalRecheckContext

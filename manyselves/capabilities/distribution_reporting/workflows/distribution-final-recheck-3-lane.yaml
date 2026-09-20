@@ -1,0 +1,66 @@
+id: distribution-final-recheck-3-lane
+version: 1.0.0
+description: File-defined affected Final Auditor recheck lane for report Chapter 3
+tasks:
+- final-chapter-recheck
+recovery:
+- current-reporting-recovery
+input_contract: declarative_final_review_cycle_context
+output_contract: declarative_final_recheck_outcome
+state:
+  review: {}
+  chapter-id: "3"
+  final-recheck-context: {}
+  should-invoke-final-recheck: false
+  final-recheck-conversation: {}
+  final-recheck-agent-result: {}
+  completed-final-recheck: {}
+actions:
+- id: prepare-current-final-recheck
+  kind: invoke_tool
+  tool: prepare-current-final-recheck
+  input_variables:
+    review: review
+    chapter_id: chapter-id
+  output_variable: final-recheck-context
+- id: final-recheck-requires-agent
+  kind: invoke_tool
+  tool: final-recheck-requires-agent
+  input_variable: final-recheck-context
+  output_variable: should-invoke-final-recheck
+- id: choose-final-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-final-recheck
+    operator: truthy
+  then: create-final-recheck-conversation
+  otherwise: complete-current-final-recheck
+- id: create-final-recheck-conversation
+  kind: create_conversation
+  agent: chief-editor-auditor
+  conversation_key: final-chapter-3
+  mode: run
+  output_variable: final-recheck-conversation
+- id: invoke-final-recheck-agent
+  kind: invoke_agent
+  agent: chief-editor-auditor
+  task: final-chapter-recheck
+  conversation_variable: final-recheck-conversation
+  input_variable: final-recheck-context
+  output_variable: final-recheck-agent-result
+- id: accept-current-final-recheck
+  kind: invoke_tool
+  tool: accept-current-final-recheck
+  input_variables:
+    context: final-recheck-context
+    result: final-recheck-agent-result
+  output_variable: final-recheck-context
+- id: complete-current-final-recheck
+  kind: invoke_tool
+  tool: complete-current-final-recheck
+  input_variable: final-recheck-context
+  output_variable: completed-final-recheck
+- id: finish-final-recheck-lane
+  kind: end_workflow
+  output_variable: completed-final-recheck
+  output_name: result

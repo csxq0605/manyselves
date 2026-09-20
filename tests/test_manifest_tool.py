@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from manyselves.core.tools.manifest_tool import ManifestManager, ManifestTool
+from manyselves.runtime.tools.manifest_tool import ManifestManager, ManifestTool
 
 
 def _run(coro):

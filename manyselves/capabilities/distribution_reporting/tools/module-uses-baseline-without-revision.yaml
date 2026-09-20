@@ -1,0 +1,10 @@
+id: module-uses-baseline-without-revision
+version: 1.0.0
+description: Whether this revise-report lane should keep baseline prose without rewriting
+implementation: capability:distribution-reporting:module-uses-baseline-without-revision
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

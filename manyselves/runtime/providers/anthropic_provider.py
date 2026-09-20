@@ -1,0 +1,708 @@
+"""Anthropic Claude provider."""
+
+import asyncio
+from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
+from anthropic import AsyncAnthropic
+from loguru import logger
+
+from .base import (
+    LLMProvider,
+    LLMResponse,
+    LLMToolCall,
+    Message,
+    ProviderRequestDisposition,
+    annotate_provider_request_failure,
+    build_provider_request_metrics,
+    infer_provider_request_disposition,
+)
+
+ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
+ANTHROPIC_CONNECT_TIMEOUT_SECONDS = 30.0
+
+
+def _value(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _normalized_anthropic_usage(raw_usage: Any) -> dict[str, int] | None:
+    """Normalize Anthropic's disjoint input buckets to one inclusive total."""
+
+    if raw_usage is None:
+        return None
+    uncached = int(_value(raw_usage, "input_tokens", 0) or 0)
+    cache_write = int(
+        _value(raw_usage, "cache_creation_input_tokens", 0) or 0
+    )
+    cached = int(_value(raw_usage, "cache_read_input_tokens", 0) or 0)
+    output = int(_value(raw_usage, "output_tokens", 0) or 0)
+    input_total = uncached + cache_write + cached
+    return {
+        "input_tokens": input_total,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_write,
+        "output_tokens": output,
+        "total_tokens": input_total + output,
+    }
+
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic Claude provider.
+
+    Also works with Anthropic-compatible endpoints (DeepSeek, MiniMax, etc.)
+    by setting ``api_base`` to the compatible URL.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        api_base: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
+        extra_headers: dict[str, str] | None = None,
+    ):
+        super().__init__(api_key, api_base, model)
+        self.client = AsyncAnthropic(
+            api_key=api_key,
+            base_url=api_base,
+            max_retries=0,  # Centralize retry logic in agent loop
+            auth_token=api_key,  # Prevent ANTHROPIC_AUTH_TOKEN env var override
+            default_headers=extra_headers,
+            # The SDK otherwise uses a 5-second connect timeout even though its
+            # read timeout is 10 minutes. Compatible gateways can legitimately
+            # need longer to establish a streaming connection.
+            timeout=httpx.Timeout(
+                connect=ANTHROPIC_CONNECT_TIMEOUT_SECONDS,
+                read=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+                write=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+                pool=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+            ),
+        )
+
+        # cache_control (prompt caching) is an Anthropic-only feature.
+        # Compatible endpoints (DeepSeek, MiniMax, etc.) reject it with 400.
+        self._supports_cache = (
+            api_base is None
+            or "anthropic" in api_base.lower()
+        )
+
+    # ------------------------------------------------------------------
+    # Message conversion
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        """Normalize nullable/mixed values to Anthropic-safe text."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    def _supports_cache_control(self) -> bool:
+        return getattr(self, "_supports_cache", True)
+
+    def _normalize_block(self, block: Any) -> dict[str, Any]:
+        """Normalize content blocks so compatible endpoints never receive null text."""
+        if not isinstance(block, dict):
+            return {"type": "text", "text": self._safe_text(block)}
+
+        normalized = dict(block)
+        block_type = normalized.get("type")
+
+        if block_type == "text":
+            normalized["text"] = self._safe_text(normalized.get("text"))
+        elif block_type == "thinking":
+            normalized["thinking"] = self._safe_text(normalized.get("thinking"))
+        elif block_type == "tool_result":
+            content = normalized.get("content")
+            if isinstance(content, list):
+                normalized["content"] = [self._normalize_block(item) for item in content]
+            else:
+                normalized["content"] = self._safe_text(content)
+
+        return normalized
+
+    def _normalize_message_content(self, content: Any) -> str | list[dict[str, Any]]:
+        if isinstance(content, list):
+            return [self._normalize_block(block) for block in content]
+        return self._safe_text(content)
+
+    def _sanitize_messages_payload(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Defensively remove null content before sending to Anthropic."""
+        sanitized: list[dict[str, Any]] = []
+        for msg in messages:
+            clean = dict(msg)
+            clean["content"] = self._normalize_message_content(clean.get("content"))
+            sanitized.append(clean)
+        return sanitized
+
+    def _drop_historical_tool_replay(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop completed tool-use/result pairs for Anthropic-compatible replay.
+
+        DeepSeek/MiniMax-style endpoints can handle the immediate tool round,
+        but may reject replaying old structured ``tool_use`` / ``tool_result``
+        blocks on a later user turn. Once a normal assistant reply already
+        followed that tool exchange, the old structured pair no longer carries
+        essential state and can be omitted from replay history.
+        """
+        compacted: list[dict[str, Any]] = []
+        i = 0
+        while i < len(messages):
+            current = messages[i]
+            nxt = messages[i + 1] if i + 1 < len(messages) else None
+            future = messages[i + 2:]
+
+            current_blocks = current.get("content")
+            next_blocks = nxt.get("content") if nxt else None
+            current_has_tool_use = isinstance(current_blocks, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_use"
+                for block in current_blocks
+            )
+            next_has_tool_result = isinstance(next_blocks, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in next_blocks
+            )
+            later_has_assistant_reply = any(
+                msg.get("role") == "assistant" and msg.get("content")
+                and not (
+                    isinstance(msg["content"], list)
+                    and any(
+                        isinstance(block, dict) and block.get("type") == "tool_use"
+                        for block in msg["content"]
+                    )
+                )
+                for msg in future
+            )
+
+            if (
+                current.get("role") == "assistant"
+                and nxt
+                and nxt.get("role") == "user"
+                and current_has_tool_use
+                and next_has_tool_result
+                and later_has_assistant_reply
+            ):
+                i += 2
+                continue
+
+            compacted.append(current)
+            i += 1
+
+        return compacted
+
+    def _convert_messages(
+        self, messages: list[Message],
+        tool_names: dict[str, str] | None = None,
+    ) -> tuple[str | list[dict] | None, list[dict]]:
+        """Convert internal messages to Anthropic API format.
+
+        Handles three special message types:
+        1. Assistant messages with tool_calls -> content blocks with type="tool_use"
+        2. Tool result messages (is_tool_result=True) -> grouped into a user message
+           with type="tool_result" blocks
+        3. Regular messages -> simple role/content dicts
+
+        When a system message has ``cache_control=True`` the system parameter is
+        emitted as a list of content blocks so the last block can carry an
+        ephemeral cache-control marker.
+
+        Per Anthropic API spec:
+        - tool_use blocks go in assistant messages
+        - tool_result blocks go in user messages (keyed by tool_use_id)
+        - Consecutive same-role messages must be merged
+        - Conversation cannot end with an assistant turn
+        """
+        system_message: str | list[dict] | None = None
+        anthropic_messages: list[dict] = []
+        pending_tool_results: list[dict] = []
+        tool_names = tool_names or {}
+
+        for msg in messages:
+            if msg.role == "system":
+                if msg.cache_control and self._supports_cache_control():
+                    system_message = [
+                        {"type": "text", "text": self._safe_text(msg.content),
+                         "cache_control": {"type": "ephemeral"}},
+                    ]
+                else:
+                    system_message = self._safe_text(msg.content)
+                continue
+
+            # Flush pending tool results before adding a new non-tool message
+            if pending_tool_results and not msg.is_tool_result:
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": self._normalize_message_content(pending_tool_results),
+                })
+                pending_tool_results = []
+
+            # Assistant message with tool calls -> structured content blocks
+            if msg.role == "assistant" and msg.tool_calls:
+                content_blocks: list[dict] = []
+                # NOTE: thinking blocks are intentionally NOT replayed. The
+                # streaming path only captures the thinking *text*, not the
+                # encrypted ``signature`` the API attaches to every thinking
+                # block. Re-sending a fabricated thinking block (missing the
+                # signature) makes the API reject the whole request with a
+                # deserialization error on the next turn. Thinking is kept on
+                # the Message for UI/debugging only.
+                if msg.content:
+                    content_blocks.append({"type": "text", "text": msg.content})
+                for tc in msg.tool_calls:
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tool_names.get(tc.name, tc.name),
+                        "input": tc.arguments,
+                    })
+                anthropic_messages.append({
+                    "role": "assistant",
+                    "content": self._normalize_message_content(content_blocks),
+                })
+                continue
+
+            # Tool result -> collect into pending list (grouped as one user message)
+            if msg.is_tool_result:
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": msg.tool_call_id,
+                    "content": self._safe_text(msg.content),
+                })
+                continue
+
+            # Regular text message
+            anthropic_messages.append({
+                "role": msg.role,
+                "content": self._normalize_message_content(msg.content),
+            })
+
+        # Flush any remaining tool results
+        if pending_tool_results:
+            anthropic_messages.append({
+                "role": "user",
+                "content": self._normalize_message_content(pending_tool_results),
+            })
+
+        if not self._supports_cache_control():
+            anthropic_messages = self._drop_historical_tool_replay(anthropic_messages)
+
+        # Merge consecutive same-role messages (Anthropic requirement)
+        merged = self._sanitize_messages_payload(self._merge_consecutive(anthropic_messages))
+
+        # Strip empty trailing assistant turns (prefill).
+        # Keep assistant turns that have actual content or tool_use blocks.
+        while merged and merged[-1].get("role") == "assistant":
+            content = merged[-1].get("content")
+            if content:
+                break
+            merged.pop()
+
+        return system_message, merged
+
+    @staticmethod
+    def _content_to_blocks(content: Any) -> list[dict[str, Any]]:
+        """View content as a list of blocks (strings become single text blocks)."""
+        if isinstance(content, list):
+            return list(content)
+        return [{"type": "text", "text": AnthropicProvider._safe_text(content)}]
+
+    @staticmethod
+    def _collapse_text_blocks(blocks: list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+        """Collapse a block list to a plain string when it is text-only.
+
+        Native Anthropic accepts content as either a string or an array of
+        blocks, but Anthropic-compatible endpoints (DeepSeek, MiniMax, …) only
+        accept the string form for plain text — an array of text blocks is
+        rejected as ``invalid type: null, expected a string``. Merging two
+        consecutive same-role text messages used to produce exactly that array,
+        so collapse text-only results back to a string. Mixed blocks that
+        contain ``tool_use`` / ``tool_result`` must stay as arrays.
+        """
+        if all(isinstance(b, dict) and b.get("type") == "text" for b in blocks):
+            return "\n".join(
+                AnthropicProvider._safe_text(b.get("text")) for b in blocks
+            )
+        return blocks
+
+    def _merge_consecutive(self, msgs: list[dict]) -> list[dict]:
+        """Merge consecutive same-role messages for Anthropic API.
+
+        Anthropic requires alternating user/assistant turns. Consecutive
+        same-role messages must be collapsed into one. When the merged content
+        is plain text only, it is emitted as a string (see
+        ``_collapse_text_blocks``) for compatibility with non-native endpoints.
+        """
+        merged: list[dict] = []
+        for msg in msgs:
+            if (
+                merged
+                and merged[-1].get("role") == msg.get("role")
+            ):
+                combined = (
+                    self._content_to_blocks(merged[-1].get("content"))
+                    + self._content_to_blocks(msg.get("content"))
+                )
+                merged[-1]["content"] = self._collapse_text_blocks(combined)
+            else:
+                merged.append(msg)
+        for msg in merged:
+            msg["content"] = self._normalize_message_content(msg.get("content"))
+        return merged
+
+    # ------------------------------------------------------------------
+    # Non-streaming chat
+    # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+        reasoning_enabled: bool | None = None,
+    ) -> LLMResponse:
+        """Send chat completion request."""
+        tool_names = self._client_tool_names(messages, tools)
+        runtime_names = {wire: name for name, wire in tool_names.items()}
+        system_message, anthropic_messages = self._convert_messages(messages, tool_names)
+
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": anthropic_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if system_message:
+            params["system"] = system_message
+
+        if reasoning_enabled is False:
+            params["thinking"] = {"type": "disabled"}
+
+        if tools:
+            params["tools"] = self._convert_tools(tools, tool_names)
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="anthropic_messages_payload_v1",
+        )
+
+        logger.debug("Sending Anthropic request: model={}, messages={}", self.model, len(messages))
+
+        try:
+            response = await self.client.messages.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+
+        content = None
+        tool_calls = []
+        thinking = None
+
+        for block in response.content:
+            if block.type == "text":
+                content = block.text
+            elif block.type == "tool_use":
+                tool_calls.append(LLMToolCall(
+                    id=block.id,
+                    name=runtime_names.get(block.name, block.name),
+                    arguments=self._client_tool_arguments(
+                        runtime_names.get(block.name, block.name), block.input, tools,
+                    ),
+                ))
+            elif block.type == "thinking":
+                thinking = block.thinking
+
+        logger.debug(
+            "Anthropic response: content_length={}, tool_calls={}, input_tokens={}, output_tokens={}",
+            len(content) if content else 0,
+            len(tool_calls),
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
+
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            usage=_normalized_anthropic_usage(response.usage),
+            thinking=thinking,
+            stop_reason=getattr(response, "stop_reason", None),
+            request_metrics=request_metrics,
+        )
+
+    # ------------------------------------------------------------------
+    # Streaming chat
+    # ------------------------------------------------------------------
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+        stream_idle_timeout_seconds: float | None = None,
+        reasoning_enabled: bool | None = None,
+    ):
+        """Send streaming chat completion request.
+
+        Yields LLMStreamChunk objects as text arrives.
+        """
+        from .base import LLMStreamChunk
+
+        tool_names = self._client_tool_names(messages, tools)
+        runtime_names = {wire: name for name, wire in tool_names.items()}
+        system_message, anthropic_messages = self._convert_messages(messages, tool_names)
+
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": anthropic_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if system_message:
+            params["system"] = system_message
+
+        if reasoning_enabled is False:
+            params["thinking"] = {"type": "disabled"}
+
+        if tools:
+            params["tools"] = self._convert_tools(tools, tool_names)
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="anthropic_messages_stream_payload_v1",
+        )
+
+        idle_timeout = (
+            ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS
+            if stream_idle_timeout_seconds is None
+            else stream_idle_timeout_seconds
+        )
+        logger.debug(
+            "Sending Anthropic streaming request: model={}, messages={}, idle_timeout={}s",
+            self.model,
+            len(messages),
+            idle_timeout,
+        )
+
+        stream_phase = "open_stream"
+        request_id = None
+        event_count = 0
+        content_delta_count = 0
+        last_event_type = None
+        last_delta_type = None
+        saw_message_stop = False
+        iterator_exhausted = False
+        stream_opened = False
+        try:
+            async with self.client.messages.stream(**params) as stream:
+                stream_opened = True
+                request_id = getattr(stream, "request_id", None)
+                logger.debug("Anthropic stream opened: request_id={}", request_id)
+                # Stream full events so thinking_delta is not dropped by
+                # Anthropic's text_stream convenience iterator.
+                stream_iter = stream.__aiter__()
+                stream_phase = "event_stream"
+                while True:
+                    try:
+                        event = await asyncio.wait_for(
+                            stream_iter.__anext__(),
+                            timeout=idle_timeout,
+                        )
+                    except StopAsyncIteration:
+                        iterator_exhausted = True
+                        logger.debug(
+                            "Anthropic stream iterator exhausted: request_id={}, "
+                            "events={}, content_deltas={}, last_event={}, "
+                            "last_delta={}, saw_message_stop={}",
+                            request_id,
+                            event_count,
+                            content_delta_count,
+                            last_event_type,
+                            last_delta_type,
+                            saw_message_stop,
+                        )
+                        break
+                    event_count += 1
+                    last_event_type = event.type
+                    if event.type == "message_stop":
+                        saw_message_stop = True
+                        logger.debug(
+                            "Anthropic message_stop received: request_id={}, events={}",
+                            request_id,
+                            event_count,
+                        )
+                    if event.type != "content_block_delta":
+                        continue
+                    content_delta_count += 1
+                    delta = event.delta
+                    last_delta_type = delta.type
+                    if delta.type == "text_delta":
+                        yield LLMStreamChunk(delta=delta.text)
+                    elif delta.type == "thinking_delta":
+                        yield LLMStreamChunk(thinking=delta.thinking)
+
+                # After streaming completes, extract tool calls from final message
+                stream_phase = "final_message"
+                final_message = await asyncio.wait_for(
+                    stream.get_final_message(),
+                    timeout=idle_timeout,
+                )
+                stream_phase = "complete"
+
+            # Parse final response (outside context manager)
+            final_tool_calls = []
+            accumulated_text = ""
+            final_thinking = None
+            for block in final_message.content:
+                if block.type == "tool_use":
+                    final_tool_calls.append(LLMToolCall(
+                        id=block.id,
+                        name=runtime_names.get(block.name, block.name),
+                        arguments=self._client_tool_arguments(
+                            runtime_names.get(block.name, block.name), block.input, tools,
+                        ),
+                    ))
+                elif block.type == "text":
+                    accumulated_text += block.text
+                elif block.type == "thinking":
+                    final_thinking = block.thinking
+
+            usage = getattr(final_message, "usage", None)
+            usage_payload = _normalized_anthropic_usage(usage)
+            logger.debug(
+                "Anthropic stream completed: stop_reason={}, input_tokens={}, "
+                "output_tokens={}, text_chars={}, thinking_chars={}, tool_calls={}",
+                getattr(final_message, "stop_reason", None),
+                getattr(usage, "input_tokens", None),
+                getattr(usage, "output_tokens", None),
+                len(accumulated_text),
+                len(final_thinking or ""),
+                len(final_tool_calls),
+            )
+            yield LLMStreamChunk(
+                delta=None,
+                done=True,
+                tool_calls=final_tool_calls or None,
+                thinking=final_thinking,
+                usage=usage_payload,
+                stop_reason=getattr(final_message, "stop_reason", None),
+                request_metrics=request_metrics,
+            )
+
+        except asyncio.TimeoutError as exc:
+            logger.warning(
+                "Anthropic stream stalled for >{}s: phase={}, request_id={}, "
+                "events={}, content_deltas={}, last_event={}, last_delta={}, "
+                "saw_message_stop={}, iterator_exhausted={}",
+                idle_timeout,
+                stream_phase,
+                request_id,
+                event_count,
+                content_delta_count,
+                last_event_type,
+                last_delta_type,
+                saw_message_stop,
+                iterator_exhausted,
+            )
+            timeout_error = TimeoutError(
+                f"Anthropic provider stream idle timeout after {idle_timeout:g}s"
+            )
+            failure = annotate_provider_request_failure(
+                timeout_error,
+                ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN,
+            )
+            raise failure from exc
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Anthropic streaming error ({}): {}",
+                type(exc).__name__,
+                str(exc),
+            )
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(
+                    exc,
+                    stream_opened=stream_opened,
+                ),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+
+    # ------------------------------------------------------------------
+    # Tool conversion
+    # ------------------------------------------------------------------
+
+    def _uses_antigravity_transport(self) -> bool:
+        path = urlsplit(getattr(self, "api_base", None) or "").path
+        return "antigravity" in path.split("/")
+
+    def _client_tool_arguments(
+        self, name: str, arguments: dict, tools: list[dict] | None,
+    ) -> dict:
+        """Undo only the gateway's synthetic argument for a closed empty object.
+
+        Antigravity's schema cleaner requires a string ``reason`` when Gemini
+        sees an empty object. It is not an argument of the runtime callable.
+        Unknown arguments and actual user-declared reason fields stay intact.
+        """
+        if not self._uses_antigravity_transport():
+            return arguments
+        schema = next((tool["input_schema"] for tool in tools or []
+                       if tool["name"] == name), {})
+        if (schema.get("type") == "object" and schema.get("properties") == {}
+                and schema.get("additionalProperties") is False
+                and set(arguments) == {"reason"} and isinstance(arguments["reason"], str)):
+            return {}
+        return arguments
+
+    def _client_tool_names(
+        self, messages: list[Message], tools: list[dict] | None,
+    ) -> dict[str, str]:
+        """Keep client search tools out of Antigravity's built-in heuristic.
+
+        That gateway interprets these names as server-side search even without
+        an Anthropic server-tool type, changing both execution and the model.
+        Alias only on the wire; runtime tools and persisted calls stay intact.
+        Keep the map request-local because providers serve concurrent sessions.
+        """
+        if not self._uses_antigravity_transport():
+            return {}
+        names = {tool["name"] for tool in tools or []}
+        names.update(tc.name for msg in messages for tc in msg.tool_calls or [])
+        aliases = {}
+        for name in sorted(names & {"web_search", "google_search", "web_search_20250305"}):
+            candidate = f"client_{name}"
+            suffix = 0
+            while candidate in names:
+                suffix += 1
+                candidate = f"client_{name}_{suffix}"
+            aliases[name] = candidate
+            names.add(candidate)
+        return aliases
+
+    def _convert_tools(
+        self, tools: list[dict], tool_names: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """Convert tools to Anthropic format."""
+        tool_names = tool_names or {}
+        return [
+            {
+                "name": tool_names.get(tool["name"], tool["name"]),
+                "description": tool["description"],
+                "input_schema": tool["input_schema"],
+            }
+            for tool in tools
+        ]

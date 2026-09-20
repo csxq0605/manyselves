@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from manyselves.core.providers.base import (
+from manyselves.runtime.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMToolCall,
@@ -16,12 +16,12 @@ from manyselves.core.providers.base import (
     provider_request_disposition,
     provider_retry_after,
 )
-from manyselves.core.providers.defaults import DEFAULT_MODELS
-from manyselves.core.providers.factory import (
+from manyselves.runtime.providers.defaults import DEFAULT_MODELS
+from manyselves.runtime.providers.factory import (
     ProviderFactory,
     ProviderManager,
 )
-from manyselves.core.providers.openai_provider import OpenAICompatProvider
+from manyselves.runtime.providers.openai_provider import OpenAICompatProvider
 
 # ── Base dataclass tests ────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ def test_message_dataclass():
 
 
 def test_anthropic_provider_uses_explicit_connect_timeout():
-    from manyselves.core.providers.anthropic_provider import (
+    from manyselves.runtime.providers.anthropic_provider import (
         ANTHROPIC_CONNECT_TIMEOUT_SECONDS,
         ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
         AnthropicProvider,
@@ -164,7 +164,7 @@ async def test_openai_adapter_treats_409_as_accepted_or_unknown():
 
 
 def test_anthropic_convert_simple_messages():
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -182,7 +182,7 @@ def test_anthropic_convert_simple_messages():
 
 
 def test_anthropic_convert_tool_calls():
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "test.txt"})
@@ -210,7 +210,7 @@ def test_anthropic_convert_tool_calls():
 
 
 def test_anthropic_convert_never_emits_null_content():
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -232,7 +232,7 @@ def test_anthropic_convert_merges_consecutive_text_as_string():
     ``invalid type: null, expected a string``. The merge must collapse
     text-only results back to a string while keeping tool blocks as an array.
     """
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -256,7 +256,7 @@ def test_anthropic_convert_merges_consecutive_text_as_string():
 
 def test_anthropic_convert_merges_text_with_tool_use_keeps_array():
     """A merged turn that still carries a tool_use block must stay a list."""
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "x"})
@@ -281,7 +281,7 @@ def test_anthropic_convert_drops_thinking_blocks_on_replay():
     API's encrypted ``signature``, so re-sending a fabricated thinking block
     makes the next request fail to deserialize (root cause of the
     "messages[0].content: invalid type: null" error on the second turn)."""
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "x"})
@@ -319,7 +319,7 @@ def test_anthropic_convert_flattens_historical_tool_replay_for_compatible_endpoi
     later user turn can fail. Once the assistant has already produced a normal
     follow-up reply, replay the plain-text assistant turns only.
     """
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     provider._supports_cache = False
@@ -346,7 +346,7 @@ def test_anthropic_convert_flattens_historical_tool_replay_for_compatible_endpoi
 
 
 def test_anthropic_convert_tools():
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tools = [{"name": "read", "description": "Read a file or inspect a directory", "input_schema": {"type": "object"}}]
@@ -355,6 +355,27 @@ def test_anthropic_convert_tools():
     assert len(result) == 1
     assert result[0]["name"] == "read"
     assert "input_schema" in result[0]
+
+
+def test_anthropic_compatible_retains_entire_active_tool_chain():
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider._supports_cache = False
+    messages = [Message(role="user", content="Research then write")]
+    for index in range(3):
+        messages.extend([
+            Message(role="assistant", content="Checking another source", tool_calls=[
+                LLMToolCall(id=f"call_{index}", name="read", arguments={"id": index})]),
+            Message(role="user", content=f"Evidence {index}", is_tool_result=True,
+                    tool_call_id=f"call_{index}"),
+        ])
+    _, payload = provider._convert_messages(messages)
+    assert len(payload) == 7
+    assert [payload[index]["content"][-1]["id"] for index in (1, 3, 5)] == [
+        "call_0", "call_1", "call_2"]
+    assert [payload[index]["content"][0]["content"] for index in (2, 4, 6)] == [
+        "Evidence 0", "Evidence 1", "Evidence 2"]
 
 
 # ── OpenAI provider conversion tests ────────────────────────────────────
@@ -498,7 +519,7 @@ async def test_openai_stream_has_application_level_idle_timeout(monkeypatch):
         chat=SimpleNamespace(completions=Completions())
     )
     monkeypatch.setattr(
-        "manyselves.core.providers.openai_provider.OPENAI_STREAM_IDLE_TIMEOUT_SECONDS",
+        "manyselves.runtime.providers.openai_provider.OPENAI_STREAM_IDLE_TIMEOUT_SECONDS",
         0.01,
     )
 
@@ -622,7 +643,8 @@ async def test_openai_stream_waits_for_usage_only_chunk_and_normalizes_cache():
     streamed = [
         chunk
         async for chunk in provider.chat_stream(
-            [Message(role="user", content="audit")]
+            [Message(role="user", content="audit")],
+            reasoning_enabled=False,
         )
     ]
 
@@ -641,11 +663,14 @@ async def test_openai_stream_waits_for_usage_only_chunk_and_normalizes_cache():
     assert terminal.request_metrics["representation"] == (
         "openai_chat_completions_stream_payload_v1"
     )
+    assert "thinking" not in captured
 
 
 @pytest.mark.asyncio
 async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+
+    captured = {}
 
     class StreamContext:
         def __aiter__(self):
@@ -679,6 +704,7 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
 
     class Messages:
         def stream(self, **kwargs):
+            captured.update(kwargs)
             return StreamContext()
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
@@ -706,11 +732,12 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
     assert chunks[0].request_metrics["representation"] == (
         "anthropic_messages_stream_payload_v1"
     )
+    assert "thinking" not in captured
 
 
 @pytest.mark.asyncio
 async def test_anthropic_stream_uses_per_request_idle_timeout(monkeypatch):
-    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 
     class NeverProducesEvent:
         def __aiter__(self):
@@ -735,7 +762,7 @@ async def test_anthropic_stream_uses_per_request_idle_timeout(monkeypatch):
     provider._supports_cache = False
     provider.client = SimpleNamespace(messages=Messages())
     monkeypatch.setattr(
-        "manyselves.core.providers.anthropic_provider.ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS",
+        "manyselves.runtime.providers.anthropic_provider.ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS",
         0.01,
     )
 

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
@@ -130,6 +130,13 @@ function ProjectRouteLayout({ accountUsername, onLogout, projectApi }: { readonl
   /></>;
 }
 
+function RemovedWorkflowRoute() {
+  const { projectId } = useParams();
+  return projectId
+    ? <Navigate replace to={`/projects/${encodeURIComponent(projectId)}`} />
+    : <Navigate replace to="/" />;
+}
+
 function NotFound() {
   return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
 }
@@ -165,6 +172,7 @@ export function AppRoutes({ accountUsername, gateway, onLogout, platform, settin
         <HistoryRoutePage gateway={gateway} />
       </Suspense>
     )} />
+    <Route path="/projects/:projectId/workflows" element={<RemovedWorkflowRoute />} />
     <Route path="/projects/:projectId/:section" element={(
       <Suspense fallback={<Placeholder title="正在加载项目文件…" />}>
         <ProjectDirectoryPage gateway={gateway} {...(platform ? { platform } : {})} />

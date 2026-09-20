@@ -1,0 +1,6 @@
+id: distribution-reporting-result
+version: 1.0.0
+description: Public value emitted by the full and selected-module Reporting workflows
+output_type: json
+contract: distribution_reporting_output
+label: Distribution reporting result

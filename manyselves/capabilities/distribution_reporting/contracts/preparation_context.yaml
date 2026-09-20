@@ -1,0 +1,5 @@
+id: preparation_context
+version: 1.0.0
+description: Typed state carried through deterministic Reporting preparation
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.preparation:PreparationContext

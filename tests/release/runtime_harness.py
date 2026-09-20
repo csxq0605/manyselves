@@ -14,8 +14,8 @@ from manyselves.application.runtime_facade import RuntimeFacade
 from manyselves.application.runtime_host import RuntimeHost
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig
-from manyselves.core.loops import LoopManager, MessageBus
 from manyselves.interfaces.types import UserMessage
+from manyselves.runtime.loops import LoopManager, MessageBus
 
 
 class LoopBoundary:

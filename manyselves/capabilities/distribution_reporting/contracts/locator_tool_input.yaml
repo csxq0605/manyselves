@@ -1,0 +1,10 @@
+id: locator_tool_input
+version: 1.0.0
+description: Provider input for opening one reference locator
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    locator: {type: string}
+  required: [locator]
+  additionalProperties: false

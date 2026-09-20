@@ -1,0 +1,10 @@
+id: accept-current-final-chapter-initial
+version: 1.0.0
+description: Accept one typed Final initial Auditor result
+implementation: capability:distribution-reporting:accept-current-final-chapter-initial
+input_contract: reporting_tool_input
+output_contract: declarative_final_chapter_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

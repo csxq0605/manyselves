@@ -1,0 +1,10 @@
+id: prepare-current-module-revision
+version: 1.0.0
+description: Prepare the original module Author's exact revision TaskEnvelope
+implementation: capability:distribution-reporting:prepare-current-module-revision
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

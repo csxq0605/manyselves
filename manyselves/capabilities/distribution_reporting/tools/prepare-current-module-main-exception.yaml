@@ -1,0 +1,10 @@
+id: prepare-current-module-main-exception
+version: 1.0.0
+description: Prepare or restore the existing module Main exception decision
+implementation: capability:distribution-reporting:prepare-current-module-main-exception
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -991,8 +991,7 @@ class MainWindow(QMainWindow):
         self.file_tree.restore_state()
         self.agent_panel.set_agent_type("main")
         for agent_id in self._conv_store.get_agent_types_with_history():
-            if agent_id in {"main", "report-workflow"}:
-                self.agent_sidebar.ensure_agent(agent_id)
+            self.agent_sidebar.ensure_agent(agent_id)
         self.agent_sidebar.select_agent("main")
         self.agent_panel.set_debug_mode("main" in self._debug_agents)
         self.agent_panel.conversation_cleared.connect(
@@ -2126,14 +2125,6 @@ class MainWindow(QMainWindow):
 
     def _handle_status_change(self, message: StatusChange) -> None:
         agent_str = str(message.agent_type)
-        run_id = str((message.extra or {}).get("run_id") or "").strip()
-        if (
-            agent_str == "report-workflow"
-            and str(message.status) == "thinking"
-            and run_id
-            and run_id != getattr(self, "_active_report_run_id", None)
-        ):
-            MainWindow._begin_report_run(self, run_id)
         self._agent_status_cache[agent_str] = (str(message.status), dict(message.extra or {}))
         ensure_agent = getattr(self, "_ensure_agent_visible", None)
         if callable(ensure_agent):
@@ -2146,29 +2137,6 @@ class MainWindow(QMainWindow):
                 sidebar.set_agent_task(agent_str, current_task)
         if self._is_visible_agent(agent_str):
             self.agent_panel.set_status(message.status, message.extra)
-
-    def _begin_report_run(self, run_id: str) -> None:
-        """Reset transient Agent UI state at the boundary of a new report run."""
-        self._active_report_run_id = run_id
-        persistent_agents = {"main", "report-workflow"}
-        sidebar = getattr(self, "agent_sidebar", None)
-        if sidebar is not None:
-            sidebar.retain_agents(persistent_agents)
-        for cache_name in (
-            "_agent_status_cache",
-            "_agent_queue_cache",
-            "_turn_state",
-            "_agent_stream_buffers",
-        ):
-            cache = getattr(self, cache_name, None)
-            if isinstance(cache, dict):
-                for agent_id in list(cache):
-                    if agent_id not in persistent_agents:
-                        cache.pop(agent_id, None)
-        if getattr(self, "current_agent_type", "main") not in persistent_agents:
-            self.current_agent_type = "main"
-            if sidebar is not None:
-                sidebar.select_agent("main")
 
     def _handle_error(self, message: Error) -> None:
         agent_str = str(message.source or "main")

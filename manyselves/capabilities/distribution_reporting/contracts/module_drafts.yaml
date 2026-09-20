@@ -1,0 +1,6 @@
+id: module_drafts
+version: 1.0.0
+description: Reporting adapter boundary for module_drafts
+adapter: json_schema
+schema: {}
+

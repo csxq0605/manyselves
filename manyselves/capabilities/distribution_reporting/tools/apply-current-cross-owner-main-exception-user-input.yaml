@@ -1,0 +1,10 @@
+id: apply-current-cross-owner-main-exception-user-input
+version: 1.0.0
+description: Apply validated user input to the current Cross Main exception
+implementation: capability:distribution-reporting:apply-current-cross-owner-main-exception-user-input
+input_contract: reporting_tool_input
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

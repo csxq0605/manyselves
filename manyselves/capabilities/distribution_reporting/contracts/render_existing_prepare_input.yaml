@@ -1,0 +1,5 @@
+id: render_existing_prepare_input
+version: 1.0.0
+description: Render preparation input joined with the Generic Run identity
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.render_existing:RenderExistingPrepareInput

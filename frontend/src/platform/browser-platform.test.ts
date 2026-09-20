@@ -154,6 +154,28 @@ describe("DOM browser platform driver", () => {
     await expect(selection).resolves.toEqual({ files: [file], name: "Inputs" });
   });
 
+  it("uses the supplied HTTP attachment URL without creating a blob URL", async () => {
+    const createObjectUrl = vi.fn(() => "blob:report");
+    const revokeObjectUrl = vi.fn();
+    const driver = createDomBrowserPlatformDriver({ document, createObjectUrl, revokeObjectUrl });
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function clickAnchor(this: HTMLAnchorElement) {
+        clicked.push(this.getAttribute("href") ?? "");
+      });
+    const input = {
+      blob: new Blob(["report"]),
+      suggestedName: "report.docx",
+      sourceUrl: "/api/v1/projects/test/files/download?path=Outputs%2Freport.docx",
+    };
+    await driver.saveDownload(input);
+    expect(clicked).toEqual([input.sourceUrl]);
+    expect(createObjectUrl).not.toHaveBeenCalled();
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+    expect(document.querySelector('a[download="report.docx"]')).toBeNull();
+    click.mockRestore();
+  });
+
   it("downloads a blob with a temporary object URL and cleans it up", async () => {
     const effects: unknown[] = [];
     const driver = createDomBrowserPlatformDriver({

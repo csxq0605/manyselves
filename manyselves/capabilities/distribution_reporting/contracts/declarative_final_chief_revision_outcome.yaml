@@ -1,0 +1,5 @@
+id: declarative_final_chief_revision_outcome
+version: 1.0.0
+description: Terminal typed result of one affected-only Final Chief revision lane
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.final_review:DeclarativeFinalChiefRevisionOutcome

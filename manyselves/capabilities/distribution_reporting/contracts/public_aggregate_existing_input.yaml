@@ -1,0 +1,5 @@
+id: public_aggregate_existing_input
+version: 1.0.0
+description: User-supplied input for the public aggregate-existing Workflow root
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.entrypoint:PublicAggregateExistingRequest

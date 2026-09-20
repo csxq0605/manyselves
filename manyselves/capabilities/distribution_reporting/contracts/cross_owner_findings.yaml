@@ -1,0 +1,6 @@
+id: cross_owner_findings
+version: 1.0.0
+description: Reporting adapter boundary for cross_owner_findings
+adapter: json_schema
+schema: {}
+
