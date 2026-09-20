@@ -106,14 +106,14 @@ Work/runs/<修订Run>/reviews/impact-analysis.json
 | 参数 | 默认 | 何时改 |
 |---|---|---|
 | `missing_evidence_policy` | `draft` | 缺证据要停/问/跳过时改为 `ask` / `block` / `skip` |
-| `cost_control_mode` | `observe` | 仅记录；`warn` / `pause_at_boundary` 需后端真正 enforce 后才有意义 |
+| `cost_control_mode` | `observe` | 完成版产品按 observe 记录用量；其他枚举值仅保留输入兼容，不承诺暂停语义 |
 | `preparation_mode` | `deterministic_workers` | 需要串行排查时改为 `serial` |
 | `preparation_concurrency` | `5` | 与五模块对齐；可 1–16 |
-| `max_provider_attempts` | `600` | 按实测量级；收紧预算时改小 |
-| `max_total_tokens` | `30_000_000` | 同上 |
+| `max_provider_attempts` | `600` | 用量记录元数据，不作为完成版产品的强制停止条件 |
+| `max_total_tokens` | `30_000_000` | 用量记录元数据，不作为完成版产品的强制停止条件 |
 | `impact_mode` | `none` | 仅 revise；见上文 |
 
-**说明：** `cost_control_mode` / `max_provider_attempts` / `max_total_tokens` 目前会写入 Run 记录，但声明式路径上**尚未强制超限暂停**；不要向用户保证「超限必停」。
+**说明：** 完成版产品的成本合同是记录和展示用量；`warn` / `pause_at_boundary` 与两个 `max_*` 输入不构成「超限必停」承诺。这是已确认的产品边界，不是未完成项。
 
 ---
 

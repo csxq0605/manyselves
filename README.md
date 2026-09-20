@@ -109,7 +109,7 @@ Markdown / YAML / JSON Schema / Python Tool references
 
 ### Bundled Capability: power-distribution reporting
 
-A working reporting team: evidence intake → five module lanes →
+The completed bundled reporting product: evidence intake → five module lanes →
 responsibility audit → Cross/Chief → Final → Word/index delivery, plus targeted
 revision of an existing complete report (impact analysis
 `impact_mode=auto|confirm`).

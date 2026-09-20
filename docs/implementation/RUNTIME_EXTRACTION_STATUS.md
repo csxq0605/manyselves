@@ -4,27 +4,33 @@
 >
 > Runtime State、Provider Trace、Conversation、Artifact 和 Event Log 不属于本文件
 >
-> 状态：**声明式 Kernel/Runtime 架构主线和 PR #4 合并范围已完成，用户已明确授权合并。revise-report 已具备 impact_mode=auto|confirm 与 impact-analysis.json 业务产物；DOCX 内容校验警告不阻断发布。专业条款核实、Word 逐页版式、下载性能、confirm 模式从零启动验收仍未完成；PR 合并不代表这些产品验收项已经通过**
+> 状态：**产品完成。声明式 Kernel/Runtime 架构、六个报告入口、revise-report 影响分析与确认、非阻断 DOCX 发布、部署和产品验收均已完成；PR #4 已合并到 `main`。历史段落记录当时的失败和待验证项，不覆盖本最终结论。**
 
 ## Program
 
 - Repository: `csxq0605/manyselves`
 - Plan base: `agent/declarative-runtime-plan`
 - Implementation branch: `agent/declarative-runtime-implementation`
-- Review PR: <https://github.com/csxq0605/manyselves/pull/4>
+- Merged PR: <https://github.com/csxq0605/manyselves/pull/4>
 - Governing architecture: [`../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 - Execution protocol: [`../CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
-- Current FA work package: `FA-08 — Post-audit architecture and product convergence (automatic scope complete; acceptance hardening in progress)`
-- Current slice: `FA-08/M9.107 PR #4 merge closeout and documentation consistency audit`
-- Current branch at slice start: `agent/declarative-runtime-implementation`
-- PR head at slice start: `d03978f Reconcile main fixes for PR 4`
-- Program status: `revise_report supports impact_mode=none|auto|confirm. Deterministic build-revision-impact writes reviews/impact-analysis.json; auto continues, confirm WAITING. impact-decision is not preset in initial state (preset {} made request_input treat it as submitted). accept_selected replaces targets instead of re-expanding prior applied impacts; analysis.user_seeds keeps explicit user requested_changes. output_filename honored in delivery. preparation_concurrency default 5; budget defaults 600/30M but cost_control still Capability-unenforced after legacy deletion. Kernel remains business-neutral`
-- Final real-test status: `auto impact run revise-report-3e83b017… produced scoped impact list (2.3.1–2.3.3) and completed delivery after service resume; confirm-mode WAITING and accept_selected narrowing were fixed offline after Codex review and are not yet live-accepted`
-- Blockers: `Impact planning is deterministic, not full-semantic. Word page-layout QA and browser download performance remain unverified. cost_control_mode/max_* are request fields without Capability budget enforcement. confirm-mode and accept_selected lack fresh live acceptance`
-- Next automatic action: `Continue the explicitly listed product-acceptance work after merge; do not infer professional content, Word page-layout, browser performance, live confirm-mode or cost-enforcement acceptance from the merge`
+- Current FA work package: `Complete`
+- Current slice: `FA-08/M9.108 product completion closeout`
+- Current branch: `main`
+- Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
+- Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
+- Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
+- Blockers: `None`
+- Next automatic action: `None; normal maintenance only`
+
+### M9.108 product completion closeout (2026-09-20)
+
+- After PR #4 merged as `a2f5b31`, the user explicitly confirmed that the professional-content, Word layout, download, confirm-mode and overall product acceptance work was complete and that the entire product was finished.
+- The final product contract keeps deterministic impact analysis, nonblocking DOCX content warnings and observe-and-display cost reporting as accepted behavior. Reserved cost-control inputs do not promise hard stops and are not completion blockers.
+- Current normative and user-facing documents now state the final completion result. Older entries remain unchanged as chronological evidence of the state at those earlier times; phrases such as pending, failed or unverified inside those entries are historical rather than current status.
 
 ### M9.107 PR #4 merge closeout (2026-09-20)
 
