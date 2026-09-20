@@ -147,7 +147,7 @@ Work/runs/<修订Run>/reviews/impact-analysis.json
 | `accepted` | 请求已受理，尚未完成 |
 | `waiting` | 等待你输入（如影响清单确认） |
 | `running` | 正在执行；以运行卡/运行态为准 |
-| `completed` | 已完成；有交付产物才能称「已交付」 |
+| `completed` | 已完成；有交付产物才能称「已交付」，同时检查是否带有渲染警告 |
 | `failed` | 失败；记录真实 Run ID 与错误，同 Run 可恢复 |
 
 输出通常在：
@@ -156,6 +156,12 @@ Work/runs/<修订Run>/reviews/impact-analysis.json
 Outputs/Reports/          # 公开报告与来源索引
 Work/runs/<runId>/        # 该 Run 的中间产物与交付包
 ```
+
+### DOCX 发布与验证
+
+- 生成文件无法被 Word/WPS 打开时，渲染失败，不发布成功结果。
+- 文件可以打开，但缺少批准正文/标题或仍含未解析内容 token 时，系统继续发布 DOCX，同时在 render result/log 中写入 `validation_warnings`，并将 `protected_prose_verified` 设为 `false`。
+- 带警告的 `completed` 表示文件已经交付，不表示内容或版式已经通过专业验收；应结合警告和人工验收判断。
 
 ---
 

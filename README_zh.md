@@ -67,7 +67,7 @@ Manyselves 的出发点是：**Agent 团队的边界应写在文档里，而不�
 | `manyselves/capabilities/` | Capability 包（当前含 `distribution_reporting`） |
 | `manyselves/application/` | 通用 Capability/Workflow/Run 生命周期 |
 | `manyselves/webapi/` | 通用 FastAPI |
-| `manyselves/frontend/` | Schema/State/Event/Output 驱动的 React |
+| `frontend/` | 由 State/Event/Output 投影驱动的 Capability 专属 React 产品前端 |
 | `manyselves/templates/` | Agent 身份与报告 Skill 文档 |
 | `docs/` | 定位、架构、部署与内部实施状态（见 [docs/README.md](docs/README.md)） |
 

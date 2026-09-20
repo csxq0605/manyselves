@@ -22,8 +22,10 @@
 | 文档 | 内容 |
 |---|---|
 | [RUN_LOCAL.md](RUN_LOCAL.md) | 本地 Web 运行 |
-| [deployment/](deployment/) | Docker / Compose |
+| [RUNNING.md](RUNNING.md) | Docker / Compose、非 root 容器引擎与服务运行 |
+| [OFFLINE_PACKAGING_REMOTE_DEPLOYMENT.md](OFFLINE_PACKAGING_REMOTE_DEPLOYMENT.md) | 离线打包与远程部署 |
+| [CONFIGURATION.md](CONFIGURATION.md) | 应用、运行时与 Capability 配置 |
 
 ## 过程记录（非用户手册）
 
-`audits/`、`research/`、`superpowers/`、`phase1/`、`experimental-*` 与历史 handoff 等为内部过程材料，需要追溯实现时再打开。
+`research/`、`implementation/` 中的历史段落与旧 handoff 是内部过程材料。判断当前状态时，以 `implementation/RUNTIME_EXTRACTION_STATUS.md` 顶部的 Current position 为准。

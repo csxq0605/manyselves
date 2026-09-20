@@ -103,13 +103,13 @@ Markdown / YAML / JSON Schema / Python Tool references
 | `manyselves/capabilities/` | Capability packages (`distribution_reporting`) |
 | `manyselves/application/` | Generic Capability/Workflow/Run lifecycle |
 | `manyselves/webapi/` | Generic FastAPI |
-| `manyselves/frontend/` | Schema/State/Event/Output-driven React |
+| `frontend/` | Capability-specific React product frontend driven by State/Event/Output projections |
 | `manyselves/templates/` | Agent identity and report skill documents |
 | `docs/` | Positioning, architecture, deployment, internal status ([index](docs/README.md)) |
 
 ### Bundled Capability: power-distribution reporting
 
-A production-grade reporting team: evidence intake → five module lanes →
+A working reporting team: evidence intake → five module lanes →
 responsibility audit → Cross/Chief → Final → Word/index delivery, plus targeted
 revision of an existing complete report (impact analysis
 `impact_mode=auto|confirm`).

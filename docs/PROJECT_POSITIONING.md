@@ -4,7 +4,7 @@
 >
 > 适用范围：仓库结构、公共接口、Capability 包、运行时、FastAPI、React、测试与发布
 >
-> 实施状态：目标尚未完全实现；以 [`implementation/RUNTIME_EXTRACTION_STATUS.md`](implementation/RUNTIME_EXTRACTION_STATUS.md) 为准
+> 实施状态：核心架构与 PR #4 合并范围已落地；尚未完成的产品验收项以 [`implementation/RUNTIME_EXTRACTION_STATUS.md`](implementation/RUNTIME_EXTRACTION_STATUS.md) 为准，合并不代表这些验收项已经通过
 
 ## 1. 一句话定位
 
@@ -266,7 +266,7 @@ Manyselves 不是：
 - 自动验证、构建和最终真实 Provider/项目/浏览器测试通过；
 - 文档与实际代码一致。
 
-在完成前，仓库状态必须明确写为“最终架构收敛中”，不能以历史声明式 Run 成功替代架构证明。
+在剩余验收完成前，仓库状态必须明确列出未验证项，不能以历史声明式 Run 成功或 PR 合并替代当前架构与产品验收证据。
 
 ## 14. 对外描述
 
