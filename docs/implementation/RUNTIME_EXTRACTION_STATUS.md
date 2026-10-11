@@ -20,13 +20,21 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-11 semantic compaction headroom and latency diagnosis`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `fb0ded3`)
+- Current slice: `2026-10-11 context compaction necessity and per-task strategy evaluation`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `0ad08f4`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Controlled generation/latency/cost comparison in the approved private inference environment; no external Provider execution or customer upload authorized by this maintenance slice.`
+- Next automatic action: `Evaluate no-semantic-compaction, recoverable tool-result masking and incremental middle-history summarization by task before further default tuning. Actual generation comparisons remain restricted to an approved inference environment and data scope; no customer upload is authorized by this slice.`
+
+### 2026-10-11 — context compaction necessity and per-task strategy evaluation
+
+- User steering: assess whether bounded subagents need compression at all, which information to retain, and how to derive thresholds and compression ratios; defer budget configuration. The previous 60% post-compaction target is an engineering headroom choice, not an empirically optimal report policy.
+- Read-only historical role profile: the initial 2.2 author made 24 successful normal requests with no summary and a maximum observed input of 49,238 tokens; two Final roles also made no summaries, with maxima of 27,213 and 20,318. These observations do not certify report quality or establish other roles' uncompressed context peaks. Multiple task invocations can share an Agent identity.
+- The configured model's current official MiMo-V2.5 specification advertises a 1M-token context. The actual endpoint/deployment limit is unverified; Runtime's missing-window fallback of 128K and separate 36K estimated working-memory trigger are not evidence of that endpoint's capacity. No Provider call was made.
+- Research comparison: no semantic compaction, equivalent fact serialization, recoverable old tool-result masking, protected facts plus incremental middle-history summary and intact recent exchanges, and task-boundary reconstruction. Primary references: Anthropic context engineering, JetBrains/TUM observation masking research, and OpenHands' official condenser implementation. Coding-task findings are not report-quality validation.
+- Local audit artifacts: `context_strategy_profile.py`, `context_strategy_profile.json`, and `压缩机制选择与实验设计.md` in the external audit workspace. The note defines total versus historical compression ratios, conditional retention floors, window/output/growth constraints, and staged quality/latency comparisons. Candidate settings are experiments, not new defaults. No production setting, report, or customer source changed in this slice.
 
 ### 2026-10-11 — semantic compaction headroom and latency diagnosis
 
