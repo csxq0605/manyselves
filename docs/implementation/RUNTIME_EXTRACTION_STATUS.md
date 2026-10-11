@@ -20,13 +20,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-12 synthetic live compaction comparison and summary information preservation`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `ada5701`)
+- Current slice: `2026-10-12 original-plan review: task-scoped fact projection before further compaction tuning`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `dfd463a`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Official API credentials and synthetic tool/summary calls verified. Customer-report generation and evidence-faithfulness validation remain pending approval of the data/environment scope; no customer data sent in this slice. Keep existing 36K/0.6 configuration pending representative evaluation. Adaptive-thinking tool replay still needs signed-block persistence and append-only/context-boundary support; configured Haiku tool calls use supported disabled thinking.`
+- Next automatic action: `Characterize and connect task-scoped authoritative fact projection using existing Runtime context rebuilding and Capability state; test visible evidence, deduplication, revision replacement and recovery offline before another synthetic generation comparison. Do not expand compaction-threshold sweeps first. Customer-report online validation still requires a resolved data/environment scope. Keep 36K/0.6 unchanged pending representative evaluation; adaptive-thinking tool replay remains unsupported as noted below.`
+
+### 2026-10-12 — return to the original fact-delivery and context-rebuilding plan
+
+- User challenged a summary-forgetting/repeated-file-search loop. Re-read the original local research plan and implementation artifacts: intended sequence was complete compact facts (G1), task-scoped context rebuilding (G2), then controlled context management (G3). The recent synthetic history comparison did not exercise the G1/G2 combination and is not final-architecture performance evidence.
+- Production inspection: module fact packets are delivered through TaskEnvelope, inline up to 32,000 characters or by readable reference. They remain ordinary history rather than an independently reconstructed fact working set. `context_rebuilder` exists in AgentLoop but no production composition assigning a concrete implementation was found. The main missing step is automatic selection and single-copy placement of current authoritative facts, draft and unresolved work, not another summary threshold.
+- Proposed slice retains durable conversations and recovery identity, and uses Capability-owned module/object/source scope with the generic Runtime context interface. Exact known-source reads and finite-scope enumeration should happen locally without an extra model search round; genuinely unknown/out-of-scope retrieval remains on demand. Replacing a context projection avoids duplicated history but does not make its per-request input tokens free. File-result caching and Provider prefix caching must be measured separately; the current Anthropic adapter explicitly marks system text, not task fact bodies.
+- Original audit plan annotated with this correction and offline-first acceptance cases in `audit_manyselves/检索_上下文_质量与成本方案调研.md` section 10 (outside Git). This review made no production code/configuration changes, API calls, customer uploads or service restarts.
 
 ### 2026-10-12 — synthetic live comparison and post-summary information preservation
 
