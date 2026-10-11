@@ -78,6 +78,7 @@ class AgentDefaults(Base):
     max_tool_calls_per_round: int = Field(default=4, ge=1)
     max_tool_result_chars: int = Field(default=6000, ge=512)
     working_memory_tokens: int = Field(default=36000, ge=4096)
+    working_memory_compaction_target_ratio: float = Field(default=0.6, gt=0, lt=1)
     context_compaction_strategy: Literal["model_summary", "structured_handoff"] = "model_summary"
     timezone: str = "Asia/Shanghai"
     prompt_templates_dir: str = "templates/agents"

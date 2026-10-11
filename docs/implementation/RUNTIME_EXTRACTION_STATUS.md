@@ -6,6 +6,8 @@
 >
 > 状态：**产品完成。声明式 Kernel/Runtime 架构、六个报告入口、revise-report 影响分析与确认、非阻断 DOCX 发布、部署和产品验收均已完成；PR #4 已合并到 `main`。历史段落记录当时的失败和待验证项，不覆盖本最终结论。**
 
+> **2026-10 报告质量与性能维护仍在进行，尚未完成新的真实生成、耗时/token 与逐项引用准确性验收。上面的产品完成状态指 2026-09 的历史产品验收，不能代替当前维护验收。**
+
 ## Program
 
 - Repository: `csxq0605/manyselves`
@@ -18,13 +20,23 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-11 paginated evidence recall and structured context handoff`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `4552138`)
+- Current slice: `2026-10-11 semantic compaction headroom and latency diagnosis`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `fb0ded3`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
 - Next automatic action: `Controlled generation/latency/cost comparison in the approved private inference environment; no external Provider execution or customer upload authorized by this maintenance slice.`
+
+### 2026-10-11 — semantic compaction headroom and latency diagnosis
+
+- User correction: previous slice completion did not finish the requested speed/cost/quality work. Semantic summarization remains the default and is useful; its net benefit must be assessed, not inferred from summary-request cost alone.
+- Read-only historical timing audit: full-report Provider observation span 118.04 minutes, 525 requests including 120 summaries; revision span 84.74 minutes, 155 requests including 20 summaries. Full-report summary requests consumed 8,523,376 ledger tokens and 97.82 summed active request minutes, which overlap with other requests and cannot be subtracted from wall time. Of 100 adjacent-summary intervals within Agent identities, 79 contained only one normal request; neighboring before/after input-token ratio median was 1.013 (observational, not a counterfactual).
+- Four reproduced defects: retained history was filled to the trigger itself; the latest user boundary was added without reserving its budget; the actual model summary could grow beyond the provisional summary without reselection; a mandatory-only oversized input still paid for a summary that removed nothing.
+- Runtime fix: trigger remains `working_memory_tokens`; post-compaction target defaults to 60% of it via `working_memory_compaction_target_ratio`. Reserve current task and intact latest exchange, then fill older units within the remaining budget. Re-select after obtaining the actual semantic summary. Skip model summarization when no historical messages can be evicted. No domain logic or new gates/locks/hashes/frameworks.
+- Same-input synthetic probe, with a fixed mock semantic summary in both versions: at 36,000 estimated-token trigger and 100 normal rounds, summary invocations 81 → 9, ordinary request estimated input 3,243,586 → 2,644,956 (18.46% lower). At 4,096 trigger / 60 rounds, summaries 53 → 14. These are deterministic scheduling/context-volume checks, not actual Provider time/token savings or semantic-quality measurements. Original measurements and scripts stay in the local audit workspace.
+- Focused/affected Runtime and config tests: `109 passed`, including semantic-decision preservation and intact tool exchanges; final configuration/session/RuntimeServices selection `15 passed` (overlap, not summed). Changed Python Ruff passed with only the two existing `agent_loop.py:N818` exclusions; staged whitespace checks passed. No real Provider call, service restart, report rewrite or customer upload.
+- Remaining: true report latency/quality comparison in an approved inference environment; long immutable task inputs, summarizer payload size and possible summary information loss still require evaluation. Current application configuration resolves to an external MiMo endpoint, not a confirmed private endpoint; this slice does not call it with customer material.
 
 ### 2026-10-11 — paginated evidence recall and structured context handoff
 

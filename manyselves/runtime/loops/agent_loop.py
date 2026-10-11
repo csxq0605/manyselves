@@ -872,6 +872,7 @@ def _compact_messages_for_working_memory(
     *,
     target_tokens: int = 36000,
     task_context: Mapping[str, Any] | None = None,
+    handoff_payload: Mapping[str, Any] | None = None,
 ) -> list[LLMMessage]:
     """Replace old working context with one structured model handoff.
 
@@ -885,7 +886,7 @@ def _compact_messages_for_working_memory(
     expressions.
     """
 
-    if not messages or _estimate_tokens(messages) <= target_tokens:
+    if not messages or (handoff_payload is None and _estimate_tokens(messages) <= target_tokens):
         return messages
 
     system_msg = messages[0]
@@ -894,7 +895,8 @@ def _compact_messages_for_working_memory(
         for message in messages[1:]
         if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
     ]
-    summary_payload = _build_handoff_summary(messages[1:], task_context=task_context)
+    summary_payload = (dict(handoff_payload) if handoff_payload is not None
+                       else _build_handoff_summary(messages[1:], task_context=task_context))
     summary_content = _render_handoff_summary(summary_payload)
     handoff = LLMMessage(role="user", content=summary_content)
 
@@ -902,36 +904,35 @@ def _compact_messages_for_working_memory(
     recent_budget = max(0, int(target_tokens) - fixed_tokens)
 
     units = _atomic_history_units(history)
-    kept: list[LLMMessage] = []
+    selected_indices: set[int] = set()
     kept_tokens = 0
     # Keep the newest unit no matter how large it is.  This is the active task
     # boundary/tool exchange and is required to finish an unfinished protocol.
     if units:
         newest = units[-1]
-        kept = list(newest)
+        selected_indices.add(len(units) - 1)
         kept_tokens = _estimate_tokens(newest)
-        for unit in reversed(units[:-1]):
-            unit_tokens = _estimate_tokens(unit)
-            if kept_tokens + unit_tokens > recent_budget:
-                continue
-            kept[0:0] = unit
-            kept_tokens += unit_tokens
 
-    # A current user boundary can be a standalone unit after a very large tool
-    # exchange.  Ensure the newest user task remains visible even if the latest
-    # atomic unit is an assistant/tool pair.
-    latest_user = next(
-        (
-            message
-            for message in reversed(history)
-            if message.role == "user" and not message.is_tool_result
-        ),
-        None,
-    )
-    if latest_user is not None and latest_user not in kept:
-        user_tokens = _estimate_tokens([latest_user])
-        if user_tokens <= recent_budget:
-            kept.insert(0, latest_user)
+    # Reserve the latest task boundary before filling the remaining budget.
+    # Appending it after filling the history used to exceed the target.
+    latest_user_index = next((index for index in reversed(range(len(units)))
+                              if any(m.role == "user" and not m.is_tool_result
+                                     for m in units[index])), None)
+    if latest_user_index is not None and latest_user_index not in selected_indices:
+        user_tokens = _estimate_tokens(units[latest_user_index])
+        if kept_tokens + user_tokens <= recent_budget:
+            selected_indices.add(latest_user_index)
+            kept_tokens += user_tokens
+    for index in reversed(range(len(units))):
+        if index in selected_indices:
+            continue
+        unit_tokens = _estimate_tokens(units[index])
+        if kept_tokens + unit_tokens > recent_budget:
+            continue
+        selected_indices.add(index)
+        kept_tokens += unit_tokens
+    kept = [message for index, unit in enumerate(units)
+            if index in selected_indices for message in unit]
 
     result = [system_msg, handoff, *kept]
     logger.info(
@@ -3660,9 +3661,11 @@ class AgentLoop:
         placed in model-visible context.
         """
 
+        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+            return messages
         compacted = _compact_messages_for_working_memory(
             messages,
-            target_tokens=self.config.working_memory_tokens,
+            target_tokens=int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio),
             task_context=self.active_task_identity,
         )
         if compacted is messages:
@@ -3884,11 +3887,20 @@ class AgentLoop:
 
         if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
             return messages
+        target_tokens = int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio)
         baseline = _compact_messages_for_working_memory(
             messages,
-            target_tokens=self.config.working_memory_tokens,
+            target_tokens=target_tokens,
             task_context=self.active_task_identity,
         )
+        retained_ids = {id(message) for message in baseline[2:]}
+        evicted = [message for message in messages[1:]
+                   if id(message) not in retained_ids
+                   and _HANDOFF_SUMMARY_MARKER not in str(message.content or "")]
+        if not evicted:
+            # A summary cannot shrink the mandatory current input. Do not pay
+            # for a model summary that leaves every original message in place.
+            return messages
         summary_message = next(
             (
                 item
@@ -3924,8 +3936,17 @@ class AgentLoop:
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload
-        index = baseline.index(summary_message)
-        baseline[index] = LLMMessage(role="user", content=_render_handoff_summary(payload))
+        # Select retained units using the actual semantic summary size, not
+        # the provisional deterministic summary size used before the request.
+        baseline = _compact_messages_for_working_memory(
+            messages, target_tokens=target_tokens,
+            task_context=self.active_task_identity, handoff_payload=payload,
+        )
+        logger.info(
+            "Context compaction for {}: estimated_tokens={} -> {}; trigger={}; target={}; source={}",
+            self.agent_type, _estimate_tokens(messages), _estimate_tokens(baseline),
+            self.config.working_memory_tokens, target_tokens, payload["source"],
+        )
         self._persist_handoff_summary(payload)
         return baseline
 
