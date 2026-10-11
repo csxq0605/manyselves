@@ -80,6 +80,7 @@ class AgentDefaults(Base):
     working_memory_tokens: int = Field(default=36000, ge=4096)
     working_memory_compaction_target_ratio: float = Field(default=0.6, gt=0, lt=1)
     context_compaction_strategy: Literal["model_summary", "structured_handoff"] = "model_summary"
+    context_compaction_model: str | None = None  # Inherit provider/credentials; None uses the task model.
     timezone: str = "Asia/Shanghai"
     prompt_templates_dir: str = "templates/agents"
 

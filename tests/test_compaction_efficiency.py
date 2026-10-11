@@ -66,14 +66,19 @@ def test_latest_task_boundary_does_not_overfill_the_retained_budget():
 
 
 @pytest.mark.asyncio
-async def test_large_model_summary_is_accounted_for_before_retaining_history(tmp_path):
+async def test_large_model_summary_never_evicts_unsummarized_history(tmp_path):
     agent = loop(tmp_path)
     agent._request_model_handoff_summary.return_value["progress"] = [f"step-{i}:" + "p" * 250 for i in range(8)]
     messages = [LLMMessage(role="system", content="system"), LLMMessage(role="user", content="review")]
     for index in range(24):
         messages.extend(exchange(index))
     compacted = await agent._compact_working_memory_async(messages)
-    assert _estimate_tokens(compacted) <= int(4096 * .6)
+    # The soft target may be exceeded by the real summary. Do not hit it by
+    # dropping extra messages the summary model never received.
+    assert _estimate_tokens(compacted) < agent.config.working_memory_tokens
+    summarized = {id(m) for m in agent._request_model_handoff_summary.await_args.args[0]}
+    retained = {id(m) for m in compacted}
+    assert all(id(m) in summarized or id(m) in retained for m in messages)
     assert "step-7:" in compacted[1].content
 
 

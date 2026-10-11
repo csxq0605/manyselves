@@ -68,6 +68,7 @@ def mock_gui():
 def mock_provider():
     provider = AsyncMock()
     provider.model = "test-model"
+    provider.context_window = 128000
     provider.chat.return_value = LLMResponse(
         content="I will help you.",
         tool_calls=[],
@@ -869,7 +870,7 @@ async def test_model_handoff_disables_anthropic_reasoning_on_wire(agent_loop):
 
 
 @pytest.mark.asyncio
-async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop):
+async def test_working_memory_compaction_failure_preserves_history(agent_loop):
     agent_loop.config = AgentDefaults(max_tool_iterations=5, working_memory_tokens=5120)
     agent_loop._chat_with_retries = AsyncMock(side_effect=RuntimeError("provider unavailable"))
     messages = [
@@ -880,8 +881,8 @@ async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop
 
     compacted = await agent_loop._compact_working_memory_async(messages)
 
-    assert '"source":"deterministic_fallback"' in compacted[1].content
-    assert "model_handoff_unavailable" in compacted[1].content
+    assert compacted is messages
+    agent_loop._chat_with_retries.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -918,7 +919,7 @@ async def test_compaction_keeps_task_refs_independent_of_summary_model(agent_loo
 
 
 @pytest.mark.asyncio
-async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
+async def test_oversized_handoff_keeps_history_instead_of_summarizing_a_subset(agent_loop):
     agent_loop.config = AgentDefaults(
         max_tool_iterations=5,
         max_tokens=512,
@@ -965,12 +966,9 @@ async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
         )
     messages.append(LLMMessage(role="user", content="current task"))
 
-    await agent_loop._compact_working_memory_async(messages)
-
-    summary_request = agent_loop._chat_with_retries.await_args.args[0]
-    assert len(summary_request[-1].content) < 20_000
-    assert "<older_state_snapshot>" in summary_request[-1].content
-    assert "<compaction_transcript>" in summary_request[-1].content
+    result = await agent_loop._compact_working_memory_async(messages)
+    assert result is messages
+    agent_loop._chat_with_retries.assert_not_awaited()
 
 
 def test_identity_task_boundary_and_restart_restore_keep_lossless_history(agent_loop):

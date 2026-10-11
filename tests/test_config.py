@@ -26,6 +26,7 @@ async def test_config_manager_load_default(temp_config_file):
     assert isinstance(config, AppConfig)
     assert config.agents.defaults.provider == "openai"
     assert config.agents.defaults.context_compaction_strategy == "model_summary"
+    assert config.agents.defaults.context_compaction_model is None
     assert config.agents.defaults.working_memory_compaction_target_ratio == 0.6
 
 
@@ -61,6 +62,7 @@ async def test_config_manager_save_and_load(temp_config_file):
     config_manager.config.agents.defaults.model = "custom_model"
     config_manager.config.agents.defaults.temperature = 0.5
     config_manager.config.agents.defaults.context_compaction_strategy = "structured_handoff"
+    config_manager.config.agents.defaults.context_compaction_model = "claude-haiku-5-5"
     config_manager.config.agents.defaults.working_memory_compaction_target_ratio = 0.5
 
     # Save
@@ -73,6 +75,7 @@ async def test_config_manager_save_and_load(temp_config_file):
     assert config.agents.defaults.model == "custom_model"
     assert config.agents.defaults.temperature == 0.5
     assert config.agents.defaults.context_compaction_strategy == "structured_handoff"
+    assert config.agents.defaults.context_compaction_model == "claude-haiku-5-5"
     assert config.agents.defaults.working_memory_compaction_target_ratio == 0.5
 
 

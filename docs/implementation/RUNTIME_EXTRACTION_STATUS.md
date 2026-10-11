@@ -20,13 +20,23 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-11 cumulative context growth, cache reuse and compaction horizon audit`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `f5c3622`)
+- Current slice: `2026-10-11 incremental handoff and official Claude Haiku 5.5 configuration`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `9a639ca`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Continue offline characterization of incremental summary input and retained-history boundaries before further default tuning. The user deferred discussion of actual inference environment/data scope; do not initiate external generation or renew that question as a prerequisite to offline work.`
+- Next automatic action: `Credential setup remains with the user. Real generation, latency and evidence-faithfulness validation remain pending. Adaptive-thinking tool replay needs signed-block persistence and append-only/context-boundary support; the configured Haiku tool path explicitly uses its supported disabled-thinking mode.`
+
+### 2026-10-11 — incremental handoff and official Claude Haiku 5.5 configuration
+
+- User instruction: switch this checkout to the official Claude API, use Haiku 5.5, and leave the API key for the user to fill. The prior local MiMo selection was not the desired configuration. The ignored local YAML now selects `anthropic-official` / `https://api.anthropic.com`, with an empty key and `claude-haiku-5-5` for both task and summary models. Old provider entries and credentials are retained but disabled to prevent fallback to an old service before the official key is supplied. The tracked example uses the same key-free official configuration.
+- Characterization first: six incremental-compaction cases and two initial Haiku wire cases failed before implementation. Reproduced retained-history rereading, 160-character retruncation of prior decisions, content loss on failed summaries, unaccounted serialized tool arguments, missing request-scoped summary-model selection/restoration, and rejected legacy sampling parameters.
+- Runtime now summarizes previous handoffs plus exactly the whole units selected for eviction, with task metadata. It freezes that partition; a larger actual summary may exceed the soft target rather than drop additional unsummarized content. Failed, malformed, refused, output-truncated or oversized summary requests leave working history unchanged. No new orchestration framework, provider calls, locks or hash/gate mechanism.
+- Optional `context_compaction_model` reuses the active Provider route/credentials/client through a loop-local copy. Admission and usage record the summary model; the main model is restored on success, error and cancellation. Existing behavior is inherited when the field is null. Exact refs/task identity remain Runtime-owned.
+- Haiku 5.5 omits legacy sampling parameters in both stream and non-stream requests. Independent summaries use adaptive thinking with low effort. Official documentation also exposed a pre-existing signed-thinking replay gap: the Runtime preserves thinking text but not signed content arrays. Haiku tool loops therefore explicitly use supported disabled thinking at medium effort (low for a low-reasoning hint). Adaptive-thinking tool loops are not claimed supported; quality under this compatible mode still needs real evaluation. See `docs/CONTEXT_HANDOFF.md` for official sources and limitations.
+- Focused/affected verification: `153 passed`; changed Python Ruff passed with only the two pre-existing `agent_loop.py:N818` exclusions. Local and example configuration validation confirms only the official provider enabled, correct model IDs and an empty key. Staged whitespace checks passed. No full-suite run, live API request, service restart, customer upload or remote push.
+- Same-input synthetic replay against the previous headroom fix: the 36K trigger / 100-round fixture still makes 9 summaries with identical normal-input estimate 2,644,956; summary-source estimate falls from 337,162 to 154,408 (54.20%). These count the mock summarizer's source messages, not actual Provider-billed tokens, wall-clock savings or semantic quality. Audit output: `compaction_efficiency_incremental.json` outside the repository.
 
 ### 2026-10-11 — cumulative context growth, cache reuse and compaction horizon audit
 
