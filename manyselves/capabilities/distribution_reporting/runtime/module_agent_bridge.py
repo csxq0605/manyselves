@@ -261,6 +261,11 @@ class ModuleAuthoringAgentBridge:
                     "run_id": run_id,
                     "input_contract": task.input_contract,
                     "output_contract": task.output_contract,
+                    "objective": envelope.objective,
+                    "input_refs": list(envelope.input_refs),
+                    "readable_refs": [ref for ref in envelope.input_refs
+                                      if envelope.artifact_delivery_modes.get(ref, "reference") == "reference"],
+                    "constraints": list(envelope.constraints),
                 }
             )
 

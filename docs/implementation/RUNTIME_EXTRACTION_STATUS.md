@@ -18,13 +18,26 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-11 complete fact delivery and recoverable artifact reads`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; baseline `3387cea`)
+- Current slice: `2026-10-11 paginated evidence recall and structured context handoff`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `4552138`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
 - Next automatic action: `Controlled generation/latency/cost comparison in the approved private inference environment; no external Provider execution or customer upload authorized by this maintenance slice.`
+
+### 2026-10-11 — paginated evidence recall and structured context handoff
+
+- Scope: continuation of the user's confidential local quality/cost maintenance. This slice builds on local commit `4552138`; it does not regenerate or certify the historical report.
+- Customer evidence search now accepts exact module/submodule filters and record offsets, returns total matches and the next offset, and permits an empty query to enumerate the normalized scope. Keyword misses, unavailable snapshots and past-end pages have distinct truthful outcomes. Missing snapshots are not cached as permanently empty. Numeric zero remains searchable.
+- Page cache identity includes query, filters, page size and offset. Historical top-k caches cannot establish complete counts and are not reused as paginated results. Existing run/module memory persists exact pages across restart. Source registration uses the existing batch API. No embedding service, vector database or new dependency was added; keyword ranking itself is unchanged.
+- Context handoff preserves prior structured handoffs, nested typed references, active task identity and exact tool paging/query coordinates. The module author and reviewer now pass task refs, readable refs, objective and constraints to the Runtime boundary. Model-generated prose cannot replace authoritative refs, task identity or tool state; explicit task constraints survive it.
+- `agents.defaults.context_compaction_strategy` accepts `model_summary` (unchanged default) or `structured_handoff` (skips the extra summary-model request). Both modes use the same generic compaction, persistence and restoration machinery. This is an experimental policy choice, not a legacy execution path. See [context handoff configuration](../CONTEXT_HANDOFF.md).
+- Characterization first: seven pagination failures, four compaction failures, a reviewer task-ref failure and a missing-then-created snapshot failure were reproduced before their fixes. Focused/affected selection: `159 passed`; final focused selection after additional snapshot/config/constraint checks: `42 passed, 69 deselected` (overlapping tests; not summed). Targeted Ruff passed with only the same two pre-existing `agent_loop.py:N818` exception-name findings excluded; staged diff whitespace checks passed. No full suite, live Provider, package install or service restart was performed.
+- Offline production-tool replay over a separate copy of the original frozen evidence: all 316 customer records enumerated in 29 pages across five modules; all 29 pages reused after tool recreation. Residual-current 14/14, scoped thermal 13/13 and SPD 9/9. Replay artifacts remain outside Git in the local audit workspace.
+- Remaining evidence-memory ownership checks: `2 passed` (`test_m66_ownership.py`).
+- Limits: complete enumeration covers only the existing normalized scope/classifications; unassigned items require unfiltered enumeration. It does not validate parsing, citations supporting individual claims, regulatory clause accuracy or model reasoning. Handoff is bounded and does not retain all old prose; structured-only mode may lose useful semantic decisions. No measured end-to-end latency/token/quality improvement is claimed. Large search outputs still use the existing recoverable full-result artifact path.
+- Kernel, compiler and workflow orchestration are unchanged. All evidence filters remain Capability-owned; Runtime knows only task metadata and generic tool coordinates. No new gates, locks, retries, hashes or frameworks were introduced. Local changes only; no customer upload, push or remote publication.
 
 ### 2026-10-11 — complete fact delivery and recoverable reads
 

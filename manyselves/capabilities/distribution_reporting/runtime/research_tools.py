@@ -7,7 +7,10 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from manyselves.capabilities.distribution_reporting.runtime.models.agentic import ResearchNote
+from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+    ResearchNote,
+    SourceKind,
+)
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
     project_evidence_locator,
@@ -27,7 +30,8 @@ class SearchProjectEvidenceTool(Tool):
     name = "search_project_evidence"
     description = (
         "Search normalized customer project evidence. Returns only E-* facts and exact "
-        "file locations; use external references only for interpretation."
+        "file locations. Use query='' with a module/submodule filter to enumerate facts; "
+        "follow next_offset until null. A keyword miss does not prove missing customer data."
     )
 
     def __init__(
@@ -43,43 +47,71 @@ class SearchProjectEvidenceTool(Tool):
         self.research_guard = research_guard
         self.evidence_memory = evidence_memory
 
-    async def __call__(self, query: str, limit: int = 10) -> dict:
+    async def __call__(
+        self, query: str, limit: int = 10, offset: int = 0,
+        module_id: str | None = None, submodule_id: str | None = None,
+    ) -> dict:
         """Search project evidence.
 
         Args:
-            query: Terms describing the customer fact, asset, value, or location.
-            limit: Maximum number of matching E-* items.
+            query: Keywords, or an empty string to enumerate the normalized scope.
+            limit: Page size, clamped to 1 through 12 records.
+            offset: Record offset returned as next_offset by the previous page.
+            module_id: Optional exact module filter; unassigned records require unfiltered enumeration.
+            submodule_id: Optional exact submodule filter, independent of query wording.
         """
         requested_limit = limit
         limit = max(1, min(limit, 12))
+        offset = max(0, offset)
+        query = query.strip()
+        query_context = {
+            "query": query, "limit": limit, "offset": offset,
+            "module_id": module_id, "submodule_id": submodule_id,
+        }
+        snapshot_available = self.index.path.is_file()
         cached = (
-            self.evidence_memory.recall_query(query, limit)
-            if self.evidence_memory is not None
+            self.evidence_memory.recall_page(query_context)
+            if self.evidence_memory is not None and snapshot_available
             else None
         )
         cache_hit = cached is not None
         if cached is None:
             if self.research_guard is not None:
                 self.research_guard()
-            items = self.index.search(query, limit)
+            items, total_matches = self.index.search_page(**query_context)
         else:
-            items = cached
+            items, total_matches = cached
         if self.evidence_memory is not None:
-            if not cache_hit:
-                self.evidence_memory.remember(items, query=query, applied_limit=limit)
+            if not cache_hit and snapshot_available:
+                self.evidence_memory.remember_page(query_context, items, total_matches)
         if self.ledger:
-            for item in items:
-                self.ledger.register_project(
-                    item.id,
-                    item.subject,
-                    project_evidence_locator(item),
-                    item.model_dump_json(),
-                )
+            self.ledger.register_many([
+                {"kind": SourceKind.PROJECT_EVIDENCE, "evidence_id": item.id,
+                 "title": item.subject, "locator": project_evidence_locator(item),
+                 "content": item.model_dump_json()}
+                for item in items
+            ])
+        next_offset = offset + len(items) if offset + len(items) < total_matches else None
         return {
+            "status": "snapshot_unavailable" if not snapshot_available else "ok" if total_matches else "no_matches",
+            "snapshot_available": snapshot_available,
+            "retrieval_mode": "keyword" if query else "enumerate",
+            "query": query,
+            "query_context": query_context,
+            "module_id": module_id,
+            "submodule_id": submodule_id,
+            "offset": offset,
+            "returned": len(items),
+            "total_matches": total_matches,
+            "next_offset": next_offset,
+            "has_more": next_offset is not None,
             "guidance": (
                 "Each hit already contains the normalized project fact and exact locator. "
                 "Use it directly; call open_project_source only when one hit is ambiguous. "
-                "Refine the query instead of opening every hit."
+                "Follow next_offset with the same query and filters to read remaining matches. "
+                "Keyword matches are not the full inventory: use query='' to enumerate an exact scope. "
+                "An empty result does not establish that the customer failed to provide data. "
+                "Counts cover only this normalized snapshot and its existing classifications."
             ),
             "requested_limit": requested_limit,
             "applied_limit": limit,

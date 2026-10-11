@@ -46,9 +46,9 @@ class ProjectEvidenceIndex:
         if self._items_cache is not None:
             return self._items_cache
         if not self.path.exists():
-            self._items_cache = ()
-            self._by_id = {}
-            return self._items_cache
+            # Preparation may still be publishing the snapshot. Absence is not
+            # an immutable empty snapshot and must not poison later reads.
+            return ()
         source_bytes = self.path.read_bytes()
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
         relative_root = (
@@ -128,12 +128,24 @@ class ProjectEvidenceIndex:
         raise ValueError(f"unknown project evidence id: {evidence_id}")
 
     def search(self, query: str, limit: int = 10) -> list[EvidenceItem]:
-        terms = [term.casefold() for term in query.split() if term.strip()]
-        if not terms or limit <= 0:
+        if not query.strip() or limit <= 0:
             return []
+        items, _total = self.search_page(query, limit=limit)
+        return items
+
+    def search_page(
+        self, query: str, *, limit: int = 10, offset: int = 0,
+        module_id: str | None = None, submodule_id: str | None = None,
+    ) -> tuple[list[EvidenceItem], int]:
+        """Page all matches; an empty query enumerates the exact filtered scope."""
+        terms = [term.casefold() for term in query.split() if term.strip()]
         ranked: list[tuple[int, EvidenceItem]] = []
         for item in self._load_snapshot():
             if is_template_skill_path(item.source.path):
+                continue
+            if module_id is not None and item.module_id != module_id:
+                continue
+            if submodule_id is not None and item.submodule_id != submodule_id:
                 continue
             text = " ".join(
                 str(value)
@@ -141,7 +153,7 @@ class ProjectEvidenceIndex:
                     item.id,
                     item.subject,
                     item.fact,
-                    item.value or "",
+                    item.value if item.value is not None else "",
                     item.unit or "",
                     item.observed_at or "",
                     item.source.path,
@@ -150,7 +162,8 @@ class ProjectEvidenceIndex:
                 )
             ).casefold()
             score = sum(text.count(term) for term in terms)
-            if score:
+            if score or not terms:
                 ranked.append((score, item))
         ranked.sort(key=lambda pair: (-pair[0], pair[1].id))
-        return [item for _, item in ranked[:limit]]
+        offset = max(0, offset)
+        return [item for _, item in ranked[offset:offset + max(0, limit)]], len(ranked)

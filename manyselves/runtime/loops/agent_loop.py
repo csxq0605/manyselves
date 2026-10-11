@@ -871,6 +871,7 @@ def _compact_messages_for_working_memory(
     messages: list[LLMMessage],
     *,
     target_tokens: int = 36000,
+    task_context: Mapping[str, Any] | None = None,
 ) -> list[LLMMessage]:
     """Replace old working context with one structured model handoff.
 
@@ -893,7 +894,7 @@ def _compact_messages_for_working_memory(
         for message in messages[1:]
         if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
     ]
-    summary_payload = _build_handoff_summary(history)
+    summary_payload = _build_handoff_summary(messages[1:], task_context=task_context)
     summary_content = _render_handoff_summary(summary_payload)
     handoff = LLMMessage(role="user", content=summary_content)
 
@@ -1044,6 +1045,8 @@ def _structured_reference_values(value: Any, *, parent_key: str = "") -> list[st
         "evidence_ref",
         "evidence_refs",
         "result_ref",
+        "full_result_ref",
+        "readable_refs",
         "result_refs",
         "subject_ref",
         "input_ref",
@@ -1065,9 +1068,12 @@ def _structured_reference_values(value: Any, *, parent_key: str = "") -> list[st
                 values.extend(
                     _structured_reference_values(child, parent_key=child_key)
                 )
-    elif isinstance(value, (list, tuple)) and key in reference_keys:
+    elif isinstance(value, (list, tuple)):
         for child in value:
-            values.extend(_flatten_reference_values(child))
+            if key in reference_keys:
+                values.extend(_flatten_reference_values(child))
+            else:
+                values.extend(_structured_reference_values(child))
     return values
 
 
@@ -1082,7 +1088,9 @@ def _flatten_reference_values(value: Any) -> list[str]:
     return []
 
 
-def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
+def _build_handoff_summary(
+    history: Sequence[LLMMessage], *, task_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a deterministic Codex-style handoff payload from typed history."""
 
     progress: list[str] = []
@@ -1091,18 +1099,33 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
     remaining: list[str] = []
     references: list[str] = []
     tool_state: list[dict[str, Any]] = []
-    active_task: dict[str, str] = {}
+    active_task: dict[str, Any] = {}
 
     def append_unique(target: list[str], value: Any, *, limit: int = 12) -> None:
         rendered = _bounded_text(value)
-        if rendered and rendered not in target and len(target) < limit:
+        if rendered and rendered not in target:
             target.append(rendered)
+            del target[:-limit]
 
     for message in history:
         content = str(message.content or "")
-        if _HANDOFF_SUMMARY_MARKER in content:
+        if content.startswith(_HANDOFF_SUMMARY_MARKER) and content.endswith(_HANDOFF_SUMMARY_END):
+            previous = _json_object(content[len(_HANDOFF_SUMMARY_MARKER):-len(_HANDOFF_SUMMARY_END)])
+            if previous is None:
+                continue
+            for key, target in (("progress", progress), ("decisions", decisions),
+                                ("constraints", constraints), ("remaining_work", remaining)):
+                for item in previous.get(key) or ():
+                    append_unique(target, item)
+            references.extend(_flatten_reference_values(previous.get("critical_refs")))
+            tool_state.extend(dict(item) for item in previous.get("tool_state", ()) if isinstance(item, Mapping))
+            if isinstance(previous.get("active_task"), Mapping):
+                active_task = dict(previous["active_task"])
             continue
         if message.role == "user" and not message.is_tool_result:
+            structured = _json_object(content)
+            if structured is not None:
+                references.extend(_structured_reference_values(structured))
             # XML task boundaries are explicit structured state.  Keep the
             # current task identity/objective and constraints without copying
             # the entire contract into the handoff.
@@ -1136,7 +1159,7 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
                         "status": "requested",
                     }
                 )
-        if message.is_tool_result:
+        if message.is_tool_result or message.role == "tool":
             payload = _json_object(message.content)
             if payload is not None:
                 references.extend(_structured_reference_values(payload))
@@ -1152,6 +1175,15 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
                         "missing_part_ids",
                         "rewrite_part_ids",
                         "result_path",
+                        "ref",
+                        "full_result_ref",
+                        "offset",
+                        "next_offset",
+                        "total",
+                        "total_matches",
+                        "returned",
+                        "has_more",
+                        "query_context",
                     )
                     if key in payload
                 }
@@ -1166,6 +1198,18 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
             else:
                 append_unique(progress, message.content, limit=8)
 
+    if task_context:
+        active_task = {
+            key: task_context[key]
+            for key in ("task_id", "run_id", "revision", "objective", "input_contract",
+                        "output_contract", "input_refs", "readable_refs")
+            if key in task_context
+        }
+        for constraint in task_context.get("constraints") or ():
+            append_unique(constraints, constraint)
+        # Task refs have priority over older incidental tool refs in the bounded tail.
+        task_refs = _structured_reference_values(active_task)
+        references = [item for item in references if item not in task_refs] + task_refs
     references = list(dict.fromkeys(item for item in references if item))[-64:]
     # The active unit is the final source of truth for unfinished work.  Keep a
     # concise tail of structured tool state rather than arbitrary old output.
@@ -1457,7 +1501,7 @@ class AgentLoop:
         restart context without adding business state.
         """
 
-        latest = _build_handoff_summary(self._conversation_history)
+        latest = _build_handoff_summary(self._conversation_history, task_context=self.active_task_identity)
         previous = self.handoff_summary or {}
         summary = dict(latest)
 
@@ -3619,6 +3663,7 @@ class AgentLoop:
         compacted = _compact_messages_for_working_memory(
             messages,
             target_tokens=self.config.working_memory_tokens,
+            task_context=self.active_task_identity,
         )
         if compacted is messages:
             return messages
@@ -3636,7 +3681,7 @@ class AgentLoop:
                 raw = raw.rsplit("\n", 1)[0]
                 payload = json.loads(raw)
             except (IndexError, TypeError, ValueError, json.JSONDecodeError):
-                payload = _build_handoff_summary(messages[1:])
+                payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
             self._compaction_sequence += 1
             payload["sequence"] = self._compaction_sequence
             self._handoff_summary = payload
@@ -3720,7 +3765,7 @@ class AgentLoop:
         selected_source = [
             item for unit in selected_units for item in unit
         ] or source[-8:]
-        older_snapshot = _build_handoff_summary(source)
+        older_snapshot = _build_handoff_summary(messages, task_context=self.active_task_identity)
         older_snapshot_for_prompt = {
             key: (
                 {
@@ -3842,6 +3887,7 @@ class AgentLoop:
         baseline = _compact_messages_for_working_memory(
             messages,
             target_tokens=self.config.working_memory_tokens,
+            task_context=self.active_task_identity,
         )
         summary_message = next(
             (
@@ -3853,19 +3899,28 @@ class AgentLoop:
         )
         if summary_message is None:
             return baseline
-        model_summary = await self._request_model_handoff_summary(messages[1:])
-        if model_summary is None:
-            try:
-                raw = str(summary_message.content).split("\n", 1)[1]
-                raw = raw.rsplit("\n", 1)[0]
-                fallback = json.loads(raw)
-            except (IndexError, TypeError, ValueError, json.JSONDecodeError):
-                fallback = _build_handoff_summary(messages[1:])
-            fallback["source"] = "deterministic_fallback"
-            fallback["fallback_reason"] = "model_handoff_unavailable"
-            payload = fallback
+        payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
+        if self.config.context_compaction_strategy == "structured_handoff":
+            payload["source"] = "structured_handoff"
         else:
-            payload = model_summary
+            model_summary = await self._request_model_handoff_summary(messages[1:])
+            if model_summary is None:
+                payload["source"] = "deterministic_fallback"
+                payload["fallback_reason"] = "model_handoff_unavailable"
+            else:
+                # Generated prose cannot replace exact task identity, refs or cursors.
+                for key in ("progress", "decisions", "constraints", "remaining_work"):
+                    payload[key] = [
+                        _bounded_text(item, limit=400)
+                        for item in (model_summary.get(key) or ())[-12:]
+                    ] or payload[key]
+                payload["source"] = "model"
+        # Explicit task constraints remain authoritative even when prose is summarized.
+        for constraint in (self.active_task_identity or {}).get("constraints") or ():
+            value = _bounded_text(constraint)
+            if value and value not in payload["constraints"]:
+                payload["constraints"].append(value)
+        payload["constraints"] = payload["constraints"][-12:]
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload

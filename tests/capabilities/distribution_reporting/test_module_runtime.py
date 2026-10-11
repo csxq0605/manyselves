@@ -2335,6 +2335,9 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     }.get(marker, marker)
 
     class ScriptedAuthorLoop:
+        def begin_typed_task(self, context):
+            self.task_context = context
+
         def __init__(self, runtime_id: str) -> None:
             self.runtime_id = runtime_id
             self.received: list[UserMessage] = []
@@ -2470,6 +2473,8 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     assert outcome.result["status"] == "completed"
     assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
     assert len(loops) == 1
+    assert loops[0].task_context["input_refs"] == envelope.input_refs
+    assert loops[0].task_context["objective"] == envelope.objective
     assert [message.turn_kind for message in loops[0].received] == [
         "task_initial",
         continuation_kind,

@@ -25,6 +25,7 @@ async def test_config_manager_load_default(temp_config_file):
 
     assert isinstance(config, AppConfig)
     assert config.agents.defaults.provider == "openai"
+    assert config.agents.defaults.context_compaction_strategy == "model_summary"
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,7 @@ async def test_config_manager_save_and_load(temp_config_file):
     # Modify config
     config_manager.config.agents.defaults.model = "custom_model"
     config_manager.config.agents.defaults.temperature = 0.5
+    config_manager.config.agents.defaults.context_compaction_strategy = "structured_handoff"
 
     # Save
     config_manager.save_config()
@@ -68,6 +70,7 @@ async def test_config_manager_save_and_load(temp_config_file):
 
     assert config.agents.defaults.model == "custom_model"
     assert config.agents.defaults.temperature == 0.5
+    assert config.agents.defaults.context_compaction_strategy == "structured_handoff"
 
 
 @pytest.mark.asyncio

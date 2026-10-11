@@ -885,6 +885,39 @@ async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["model_summary", "structured_handoff"])
+async def test_compaction_keeps_task_refs_independent_of_summary_model(agent_loop, strategy):
+    ref = "Work/runs/example/context/module-2.4-facts.md"
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy=strategy,
+    )
+    agent_loop.begin_typed_task({
+        "task_id": "author", "input_refs": [ref], "objective": "review all measurements",
+        "constraints": ["Use only verified source facts"],
+    })
+    agent_loop._request_model_handoff_summary = AsyncMock(return_value={
+        "progress": ["some work"], "decisions": [], "constraints": ["another constraint"],
+        "remaining_work": ["continue"], "critical_refs": ["invented-ref"],
+        "source": "model",
+    })
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old work " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ]
+    compacted = await agent_loop._compact_working_memory_async(messages)
+    payload = json.loads(compacted[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["active_task"]["task_id"] == "author"
+    assert ref in payload["critical_refs"]
+    assert "invented-ref" not in payload["critical_refs"]
+    assert "Use only verified source facts" in payload["constraints"]
+    assert agent_loop._request_model_handoff_summary.await_count == (strategy == "model_summary")
+    assert payload["source"] == ("model" if strategy == "model_summary" else "structured_handoff")
+    restored = agent_loop.durable_handoff_summary()
+    assert ref in restored["critical_refs"]
+
+
+@pytest.mark.asyncio
 async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
     agent_loop.config = AgentDefaults(
         max_tool_iterations=5,
