@@ -20,13 +20,21 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-11 context compaction necessity and per-task strategy evaluation`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `0ad08f4`)
+- Current slice: `2026-10-11 cumulative context growth, cache reuse and compaction horizon audit`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; this slice baseline `f5c3622`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Evaluate no-semantic-compaction, recoverable tool-result masking and incremental middle-history summarization by task before further default tuning. Actual generation comparisons remain restricted to an approved inference environment and data scope; no customer upload is authorized by this slice.`
+- Next automatic action: `Continue offline characterization of incremental summary input and retained-history boundaries before further default tuning. The user deferred discussion of actual inference environment/data scope; do not initiate external generation or renew that question as a prerequisite to offline work.`
+
+### 2026-10-11 — cumulative context growth, cache reuse and compaction horizon audit
+
+- Clarified user concern: each ordinary request contains the currently retained history, not just the latest increment. Peak request input determines window pressure, whereas summed request inputs include repeated history. Anthropic usage normalization includes cache reads and writes in total input.
+- Read-only historical evidence: the no-summary 2.2 author sent 822,250 cumulative input tokens over 24 requests, with a 49,238 peak and 773,248 cache reads (94.04%). In the initial 2.2 review task segment, ordinary-request cache-read fraction was 85.45% before the first summary and 2.93% after it; four summaries added 303,589 input tokens and 222.93 summed active seconds. This is observational, not a measured no-summary counterfactual or wall-clock savings claim.
+- Boundary-aware audit: full-report has 118 summary episodes after collapsing adjacent attempts; 45 were followed by at most two normal requests in the same contiguous task-id segment, and 28 by at most two normal requests for that Agent across the rest of the run. These are hindsight counts, not an online stopping oracle. Task segments may include repeated invocations.
+- Same-task successful before/after pairs: 95 for full-report, with median next-input/prior-input ratio 1.0142; 13 for revision, median 1.0217. Intervening outputs and tool results remain confounders. Missing full historical request payloads prevent exact attribution of repeated content or reconstruction of all uncompressed peaks.
+- Local `context_growth_audit.py` and `context_growth_metrics.json` verify token-bucket reconciliation and segment totals for both ledgers. `累计上下文与缓存收益核查.md` records the evidence, limitations, and cache-aware strategy implications. Summary error estimates remain distinguished from Provider-reported usage. No production settings or execution semantics changed; no Provider request or customer upload. User deferred the live comparison environment question.
 
 ### 2026-10-11 — context compaction necessity and per-task strategy evaluation
 
