@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import EvidenceItem
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
+    is_template_skill_path,
+)
 
 
 def project_evidence_locator(item: EvidenceItem) -> str:
@@ -100,6 +103,22 @@ class ProjectEvidenceIndex:
         self._load_snapshot()
         return self._snapshot_ref
 
+    def module_items(
+        self, module_id: str, submodule_ids: set[str] | None = None,
+    ) -> list[EvidenceItem]:
+        """Enumerate the normalized scope, including unassigned customer evidence.
+
+        No ranking or top-k is applied. Completeness refers to this snapshot
+        and its existing taxonomy mapping, not to unparsed original material.
+        """
+        return [
+            item for item in self._load_snapshot()
+            if not is_template_skill_path(item.source.path)
+            and item.module_id in (None, module_id)
+            and (submodule_ids is None or item.submodule_id is None
+                 or item.submodule_id in submodule_ids)
+        ]
+
     def get(self, evidence_id: str) -> EvidenceItem:
         if not evidence_id.startswith("E-"):
             raise ValueError("project source ids must start with E-")
@@ -114,6 +133,8 @@ class ProjectEvidenceIndex:
             return []
         ranked: list[tuple[int, EvidenceItem]] = []
         for item in self._load_snapshot():
+            if is_template_skill_path(item.source.path):
+                continue
             text = " ".join(
                 str(value)
                 for value in (

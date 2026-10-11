@@ -134,8 +134,12 @@ class _IndexedOpenArtifactTool(OpenArtifactTool):
             if getattr(self, "reuse_result", True)
             else None
         )
-        if existing is not None and existing.get("status") == "completed":
-            return existing.get("result")
+        cached = existing.get("result") if existing else None
+        if (
+            existing is not None and existing.get("status") == "completed"
+            and not (isinstance(cached, dict) and cached.get("status") == "already_read")
+        ):
+            return cached
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
         if getattr(self, "reuse_result", True):
             self.result_index.record(
@@ -216,8 +220,12 @@ class _IndexedOpenToolResultTool(OpenToolResultTool):
             if getattr(self, "reuse_result", True)
             else None
         )
-        if existing is not None and existing.get("status") == "completed":
-            return existing.get("result")
+        cached = existing.get("result") if existing else None
+        if (
+            existing is not None and existing.get("status") == "completed"
+            and not (isinstance(cached, dict) and cached.get("status") == "already_read")
+        ):
+            return cached
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
         if getattr(self, "reuse_result", True):
             self.result_index.record(

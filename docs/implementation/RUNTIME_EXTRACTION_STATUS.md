@@ -17,14 +17,29 @@
 
 ## Current position
 
-- Current FA work package: `Complete`
-- Current slice: `FA-08/M9.108 product completion closeout`
-- Current branch: `main`
+- Current FA work package: `Post-acceptance reporting quality maintenance`
+- Current slice: `2026-10-11 complete fact delivery and recoverable artifact reads`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; baseline `3387cea`)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `None; normal maintenance only`
+- Next automatic action: `Controlled generation/latency/cost comparison in the approved private inference environment; no external Provider execution or customer upload authorized by this maintenance slice.`
+
+### 2026-10-11 — complete fact delivery and recoverable reads
+
+- Scope: user requested implementation after reviewing report omissions, retrieval, context compaction and cost research. This is a maintenance slice; the 2026-09 product acceptance below is historical and does not certify present report accuracy or this change's speed/cost benefit.
+- Production path: existing `build_module_dispatch` → `prepare_module_authoring` → file-defined Agent task/Module Provider now carries a compact, complete module fact packet from the frozen normalized snapshot. Every record retains source coordinates, numbers, qualifiers and photo refs; unassigned customer facts remain visible. Packets above 32,000 characters are stored in full and explicitly delivered by reference with counts, never silently cut. Author preparation and resume preserve the readable packet ref.
+- Initial/local-scope review evidence includes normalized facts independent of the author's selected citations, while retaining cited cross-module evidence. Existing review contracts/findings handle omissions; no new approval gate or validator chain is introduced.
+- Reserved `Inputs/report-template-role-skills` content is excluded from new generic customer-evidence normalization and from search/module enumeration over historical snapshots. Historical files and IDs are not rewritten.
+- Runtime readers allow repeated pages after context loss. Existing completed-result caching still reuses actual content; legacy `already_read` empty markers are reread. When an artifact page exceeds the tool wire budget, the formatter keeps its original ref and advances `next_offset` by the content actually delivered, including JSON-escaping overhead, instead of nesting another opaque tool-result envelope.
+- Characterization: seven initial tests failed on missing fact delivery, uncited-review omissions, instruction contamination, empty rereads and nested page truncation; two additional recovery tests reproduced cached empty markers. All were corrected. Focused/affected batches: `144 passed`, `27 passed`, then `15 passed` after recovery changes (overlapping selections, not a full suite).
+- Final fact-delivery/recovery selection: `8 passed`. Targeted Ruff passed with only the two pre-existing `N818` exception-name findings in `agent_loop.py` excluded; both were independently reproduced from baseline HEAD, and no new Ruff findings remain. `git diff --cached --check` passed. Working-tree `git diff` reported a local work-tree error despite successful status/add; the staged diff was reviewed instead.
+- Commands use existing `.venv-cpython/Scripts/python.exe -m pytest -q ... --maxfail=3`, with TEMP/TMP redirected to the authorized audit workspace because sandbox temporary-directory permissions prevented fixture creation. No packages installed and no Provider called.
+- Local frozen-input replay (outside the repository, preserving original runs): 316 normalized customer records delivered across five packets, including all 14 residual-current, 13 scoped thermal and 9 SPD records; all five fit inline. This verifies delivery over existing mappings, not parsing completeness, final writing quality, regulatory correctness or measured acceleration.
+- Architecture: all electrical-domain selection/packet logic remains Capability-owned; only domain-neutral page delivery changed in Runtime. Kernel, Compiler, Workflow Host, YAML control flow and APIs unchanged. No new framework, hash/CAS, lock, gate or retry policy.
+- Remaining limits: existing taxonomy mapping can still misclassify facts; long packets require explicit reads; semantic compaction policy and knowledge retrieval ranking remain unchanged; more initial evidence can increase initial input tokens. Net cost, runtime, model faithfulness and severe-omission rate require the planned controlled generation comparison.
+- Repository-local implementation and synthetic tests only; customer replay outputs stay outside the repository. No push or remote publication during confidential local evaluation.
 
 ### M9.108 product completion closeout (2026-09-20)
 

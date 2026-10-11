@@ -4236,6 +4236,43 @@ class AgentLoop:
         if len(rendered) <= max_chars:
             return rendered
 
+        # A page already has a stable source and cursor. Fit its content to
+        # the wire budget (including JSON escaping) instead of persisting a
+        # second truncation envelope around it. The next read stays on the
+        # original artifact and advances by the characters actually shown.
+        if (
+            tool_name in {"open_artifact", "open_tool_result"}
+            and isinstance(result, dict)
+            and isinstance(result.get("ref"), str)
+            and isinstance(result.get("content"), str)
+            and isinstance(result.get("offset"), int)
+            and isinstance(result.get("total"), int)
+            and isinstance(result.get("returned"), int)
+        ):
+            page = dict(filtered)
+            content = result["content"]
+            low, high = 0, len(content)
+            fitted = None
+            while low <= high:
+                size = (low + high) // 2
+                end = result["offset"] + size
+                page.update(
+                    content=content[:size], returned=size,
+                    truncated=end < result["total"],
+                    next_offset=end if end < result["total"] else None,
+                )
+                encoded = _sanitize_provider_visible_text(
+                    json.dumps(page, ensure_ascii=False, default=str)
+                )
+                if len(encoded) <= max_chars:
+                    if size > 0:
+                        fitted = encoded
+                    low = size + 1
+                else:
+                    high = size - 1
+            if fitted is not None:
+                return fitted
+
         safe_agent = "".join(
             char if char.isalnum() or char in "-_." else "_"
             for char in str(self.agent_type)
@@ -4263,7 +4300,7 @@ class AgentLoop:
                 "instruction": (
                     "如需剩余内容，调用 open_tool_result，ref 使用 full_result_ref，"
                     "offset 使用 next_offset，省略 limit 即按 8000 字符读取；"
-                    "不得从 offset=0 重读 preview。"
+                    "已有内容仍在上下文时无需重读；压缩后遗失内容时可重读原引用。"
                 ),
                 "preview": preview,
             }

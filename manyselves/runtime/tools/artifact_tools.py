@@ -28,7 +28,6 @@ class OpenArtifactTool(Tool):
             max(default_limit, self.minimum_limit), self.maximum_limit
         )
         self.allowed_refs = frozenset(allowed_refs) if allowed_refs is not None else None
-        self._opened_pages: set[tuple[str, int, int]] = set()
 
     async def __call__(
         self, ref: str, offset: int = 0, limit: int | None = None
@@ -38,21 +37,10 @@ class OpenArtifactTool(Tool):
         bounded_limit = min(
             max(limit or self.default_limit, self.minimum_limit), self.maximum_limit
         )
-        page_key = (ref, offset, bounded_limit)
-        if page_key in self._opened_pages:
-            return {
-                "status": "already_read",
-                "ref": ref,
-                "offset": offset,
-                "limit": bounded_limit,
-                "content": "",
-                "instruction": "该页已在本任务读取；使用已有工作记忆或读取 next_offset，不要重复读取。",
-            }
         try:
             page = self.gateway.open(ref, offset=offset, limit=bounded_limit).as_dict()
         except ToolContractError as error:
             return contract_error_result(error, ref=ref, offset=offset, limit=bounded_limit)
-        self._opened_pages.add(page_key)
         return page
 
 
@@ -61,13 +49,12 @@ class OpenToolResultTool(Tool):
     description = (
         "Continue a truncated tool result using its opaque reference. The default and "
         "maximum page size are both 8000 characters. Start at the prior result's "
-        "next_offset, omit limit unless a smaller final page is necessary, and never "
-        "reopen text already included in the truncation preview."
+        "next_offset and omit limit unless a smaller page is necessary. Reopen a "
+        "previous page when its content is no longer available in context."
     )
 
     def __init__(self, gateway: ArtifactGateway):
         self.gateway = gateway
-        self._opened_pages: set[tuple[str, int, int]] = set()
 
     async def __call__(self, ref: str, offset: int = 0, limit: int = 8000) -> dict:
         """Open the next page of a truncated tool result.
@@ -78,26 +65,12 @@ class OpenToolResultTool(Tool):
             limit: Page size in characters. Defaults to the maximum 8000 characters.
         """
         bounded_limit = min(max(limit, 1), 8000)
-        page_key = (ref, offset, bounded_limit)
-        if page_key in self._opened_pages:
-            return {
-                "status": "already_read",
-                "ref": ref,
-                "offset": offset,
-                "limit": bounded_limit,
-                "content": "",
-                "instruction": (
-                    "该页已读取；使用已有工作记忆并从上一页 next_offset 继续，"
-                    "不要重新读取预览或已读分页。"
-                ),
-            }
         try:
             page = self.gateway.open_internal(
                 ref, offset=offset, limit=bounded_limit
             ).as_dict()
         except ToolContractError as error:
             return contract_error_result(error, ref=ref, offset=offset, limit=bounded_limit)
-        self._opened_pages.add(page_key)
         return page
 
 

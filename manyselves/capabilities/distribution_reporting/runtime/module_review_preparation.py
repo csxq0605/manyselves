@@ -47,6 +47,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
 from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
     advance_module_review_preflight_progress,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
+    register_fact_sources,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
+    ProjectEvidenceIndex,
+)
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
 )
@@ -137,6 +143,11 @@ def _review_evidence(
         for source_id in claim.source_ids
         if source_id.startswith("E-")
     }
+    # Coverage is independent of what the author chose to cite. Keep cited
+    # cross-module sources as well as every fact in the review's own scope.
+    items = ProjectEvidenceIndex(workspace, run_id).module_items(subject.module_id, scope)
+    register_fact_sources(workspace, run_id, items)
+    selected_ids.update(item.id for item in items)
     return _review_evidence_by_ids(workspace, run_id, selected_ids)
 
 
@@ -519,6 +530,7 @@ def prepare_current_module_review(
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
                 "首轮必须覆盖 input 中全部 required_submodule_ids",
+                "evidence 包含检查范围内未被作者引用的事实；独立检查异常、测点和资料缺口是否遗漏，不能只核对作者的引用。",
                 *user_supplement_constraints(
                     request_user_supplements(state.get("request")),
                     stage="module_review",

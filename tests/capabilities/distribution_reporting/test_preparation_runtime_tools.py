@@ -11,6 +11,7 @@ import pytest
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     FilePreparationResult,
     ManifestFile,
+    ParsedArtifact,
     PreparationContext,
     ProjectManifest,
 )
@@ -275,6 +276,24 @@ def test_normalize_evidence_consumes_worker_results_only_and_writes_projection(
     assert photo_calls == [([result.evidence_items[0]], [])]
     assert (tmp_path / "Work/evidence.jsonl").is_file()
     assert (tmp_path / "Work/mapping-gaps.json").is_file()
+
+
+def test_normalizer_keeps_customer_text_but_excludes_reserved_role_instructions(tmp_path):
+    tools, _ = _tools(tmp_path)
+    paths = [Path("Inputs/customer.txt"), Path("Inputs/report-template-role-skills/a/SKILL.md")]
+    context = _context().model_copy(update={
+        "project_manifest": ProjectManifest(files=[]),
+        "parsed_artifacts": [
+            ParsedArtifact(
+                id=f"parsed-{i}", kind="text",
+                source=SourceLocation(file_id=f"file-{i}", path=path),
+                payload={"text": "现场观察" if i == 0 else "仅供写作的方法"},
+            )
+            for i, path in enumerate(paths)
+        ],
+    })
+    result = tools.normalize_evidence(context)
+    assert [(item.id, item.fact) for item in result.evidence_items] == [("E-0001", "现场观察")]
 
 
 def test_evaluate_coverage_uses_normalized_context_and_persists_result(

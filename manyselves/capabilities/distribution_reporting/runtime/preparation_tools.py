@@ -52,6 +52,9 @@ from manyselves.capabilities.distribution_reporting.runtime.research.project_evi
 )
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
+    is_template_skill_path,
+)
 
 
 class InputSnapshotLoader(Protocol):
@@ -300,6 +303,8 @@ class PreparationTools:
             )
 
         for artifact in context.parsed_artifacts:
+            if is_template_skill_path(artifact.source.path):
+                continue
             if artifact.kind == "manual_required":
                 mapping_gaps.append(
                     {

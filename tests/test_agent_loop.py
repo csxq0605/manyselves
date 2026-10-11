@@ -720,6 +720,31 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert not (workspace / ".manyselves/tool-results").exists()
 
 
+def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_loop):
+    """Escaping overhead must not create an endless chain of tool-result refs."""
+    text = ('数值="11.3"\n' * 1600) + "TAIL"
+    offset = 0
+    delivered = []
+    while offset < len(text):
+        content = text[offset:offset + 8000]
+        page = {
+            "ref": "original-ref", "content": content, "offset": offset,
+            "returned": len(content), "total": len(text),
+            "truncated": offset + len(content) < len(text),
+            "next_offset": offset + len(content) if offset + len(content) < len(text) else None,
+        }
+        rendered = agent_loop._format_tool_result(page, tool_name="open_tool_result")
+        actual = json.loads(rendered)
+        assert len(rendered) <= agent_loop.config.max_tool_result_chars
+        assert actual.get("ref") == "original-ref"
+        assert "full_result_ref" not in actual
+        assert actual["returned"] > 0
+        delivered.append(actual["content"])
+        offset += actual["returned"]
+        assert actual["next_offset"] == (offset if offset < len(text) else None)
+    assert "".join(delivered) == text
+
+
 def test_working_memory_compaction_persists_handoff_summary(agent_loop, workspace):
     messages = [
         LLMMessage(role="system", content="system"),
