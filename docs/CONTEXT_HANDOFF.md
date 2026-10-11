@@ -32,6 +32,15 @@ hits its output limit, working history remains unchanged. No failed summary is
 used as permission to discard raw history. This preserves evidence; it does not
 solve a task whose required input itself exceeds the model window.
 
+An accepted model summary is kept as generated: Runtime does not cut each prose
+item at 400 characters or keep only its last 12 items. The summary request's
+output limit still bounds generation; hitting that limit rejects compaction.
+Empty model arrays can clear obsolete state rather than resurrect deterministic
+fallback prose. Explicit task constraints remain authoritative. Durable restart
+merging also retains the accepted model prose and adds bounded new observations;
+it leaves semantic rewriting to the next summary. This may use more context than
+the old tail clipping and does not guarantee that the model selected every fact.
+
 The default policy remains semantic summarization:
 
 ```yaml

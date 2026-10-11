@@ -73,6 +73,42 @@ async def test_failed_summary_keeps_original_content(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_valid_model_summary_is_not_silently_cut_after_generation(tmp_path):
+    agent = make_loop(tmp_path)
+    decision = "This correction remains conditional. " * 18 + "Only source CORRECTION-17 supersedes the old reading."
+    summary = {**SUMMARY, "progress": [f"Evidence {i}: preserve exact reading and locator" for i in range(14)],
+               "decisions": [decision], "constraints": [f"Unresolved exception {i}" for i in range(14)]}
+    agent._request_model_handoff_summary = AsyncMock(return_value=summary)
+    compacted = await agent._compact_working_memory_async(history())
+    for key in ("progress", "decisions", "constraints", "remaining_work"):
+        assert agent.handoff_summary[key] == summary[key]
+    assert decision in compacted[1].content
+
+
+@pytest.mark.asyncio
+async def test_model_handoff_survives_durable_merge_without_tail_clipping(tmp_path):
+    agent = make_loop(tmp_path)
+    summary = {**SUMMARY, "progress": [f"Evidence {i}: unresolved" for i in range(14)],
+               "decisions": ["Conditional result. " * 30 + "Do not certify until REF-73 is confirmed."]}
+    agent._request_model_handoff_summary = AsyncMock(return_value=summary)
+    agent._conversation_history = await agent._compact_working_memory_async(history())
+    durable = agent.durable_handoff_summary()
+    for key in ("progress", "decisions", "constraints"):
+        assert all(value in durable[key] for value in summary[key])
+    assert durable["source"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_model_can_clear_a_previous_decision_without_fallback(tmp_path):
+    agent = make_loop(tmp_path)
+    messages = history()
+    messages.insert(1, Message(role="user", content=_render_handoff_summary(SUMMARY)))
+    agent._request_model_handoff_summary = AsyncMock(return_value={**SUMMARY, "decisions": []})
+    await agent._compact_working_memory_async(messages)
+    assert agent.handoff_summary["decisions"] == []
+
+
+@pytest.mark.asyncio
 async def test_oversized_tool_arguments_do_not_silently_disappear(tmp_path):
     agent = make_loop(tmp_path)
     agent._context_window_for_request = lambda: 12000

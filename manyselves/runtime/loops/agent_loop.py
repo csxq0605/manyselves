@@ -1507,7 +1507,7 @@ class AgentLoop:
         previous = self.handoff_summary or {}
         summary = dict(latest)
 
-        def merged_values(key: str, *, limit: int) -> list[Any]:
+        def merged_values(key: str, *, limit: int | None) -> list[Any]:
             merged: list[Any] = []
             seen: set[str] = set()
             for item in (
@@ -1519,10 +1519,17 @@ class AgentLoop:
                     continue
                 seen.add(marker)
                 merged.append(item)
-            return merged[-limit:]
+            return merged[-limit:] if limit is not None else merged
 
+        model_handoff = previous.get("source") == "model"
         for key in ("progress", "decisions", "constraints"):
-            summary[key] = merged_values(key, limit=12)
+            summary[key] = merged_values(key, limit=None if model_handoff else 12)
+        if model_handoff:
+            # Restart must not undo the model summary's information preservation.
+            # New deterministic observations remain bounded by their extractor;
+            # the next semantic handoff, not tail slicing, rewrites older prose.
+            summary["source"] = "model"
+            summary["remaining_work"] = merged_values("remaining_work", limit=None)
         summary["critical_refs"] = merged_values("critical_refs", limit=64)
         summary["tool_state"] = merged_values("tool_state", limit=24)
         if not latest.get("active_task") and previous.get("active_task"):
@@ -3894,17 +3901,20 @@ class AgentLoop:
             else:
                 # Generated prose cannot replace exact task identity, refs or cursors.
                 for key in ("progress", "decisions", "constraints", "remaining_work"):
-                    payload[key] = [
-                        _bounded_text(item, limit=400)
-                        for item in (model_summary.get(key) or ())[-12:]
-                    ] or payload[key]
+                    # The completed model output already has a request token bound.
+                    # Cutting strings/items here can remove a negation, correction
+                    # or source locator after the raw history has been evicted.
+                    # An empty array is also meaningful: do not resurrect stale
+                    # decisions from the deterministic extraction in that case.
+                    payload[key] = list(model_summary.get(key) or ())
                 payload["source"] = "model"
         # Explicit task constraints remain authoritative even when prose is summarized.
         for constraint in (self.active_task_identity or {}).get("constraints") or ():
-            value = _bounded_text(constraint)
+            value = str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
             if value and value not in payload["constraints"]:
                 payload["constraints"].append(value)
-        payload["constraints"] = payload["constraints"][-12:]
+        if payload["source"] != "model":
+            payload["constraints"] = payload["constraints"][-12:]
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload
