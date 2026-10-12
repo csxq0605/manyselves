@@ -1186,6 +1186,11 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
     )
 
     class EnvelopeLoop:
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder):
+            self.context_rebuilder = rebuilder
+
         def __init__(self, **kwargs: Any) -> None:
             self.runtime_id = str(kwargs["agent_type"])
             self.envelope = kwargs.pop("_test_envelope")
@@ -1340,6 +1345,8 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
             assert outcome.result["status"] == "completed"
             assert outcome.result["submission"]["kind"] == payload.kind
             loop = loops[-1]
+            assert loop.context_rebuilder is not None
+            assert loop.received[0].content.startswith(loop.context_rebuilder.boundary)
             assert loop.received[0].task_id == f"host-action-{label}"
             assert loop.published[0].sender == envelope.agent_id
             assert loop.published[0].task_id == envelope.task_id

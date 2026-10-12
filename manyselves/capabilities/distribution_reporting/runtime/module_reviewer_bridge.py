@@ -49,6 +49,8 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .task_context import bind_task_context
+
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]
@@ -212,13 +214,13 @@ class ModuleReviewerAgentBridge:
                 }
             )
 
+        projection = bind_task_context(
+            session.loop, self.workspace, envelope, output_contract=task.output_contract,
+            render_prompt=lambda: self._prompt(agent, task, review_input, inline_context=inline_context),
+        )
         request = AgentTurnRequest(
-            content=self._prompt(
-                agent,
-                task,
-                review_input,
-                inline_context=inline_context,
-            ),
+            content=projection.initial_message() if projection is not None else self._prompt(
+                agent, task, review_input, inline_context=inline_context),
             message_id=f"{task_id}:{run_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,
@@ -261,6 +263,7 @@ class ModuleReviewerAgentBridge:
                 task,
                 context,
                 event_kind,
+                include_context=projection is None,
             ),
             result_decoder=lambda result_ref: self._decode_result(
                 result_ref,
@@ -336,6 +339,8 @@ class ModuleReviewerAgentBridge:
         task: TaskDefinition,
         context: DeclarativeModuleRuntimeLaneContext,
         event_kind: Any,
+        *,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         if event_name == "max_tokens":
@@ -366,7 +371,7 @@ class ModuleReviewerAgentBridge:
                     },
                     ensure_ascii=False,
                     indent=2,
-                ),
+                ) if include_context else "当前事实、稿件与未决项由 typed_task_state 提供；继续处理本次纠正。",
                 f"</{event_name}>",
             )
         )

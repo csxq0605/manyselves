@@ -56,6 +56,8 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .task_context import bind_task_context, replace_inline_fact_packet, task_fact_packet
+
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]
@@ -269,8 +271,19 @@ class ModuleAuthoringAgentBridge:
                 }
             )
 
+        # The prepared revision owns current findings/draft; only replace the
+        # fact carrier from the authoritative finite scope, not from old chat.
+        prompt_context = context.model_copy(deep=True)
+        prompt_envelope = self._envelope(prompt_context, task)
+        facts = task_fact_packet(self.workspace, envelope, context.module_id)
+        if facts is not None and prompt_envelope is not None:
+            prompt_envelope.inline_context = replace_inline_fact_packet(prompt_envelope.inline_context, facts)
+        projection = bind_task_context(
+            session.loop, self.workspace, envelope, output_contract=task.output_contract,
+            render_prompt=lambda: self._prompt(agent, task, prompt_context),
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, context),
+            content=projection.initial_message() if projection is not None else self._prompt(agent, task, prompt_context),
             message_id=f"{task_id}:{run_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,
@@ -313,6 +326,7 @@ class ModuleAuthoringAgentBridge:
                 task,
                 context,
                 event_kind,
+                include_context=projection is None,
             ),
             result_decoder=lambda result_ref: self._decode_result(
                 result_ref,
@@ -389,6 +403,8 @@ class ModuleAuthoringAgentBridge:
         task: TaskDefinition,
         context: DeclarativeModuleRuntimeLaneContext,
         event_kind: Any,
+        *,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         if event_name == "max_tokens":
@@ -419,7 +435,7 @@ class ModuleAuthoringAgentBridge:
                     },
                     ensure_ascii=False,
                     indent=2,
-                ),
+                ) if include_context else "当前事实、稿件与未决项由 typed_task_state 提供；继续处理本次纠正。",
                 f"</{event_name}>",
             )
         )

@@ -154,6 +154,8 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .task_context import bind_task_context
+
 REPORT_MODULE_IDS = tuple(REPORT_TAXONOMY)
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
@@ -484,8 +486,15 @@ class CrossOwnerAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        def render_prompt() -> str:
+            return self._prompt(agent, task, preparation)
+
+        projection = bind_task_context(
+            session.loop, self.workspace, preparation.envelope,
+            output_contract=task.output_contract, render_prompt=render_prompt,
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, preparation),
+            content=projection.initial_message() if projection is not None else render_prompt(),
             message_id=f"{task_id}:{run_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,

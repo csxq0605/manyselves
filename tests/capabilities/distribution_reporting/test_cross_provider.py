@@ -194,6 +194,11 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
             self.received: list[UserMessage] = []
             self.callback = None
 
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
+
         def restore_conversation(
             self,
             messages,
@@ -316,6 +321,8 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
     assert [message.task_attempt_id for message in loops[0].received] == [
         "invoke-cross-owner-2.1",
     ]
+    assert loops[0].context_rebuilder is not None
+    assert loops[0].received[0].content.startswith(loops[0].context_rebuilder.boundary)
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]
@@ -713,6 +720,11 @@ async def test_cross_provider_recheck_rebinds_tools_and_terminal_on_same_session
             self.contents: list[str] = []
             self.terminal_task_ids: list[str] = []
             self.callback = None
+
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
 
         def restore_conversation(
             self,

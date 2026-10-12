@@ -123,6 +123,11 @@ async def test_final_agent_recovery_corrects_in_same_session(tmp_path: Path) -> 
             self.received: list[UserMessage] = []
             self._callback = None
 
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
+
         def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
             del messages, task_boundaries, handoff_summary
 
@@ -233,6 +238,8 @@ async def test_final_agent_recovery_corrects_in_same_session(tmp_path: Path) -> 
         "submission_correction",
     ]
     assert loops[0].received[0].session_id == loops[0].received[1].session_id
+    assert "typed_task_state" in loops[0].received[1].content
+    assert len(loops[0].received[1].content) < len(loops[0].received[0].content)
 
 
 @pytest.mark.asyncio
@@ -335,6 +342,11 @@ async def test_final_provider_uses_real_submit_tool_and_reuses_one_session(
             self.kwargs = kwargs
             self.received: list[UserMessage] = []
             self._callback = None
+
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
 
         def restore_conversation(
             self,
@@ -441,6 +453,8 @@ async def test_final_provider_uses_real_submit_tool_and_reuses_one_session(
     assert len(built) == 1
     assert built[0]["llm_provider"] is services.active_provider
     assert set(loops[0].kwargs["tools"].get_all()) == {"submit_result", "open_tool_result"}
+    assert loops[0].context_rebuilder is not None
+    assert loops[0].received[0].content.startswith(loops[0].context_rebuilder.boundary)
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]

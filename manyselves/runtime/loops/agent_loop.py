@@ -2832,7 +2832,7 @@ class AgentLoop:
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
         rebuild_count = 0
-        if self.context_rebuilder is not None:
+        if self.context_rebuilder is not None and phase != "context_compaction":
             # Rebase only the Provider-facing copy.  The lossless local
             # ``_conversation_history`` remains available to the forensic
             # trace and is never used as a fallback source by the rebaser.

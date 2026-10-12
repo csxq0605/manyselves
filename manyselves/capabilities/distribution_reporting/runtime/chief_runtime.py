@@ -75,6 +75,8 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .task_context import bind_task_context
+
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]
@@ -394,8 +396,15 @@ class ChiefChapterAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        def render_prompt() -> str:
+            return self._prompt(agent, task, context.contract, context.envelope)
+
+        projection = bind_task_context(
+            session.loop, self.workspace, context.envelope,
+            output_contract=task.output_contract, render_prompt=render_prompt,
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, context.contract, context.envelope),
+            content=projection.initial_message() if projection is not None else render_prompt(),
             message_id=f"{task_id}:{run_id}:chapter-{context.chapter_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,
@@ -432,6 +441,7 @@ class ChiefChapterAgentInvoker:
                 context.contract,
                 context.envelope,
                 event_kind,
+                include_context=projection is None,
             ),
             result_decoder=self._decode_result,
             recovery=self.recovery_driver,
@@ -483,6 +493,8 @@ class ChiefChapterAgentInvoker:
         contract: ChiefChapterLaneInput,
         envelope: TaskEnvelope,
         event_kind: Any,
+        *,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         if event_name == "max_tokens":
@@ -506,11 +518,11 @@ class ChiefChapterAgentInvoker:
                 instruction,
                 f"你仍是 {agent.id}，当前任务是 {task.id}。",
                 "立即调用 submit_result，提交符合 output contract 的 chief_chapter_lane_submission。",
-                json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
-                f"Output contract: {task.output_contract}",
-                *( [f"Inline context:\n{envelope.inline_context}"]
-                   if envelope.inline_context else [] ),
+                *( [json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                    f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
+                    f"Output contract: {task.output_contract}",
+                    *([f"Inline context:\n{envelope.inline_context}"] if envelope.inline_context else [])]
+                   if include_context else ["当前任务输入与最新稿件由 typed_task_state 提供。"] ),
                 f"</{event_name}>",
             )
         )

@@ -1,5 +1,52 @@
 # Context handoff policy
 
+## Reporting task state and transient history
+
+Reporting author/revision, module review/recheck, Cross, Chief, Final Chief,
+Final Auditor/recheck and Aggregate Provider compositions now bind a
+`TaskContextRebuilder`. Before each ordinary Provider dispatch it assembles:
+
+1. The system instructions and current typed task input.
+2. The latest durable draft parts and evidence bindings for that run/task/revision.
+3. The current task's recent exchanges and, when needed, a history summary.
+
+Module author/revision input is enriched once at binding from the normalized
+evidence snapshot, enumerating the assigned module/submodule scope and unassigned
+records without top-k ranking or a model search round. An unavailable snapshot
+does not replace prepared input with a false empty scope. Other roles preserve
+their prepared contracts, including the evidence/content those contracts already
+contain; this does not automatically expand all referenced artifacts or standards.
+Template distillation is outside this reporting-task projection slice.
+
+The authoritative state is placed once in the outgoing request and refreshed in
+place. Old tasks and their obsolete draft capsules stay in durable conversations
+but are excluded from the Provider projection. Same-task restarts retain completed
+exchanges in the restored contiguous task segment. Ordinary recovery prompts refer
+to the capsule instead of appending another full copy of the task input. Existing
+tool-result caching, session identity and completed-result recovery remain in use.
+Older raw tool observations may still repeat facts; this is not global text deduplication.
+
+For these reconstructed tasks, `working_memory_tokens` and the target ratio apply
+to **transient history**, before exact task state is added. The configured 36,000
+and 0.6 are unchanged. Fixed facts and durable draft text are excluded from the
+summary-model request; a large fixed packet alone does not trigger a new summary
+on every small tool update. Semantic summarization is still useful for sufficiently
+long process history. Repeated requests reuse its compacted working copy.
+
+The existing full-request context-window check runs after reconstruction and
+includes task state and tools. Mandatory state that does not fit returns
+`context_budget_exhausted`; this change does not introduce automatic task splitting
+or silently truncate the packet. A restart can rebuild exact state and drafts from
+local data, but does not guarantee lossless retention of every old reasoning detail.
+
+All retained task state still consumes input on each Provider request. Local
+assembly avoids model search rounds; it does not imply free tokens, configured
+prefix-cache coverage for task bodies, or measured end-to-end latency savings.
+The following generic policy also applies to loops without this projection; their
+working-memory trigger covers their ordinary message input as before.
+
+## History policy
+
 The default `model_summary` policy still asks the configured Provider to summarize
 progress, decisions and remaining work when working memory is compacted. Exact
 task identity, structured artifact/evidence references and tool paging coordinates
