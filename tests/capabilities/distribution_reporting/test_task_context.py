@@ -45,6 +45,13 @@ def test_fact_scope_is_complete_including_unassigned_and_last_anomaly(tmp_path):
     assert "记录总数：81" in packet
     assert "11.3 A unresolved" in packet and "J80" in packet
     assert "E-0081" in packet and "E-0082" not in packet and "E-0083" not in packet
+    # A submodule projection must not advertise completeness of the whole module.
+    scope_line = next(line for line in packet.splitlines() if line.startswith("检索范围："))
+    assert json.loads(scope_line.removeprefix("检索范围：")) == {
+        "module_id": "2.4", "submodule_ids": ["2.4.3.1"], "includes_unassigned": True,
+    }
+    assert "本模块及未分配模块的全部记录" not in packet
+    assert "范围外对象需要定向查询" in packet
     inline = replace_inline_fact_packet('<project_facts delivery_mode="reference">open it</project_facts>\nKNOWLEDGE', packet)
     again = replace_inline_fact_packet(inline, packet)
     assert inline == again

@@ -25,7 +25,7 @@ def task_fact_packet(workspace: Path, envelope: TaskEnvelope, module_id: str) ->
     if not index.path.is_file():
         return None
     scope = set(envelope.target_submodule_ids) or None
-    return render_fact_packet(index.module_items(module_id, scope), module_id)
+    return render_fact_packet(index.module_items(module_id, scope), module_id, submodule_ids=scope)
 
 
 def replace_inline_fact_packet(inline: str | None, packet: str) -> str:

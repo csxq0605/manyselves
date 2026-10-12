@@ -18,6 +18,12 @@ their prepared contracts, including the evidence/content those contracts already
 contain; this does not automatically expand all referenced artifacts or standards.
 Template distillation is outside this reporting-task projection slice.
 
+Fact packets explicitly state the module and optional submodule scope. A complete
+packet for one submodule is not evidence that other objects are absent from the
+whole snapshot. Out-of-scope objects require targeted lookup; until queried they
+remain unverified. This scope statement does not guarantee model tool use or
+correct interpretation of a value that is already visible.
+
 The authoritative state is placed once in the outgoing request and refreshed in
 place. Old tasks and their obsolete draft capsules stay in durable conversations
 but are excluded from the Provider projection. Same-task restarts retain completed

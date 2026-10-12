@@ -147,7 +147,7 @@ def test_packet_preserves_conflicts_unassigned_facts_and_exact_values(tmp_path):
     _write_facts(tmp_path, [*items, unassigned, other_module])
     scoped = ProjectEvidenceIndex(tmp_path, "facts").module_items("2.4", {"2.4.3.1"})
     assert [item.id for item in scoped] == ["E-0001", "E-0002", "E-0003"]
-    text = render_fact_packet(scoped, "2.4")
+    text = render_fact_packet(scoped, "2.4", submodule_ids={"2.4.3.1"})
     rows = [json.loads(line) for line in text.splitlines() if line.startswith("[")]
     assert len(rows) == 3
     assert rows[0][3] == items[0].fact
