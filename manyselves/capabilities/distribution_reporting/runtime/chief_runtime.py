@@ -135,6 +135,8 @@ def _source_projection(
 
     cross_ref = state.get("cross_review_completion_ref")
     source_refs = [str(cross_ref)] if cross_ref else []
+    if state.get("cross_decision_pack_ref"):
+        source_refs.append(str(state["cross_decision_pack_ref"]))
     raw_modules = state.get("module_submissions", {})
     modules = {
         str(module_id): _model(module, ModuleSubmission)
@@ -153,7 +155,7 @@ def _source_projection(
                 },
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:2400]
+            )
             for module_id, module in sorted(
                 modules.items(), key=lambda item: float(item[0])
             )
@@ -172,7 +174,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:6000],
+            ),
             "module_boundaries": ",".join(
                 f"{module_id}:{','.join(sorted(module.submodule_narratives))}"
                 for module_id, module in sorted(
@@ -189,7 +191,7 @@ def _source_projection(
                 plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:12_000],
+            ),
         }
         knowledge_ref = state.get("special_topic_knowledge_ref")
         if knowledge_ref:

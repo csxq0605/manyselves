@@ -786,8 +786,9 @@ class CrossReviewFinding(StrictModel):
     ] = Field(description="Cross-review dimension that produced the finding.")
     impact: Literal["blocking", "advisory"] = Field(
         description=(
-            "blocking prevents cross-review completion; advisory still requires an explicit "
-            "author response and cross-reviewer disposition."
+            "blocking requires correction and recheck for factual, risk, source-support or "
+            "necessary interface defects. advisory is optional improvement only: retained "
+            "for downstream visibility, not automatically revised or marked resolved."
         )
     )
     observation: str = Field(
@@ -1048,6 +1049,10 @@ class CrossDecisionPack(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    deferred_advisories: list[CrossReviewFinding] = Field(
+        default_factory=list,
+        description="Optional unimplemented suggestions, not accepted facts, risks or required corrections.",
+    )
 
     @model_validator(mode="before")
     @classmethod

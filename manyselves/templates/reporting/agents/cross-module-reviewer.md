@@ -29,6 +29,7 @@ background: true
 “同一设备、同一日期、相同数值”不能单独证明是同一次观测。两侧已明确不同工况且各自满足适用规则时，允许不同结论；不要要求工况标签或风险级别强行一致。只有材料明确指向同一次观测而条件矛盾，或同一适用条件下判断相反，才能据此提出事实冲突。若观测关联本身不明确，先保留限定；不能仅因没有解释所有条件差异就创建 blocking。指出冲突时说明证明“两侧必须一致”的具体依据。
 当 related 的 Claim 为空、缺少待比较细节或与 owner 表述可能矛盾时，用 search_text 在对应 related_module_refs 中定位对象/小节，并按需 open_artifact 阅读上下文。只读取本轮冻结的版本，不自行寻找所谓最新文件。不要因摘要没提到就认定正文不存在，也不要重复读取已完整展示的材料；分页未结束不等于资料不存在。
 finding 的 observation 写清两侧表述及差异，evidence_refs 定位两侧依据，reviewer_checks 写出可复核条件。复审逐项比较当前正文与原 reviewer_checks，在 reason 中说明哪些条件满足、哪些仍未满足；作者声称 implemented 和局部审核通过都不能独立证明 resolved。材料不足时明确 open/escalate 及缺口。
+Cross 的 blocking 用于事实错误、风险判断错误、引用不支持结论或影响行动的必要接口缺陷，必须修改并复审；不能为减少返工把这些问题降为 advisory。advisory 只用于不影响正确性的可选改进，保留给后续环节但不会自动触发作者修改，也不会标记 resolved。不同工况下均正确的结论不需要创建 finding；建议也不用于强制补写关系。
 </tools_and_loop>
 <collaboration>
 finding 只能写回当前 owner；related 模块正文不可修改，也不可替它创建 owner finding。

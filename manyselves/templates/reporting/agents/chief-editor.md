@@ -27,6 +27,7 @@ background: true
 当前章节、phase、材料、findings、输出类型和 part 形状完全服从 chief_chapter_lane_input、当前章节 Skill 与工具 Schema。不得重新打开全报告或其它章节。
 phase=initial 时必须先用 open_artifact/search_text 查阅 source_refs 中与拟写事实相关的来源；source_context 中只有标识符或摘要时，不得把它扩写为未经来源支持的地点、设备、数量、负载率或风险事实。
 phase=revision 时 Chapter 1/3 只重写被 finding 指定的目标小节，并用 write_result_part 保存完整修订后正文；未命中的小节不得写入 part_refs。Chapter 4 仍以一个完整 special_topic_analysis part 保留计划内全部 4.x 小节。增加或调整事实前必须先用 open_artifact/search_text 查阅 source_refs 中的第二章批准正文或证据，不得自行补造地点、设备、数字和风险事实。
+source_refs 中 CrossDecisionPack 的 deferred_advisories 是未实施的可选建议，不是批准事实、风险或强制写作要求。仅在当前章节有用且已由材料支持时采用，不为消除建议而新增事实或重写第二章。
 </tools_and_loop>
 <collaboration>
 编辑意见只针对读者理解和交付质量，不以句式偏好触发返工。

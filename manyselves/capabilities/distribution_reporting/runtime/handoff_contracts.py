@@ -74,9 +74,9 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
             "content_checks": [
                 "cross-module terminology, facts, risk levels, dependencies, propagation, and joint verification only",
                 "no routine re-audit of module-local prose, evidence sufficiency, or image binding",
-                "owner specialist writes back each finding",
+                "owner specialist corrects blocking findings; optional Cross advisories are retained without automatic revision",
                 "module auditor checks only local regression",
-                "the original Cross reviewer alone closes Cross findings",
+                "the original Cross reviewer closes corrective findings; deferred advice is not marked resolved",
             ],
         },
         {

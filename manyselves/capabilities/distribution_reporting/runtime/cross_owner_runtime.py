@@ -891,7 +891,9 @@ class CrossOwnerRuntime:
     @staticmethod
     def initial_has_findings(value: Any) -> bool:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
-        return bool(context.acceptance and context.acceptance.result.findings)
+        return bool(context.acceptance and any(
+            finding.impact == "blocking" for finding in context.acceptance.result.findings
+        ))
 
     async def prepare_revision(
         self,
@@ -915,7 +917,7 @@ class CrossOwnerRuntime:
             owner_input_ref = progress.next_owner_input_ref
             prior_completion_ref = progress.lane.local_review_ref
         else:
-            findings = list(acceptance.result.findings)
+            findings = [f for f in acceptance.result.findings if f.impact == "blocking"]
             owner_subject_path = self.workspace / initial_preparation.owner_input.owner_subject_ref
             current = ModuleSubmission.model_validate_json(
                 owner_subject_path.read_text(encoding="utf-8")
@@ -1933,7 +1935,7 @@ class CrossOwnerRuntime:
         acceptance = context.acceptance
         if context.status != "initial_accepted" or acceptance is None:
             raise ValueError("Cross owner pipeline cannot complete before initial acceptance")
-        if acceptance.result.findings:
+        if any(f.impact == "blocking" for f in acceptance.result.findings):
             raise ValueError("Cross owner findings require the revision/recheck lifecycle")
         review_round = context.preparation.review_round if context.preparation else 0
         completion_ref = (
@@ -1941,6 +1943,7 @@ class CrossOwnerRuntime:
             f"cross-owner-completion-r{review_round}-{acceptance.owner_module_id}.json"
         )
         completion = ReviewCompletionRecord(
+            review_protocol_version=3,
             lifecycle="cross",
             run_id=acceptance.run_id,
             reviewer_agent_id="cross-module-reviewer",
@@ -1950,9 +1953,10 @@ class CrossOwnerRuntime:
                 if context.preparation is not None
                 else acceptance.owner_input_ref
             ],
-            finding_refs=[],
+            finding_refs=[acceptance.result_ref] if acceptance.result.findings else [],
             verdict_refs=[],
             resolved_finding_ids=[],
+            deferred_advisory_ids=[f.id for f in acceptance.result.findings],
         )
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
         pipeline = {
@@ -1962,7 +1966,7 @@ class CrossOwnerRuntime:
             "initial_result": acceptance.result.model_dump(mode="json"),
             "completion_ref": completion_ref,
             "completion": completion.model_dump(mode="json"),
-            "findings": [],
+            "findings": [f.model_dump(mode="json") for f in acceptance.result.findings],
             "synthesis_inputs": [
                 item.model_dump(mode="json")
                 for item in acceptance.result.synthesis_inputs
@@ -2002,7 +2006,7 @@ class CrossOwnerRuntime:
             result = _model(outcome.pipeline.get("initial_result"), CrossOwnerFindingSubmission)
             if result.owner_module_id != owner_module_id:
                 raise ValueError("Cross owner outcome owner/result mismatch")
-            if result.findings:
+            if any(f.impact == "blocking" for f in result.findings) or outcome.pipeline.get("lane") is not None:
                 completed = _model(outcome.pipeline, _CrossOwnerPipelineResult)
                 state.setdefault("module_submissions", {})[owner_module_id] = (
                     completed.lane.module
@@ -2082,7 +2086,7 @@ class CrossOwnerRuntime:
         self.store.write_json(verdict_ref, cross_verdicts.model_dump(mode="json"))
         completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
         completion = ReviewCompletionRecord(
-            review_protocol_version=2,
+            review_protocol_version=3,
             lifecycle="cross",
             run_id=run_id,
             reviewer_agent_id="cross-module-reviewer",
@@ -2091,13 +2095,23 @@ class CrossOwnerRuntime:
             finding_refs=[finding_ref],
             verdict_refs=[verdict_ref],
             resolved_finding_ids=sorted(item.finding_id for item in verdicts),
+            deferred_advisory_ids=sorted(
+                f.id for f in cross_findings.findings
+                if f.impact == "advisory"
+                and f.id not in {v.finding_id for v in verdicts}
+            ),
         )
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
         pack = CrossDecisionPack(
+            version=2,
             run_id=run_id,
             module_ids=list(REPORT_MODULE_IDS),
             cross_review_completion_ref=completion_ref,
             synthesis_inputs=cross_findings.synthesis_inputs,
+            deferred_advisories=[
+                f for f in cross_findings.findings
+                if f.id in completion.deferred_advisory_ids
+            ],
         )
         pack_ref = f"Work/runs/{run_id}/reviews/cross-decision-pack.json"
         self.store.write_json(pack_ref, pack.model_dump(mode="json"))

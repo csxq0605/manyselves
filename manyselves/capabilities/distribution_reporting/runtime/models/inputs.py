@@ -86,6 +86,7 @@ class CrossDecisionPackView(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    deferred_advisories: list[CrossReviewFinding] = Field(default_factory=list)
     artifact_refs: list[str] = Field(
         default_factory=list,
         description="Current-run Cross completion refs retained for business identity.",
@@ -1988,9 +1989,13 @@ class ReviewCompletionRecord(StrictModel):
     finding_refs: list[str] = Field(
         description="Initial and regression finding artifacts considered by completion."
     )
-    verdict_refs: list[str] = Field(description="Reviewer verdict artifacts closing every finding.")
+    verdict_refs: list[str] = Field(description="Reviewer verdict artifacts closing corrective findings.")
     resolved_finding_ids: list[str] = Field(
-        description="Every finding id closed by reviewer verdict or empty initial findings."
+        description="Finding ids actually closed by reviewer verdict, excluding deferred advice."
+    )
+    deferred_advisory_ids: list[str] = Field(
+        default_factory=list,
+        description="Cross v3 optional advice retained without revision or a resolved verdict.",
     )
 
     @model_validator(mode="before")

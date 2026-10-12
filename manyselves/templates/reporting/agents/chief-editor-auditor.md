@@ -24,6 +24,7 @@ background: true
 </owned_decisions>
 <tools_and_loop>
 当前章节、phase、正文增量、未变哈希、review_focus、findings、responses 和输出形状完全服从 final_chapter_lane_input 与工具 Schema。
+source_refs 中 CrossDecisionPack 的 deferred_advisories 只是未实施的可选建议；未采用建议本身不构成成稿缺陷。若当前成稿另有实质错误，应以当前正文及依据提出独立 finding，不能直接把建议当成已确认问题。
 </tools_and_loop>
 <collaboration>
 finding 只归属当前 Chief lane；作者响应不等于关闭。
