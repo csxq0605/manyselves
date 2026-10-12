@@ -116,6 +116,10 @@ def _review_knowledge(
 ) -> tuple[str | None, str]:
     refs = state.get("module_knowledge_refs", {})
     knowledge_ref = refs.get(module_id) if isinstance(refs, Mapping) else None
+    if not knowledge_ref and state.get("run_id"):
+        canonical_ref = f"Work/runs/{state['run_id']}/context/module-{module_id}-knowledge.md"
+        if (workspace / canonical_ref).is_file():
+            knowledge_ref = canonical_ref
     if not knowledge_ref:
         return None, ""
     text = (workspace / str(knowledge_ref)).read_text(encoding="utf-8")
@@ -301,7 +305,7 @@ def prepare_module_local_regression_review(
         state["module_knowledge_refs"] = {
             module_id: str(knowledge_path.relative_to(store.workspace))
         }
-    knowledge_ref, _knowledge_context = _review_knowledge(
+    knowledge_ref, knowledge_context = _review_knowledge(
         store.workspace,
         state,
         module_id,
@@ -323,7 +327,7 @@ def prepare_module_local_regression_review(
         unchanged_submodule_sha256={},
         unchanged_statement_sha256={},
         knowledge_ref=knowledge_ref,
-        knowledge_context="",
+        knowledge_context=knowledge_context,
         evidence=_review_evidence(store.workspace, current, run_id, scope),
         required_submodule_ids=sorted(scope),
         required_findings=[],

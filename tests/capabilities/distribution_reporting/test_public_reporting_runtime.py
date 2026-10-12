@@ -1451,8 +1451,10 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
     assert restored_progress["review_round"] == 1
 
 
+@pytest.mark.parametrize("changed", [True, False])
 def test_module_recheck_projects_prior_current_and_finding_evidence(
     tmp_path: Path,
+    changed: bool,
 ) -> None:
     """A paid recheck receives every E-* ref active in its compact delta."""
 
@@ -1592,14 +1594,50 @@ def test_module_recheck_projects_prior_current_and_finding_evidence(
         ),
     )
 
+    if not changed:
+        context.module = baseline.model_copy(update={
+            "revision": 1, "revision_responses": revised.revision_responses,
+        })
+        store.write_json(
+            f"Work/runs/{run_id}/modules/2.4-r1.json",
+            context.module.model_dump(mode="json"),
+        )
+    knowledge_ref = f"Work/runs/{run_id}/context/module-2.4-knowledge.md"
+    knowledge_path = tmp_path / knowledge_ref
+    knowledge_path.parent.mkdir(parents=True, exist_ok=True)
+    knowledge_path.write_text(
+        f"# 依据\n## {target} 适用\n范围内规则原文。\n## 2.4.3.1 其他\n范围外规则。",
+        encoding="utf-8",
+    )
+    context.reporting_state["module_knowledge_refs"] = {"2.4": knowledge_ref}
+    context.reporting_state["template_skill_text"] = {"auditor-2.4": "保留审查方法。"}
+    from tests.capabilities.distribution_reporting.test_project_fact_packet import _facts
+
+    uncited = _facts(1)[0].model_copy(update={"id": "E-0099", "submodule_id": target})
+    store.write_jsonl(
+        f"Work/runs/{run_id}/preparation/evidence.jsonl", [uncited.model_dump(mode="json")],
+    )
     prepared = prepare_current_module_recheck(context, store=store)
 
     assert prepared.recheck is not None
     assert prepared.recheck.prepared.review_input is not None
+    packet = prepared.recheck.prepared.review_input
+    assert set(packet.subject.submodule_narratives) == {target}
+    assert packet.claim_statements[0].text == context.module.claims[0].text
+    assert "范围内规则原文" in packet.knowledge_context
+    assert "范围外规则" not in packet.knowledge_context
+    assert "保留审查方法" in prepared.recheck.prepared.envelope.inline_context
     assert {
         item.evidence_id
         for item in prepared.recheck.prepared.review_input.evidence
-    } == {prior_evidence, current_evidence, finding_evidence}
+    } == ({prior_evidence, current_evidence, finding_evidence, "E-0099"} if changed
+          else {prior_evidence, finding_evidence, "E-0099"})
+    with pytest.raises(ValueError, match="evidence packet"):
+        type(packet).model_validate({
+            **packet.model_dump(mode="json"),
+            "evidence": [item.model_dump(mode="json") for item in packet.evidence
+                         if item.evidence_id != finding_evidence],
+        })
 
 
 @pytest.mark.asyncio

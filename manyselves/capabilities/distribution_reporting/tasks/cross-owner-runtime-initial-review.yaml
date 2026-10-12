@@ -6,5 +6,7 @@ objective: Return findings and synthesis inputs for the exact prepared Cross own
 input_contract: declarative_cross_owner_runtime_context
 output_contract: declarative_cross_owner_initial_agent_result
 tools:
+- search_text
+- open_artifact
 - submit_result
 recovery: current-reporting-recovery

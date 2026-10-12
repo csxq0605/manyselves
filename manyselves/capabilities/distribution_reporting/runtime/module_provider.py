@@ -314,14 +314,12 @@ def build_module_provider_tools(
         photo_map = getattr(artifact_access, "photo_map", None)
         photo_refs = photo_map() if callable(photo_map) else {}
         large_artifact_reader = envelope.agent_id in {
-            "cross-module-reviewer",
             "chief-editor",
             "chief-editor-auditor",
         }
         audit_artifact_reader = envelope.agent_id == "evidence-auditor"
         default_limit = 160_000 if large_artifact_reader else 8_000 if audit_artifact_reader else 4_000
         minimum_limit = 160_000 if envelope.agent_id in {
-            "cross-module-reviewer",
             "chief-editor",
         } else 1
         maximum_limit = 160_000 if large_artifact_reader else 8_000

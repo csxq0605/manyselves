@@ -63,8 +63,8 @@ from tests.capabilities.distribution_reporting.test_cross_round import (
 )
 
 
-def _state(run_id: str) -> dict[str, object]:
-    return {
+def _state(run_id: str, workspace: Path | None = None) -> dict[str, object]:
+    state = {
         "run_id": run_id,
         "module_submissions": {
             module_id: ModuleSubmission(
@@ -88,6 +88,64 @@ def _state(run_id: str) -> dict[str, object]:
             for module_id in REPORT_TAXONOMY
         },
     }
+    if workspace is not None:
+        for module_id, module in state["module_submissions"].items():
+            path = workspace / state["module_artifact_refs"][module_id]["ref"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(module.model_dump_json(indent=2), encoding="utf-8")
+    return state
+
+
+@pytest.mark.asyncio
+async def test_cross_production_tools_can_read_unclaimed_related_prose(tmp_path, monkeypatch):
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime import cross_provider
+    from manyselves.kernel.definitions import DefinitionKind
+
+    run_id = "cross-related-prose"
+    state = _state(run_id, tmp_path)
+    related_ref = state["module_artifact_refs"]["2.2"]["ref"]
+    related = state["module_submissions"]["2.2"]
+    related.submodule_narratives[next(iter(related.submodule_narratives))] = "设备 A 的读数为 16.58，结论为异常。"
+    (tmp_path / related_ref).write_text(related.model_dump_json(indent=2), encoding="utf-8")
+    lifecycle = CrossOwnerRuntime(tmp_path)
+    context = lifecycle.prepare_initial({"state": lifecycle.prepare(state), "owner_module_id": "2.1"})
+    _, definitions = load_distribution_reporting_capability()
+    agent = definitions.require(DefinitionKind.AGENT, "cross-module-reviewer")
+    task = definitions.require(DefinitionKind.TASK, "cross-owner-runtime-initial-review")
+    captured = {}
+    build_tools = cross_provider.build_module_provider_tools
+
+    def capture(*args, **kwargs):
+        registry = build_tools(*args, **kwargs)
+        captured["tools"] = registry
+        return registry
+
+    monkeypatch.setattr(cross_provider, "build_module_provider_tools", capture)
+    runtime = cross_provider.CrossProviderRuntime(RuntimeServicesView(
+        workspace=tmp_path, bus=MessageBus(), active_provider=object(),
+        agent_defaults=AgentDefaults(), global_knowledge_root=None,
+    ))
+    runtime._bridge(agent, task, context, ConversationRecord(
+        conversation_id="cross-prose", run_id=run_id,
+        key=ConversationKey(agent_id=agent.id, value="cross-owner-2.1", mode=ConversationMode.RUN),
+    ))
+    registry = captured["tools"]
+    assert registry.get("search_text") is not None
+    assert registry.get("open_artifact") is not None
+    search = await registry.get("search_text")(ref=related_ref, query="16.58")
+    assert "16.58" in json.dumps(search, ensure_ascii=False)
+    page = await registry.get("open_artifact")(ref=related_ref, limit=128)
+    assert page["returned"] == 128
+    assert page["truncated"] is True
+    next_page = await registry.get("open_artifact")(
+        ref=related_ref, offset=page["next_offset"], limit=128,
+    )
+    assert next_page["offset"] == 128
+    with pytest.raises(PermissionError):
+        await registry.get("open_artifact")(ref=f"Work/runs/{run_id}/private.txt")
 
 
 @pytest.mark.asyncio
@@ -118,7 +176,7 @@ async def test_cross_provider_shares_declared_recovery_with_tool_callback(
     )
     context = CrossOwnerRuntime(tmp_path).prepare_initial(
         {
-            "state": CrossOwnerRuntime(tmp_path).prepare(_state("cross-schema-run")),
+            "state": CrossOwnerRuntime(tmp_path).prepare(_state("cross-schema-run", tmp_path)),
             "owner_module_id": "2.1",
         }
     )
@@ -255,7 +313,7 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
         global_knowledge_root=None,
     )
     runtime = CrossOwnerRuntime(tmp_path)
-    state = runtime.prepare(_state(run_id))
+    state = runtime.prepare(_state(run_id, tmp_path))
     composition = build_cross_provider_composition(
         services,
         cross_runtime=runtime,
@@ -367,7 +425,7 @@ async def test_cross_provider_reuses_persisted_completed_result_before_provider(
     run_id = "cross-provider-persisted-reuse"
     bus = MessageBus()
     runtime = CrossOwnerRuntime(tmp_path)
-    state = runtime.prepare(_state(run_id))
+    state = runtime.prepare(_state(run_id, tmp_path))
     context = runtime.prepare_initial(
         {"state": state, "owner_module_id": "2.1"}
     )
@@ -507,7 +565,7 @@ async def test_cross_owner_finding_revises_locally_rechecks_and_completes(
 
     run_id = "cross-owner-finding-lifecycle"
     runtime = CrossOwnerRuntime(tmp_path)
-    raw_state = _state(run_id)
+    raw_state = _state(run_id, tmp_path)
     for module_id, submission in raw_state["module_submissions"].items():
         runtime.store.write_json(
             f"Work/runs/{run_id}/modules/{module_id}-r0.json",
@@ -815,7 +873,7 @@ async def test_cross_provider_recheck_rebinds_tools_and_terminal_on_same_session
         global_knowledge_root=None,
     )
     runtime = CrossOwnerRuntime(tmp_path)
-    state = runtime.prepare(_state(run_id))
+    state = runtime.prepare(_state(run_id, tmp_path))
     initial_context = runtime.prepare_initial(
         {"state": state, "owner_module_id": "2.1"}
     )

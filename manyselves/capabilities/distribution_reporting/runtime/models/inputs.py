@@ -641,7 +641,7 @@ class ModuleReviewInput(StrictModel):
         default_factory=list,
         description=(
             "Recheck-only prior semantics for Claims added, removed, or changed since "
-            "the last paid review. Unchanged statements are retained only by hash."
+            "the last paid review. Current statements also include unchanged finding-scope text."
         ),
     )
     unchanged_submodule_sha256: dict[str, str] = Field(
@@ -661,20 +661,20 @@ class ModuleReviewInput(StrictModel):
         default=None,
         description=(
             "Provenance path for the current-run module Knowledge artifact from which the "
-            "inline bounded slice was made. Initial review carries the body; later tasks "
-            "retain only this provenance because the auditor identity is persistent."
+            "inline bounded slice was made. Each task carries its own scoped body; "
+            "persistent reviewer identity does not imply visible earlier context."
         ),
     )
     knowledge_context: str = Field(
         default="",
         description=(
-            "Initial-review selected taxonomy sections from the immutable Knowledge snapshot; "
-            "later persistent-identity tasks leave this empty unless Knowledge changed."
+            "Selected taxonomy sections from the immutable Knowledge snapshot for this "
+            "task's scope, including recheck and local regression."
         ),
     )
     evidence: list[ReviewEvidenceExcerpt] = Field(
         description=(
-            "Complete bounded packet for every E-* id bound to the reviewed subject. "
+            "Bounded packet covering cited E-* ids and uncited project facts in review scope. "
             "The reviewer must use this packet rather than reopen or research sources."
         )
     )
@@ -815,7 +815,7 @@ class ModuleReviewInput(StrictModel):
         )
         if (
             len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
-            or set(supplied_evidence_ids) != required_evidence_ids
+            or not required_evidence_ids.issubset(supplied_evidence_ids)
         ):
             raise ValueError("module review evidence packet does not match its active semantics")
         if self.phase != "recheck" and current_claim_evidence_ids != subject_evidence_ids:
@@ -932,8 +932,8 @@ class ModuleReviewInput(StrictModel):
             changed_narratives = set(
                 self.revision_diff.changed_submodule_narratives
             )
-            if set(self.subject.submodule_narratives) != changed_narratives:
-                raise ValueError("module recheck subject must contain only changed narratives")
+            if not changed_narratives.issubset(self.subject.submodule_narratives):
+                raise ValueError("module recheck subject must contain every changed narrative")
             unchanged_submodules = scope - changed_narratives
             if set(self.unchanged_submodule_sha256) != unchanged_submodules:
                 raise ValueError("module recheck must hash every unchanged required narrative")
@@ -946,7 +946,10 @@ class ModuleReviewInput(StrictModel):
             visible_changed_statements = set(current_statement_refs) | set(
                 prior_statement_refs
             )
-            if visible_changed_statements != changed_statements:
+            if not (
+                changed_statements <= visible_changed_statements
+                <= changed_statements | set(self.unchanged_statement_sha256)
+            ):
                 raise ValueError(
                     "module recheck must expose current and prior semantics for every "
                     "changed statement"
@@ -969,13 +972,13 @@ class ModuleReviewInput(StrictModel):
                     }
                 )
                 for submodule_id in (
-                    changed_narratives
+                    set(self.subject.submodule_narratives)
                     | {statement.submodule_id for statement in self.claim_statements}
                 )
             }
             if self.subject.evidence_ids_by_submodule != expected_subject_evidence:
                 raise ValueError(
-                    "module recheck subject evidence must describe only current changed semantics"
+                    "module recheck subject evidence must describe current visible semantics"
                 )
         return self
 

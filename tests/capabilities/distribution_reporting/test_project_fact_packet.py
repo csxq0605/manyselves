@@ -126,6 +126,29 @@ def test_reviewer_receives_evidence_that_author_did_not_cite(tmp_path):
     assert json.loads(excerpts[-1].content)["needs_confirmation"] is True
 
 
+def test_initial_review_contract_accepts_uncited_scope_evidence(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
+        DeclarativeModuleRuntimeLaneContext,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
+        prepare_current_module_review,
+    )
+    from tests.capabilities.distribution_reporting.test_public_reporting_runtime import (
+        _module_submission,
+    )
+
+    state = _write_facts(tmp_path, _facts())
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.4", workflow_id="module-report", reporting_state=state,
+        status="authored", module=_module_submission(),
+    )
+    prepared = prepare_current_module_review(context, store=ReportingStore(tmp_path))
+    packet = prepared.review.prepared.review_input
+    assert packet is not None
+    assert {item.evidence_id for item in packet.evidence} == {item.id for item in _facts()}
+    assert json.loads(packet.evidence[-1].content)["needs_confirmation"] is True
+
+
 def test_packet_preserves_conflicts_unassigned_facts_and_exact_values(tmp_path):
     from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
         render_fact_packet,

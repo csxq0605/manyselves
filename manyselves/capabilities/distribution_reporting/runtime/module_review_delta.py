@@ -58,7 +58,7 @@ def build_module_recheck_delta(
     current: ModuleSubmission,
     scope: set[str],
 ) -> dict[str, object]:
-    """Build the existing bounded delta from the last reviewed subject."""
+    """Keep current finding-scope text self-contained; use the delta for focus."""
 
     raw = build_revision_diff(baseline, current)
     changed_narratives = set(raw["changed_submodule_narratives"])
@@ -86,8 +86,8 @@ def build_module_recheck_delta(
         )
     current_statements = [
         _review_claim_statement(current_claims[claim_id])
-        for claim_id in sorted(changed_claim_ids)
-        if claim_id in current_claims
+        for claim_id in sorted(current_claims)
+        if current_claims[claim_id].submodule_id in scope
     ]
     prior_statements = [
         _review_claim_statement(baseline_claims[claim_id])
@@ -96,30 +96,14 @@ def build_module_recheck_delta(
     ]
     changed_statement_refs = sorted(
         {
-            statement.statement_ref
-            for statement in [*current_statements, *prior_statements]
+            _review_claim_statement(claim).statement_ref
+            for claim_id in changed_claim_ids
+            for claim in (current_claims.get(claim_id), baseline_claims.get(claim_id))
+            if claim is not None
         }
     )
     changed_statement_ids = set(changed_statement_refs)
-    delta_submodule_ids = changed_narratives | {
-        statement.submodule_id for statement in current_statements
-    }
-    subject_view = module_content_view(current, changed_narratives).model_copy(
-        update={
-            "evidence_ids_by_submodule": {
-                submodule_id: sorted(
-                    {
-                        evidence_id
-                        for statement in current_statements
-                        if statement.submodule_id == submodule_id
-                        for evidence_id in statement.evidence_ids
-                        if evidence_id.startswith("E-")
-                    }
-                )
-                for submodule_id in delta_submodule_ids
-            }
-        }
-    )
+    subject_view = module_content_view(current, scope)
     unchanged_statement_sha256 = {
         statement.statement_ref: _model_sha256(statement)
         for statement in (

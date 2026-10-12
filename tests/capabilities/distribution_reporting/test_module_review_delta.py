@@ -43,3 +43,16 @@ def test_module_recheck_delta_rejects_changed_claim_outside_reviewer_scope() -> 
 
     with pytest.raises(ValueError, match="Claims outside reviewer finding scope"):
         build_module_recheck_delta(baseline, revised, {"2.4.1.1"})
+
+
+def test_recheck_keeps_unchanged_disputed_text_without_previous_conversation() -> None:
+    baseline = _module(claim_text="数值 16.58 超过 10，但结论正常。", revision=0)
+    current = baseline.model_copy(update={"revision": 1})
+    delta = build_module_recheck_delta(baseline, current, {"2.4.1.2"})
+
+    assert delta["subject"].submodule_narratives == {
+        "2.4.1.2": baseline.submodule_narratives["2.4.1.2"],
+    }
+    assert [item.text for item in delta["claim_statements"]] == [baseline.claims[0].text]
+    assert delta["revision_diff"].changed_statement_refs == []
+    assert delta["prior_claim_statements"] == []

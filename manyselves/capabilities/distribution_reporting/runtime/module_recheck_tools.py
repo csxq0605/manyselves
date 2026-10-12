@@ -44,8 +44,11 @@ from manyselves.capabilities.distribution_reporting.runtime.module_review_delta 
     build_module_recheck_delta,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
+    _review_evidence,
     _review_evidence_by_ids,
+    _review_knowledge,
     _structure_report,
+    _template_skill_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
@@ -209,6 +212,13 @@ def prepare_current_module_recheck(
         for evidence_ref in finding.evidence_refs
         if evidence_ref.startswith("E-")
     )
+    # Include uncited scope facts as well as old/new/finding references. A
+    # persistent reviewer identity does not guarantee visible earlier messages.
+    scope_evidence = _review_evidence(store.workspace, current, run_id, scope)
+    active_evidence_ids.difference_update(item.evidence_id for item in scope_evidence)
+    knowledge_ref, knowledge_context = _review_knowledge(
+        store.workspace, context.reporting_state, context.module_id, scope,
+    )
     review_input = ModuleReviewInput(
         report_instruction=report_instruction_from_state(context.reporting_state),
         input_changes=context.reporting_state.get("revision_input_changes"),
@@ -224,7 +234,9 @@ def prepare_current_module_recheck(
         prior_claim_statements=delta["prior_claim_statements"],
         unchanged_submodule_sha256=delta["unchanged_submodule_sha256"],
         unchanged_statement_sha256=delta["unchanged_statement_sha256"],
-        evidence=_review_evidence_by_ids(
+        knowledge_ref=knowledge_ref,
+        knowledge_context=knowledge_context,
+        evidence=scope_evidence + _review_evidence_by_ids(
             store.workspace,
             run_id,
             active_evidence_ids,
@@ -265,7 +277,9 @@ def prepare_current_module_recheck(
         target_submodule_ids=sorted({finding.target_submodule_id for finding in pending}),
         input_contract_kind="module_review_input",
         input_contract_ref=input_ref,
-        inline_context=None,
+        inline_context=_template_skill_context(
+            store.workspace, context.reporting_state, context.module_id,
+        ),
         allowed_tools=["submit_result"],
     )
     prepared = ModuleRecheckPreparation(
