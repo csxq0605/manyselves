@@ -233,12 +233,18 @@ async def test_cross_provider_shares_declared_recovery_with_tool_callback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("joint", [False, True])
 async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_session(
-    tmp_path: Path,
+    tmp_path: Path, joint: bool,
 ) -> None:
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.cross_joint import prepare_review
     from manyselves.capabilities.distribution_reporting.runtime.cross_provider import (
         build_cross_provider_composition,
     )
+    from manyselves.kernel.definitions import DefinitionKind
 
     run_id = "cross-provider-run"
     bus = MessageBus()
@@ -271,6 +277,11 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
                 if message.agent_type != self.kwargs["agent_type"]:
                     return
                 self.received.append(message)
+                if joint:
+                    await self.kwargs["tools"].get("submit_result")(
+                        kind="cross_review_finding_submission", findings=[], synthesis_inputs=[],
+                    )
+                    return
                 await self.kwargs["tools"].get("submit_result")(
                     kind="cross_owner_finding_submission",
                     owner_module_id="2.1",
@@ -349,6 +360,12 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
         output_contract="declarative_cross_owner_initial_agent_result",
         tools=["submit_result"],
     )
+    if joint:
+        _, registry = load_distribution_reporting_capability()
+        agent = registry.require(DefinitionKind.AGENT, "cross-relation-reviewer")
+        task = registry.require(DefinitionKind.TASK, "cross-joint-runtime-review")
+        context = prepare_review(runtime, _state(run_id, tmp_path))
+        conversation.key = ConversationKey(agent_id=agent.id, value="cross-joint", mode=ConversationMode.RUN)
     try:
         first = await composition.agent_invokers[agent.id].invoke(
             agent,
@@ -364,6 +381,20 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
             conversation,
             task_id="invoke-cross-owner-2.1-again",
         )
+        if joint:
+            await composition.close()
+            def unexpected_provider(**kwargs):
+                raise AssertionError("Restart must reuse the persisted completed joint result")
+            composition = build_cross_provider_composition(
+                services, cross_runtime=CrossOwnerRuntime(tmp_path),
+                execution=AgentExecutionService(bus, timeout=1), loop_builder=unexpected_provider,
+            )
+            recovered = await composition.agent_invokers[agent.id].invoke(
+                agent, task, context.model_dump(mode="json"), conversation,
+                task_id="invoke-joint-after-restart",
+            )
+            assert recovered.status == "ok"
+            assert recovered.result == first.result
     finally:
         await composition.close()
         bus.shutdown()
@@ -384,21 +415,21 @@ async def test_cross_provider_uses_real_submit_tool_wire_identity_and_one_sessio
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]
-    assert conversation.external_session_id == "public-reporting:cross-owner-2.1"
-    assert set(built[0]["tools"].get_all()) == {"submit_result", "open_tool_result"}
+    assert conversation.external_session_id == f"public-reporting:{conversation.key.value}"
+    assert {"submit_result", "open_tool_result"} <= set(built[0]["tools"].get_all())
 
     result_path = (
         tmp_path
         / "Work/runs"
         / run_id
         / "results"
-        / "cross-owner-2.1-r0-initial.json"
+        / ("cross-joint-r0.json" if joint else "cross-owner-2.1-r0-initial.json")
     )
     persisted = json.loads(result_path.read_text(encoding="utf-8"))
-    assert persisted["agent_id"] == "cross-module-reviewer"
-    assert persisted["task_id"] == "cross-owner-2.1-r0-initial"
+    assert persisted["agent_id"] == agent.id
+    assert persisted["task_id"] == context.preparation.envelope.task_id
     assert persisted["session_id"] == conversation.external_session_id
-    assert persisted["payload"]["kind"] == "cross_owner_finding_submission"
+    assert persisted["payload"]["kind"] == ("cross_review_finding_submission" if joint else "cross_owner_finding_submission")
 
 
 @pytest.mark.asyncio

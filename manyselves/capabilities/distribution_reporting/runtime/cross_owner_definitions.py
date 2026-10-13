@@ -78,6 +78,27 @@ def register_cross_owner_pipeline_specializations(
         )
         definitions.register(workflow)
         workflows[workflow_id] = workflow
+    repair_template = definitions.require(
+        DefinitionKind.WORKFLOW, "distribution-cross-owner-repair-lane"
+    )
+    for module_id in REPORT_MODULE_IDS:
+        workflow_id = f"distribution-cross-owner-{module_id}-repair-lane"
+        if definitions.get(DefinitionKind.WORKFLOW, workflow_id) is None:
+            workflow = specialize_workflow(
+                repair_template,
+                {
+                    "owner_module_id": module_id,
+                    "conversation_key": f"cross-owner-{module_id}",
+                    "revision_agent_id": f"module-{module_id}-specialist",
+                    "revision_task_id": f"cross-owner-module-{module_id}-revision-r1",
+                    "revision_conversation_key": f"module-{module_id}",
+                    "local_review_conversation_key": f"module-auditor-{module_id}",
+                    "local_review_workflow_id": f"distribution-cross-owner-local-{module_id}-module-review-lane",
+                },
+                workflow_id=workflow_id,
+            )
+            definitions.register(workflow)
+            workflows[workflow_id] = workflow
     return workflows
 
 

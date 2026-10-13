@@ -65,7 +65,7 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
         {
             "stage": "cross-review",
             "producer": "five independently reviewed module pipelines",
-            "consumer": "cross-module-reviewer",
+            "consumer": "cross-relation-reviewer",
             "input": "CrossReviewInput with five exact ModuleSubmission artifacts",
             "output": (
                 "coverage + CrossReviewFinding + CrossSynthesisInput + "

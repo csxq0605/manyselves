@@ -1930,6 +1930,6 @@ def test_full_report_stops_at_existing_tail_specialization_boundary(
 
     with pytest.raises(
         ValueError,
-        match="distribution-cross-owner-2.1-pipeline",
+        match="distribution-cross-owner-2.1-repair-lane",
     ):
         runtime.compile_plan(request)

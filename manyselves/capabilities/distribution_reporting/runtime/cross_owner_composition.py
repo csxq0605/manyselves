@@ -136,6 +136,7 @@ def build_cross_owner_tool_implementations(
         implementation = getattr(runtime, attribute, None)
         if callable(implementation):
             implementations[tool_id] = implementation
+    implementations.update(getattr(runtime, "joint_tools", {}))
     return implementations
 
 

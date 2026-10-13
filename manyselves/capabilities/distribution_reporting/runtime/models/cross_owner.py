@@ -9,8 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agentic import (
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
+    CrossReviewFindingSubmission,
+    CrossReviewVerdictSubmission,
+    TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from .inputs import CrossReviewInput
 from .module_lane import DeclarativeModuleRuntimeLaneContext
 from .review import (
     CrossOwnerInitialReviewAcceptance,
@@ -35,6 +39,40 @@ class DeclarativeCrossOwnerInitialAgentResult(BaseModel):
     status: Literal["completed", "failed"]
     submission: CrossOwnerFindingSubmission | None = None
     error: str | None = None
+
+
+class CrossJointPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str
+    workflow_id: str
+    owner_module_id: str = "joint"
+    review_round: int
+    review_input: CrossReviewInput
+    envelope: TaskEnvelope
+
+
+class DeclarativeCrossJointRuntimeContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["cross_joint_context"] = "cross_joint_context"
+    owner_module_id: str = "joint"
+    preparation: CrossJointPreparation | None = None
+    main_preparation: MainExceptionDecisionPreparation | None = None
+    main_acceptance: MainExceptionDecisionAcceptance | None = None
+
+
+class DeclarativeCrossJointAgentResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["completed", "failed"]
+    submission: CrossReviewFindingSubmission | CrossReviewVerdictSubmission | None = None
+    error: str | None = None
+
+
+def cross_runtime_context(value: Any):
+    if isinstance(value, DeclarativeCrossJointRuntimeContext):
+        return value
+    if isinstance(value, dict) and value.get("kind") == "cross_joint_context":
+        return DeclarativeCrossJointRuntimeContext.model_validate(value)
+    return value if isinstance(value, DeclarativeCrossOwnerRuntimeContext) else DeclarativeCrossOwnerRuntimeContext.model_validate(value)
 
 
 class DeclarativeCrossOwnerRecheckAgentResult(BaseModel):

@@ -990,9 +990,10 @@ class ModuleReviewInput(StrictModel):
 
 class CrossReviewInput(StrictModel):
     kind: Literal["cross_review_input"] = "cross_review_input"
-    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = Field(
+        default=None,
         description=(
-            "Responsibility module for this specialized Cross lane. Every finding and "
+            "Null means a joint review of the current five-module snapshot. Otherwise the responsibility module for this specialized Cross lane. Every finding and "
             "writeback target created by the lane must belong to this module."
         )
     )
@@ -1007,6 +1008,12 @@ class CrossReviewInput(StrictModel):
         description="initial creates Cross findings; recheck closes required Cross findings."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    review_round: int = Field(default=0, ge=0)
+    report_instruction: str = ""
+    input_changes: RevisionInputChanges | None = Field(
+        default=None,
+        description="Current parsed input changes and superseded evidence IDs; prior drafts are not current facts.",
+    )
     module_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         description="Workflow-owned refs for the exact five reviewed module subjects."
     )
@@ -1015,8 +1022,8 @@ class CrossReviewInput(StrictModel):
     )
     modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description=(
-            "Initial: complete five-module subjects. Recheck: only modules changed by "
-            "the current Cross revision wave."
+            "Joint review: complete five-module subjects in every round. Specialized "
+            "owner recheck: modules changed by the current Cross revision wave."
         )
     )
     changed_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
@@ -1066,14 +1073,15 @@ class CrossReviewInput(StrictModel):
             raise ValueError("initial cross review requires all five complete modules")
         if self.phase == "recheck":
             if any(
-                finding.owner_module_id != self.owner_module_id
+                self.owner_module_id is not None and finding.owner_module_id != self.owner_module_id
                 for finding in self.required_findings
             ):
                 raise ValueError(
                     "cross lane required findings must belong to owner_module_id"
                 )
-            if not changed or set(self.modules) != changed:
-                raise ValueError("cross recheck full subjects must equal changed_module_ids")
+            visible = expected if self.owner_module_id is None else changed
+            if not changed or set(self.modules) != visible:
+                raise ValueError("cross recheck requires current subjects for its joint or owner scope")
             required = {finding.id for finding in self.required_findings}
             responses = {
                 response.finding_id
@@ -1150,8 +1158,8 @@ class CrossOwnerInput(StrictModel):
         default=None,
         description="Current parsed input changes. Check linked prose against these facts; superseded E IDs describe the old baseline only.",
     )
-    phase: Literal["initial", "recheck"] = Field(
-        description="Whether this is the owner's initial review or its bound recheck."
+    phase: Literal["initial", "recheck", "repair"] = Field(
+        description="Initial owner review, bound recheck, or author repair projected from a joint decision."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     review_round: int = Field(
@@ -1250,7 +1258,7 @@ class CrossOwnerInput(StrictModel):
                 raise ValueError("initial Cross owner input cannot contain recheck state")
             if self.local_regression_review_ref:
                 raise ValueError("initial Cross owner input cannot contain regression refs")
-        else:
+        elif self.phase == "recheck":
             if self.review_round <= 0:
                 raise ValueError("Cross owner recheck requires a positive review round")
             required = {finding.id for finding in self.required_findings}

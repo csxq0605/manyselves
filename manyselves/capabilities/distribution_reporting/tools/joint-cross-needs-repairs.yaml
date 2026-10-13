@@ -1,0 +1,10 @@
+id: joint-cross-needs-repairs
+version: 1.0.0
+description: joint cross needs repairs
+implementation: capability:distribution-reporting:joint-cross-needs-repairs
+input_contract: reporting_tail_state
+output_contract: boolean
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

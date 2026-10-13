@@ -1,0 +1,10 @@
+id: complete-joint-cross-review
+version: 1.0.0
+description: complete joint cross review
+implementation: capability:distribution-reporting:complete-joint-cross-review
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

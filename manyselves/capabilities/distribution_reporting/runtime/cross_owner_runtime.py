@@ -71,12 +71,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     WorkflowDecisionSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+    DeclarativeCrossJointAgentResult,
     DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRecheckAgentResult,
     DeclarativeCrossOwnerRuntimeContext,
     DeclarativeMainExceptionAgentResult,
     DeclarativeMainExceptionUserInput,
+    cross_runtime_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     CrossOwnerInput,
@@ -258,6 +260,7 @@ def _build_owner_input(
     metadata: Mapping[str, Any],
     owner_module_id: str,
     review_round: int,
+    phase: str = "initial",
 ) -> tuple[CrossOwnerInput, str]:
     owner = modules[owner_module_id]
     owner_ref = _module_subject_ref(state, metadata, owner)
@@ -278,7 +281,7 @@ def _build_owner_input(
 
     owner_view: ModuleContentView = module_content_view(owner)
     contract = CrossOwnerInput(
-        phase="initial",
+        phase=phase,
         run_id=str(state["run_id"]),
         review_round=review_round,
         owner_module_id=owner_module_id,
@@ -404,7 +407,7 @@ class CrossOwnerAgentInvoker:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
-        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        context = cross_runtime_context(value)
         preparation = self.preparation_for_output(context, task.output_contract)
         if preparation is None or preparation.envelope is None:
             return AgentInvocationOutcome(
@@ -582,7 +585,7 @@ class CrossOwnerAgentInvoker:
                 json.dumps(
                     {
                         "run_id": preparation.run_id,
-                        "owner_module_id": preparation.owner_module_id,
+                        "owner_module_id": getattr(preparation, "owner_module_id", "joint"),
                         "output_contract": task.output_contract,
                     },
                     ensure_ascii=False,
@@ -597,7 +600,7 @@ class CrossOwnerAgentInvoker:
         context: DeclarativeCrossOwnerRuntimeContext,
         output_contract: str,
     ) -> Any:
-        local = context.local_module_context
+        local = getattr(context, "local_module_context", None)
         if output_contract == "declarative_module_review_agent_result":
             return local.review.prepared if local is not None and local.review else None
         if output_contract == "declarative_module_recheck_agent_result":
@@ -644,6 +647,10 @@ class CrossOwnerAgentInvoker:
 
     @staticmethod
     def _decode_payload(payload: Any, *, output_contract: str) -> dict[str, Any]:
+        if output_contract == "declarative_cross_joint_agent_result":
+            return DeclarativeCrossJointAgentResult(
+                status="completed", submission=payload,
+            ).model_dump(mode="json")
         if output_contract == "declarative_module_review_agent_result":
             return DeclarativeModuleReviewAgentResult(
                 status="completed",
@@ -679,6 +686,11 @@ class CrossOwnerAgentInvoker:
 class CrossOwnerRuntime:
     """Compose Cross owner preparation, initial acceptance, and reduction."""
 
+    @property
+    def joint_tools(self):
+        from .cross_joint import build_joint_tools
+        return build_joint_tools(self)
+
     def __init__(
         self,
         workspace: Path,
@@ -702,6 +714,7 @@ class CrossOwnerRuntime:
             )
             self.agent_invokers: Mapping[str, Any] = {
                 "cross-module-reviewer": invoker,
+                "cross-relation-reviewer": invoker,
                 "main-agent": invoker,
             }
         else:

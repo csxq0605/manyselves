@@ -15,6 +15,7 @@ accepts:
 - resolution_verdicts
 - report_state
 - output_artifacts
+- declarative_cross_joint_runtime_context
 - declarative_cross_owner_runtime_context
 - declarative_module_runtime_lane_context
 produces:
