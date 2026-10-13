@@ -110,6 +110,7 @@ class WorkflowCompiler:
             definitions,
             workflow_stack=(),
             compiled=compiled,
+            assignable_pairs=set(),
         )
         definition_snapshots = _snapshot_plan_definitions(
             compiled,
@@ -134,6 +135,7 @@ class WorkflowCompiler:
         *,
         workflow_stack: tuple[str, ...],
         compiled: dict[str, ResolvedPlan],
+        assignable_pairs: set[tuple[str, str]],
     ) -> ResolvedPlan:
         if workflow.id in workflow_stack:
             cycle = " -> ".join((*workflow_stack, workflow.id))
@@ -214,6 +216,7 @@ class WorkflowCompiler:
                 conversation_bindings,
                 conversation_agents,
                 variable_contracts,
+                assignable_pairs=assignable_pairs,
             )
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
@@ -260,6 +263,7 @@ class WorkflowCompiler:
                     variable_contracts.get(action.output_variable),
                     workflow.output_contract,
                     action.id,
+                    assignable_pairs=assignable_pairs,
                 )
                 action.output_contract = workflow.output_contract
         plan = ResolvedPlan(
@@ -301,6 +305,7 @@ class WorkflowCompiler:
                 definitions,
                 workflow_stack=(*workflow_stack, workflow.id),
                 compiled=compiled,
+                assignable_pairs=assignable_pairs,
             )
         return plan
 
@@ -459,6 +464,7 @@ class WorkflowCompiler:
         conversation_bindings: dict[str, dict[str, str]],
         conversation_agents: dict[str, str],
         variable_contracts: dict[str, str],
+        assignable_pairs: set[tuple[str, str]],
     ) -> None:
         if isinstance(action, SetVariableAction):
             defined_variables.add(action.variable)
@@ -496,6 +502,7 @@ class WorkflowCompiler:
                     variable_contracts.get(action.input_variable),
                     tool.input_contract,
                     action.id,
+                    assignable_pairs=assignable_pairs,
                 )
             self._require(
                 definitions,
@@ -623,6 +630,7 @@ class WorkflowCompiler:
                 variable_contracts.get(action.input_variable),
                 task.input_contract,
                 action.id,
+                assignable_pairs=assignable_pairs,
             )
             for contract_id in (task.input_contract, task.output_contract):
                 self._require(
@@ -757,6 +765,7 @@ class WorkflowCompiler:
                     variable_contracts.get(action.input_variable),
                     output.contract,
                     action.id,
+                    assignable_pairs=assignable_pairs,
                 )
                 self._require(
                     definitions,
@@ -779,6 +788,7 @@ class WorkflowCompiler:
         source_contract_id: str | None,
         target_contract_id: str,
         action_id: str,
+        assignable_pairs: set[tuple[str, str]],
     ) -> None:
         if source_contract_id is None:
             return
@@ -788,6 +798,9 @@ class WorkflowCompiler:
             target, ContractDefinition
         ):
             raise CompilerError(f"invalid contract definition for action {action_id}")
+        pair = (source_contract_id, target_contract_id)
+        if pair in assignable_pairs:
+            return
         if not build_contract_adapter(source).is_assignable_to(
             build_contract_adapter(target)
         ):
@@ -795,6 +808,9 @@ class WorkflowCompiler:
                 f"contract {source_contract_id} is not assignable to "
                 f"{target_contract_id} for action {action_id}"
             )
+        # The registry is fixed during this compilation, including child workflows.
+        # Keep no cross-compilation cache: callers may reuse a compiler with new definitions.
+        assignable_pairs.add(pair)
 
     @staticmethod
     def _validate_control_flow(

@@ -391,3 +391,32 @@ async def test_loaded_partial_state_resumes_after_completed_action(
     assert completed.outputs == {"result": {"value": 2}}
     assert calls == 1
     assert completed.actions["set-input"].status is ActionExecutionStatus.COMPLETED
+
+
+def test_compile_reuses_contract_comparisons_only_within_one_compilation(monkeypatch):
+    from manyselves.kernel.contracts import ContractDefinitionError
+    from manyselves.kernel.workflow import compiler as compiler_module
+
+    definitions, contract = _definitions()
+    workflow = WorkflowDefinition(
+        id="repeated-contract", version="1.0.0", description="Repeated neutral typed steps",
+        input_variable="value", input_contract=contract.id, output_contract=contract.id,
+        actions=[{"id": f"step-{i}", "kind": "invoke_tool", "tool": "increment",
+                  "input_variable": "value", "output_variable": "value"} for i in range(4)]
+        + [{"id": "finish", "kind": "end_workflow", "output_variable": "value", "output_name": "result"}],
+    )
+    built = []
+    build = compiler_module.build_contract_adapter
+    def record(definition):
+        built.append(definition.id)
+        return build(definition)
+    monkeypatch.setattr(compiler_module, "build_contract_adapter", record)
+    compiler = WorkflowCompiler(build_builtin_executor_registry())
+    first = compiler.compile(workflow, definitions)
+    assert len(built) == 2  # One complete adapter/schema comparison for the pair.
+    second = compiler.compile(workflow, definitions)
+    assert first == second
+    assert len(built) == 4  # A separate compilation never reuses registry-dependent state.
+    contract.schema_["type"] = "invalid-json-schema-type"
+    with pytest.raises(ContractDefinitionError):
+        compiler.compile(workflow, definitions)
