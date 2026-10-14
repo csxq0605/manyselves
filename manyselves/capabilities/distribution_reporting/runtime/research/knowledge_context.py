@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,9 +27,9 @@ class KnowledgeContext:
 
 
 class KnowledgeContextBuilder:
-    """Build bounded, taxonomy-aligned context without relying on model retrieval."""
+    """Inline whole selected sources, with explicit locators for unexpanded ones."""
 
-    MAX_SNIPPET_CHARS = 900
+    # Inline-source target, not permission to truncate requirements or references.
     MAX_MODULE_CHARS = 14_000
     QUALITY_TERMS = (
         "报告质量",
@@ -158,24 +156,6 @@ class KnowledgeContextBuilder:
         return sum(lowered.count(term.casefold()) for term in terms if term)
 
     @classmethod
-    def _snippet(cls, text: str, terms: tuple[str, ...]) -> str:
-        lowered = text.casefold()
-        positions = [lowered.find(term.casefold()) for term in terms if term and term.casefold() in lowered]
-        if not positions:
-            return ""
-        first = min(positions)
-        heading_start = text.rfind("\n#", 0, first)
-        start = heading_start + 1 if heading_start >= 0 else max(0, first - 180)
-        snippet = text[start : start + cls.MAX_SNIPPET_CHARS]
-        return re.sub(r"\n{3,}", "\n\n", snippet).strip()
-
-    @classmethod
-    def _normalized_snippet_hash(cls, text: str) -> str:
-        normalized = unicodedata.normalize("NFKC", text)
-        normalized = re.sub(r"\s+", " ", normalized).strip().casefold()
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-    @classmethod
     def _domain_terms(cls) -> tuple[str, ...]:
         return tuple(
             value
@@ -221,6 +201,65 @@ class KnowledgeContextBuilder:
             namespace=document.namespace,
         ).id
 
+    def _assemble(
+        self,
+        header: str,
+        sections: list[tuple[str, str, list[ReferenceDocument]]],
+        filename: str,
+    ) -> KnowledgeContext:
+        """Share whole sources across sections; never slice a purported rule.
+
+        The catalogue and user requirements are mandatory. Only optional source
+        bodies consume the remaining inline target. Large sources stay available
+        in the existing ledger and via open_reference, without a new model call.
+        """
+        blocks = [header, (
+            "以下匹配项是候选参考，不表示已穷尽适用标准或已核实版本有效性。"
+            "引用结论前须核对完整原文的适用范围、前提和例外；R-* 不是客户现场事实。"
+        )]
+        sources: dict[tuple[str, str], tuple[str, ReferenceDocument]] = {}
+        for heading, requirement, documents in sections:
+            ids = []
+            for document in documents:
+                key = (document.namespace, document.relative_path)
+                if key not in sources:
+                    sources[key] = (self._register(document), document)
+                ids.append(sources[key][0])
+            reference = (
+                "候选来源：" + "、".join(dict.fromkeys(ids)) if ids else
+                "未检索到匹配项；通用专业知识与假设不得写成客户事实或已核实条款。"
+            )
+            blocks.append("\n".join(part for part in (heading, requirement, reference) if part))
+
+        entries = []
+        prefixes = []
+        for source_id, document in sources.values():
+            ref = self.ledger.content_ref(source_id)
+            prefix = (
+                f"### {source_id} {document.title}\n来源：{document.relative_path}\n"
+                f"完整原文文件：{ref.as_posix() if ref else document.relative_path}\n"
+            )
+            prefixes.append(prefix)
+            entries.append(prefix + (
+                f"原文未展开（{len(document.text)} 字）；此目录项不是条款依据。"
+                f"请用 open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
+                "读取完整原文；无法取得或核实适用性时保留不确定性。"
+            ))
+        size = len("\n\n".join([*blocks, *entries]))
+        for index, (_source_id, document) in enumerate(sources.values()):
+            full = prefixes[index] + f"完整原文（{len(document.text)} 字）：\n" + document.text
+            increment = len(full) - len(entries[index])
+            if size + increment <= self.MAX_MODULE_CHARS:
+                entries[index] = full
+                size += increment
+        text = "\n\n".join([*blocks, *entries])
+        path = self.store.write_text(f"Work/runs/{self.run_id}/context/{filename}", text + "\n")
+        return KnowledgeContext(
+            path=path.relative_to(self.workspace), text=text,
+            source_ids=tuple(source_id for source_id, _document in sources.values()),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
+        )
+
     def build_module(self, module_id: str) -> KnowledgeContext:
         module = REPORT_TAXONOMY[module_id]
         header_lines = [
@@ -230,16 +269,7 @@ class KnowledgeContextBuilder:
             "可结合模型已有专业知识解释机理、提出备选原因、比较方案和补充行业实践；涉及本项目是否存在、具体数值、设备状态或合规结论时仍必须依赖 E-* 项目证据。",
         ]
         header = "\n".join(header_lines).strip()
-        submodule_count = len(module.submodules)
-        separator_reserve = 2 * submodule_count
-        per_submodule_chars = max(
-            240,
-            (self.MAX_MODULE_CHARS - len(header) - separator_reserve)
-            // submodule_count,
-        )
-        blocks: list[str] = []
-        source_ids: list[str] = []
-        snippet_sources: dict[str, str] = {}
+        sections = []
         for submodule_id, submodule in module.submodules.items():
             terms = (submodule_id, submodule.title)
             documents = self._ranked(
@@ -247,59 +277,9 @@ class KnowledgeContextBuilder:
                 self.MAX_DOCUMENTS_PER_SUBMODULE,
                 professional_only=True,
             )
-            block_lines = [f"## {submodule_id} {submodule.title}"]
-            if not documents:
-                block_lines.append(
-                    "未检索到项目/全局 Knowledge 匹配项；可使用模型专业知识继续分析，"
-                    "但通用知识或假设不得写成客户现场事实。"
-                )
-            else:
-                for document in documents:
-                    snippet = self._snippet(document.text, terms)
-                    if not snippet:
-                        continue
-                    source_id = self._register(document)
-                    snippet_hash = self._normalized_snippet_hash(snippet)
-                    existing_source = snippet_sources.get(snippet_hash)
-                    if existing_source is not None:
-                        entry = f"复用知识引用：{existing_source}（相同片段不重复注入）"
-                    else:
-                        entry_prefix = (
-                            f"### {source_id} {document.title}\n"
-                            f"来源：{document.relative_path}\n"
-                        )
-                        remaining = (
-                            per_submodule_chars
-                            - len("\n".join(block_lines))
-                            - len(entry_prefix)
-                            - 2
-                        )
-                        if remaining < 80:
-                            continue
-                        entry = entry_prefix + snippet[:remaining].rstrip()
-                        snippet_sources[snippet_hash] = source_id
-                    candidate = "\n".join([*block_lines, entry])
-                    if len(candidate) > per_submodule_chars:
-                        continue
-                    block_lines.append(entry)
-                    source_ids.append(existing_source or source_id)
-            if len(block_lines) == 1:
-                block_lines.append(
-                    "匹配项因本模块配额或去重规则未重复展开；可通过已列 R-* 引用追溯。"
-                )
-            blocks.append("\n".join(block_lines))
-        text = "\n\n".join([header, *blocks]).strip()
-        if len(text) > self.MAX_MODULE_CHARS:
-            raise ValueError("module Knowledge assembly exceeded its deterministic budget")
-        path = self.store.write_text(
-            f"Work/runs/{self.run_id}/context/module-{module_id}-knowledge.md",
-            text + "\n",
-        )
-        return KnowledgeContext(
-            path=path.relative_to(self.workspace),
-            text=text,
-            source_ids=tuple(dict.fromkeys(source_ids)),
-            snapshot_ref=self.library.snapshot_manifest_ref(),
+            sections.append((f"## {submodule_id} {submodule.title}", "", documents))
+        return self._assemble(
+            header, sections, f"module-{module_id}-knowledge.md",
         )
 
     def build_quality(self) -> KnowledgeContext:
@@ -308,28 +288,9 @@ class KnowledgeContextBuilder:
             "",
             "总编必须保留全部固定子模块，并检查风险机理、建议可执行性、跨模块关系和结构完整性。",
         ]
-        source_ids: list[str] = []
-        for document in self._ranked(self.QUALITY_TERMS, 5):
-            source_id = self._register(document)
-            source_ids.append(source_id)
-            lines.extend(
-                [
-                    "",
-                    f"## {source_id} {document.title}",
-                    f"来源：{document.relative_path}",
-                    self._snippet(document.text, self.QUALITY_TERMS),
-                ]
-            )
-        text = "\n".join(lines).strip()
-        path = self.store.write_text(
-            f"Work/runs/{self.run_id}/context/report-quality-criteria.md",
-            text + "\n",
-        )
-        return KnowledgeContext(
-            path=path.relative_to(self.workspace),
-            text=text,
-            source_ids=tuple(dict.fromkeys(source_ids)),
-            snapshot_ref=self.library.snapshot_manifest_ref(),
+        return self._assemble(
+            "\n".join(lines), [("## 质量参考", "", self._ranked(self.QUALITY_TERMS, 5))],
+            "report-quality-criteria.md",
         )
 
     @staticmethod
@@ -347,7 +308,7 @@ class KnowledgeContextBuilder:
         )[:16]
 
     def build_special_topics(self, plan: SpecialTopicPlan) -> KnowledgeContext:
-        """Build a bounded Knowledge packet aligned to the dynamic Chapter 4 plan."""
+        """Preserve Chapter 4 requirements and budget only optional source bodies."""
 
         lines = [
             "# 专项问题分析知识上下文",
@@ -357,52 +318,14 @@ class KnowledgeContextBuilder:
             "可使用模型已有专业知识补充机理、方案比较、行业实践与验证思路；"
             "当前项目是否存在某问题、具体数值、设备状态及合规结论仍只能由 E-* 项目证据支持。",
         ]
-        source_ids: list[str] = []
+        sections = []
         for section in plan.sections:
             terms = self._special_topic_terms(section.title, section.requirement)
-            lines.extend(
-                [
-                    "",
-                    f"## {section.section_id} {section.title}",
-                    "",
-                    "Inputs 简要要求：",
-                    section.requirement,
-                ]
-            )
             documents = self._ranked(terms, 3)
-            if not documents:
-                lines.extend(
-                    [
-                        "",
-                        "未检索到项目/全局 Knowledge 匹配项；可使用模型专业知识补充分析，"
-                        "但必须明确其为通用工程判断，不得写成客户事实。",
-                    ]
-                )
-                continue
-            for document in documents:
-                source_id = self._register(document)
-                source_ids.append(source_id)
-                lines.extend(
-                    [
-                        "",
-                        f"### {source_id} {document.title}",
-                        f"来源：{document.relative_path}",
-                        self._snippet(document.text, terms),
-                    ]
-                )
-        text = "\n".join(lines).strip()
-        if len(text) > self.MAX_MODULE_CHARS:
-            text = (
-                text[: self.MAX_MODULE_CHARS].rsplit("\n", 1)[0]
-                + "\n\n[专项知识上下文已按成本上限截断]"
-            )
-        path = self.store.write_text(
-            f"Work/runs/{self.run_id}/context/special-topic-knowledge.md",
-            text + "\n",
-        )
-        return KnowledgeContext(
-            path=path.relative_to(self.workspace),
-            text=text,
-            source_ids=tuple(dict.fromkeys(source_ids)),
-            snapshot_ref=self.library.snapshot_manifest_ref(),
+            sections.append((
+                f"## {section.section_id} {section.title}",
+                "Inputs 简要要求：\n" + section.requirement, documents,
+            ))
+        return self._assemble(
+            "\n".join(lines), sections, "special-topic-knowledge.md",
         )
