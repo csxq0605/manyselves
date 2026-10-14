@@ -32,6 +32,8 @@ _CORE_PURPOSE_MARKERS = {
 
 
 def _purpose_for(path: Path) -> str | None:
+    if path.suffix.casefold() not in {".xlsx", ".xlsm"}:
+        return None
     normalized_name = path.name.casefold()
     for purpose, markers in _CORE_PURPOSE_MARKERS.items():
         if any(marker in normalized_name for marker in markers):

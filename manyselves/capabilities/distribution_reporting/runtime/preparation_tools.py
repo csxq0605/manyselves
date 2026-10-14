@@ -267,6 +267,13 @@ class PreparationTools:
             key=lambda item: item.manifest_order,
         ):
             if result.status != "parsed":
+                if not is_template_skill_path(result.source_path):
+                    mapping_gaps.append({
+                        "file_id": result.file_id,
+                        "code": "file_parse_failed",
+                        "path": result.source_path.as_posix(),
+                        "message": f"文件解析失败：{result.source_path.as_posix()}；{result.error or '未知原因'}",
+                    })
                 continue
             mapped_evidence = list(result.provisional_evidence)
             if any(item.photo_refs for item in mapped_evidence):
@@ -310,7 +317,14 @@ class PreparationTools:
                     {
                         "file_id": artifact.source.file_id,
                         "kind": "manual_required",
+                        **artifact.source.model_dump(mode="json", exclude_none=True),
                         **artifact.payload,
+                        "message": (
+                            f"资料提取不完整：{artifact.source.path.as_posix()} "
+                            f"{artifact.source.sheet or ''} {artifact.source.cell or ''} "
+                            f"{f'page={artifact.source.page}' if artifact.source.page else ''}；"
+                            f"{artifact.payload.get('reason', 'manual_required')}"
+                        ),
                     }
                 )
                 continue
@@ -328,6 +342,8 @@ class PreparationTools:
                     continue
                 subject = str(artifact.payload["values"][0])
                 fact = "; ".join(pairs)
+                if artifact.payload.get("merged_ranges"):
+                    fact += "; 合并单元格范围=" + ", ".join(artifact.payload["merged_ranges"])
             elif artifact.kind in {"text", "document_paragraph", "pdf_page"}:
                 fact = str(artifact.payload.get("text", "")).strip()
                 if not fact:

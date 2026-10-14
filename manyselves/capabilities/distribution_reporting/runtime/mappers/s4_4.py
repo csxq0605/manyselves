@@ -508,32 +508,31 @@ def _map_thermal(
 ) -> tuple[list, list[MappingGap]]:
     evidence = []
     gaps: list[MappingGap] = []
-    current_room = ""
-    current_cabinet = ""
-    current_environment: float | None = None
-    current_humidity: float | None = None
-    room_row: int | None = None
-    cabinet_row: int | None = None
-    environment_row: int | None = None
-    humidity_row: int | None = None
+    # Only vertical merges in the same semantic column share context. A
+    # horizontal merge across different fields is not a temperature/room value.
+    context_merges = {
+        column: sorted(
+            (area.min_row, area.max_row)
+            for area in sheet.merged_cells.ranges
+            if area.min_col == area.max_col == column
+        )
+        for column in range(1, 6)
+    }
+
+    def anchor_row(row: int, column: int) -> int:
+        return next((start for start, end in context_merges[column] if start <= row <= end), row)
+
     missing_position_rows: list[int] = []
     for row in range(3, sheet.max_row + 1):
-        room = _text(sheet.cell(row, 1).value)
-        if room:
-            current_room = room
-            room_row = row
-        cabinet = _text(sheet.cell(row, 4).value)
-        if cabinet:
-            current_cabinet = cabinet
-            cabinet_row = row
-        environment = _numeric_value(sheet, value_sheet, row, 2)
-        if isinstance(environment, (int, float)):
-            current_environment = float(environment)
-            environment_row = row
-        humidity = _numeric_value(sheet, value_sheet, row, 3)
-        if isinstance(humidity, (int, float)):
-            current_humidity = float(humidity)
-            humidity_row = row
+        room_row, environment_row, humidity_row, cabinet_row, load_row = (
+            anchor_row(row, column) for column in range(1, 6)
+        )
+        current_room = _text(sheet.cell(room_row, 1).value)
+        current_cabinet = _text(sheet.cell(cabinet_row, 4).value)
+        environment = _numeric_value(sheet, value_sheet, environment_row, 2)
+        current_environment = float(environment) if isinstance(environment, (int, float)) else None
+        humidity = _numeric_value(sheet, value_sheet, humidity_row, 3)
+        current_humidity = float(humidity) if isinstance(humidity, (int, float)) else None
         position = _text(sheet.cell(row, 6).value)
         measured = _numeric_value(sheet, value_sheet, row, 7)
         if not isinstance(measured, (int, float)):
@@ -545,7 +544,7 @@ def _map_thermal(
             missing_position_rows.append(row)
             fact_parts.append("检测部位=未填写")
         fact_parts.append(f"测点温度={measured:g}℃")
-        load_rate = _numeric_value(sheet, value_sheet, row, 5)
+        load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
         if current_environment is not None:
@@ -556,7 +555,7 @@ def _map_thermal(
         fact = "；".join(fact_parts)
         context_rows = [
             context_row
-            for context_row in (room_row, cabinet_row, environment_row, humidity_row, row)
+            for context_row in (room_row, cabinet_row, environment_row, humidity_row, load_row, row)
             if context_row is not None
         ]
         source_start_row = min(context_rows)
@@ -580,7 +579,10 @@ def _map_thermal(
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=float(measured),
                     unit="℃",
-                    needs_confirmation=not position,
+                    needs_confirmation=(
+                        not position or not current_room or not current_cabinet
+                        or current_environment is None
+                    ),
                 )
             )
         if not current_room or not current_cabinet:
@@ -671,6 +673,20 @@ def map_s4_4(path: Path, *, file_id: str) -> MappingResult:
     try:
         evidence = []
         gaps: list[MappingGap] = []
+        # Do not equate an uncalculated formula with an empty measurement. Reuse
+        # the already-open workbooks and stream cached cells once per sheet.
+        for sheet in workbook.worksheets:
+            for row, cached in zip(sheet.iter_rows(), value_workbook[sheet.title].iter_rows(), strict=True):
+                for cell, cached_cell in zip(row, cached, strict=True):
+                    if cell.data_type != "f" or dispimg_refs(cell.value):
+                        continue
+                    if cached_cell.value is None or cached_cell.data_type == "e":
+                        code = "formula_result_error" if cached_cell.data_type == "e" else "formula_result_unavailable"
+                        gaps.append(MappingGap(
+                            code=code,
+                            message=f"公式缺少可用缓存结果：{sheet.title}!{cell.coordinate}；{cell.value}",
+                            sheet=sheet.title, cell=cell.coordinate,
+                        ))
         if "低配评估详情" in workbook.sheetnames:
             low_evidence, low_gaps = _map_low_voltage(
                 path,

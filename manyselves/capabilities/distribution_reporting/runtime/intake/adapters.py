@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from docx import Document
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from PIL import Image
 
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
@@ -16,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     SourceLocation,
 )
+from manyselves.runtime.artifacts.parsers import parse_artifact
 
 Parser = Callable[[Path, ManifestFile], list[ParsedArtifact]]
 
@@ -51,11 +52,17 @@ def _parse_text(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
 
 
 def _parse_docx(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
-    document = Document(path)
+    document = parse_artifact(path)
+    if document.error:
+        raise ValueError(document.error)
     return [
-        _artifact(manifest, "document_paragraph", index, {"text": paragraph.text}, row=index)
-        for index, paragraph in enumerate(document.paragraphs, start=1)
-        if paragraph.text.strip()
+        _artifact(
+            manifest, "document_paragraph", index,
+            {"text": block.text, "locator": block.locator},
+            cell=block.locator, row=int(block.locator.rsplit(":", 1)[-1]),
+        )
+        for index, block in enumerate(document.blocks, start=1)
+        if block.text.strip()
     ]
 
 
@@ -71,32 +78,46 @@ def _parse_image(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
 
 
 def _parse_workbook(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    # Raw cells are observations, not an inferred header/value schema. Normal
+    # mode exposes merge ranges; the second stream supplies cached formula values.
+    workbook = load_workbook(path, read_only=False, data_only=False)
     artifacts: list[ParsedArtifact] = []
     try:
-        for sheet in workbook.worksheets:
-            rows = sheet.iter_rows(values_only=True)
-            first = next(rows, None)
-            if first is None:
-                continue
-            headers = [
-                str(value) if value not in (None, "") else f"column_{index + 1}"
-                for index, value in enumerate(first)
-            ]
-            for row_index, row in enumerate(rows, start=2):
-                if not any(value not in (None, "") for value in row):
-                    continue
-                artifacts.append(
-                    _artifact(
-                        manifest,
-                        "workbook_row",
-                        len(artifacts) + 1,
-                        {"headers": headers, "values": list(row)},
-                        sheet=sheet.title,
-                        cell=f"A{row_index}",
-                        row=row_index,
-                    )
-                )
+        values = load_workbook(path, read_only=True, data_only=True)
+        try:
+            for sheet in workbook.worksheets:
+                cached_rows = values[sheet.title].iter_rows()
+                for row_index, (row, cached) in enumerate(
+                    zip(sheet.iter_rows(), cached_rows, strict=True), start=1
+                ):
+                    if not any(cell.value not in (None, "") for cell in row):
+                        continue
+                    row_values = []
+                    for cell, cached_cell in zip(row, cached, strict=True):
+                        value = cell.value
+                        if cell.data_type == "f":
+                            value = cached_cell.value
+                            if value is None or cached_cell.data_type == "e":
+                                reason = "formula_result_error" if cached_cell.data_type == "e" else "formula_result_unavailable"
+                                artifacts.append(_artifact(
+                                    manifest, "manual_required", len(artifacts) + 1,
+                                    {"reason": reason, "formula": str(cell.value), "cached_value": value},
+                                    sheet=sheet.title, cell=cell.coordinate, row=row_index,
+                                ))
+                                value = None
+                        row_values.append(value)
+                    merges = [str(area) for area in sheet.merged_cells.ranges
+                              if area.min_row == row_index]
+                    artifacts.append(_artifact(
+                        manifest, "workbook_row", len(artifacts) + 1,
+                        {"headers": [cell.coordinate for cell in row],
+                         "values": row_values, "merged_ranges": sorted(merges),
+                         "header_inferred": False},
+                        sheet=sheet.title, row=row_index,
+                        cell=f"A{row_index}:{get_column_letter(len(row))}{row_index}",
+                    ))
+        finally:
+            values.close()
     finally:
         workbook.close()
     return artifacts
@@ -117,16 +138,15 @@ def _parse_pdf(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
     except ImportError:
         return _manual(manifest, "pdf_parser_unavailable")
     reader = PdfReader(path)
-    return [
-        _artifact(
-            manifest,
-            "pdf_page",
-            page_number,
-            {"text": page.extract_text() or ""},
-            page=page_number,
-        )
-        for page_number, page in enumerate(reader.pages, start=1)
-    ]
+    artifacts = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        # Empty extraction can mean a scan, blank page or unsupported content;
+        # it is not proof that the page contains no customer observations.
+        kind = "pdf_page" if text.strip() else "manual_required"
+        payload = {"text": text} if text.strip() else {"reason": "pdf_page_without_text"}
+        artifacts.append(_artifact(manifest, kind, page_number, payload, page=page_number))
+    return artifacts
 
 
 class IntakeAdapterRegistry:
