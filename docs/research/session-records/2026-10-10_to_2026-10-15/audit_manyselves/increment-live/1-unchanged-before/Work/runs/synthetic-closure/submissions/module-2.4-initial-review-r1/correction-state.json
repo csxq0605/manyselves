@@ -1,0 +1,36 @@
+{
+  "kind": "submission_correction_state",
+  "run_id": "synthetic-closure",
+  "task_id": "module-2.4-initial-review-r1",
+  "revision": 1,
+  "status": "resolved",
+  "accepted": true,
+  "submission_kind": "module_review_verdict_submission",
+  "raw_payload": {
+    "kind": "module_review_verdict_submission",
+    "coverage": {
+      "submodule_ids": [
+        "2.4.1.1"
+      ]
+    },
+    "new_findings": [],
+    "verdicts": [
+      {
+        "finding_id": "M-2.4-initial-r0-001",
+        "verdict": "open",
+        "reason": "当前主体 submodule_narratives 为空，revision_diff 的 changed_submodule_narratives 与 changed_statement_refs 也均为空，未见 2.4.1.1 的正文结论被修改。作者响应声称已修正工况 A 的结论，但该修正未体现在当前提交的正文中；按 required_change 要求，仅修改响应不能关闭问题。需要作者在 2.4.1.1 正文中将工况 A（16.58 mA，超过虚构规则 10 mA）的结论改为异常，并保留原始数值。",
+        "evidence_refs": [
+          "Work/runs/synthetic-closure/modules/2.4-r1.json",
+          "Work/runs/synthetic-closure/reviews/module/initial/2.4/recheck-diff-r1.json",
+          "E-0001"
+        ]
+      }
+    ]
+  },
+  "transport_normalization": null,
+  "correction_mode": "none",
+  "validation_errors": [],
+  "affected_part_ids": [],
+  "validation_failures": 0,
+  "fingerprint_occurrences": 0
+}

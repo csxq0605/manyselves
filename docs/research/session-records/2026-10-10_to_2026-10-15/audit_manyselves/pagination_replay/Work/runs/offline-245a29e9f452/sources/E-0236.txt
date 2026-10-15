@@ -1,0 +1,1 @@
+{"id":"E-0236","subject":"评估总表 2.1.3","fact":"既有评估结论=备用电源无法自动切换","source":{"file_id":"file-013a9efb52231caa","path":"Inputs/S4-6评估总表.xlsx","sheet":"评估信息汇总表","cell":"F7:G7","page":null,"row":7,"column":"F","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":0.65,"needs_confirmation":true,"module_id":"2.1","submodule_id":"2.1.3","photo_refs":[]}

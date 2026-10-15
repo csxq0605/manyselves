@@ -1,0 +1,38 @@
+{
+  "kind": "template_distillation_input",
+  "run_id": "distill-template-skill-60000000000040008000000000000002",
+  "template_ref": "Work/runs/distill-template-skill-60000000000040008000000000000002/templates/template-for-skill.docx",
+  "inspect_max_chars": 100000,
+  "required_part_ids": [
+    "author-2.1",
+    "author-2.2",
+    "author-2.3",
+    "author-2.4",
+    "author-2.5",
+    "auditor-2.1",
+    "auditor-2.2",
+    "auditor-2.3",
+    "auditor-2.4",
+    "auditor-2.5",
+    "chief-editor-chapter-1",
+    "chief-editor-chapter-3",
+    "chief-editor-chapter-4",
+    "final-auditor"
+  ],
+  "boundary_policy_version": 1,
+  "allowed_transfer_categories": [
+    "analysis_method",
+    "quality_check",
+    "synthesis_method",
+    "visual_method"
+  ],
+  "required_exclusion_categories": [
+    "customer_identity",
+    "domain_knowledge",
+    "domain_standard_or_threshold",
+    "evidence_or_claim_identifier",
+    "project_conclusion_or_recommendation",
+    "project_fact_or_number",
+    "project_finding_or_risk"
+  ]
+}

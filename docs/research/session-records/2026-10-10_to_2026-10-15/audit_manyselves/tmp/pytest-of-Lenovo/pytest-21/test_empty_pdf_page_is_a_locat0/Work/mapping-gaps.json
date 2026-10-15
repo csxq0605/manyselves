@@ -1,0 +1,12 @@
+{
+  "gaps": [
+    {
+      "file_id": "fixture",
+      "kind": "manual_required",
+      "path": "E:/PKU/program/2026/Aug/work/audit_manyselves/tmp/pytest-of-Lenovo/pytest-21/test_empty_pdf_page_is_a_locat0/mixed.pdf",
+      "page": 2,
+      "reason": "pdf_page_without_text",
+      "message": "资料提取不完整：E:/PKU/program/2026/Aug/work/audit_manyselves/tmp/pytest-of-Lenovo/pytest-21/test_empty_pdf_page_is_a_locat0/mixed.pdf   page=2；pdf_page_without_text"
+    }
+  ]
+}

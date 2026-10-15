@@ -1,0 +1,1 @@
+{"id":"E-0007","subject":"基础图纸与技术参数/关键负荷清单","fact":"具备情况=NG；有效性=NG","source":{"file_id":"file-0e493d3e291ad22b","path":"Inputs/S2-1收资表.xlsx","sheet":"收资表","cell":"G8:H8","page":null,"row":8,"column":"G","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.1","submodule_id":"2.1.2","photo_refs":[]}

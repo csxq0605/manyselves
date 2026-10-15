@@ -1,0 +1,101 @@
+{
+  "kind": "module_review_input",
+  "report_instruction": "",
+  "input_changes": null,
+  "review_protocol_version": 2,
+  "phase": "recheck",
+  "run_id": "synthetic-closure",
+  "module_id": "2.4",
+  "lifecycle_id": "initial",
+  "review_round": 1,
+  "subject_ref": "Work/runs/synthetic-closure/modules/2.4-r1.json",
+  "subject_revision": 1,
+  "subject": {
+    "module_id": "2.4",
+    "revision": 1,
+    "submodule_narratives": {},
+    "evidence_ids_by_submodule": {},
+    "unresolved_questions": []
+  },
+  "claim_statements": [],
+  "prior_claim_statements": [],
+  "unchanged_submodule_sha256": {
+    "2.4.1.1": "c9cb60a0a3e5003df3215622bae6d79f8ec6a26dfe3698223c074f059a6f6d07"
+  },
+  "unchanged_statement_sha256": {
+    "statement-7a733b6bab84": "78f352ad2d0221930dec12c97feebb44b6b155b37e338f176aef77d1bf487b41"
+  },
+  "knowledge_ref": null,
+  "knowledge_context": "",
+  "evidence": [
+    {
+      "evidence_id": "E-0001",
+      "title": "虚构实验记录",
+      "locator": "Inputs/fiction.txt",
+      "content": "对象 T，2026-01-01，工况 A，读数 16.58 mA。"
+    }
+  ],
+  "required_submodule_ids": [
+    "2.4.1.1"
+  ],
+  "required_findings": [
+    {
+      "id": "M-2.4-initial-r0-001",
+      "target_submodule_id": "2.4.1.1",
+      "category": "conclusion",
+      "impact": "blocking",
+      "observation": "工况 A 的读数为 16.58 mA，超过虚构规则 10 mA，但正文写成正常。",
+      "evidence_refs": [
+        "E-0001",
+        "Work/runs/synthetic-closure/context/module-2.4-knowledge.md"
+      ],
+      "required_change": "按工况 A 的原始记录与虚构适用规则修正结论，不能只修改响应而不修改正文。",
+      "reviewer_checks": [
+        "核对工况 A 的正文结论应为异常，数值必须仍为 16.58 mA。",
+        "如涉及工况 B，应独立按 B 的规则判断，不得把不同工况视为同一次观测冲突。"
+      ]
+    }
+  ],
+  "revision_responses": [
+    {
+      "finding_id": "M-2.4-initial-r0-001",
+      "action": "implemented",
+      "summary": "已经完整修正工况 A 的结论，所有数值与规则均已检查，请确认关闭该问题。",
+      "changed_target_ids": [
+        "2.4.1.1"
+      ]
+    }
+  ],
+  "prior_review_completion_ref": null,
+  "prior_review_completion": null,
+  "baseline_subject_ref": "Work/runs/synthetic-closure/modules/2.4-r0.json",
+  "trigger_cross_findings": [],
+  "trigger_revision_responses": [],
+  "revision_diff_ref": "Work/runs/synthetic-closure/reviews/module/initial/2.4/recheck-diff-r1.json",
+  "revision_diff": {
+    "module_id": "2.4",
+    "from_revision": 0,
+    "to_revision": 1,
+    "changed_submodule_narratives": [],
+    "changed_statement_refs": [],
+    "evidence_ids_added": [],
+    "evidence_ids_removed": []
+  },
+  "validation_report_ref": "Work/runs/synthetic-closure/reviews/module/initial/2.4/preflight-subject-r1-review-r1.json",
+  "validation_report": {
+    "kind": "validation_report",
+    "validation_protocol_version": 2,
+    "run_id": "synthetic-closure",
+    "subject_ref": "Work/runs/synthetic-closure/modules/2.4-r1.json",
+    "subject_revision": 1,
+    "validator": "module-review-preflight/v1",
+    "check_ids": [
+      "module.canonical_markdown",
+      "module_preflight.control_markers",
+      "module_preflight.claim_source_ids_unique",
+      "module_preflight.sources_registered"
+    ],
+    "failures": [],
+    "passed": true
+  }
+}

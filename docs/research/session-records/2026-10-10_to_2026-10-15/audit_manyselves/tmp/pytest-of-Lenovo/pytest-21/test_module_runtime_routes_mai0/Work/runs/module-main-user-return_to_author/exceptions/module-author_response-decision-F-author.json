@@ -1,0 +1,8 @@
+{
+  "kind": "workflow_decision_submission",
+  "decision": "return_to_author",
+  "rationale": "用户明确给出该例外节点的下一步处理意见。",
+  "finding_ids": [
+    "F-author"
+  ]
+}

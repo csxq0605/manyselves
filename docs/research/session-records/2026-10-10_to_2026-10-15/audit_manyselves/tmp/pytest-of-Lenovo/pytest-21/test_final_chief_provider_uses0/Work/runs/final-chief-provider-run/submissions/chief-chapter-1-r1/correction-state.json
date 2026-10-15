@@ -1,0 +1,38 @@
+{
+  "kind": "submission_correction_state",
+  "run_id": "final-chief-provider-run",
+  "task_id": "chief-chapter-1-r1",
+  "revision": 1,
+  "status": "resolved",
+  "accepted": true,
+  "submission_kind": "chief_chapter_lane_revision_submission",
+  "raw_payload": {
+    "kind": "chief_chapter_lane_revision_submission",
+    "run_id": "final-chief-provider-run",
+    "base_subject_ref": "Work/runs/final-chief-provider-run/edited-r0.json",
+    "chapter_id": "1",
+    "revision": 1,
+    "section_ids": [
+      "1.2"
+    ],
+    "part_refs": {
+      "findings_overview": "Work/runs/final-chief-provider-run/drafts/chief-chapter-1-r1/r1/findings_overview.md"
+    },
+    "revision_responses": [
+      {
+        "finding_id": "F-1-001",
+        "action": "implemented",
+        "summary": "已补充事实边界、责任主体与后续动作，便于执行。",
+        "changed_target_ids": [
+          "1.2"
+        ]
+      }
+    ]
+  },
+  "transport_normalization": null,
+  "correction_mode": "none",
+  "validation_errors": [],
+  "affected_part_ids": [],
+  "validation_failures": 0,
+  "fingerprint_occurrences": 0
+}

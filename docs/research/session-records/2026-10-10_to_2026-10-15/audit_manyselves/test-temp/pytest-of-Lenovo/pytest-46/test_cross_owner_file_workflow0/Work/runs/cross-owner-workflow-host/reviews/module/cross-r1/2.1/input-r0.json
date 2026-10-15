@@ -1,0 +1,113 @@
+{
+  "kind": "module_review_input",
+  "report_instruction": "",
+  "input_changes": null,
+  "review_protocol_version": 2,
+  "phase": "local_regression",
+  "run_id": "cross-owner-workflow-host",
+  "module_id": "2.1",
+  "lifecycle_id": "cross-r1",
+  "review_round": 0,
+  "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.1-r1.json",
+  "subject_revision": 1,
+  "subject": {
+    "module_id": "2.1",
+    "revision": 1,
+    "submodule_narratives": {
+      "2.1.1": "补充关系机制、影响路径与和 2.2 的联合验证步骤。"
+    },
+    "evidence_ids_by_submodule": {
+      "2.1.1": []
+    },
+    "unresolved_questions": []
+  },
+  "claim_statements": [],
+  "prior_claim_statements": [],
+  "unchanged_submodule_sha256": {},
+  "unchanged_statement_sha256": {},
+  "knowledge_ref": null,
+  "knowledge_context": "",
+  "evidence": [],
+  "required_submodule_ids": [
+    "2.1.1"
+  ],
+  "required_findings": [],
+  "revision_responses": [],
+  "prior_review_completion_ref": "Work/runs/cross-owner-workflow-host/reviews/module/initial/2.1/completion-r0.json",
+  "prior_review_completion": {
+    "kind": "review_completion_record",
+    "review_protocol_version": 1,
+    "lifecycle": "module",
+    "run_id": "cross-owner-workflow-host",
+    "reviewer_agent_id": "evidence-auditor",
+    "reviewer_session_key": "module-auditor-2.1",
+    "subject_refs": [
+      "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json"
+    ],
+    "finding_refs": [],
+    "verdict_refs": [],
+    "resolved_finding_ids": []
+  },
+  "baseline_subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json",
+  "trigger_cross_findings": [
+    {
+      "id": "X-2.1-r0-1",
+      "owner_module_id": "2.1",
+      "target_submodule_ids": [
+        "2.1.1"
+      ],
+      "related_module_ids": [
+        "2.2"
+      ],
+      "category": "dependencies",
+      "impact": "blocking",
+      "observation": "当前模块没有把该关系写入可验证正文，导致关联模块无法复核其依赖边界。",
+      "evidence_refs": [
+        "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json"
+      ],
+      "required_change": "在 2.1.1 中补充关系机制、影响路径和与 2.2 的联合验证步骤，并明确后续复核方法。",
+      "reviewer_checks": [
+        "确认关系机制已写入目标小节并能由关联模块复核。"
+      ]
+    }
+  ],
+  "trigger_revision_responses": [
+    {
+      "finding_id": "X-2.1-r0-1",
+      "action": "implemented",
+      "summary": "已补充关系机制及联合验证步骤，供后续复核。",
+      "changed_target_ids": [
+        "2.1.1"
+      ]
+    }
+  ],
+  "revision_diff_ref": "Work/runs/cross-owner-workflow-host/reviews/module/cross-r1/2.1/trigger-diff-r1.json",
+  "revision_diff": {
+    "module_id": "2.1",
+    "from_revision": 0,
+    "to_revision": 1,
+    "changed_submodule_narratives": [
+      "2.1.1"
+    ],
+    "changed_statement_refs": [],
+    "evidence_ids_added": [],
+    "evidence_ids_removed": []
+  },
+  "validation_report_ref": "Work/runs/cross-owner-workflow-host/reviews/module/cross-r1/2.1/preflight-subject-r1-review-r0.json",
+  "validation_report": {
+    "kind": "validation_report",
+    "validation_protocol_version": 2,
+    "run_id": "cross-owner-workflow-host",
+    "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.1-r1.json",
+    "subject_revision": 1,
+    "validator": "module-review-preflight/v1",
+    "check_ids": [
+      "module.canonical_markdown",
+      "module_preflight.control_markers",
+      "module_preflight.claim_source_ids_unique",
+      "module_preflight.sources_registered"
+    ],
+    "failures": [],
+    "passed": true
+  }
+}

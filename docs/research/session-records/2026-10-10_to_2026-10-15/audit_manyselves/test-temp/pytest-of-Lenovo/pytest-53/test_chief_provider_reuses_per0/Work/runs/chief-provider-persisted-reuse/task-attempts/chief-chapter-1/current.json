@@ -1,0 +1,17 @@
+{
+  "workflow_id": "public-reporting",
+  "run_id": "chief-provider-persisted-reuse",
+  "task_id": "chief-chapter-1",
+  "task_attempt_id": "attempt-27d5a9841b8248508d3e1f56cdabd534",
+  "agent_id": "chief-editor",
+  "identity_key": "chief-chapter-1",
+  "session_id": "persisted-chief-session",
+  "task_envelope_sha256": "809bc0c818dd83f36db7c3427e0d60b051759861331155f9f3d341314e66280c",
+  "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "input_contract_ref": "Work/runs/chief-provider-persisted-reuse/context/chief-chapter-1-input.json",
+  "input_contract_sha256": "90a60e0992ef1ce19ba1fc9f8e8707b4960da6f83a4f5d692722e3cc0fd40dbe",
+  "subject_ref": "Work/runs/chief-provider-persisted-reuse/reviews/cross-completion.json",
+  "subject_sha256": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f",
+  "lease_owner_id": "Csxq-Laptop:18568:bf9a082ae70e4569be06e062b91fc704:attempt-27d5a9841b8248508d3e1f56cdabd534",
+  "lease_epoch": 1
+}

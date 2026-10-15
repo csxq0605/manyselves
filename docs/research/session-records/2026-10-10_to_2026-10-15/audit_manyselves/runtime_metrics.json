@@ -1,0 +1,2336 @@
+{
+  "aggregate-existing-3d0118aa6d4847cca201ebabe852641f": {
+    "rows": 46,
+    "requests": 46,
+    "first": "2026-09-09T16:36:03.914669+08:00",
+    "last": "2026-09-09T17:19:23.461680+08:00",
+    "sums": {
+      "input_tokens": 1321997,
+      "output_tokens": 82898,
+      "total_tokens": 1404895,
+      "cached_input_tokens": 1070592,
+      "uncached_input_tokens": 251405,
+      "duration_ms": 2377990,
+      "queue_wait_ms": 8306,
+      "provider_active_ms": 2378044,
+      "request_chars": 2443665,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 5,
+          "tokens": 96991,
+          "active_ms": 554687
+        },
+        "tool_followup": {
+          "n": 40,
+          "tokens": 1232540,
+          "active_ms": 1778308
+        },
+        "context_compaction": {
+          "n": 1,
+          "tokens": 75364,
+          "active_ms": 45049
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 6,
+          "tokens": 172355,
+          "active_ms": 599736
+        },
+        "evidence_lookup": {
+          "n": 40,
+          "tokens": 1232540,
+          "active_ms": 1778308
+        }
+      },
+      "status": {
+        "success": {
+          "n": 46,
+          "tokens": 1404895,
+          "active_ms": 2378044
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 46,
+          "tokens": 1404895,
+          "active_ms": 2378044
+        }
+      },
+      "agent_id": {
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 14,
+          "tokens": 793038,
+          "active_ms": 1020662
+        },
+        "distribution-aggregate-existing-tail:chief-editor-auditor:final-chapter-3": {
+          "n": 1,
+          "tokens": 13814,
+          "active_ms": 159890
+        },
+        "distribution-aggregate-existing-tail:chief-editor-auditor:final-chapter-1": {
+          "n": 1,
+          "tokens": 14989,
+          "active_ms": 260152
+        },
+        "distribution-aggregate-existing-tail:chief-editor:chief-chapter-3": {
+          "n": 16,
+          "tokens": 367049,
+          "active_ms": 628753
+        },
+        "distribution-aggregate-existing-tail:chief-editor:chief-chapter-1": {
+          "n": 14,
+          "tokens": 216005,
+          "active_ms": 308587
+        }
+      }
+    },
+    "delivery": false
+  },
+  "full-report-8c70828443b9499d80f8a6bda41c670c": {
+    "rows": 525,
+    "requests": 525,
+    "first": "2026-09-09T18:28:08.178965+08:00",
+    "last": "2026-09-09T20:26:06.415131+08:00",
+    "sums": {
+      "input_tokens": 27650140,
+      "output_tokens": 693090,
+      "total_tokens": 28343230,
+      "cached_input_tokens": 11046464,
+      "uncached_input_tokens": 16603676,
+      "duration_ms": 20387660,
+      "queue_wait_ms": 85156,
+      "provider_active_ms": 20387575,
+      "request_chars": 58818953,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 50,
+          "tokens": 2263674,
+          "active_ms": 4000195
+        },
+        "tool_followup": {
+          "n": 355,
+          "tokens": 17556180,
+          "active_ms": 10518043
+        },
+        "context_compaction": {
+          "n": 120,
+          "tokens": 8523376,
+          "active_ms": 5869337
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 168,
+          "tokens": 10631767,
+          "active_ms": 9788760
+        },
+        "evidence_lookup": {
+          "n": 355,
+          "tokens": 17556180,
+          "active_ms": 10518043
+        },
+        "provider_retry": {
+          "n": 2,
+          "tokens": 155283,
+          "active_ms": 80772
+        }
+      },
+      "status": {
+        "success": {
+          "n": 523,
+          "tokens": 28254684,
+          "active_ms": 20289810
+        },
+        "error": {
+          "n": 2,
+          "tokens": 88546,
+          "active_ms": 97765
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 525,
+          "tokens": 28343230,
+          "active_ms": 20387575
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.4-specialist:specialist-2.4": {
+          "n": 27,
+          "tokens": 1532233,
+          "active_ms": 988904
+        },
+        "public-reporting:module-2.3-specialist:specialist-2.3": {
+          "n": 27,
+          "tokens": 1226670,
+          "active_ms": 624106
+        },
+        "public-reporting:module-2.5-specialist:specialist-2.5": {
+          "n": 40,
+          "tokens": 1841642,
+          "active_ms": 1128426
+        },
+        "public-reporting:module-2.1-specialist:specialist-2.1": {
+          "n": 26,
+          "tokens": 1099375,
+          "active_ms": 706865
+        },
+        "public-reporting:module-2.2-specialist:specialist-2.2": {
+          "n": 24,
+          "tokens": 835467,
+          "active_ms": 432899
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 50,
+          "tokens": 3316342,
+          "active_ms": 2088829
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 32,
+          "tokens": 1932974,
+          "active_ms": 1294783
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 27,
+          "tokens": 1710508,
+          "active_ms": 1284029
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 25,
+          "tokens": 1601931,
+          "active_ms": 1335215
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 41,
+          "tokens": 2533474,
+          "active_ms": 1328730
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 10,
+          "tokens": 549442,
+          "active_ms": 460154
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 27,
+          "tokens": 1310679,
+          "active_ms": 839159
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 15,
+          "tokens": 794239,
+          "active_ms": 524100
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 39,
+          "tokens": 1944643,
+          "active_ms": 674340
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 4,
+          "tokens": 265825,
+          "active_ms": 325832
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 3,
+          "tokens": 199535,
+          "active_ms": 502454
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 5,
+          "tokens": 332958,
+          "active_ms": 666232
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 3,
+          "tokens": 208745,
+          "active_ms": 493893
+        },
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 4,
+          "tokens": 134938,
+          "active_ms": 200749
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 5,
+          "tokens": 364495,
+          "active_ms": 845380
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 39,
+          "tokens": 1827247,
+          "active_ms": 1567463
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 47,
+          "tokens": 2674861,
+          "active_ms": 1422859
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 2,
+          "tokens": 48987,
+          "active_ms": 292067
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 3,
+          "tokens": 56020,
+          "active_ms": 360107
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/full-report-8c70828443b9499d80f8a6bda41c670c/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/full-report-8c70828443b9499d80f8a6bda41c670c/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/full-report-8c70828443b9499d80f8a6bda41c670c/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/full-report-8c70828443b9499d80f8a6bda41c670c/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/full-report-8c70828443b9499d80f8a6bda41c670c/delivery/full-report-8c70828443b9499d80f8a6bda41c670c-full-report-8c70828443b9499d80f8a6bda41c670c/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "full_report",
+      "instruction": "使用当前 test 项目 Inputs 中的三份 Excel、Knowledge 知识库、Inputs/report-template-role-skills 中的角色 Skill 和 Templates 输出模板，从原始输入完成准备、编写、审查、必要修订、汇总、最终审查、渲染和发布，生成覆盖 2.1–2.5 全部模块的完整配电安全专家咨询报告。缺少证据时保留草稿并明确不确定性，保持事实可追溯。保留所有旧 Run，不恢复旧 Run，不使用旧 Run 的模块或提交结果。",
+      "target_modules": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": "配电安全专家咨询报告_自主全流程验收.docx",
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  },
+  "full-report-a3e668f660694886b554ad8ac535814f": {
+    "rows": 1234,
+    "requests": 1234,
+    "first": "2026-09-05T17:09:22.950490+08:00",
+    "last": "2026-09-09T16:16:13.821035+08:00",
+    "sums": {
+      "input_tokens": 61323863,
+      "output_tokens": 1405027,
+      "total_tokens": 62728890,
+      "cached_input_tokens": 9094931,
+      "uncached_input_tokens": 52194436,
+      "duration_ms": 21857703,
+      "queue_wait_ms": 106974,
+      "provider_active_ms": 21857213,
+      "request_chars": 159067625,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "context_compaction": {
+          "n": 164,
+          "tokens": 22621544,
+          "active_ms": 8630508
+        },
+        "initial": {
+          "n": 94,
+          "tokens": 17234380,
+          "active_ms": 4094373
+        },
+        "tool_followup": {
+          "n": 976,
+          "tokens": 22872966,
+          "active_ms": 9132332
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 254,
+          "tokens": 39703948,
+          "active_ms": 12611888
+        },
+        "evidence_lookup": {
+          "n": 970,
+          "tokens": 22737342,
+          "active_ms": 9127129
+        },
+        "provider_retry": {
+          "n": 10,
+          "tokens": 287600,
+          "active_ms": 118196
+        }
+      },
+      "status": {
+        "success": {
+          "n": 1207,
+          "tokens": 59413415,
+          "active_ms": 21672008
+        },
+        "error": {
+          "n": 27,
+          "tokens": 3315475,
+          "active_ms": 185205
+        }
+      },
+      "model": {
+        "qwen3.8-flash": {
+          "n": 511,
+          "tokens": 26667415,
+          "active_ms": 12294359
+        },
+        "gemini-3.6-flash-medium": {
+          "n": 537,
+          "tokens": 28846841,
+          "active_ms": 2528240
+        },
+        "mimo-v2.5": {
+          "n": 186,
+          "tokens": 7214634,
+          "active_ms": 7034614
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:specialist-2.3": {
+          "n": 86,
+          "tokens": 4739124,
+          "active_ms": 2392545
+        },
+        "public-reporting:module-2.5-specialist:specialist-2.5": {
+          "n": 222,
+          "tokens": 11822101,
+          "active_ms": 3000484
+        },
+        "public-reporting:module-2.2-specialist:specialist-2.2": {
+          "n": 209,
+          "tokens": 10553357,
+          "active_ms": 2873641
+        },
+        "public-reporting:module-2.4-specialist:specialist-2.4": {
+          "n": 217,
+          "tokens": 9598672,
+          "active_ms": 2851458
+        },
+        "public-reporting:module-2.1-specialist:specialist-2.1": {
+          "n": 227,
+          "tokens": 10628176,
+          "active_ms": 2775241
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 7,
+          "tokens": 156091,
+          "active_ms": 46802
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 27,
+          "tokens": 2622255,
+          "active_ms": 381666
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 11,
+          "tokens": 1229432,
+          "active_ms": 426451
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 10,
+          "tokens": 1219017,
+          "active_ms": 344371
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 42,
+          "tokens": 2224020,
+          "active_ms": 597271
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 12,
+          "tokens": 1271817,
+          "active_ms": 273136
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 6,
+          "tokens": 321717,
+          "active_ms": 250555
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 5,
+          "tokens": 250854,
+          "active_ms": 112326
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 5,
+          "tokens": 230960,
+          "active_ms": 174012
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 4,
+          "tokens": 217324,
+          "active_ms": 77779
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 12,
+          "tokens": 604743,
+          "active_ms": 1597496
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 22,
+          "tokens": 711131,
+          "active_ms": 501213
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 13,
+          "tokens": 550238,
+          "active_ms": 204375
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 13,
+          "tokens": 502844,
+          "active_ms": 309119
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 53,
+          "tokens": 2317735,
+          "active_ms": 1090669
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 27,
+          "tokens": 879542,
+          "active_ms": 605305
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 1,
+          "tokens": 19210,
+          "active_ms": 306444
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 3,
+          "tokens": 58530,
+          "active_ms": 664854
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "full-report-a3e668f660694886b554ad8ac535814f",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/full-report-a3e668f660694886b554ad8ac535814f/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/full-report-a3e668f660694886b554ad8ac535814f/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/full-report-a3e668f660694886b554ad8ac535814f/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/full-report-a3e668f660694886b554ad8ac535814f/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/full-report-a3e668f660694886b554ad8ac535814f/delivery/full-report-a3e668f660694886b554ad8ac535814f-full-report-a3e668f660694886b554ad8ac535814f/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "full_report",
+      "instruction": "使用当前 test 项目 Inputs 中的三份 Excel（S2-1收资表.xlsx、S4-4诊断工作用表.xlsx、S4-6评估总表.xlsx）、Knowledge 知识库、Inputs/report-template-role-skills 中已有的十四份角色 Skill 和 Templates 输出模板，生成完整供配电评估报告（2.1–2.5）。缺少证据时保留草稿并明确标注不确定性，保持全部事实与数据可追溯到原始来源。",
+      "target_modules": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": null,
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  },
+  "main": {
+    "rows": 12,
+    "requests": 12,
+    "first": "2026-09-05T16:54:55.211821+08:00",
+    "last": "2026-09-09T18:28:12.381799+08:00",
+    "sums": {
+      "input_tokens": 46617,
+      "output_tokens": 2903,
+      "total_tokens": 49520,
+      "cached_input_tokens": 28541,
+      "uncached_input_tokens": 14685,
+      "duration_ms": 251898,
+      "queue_wait_ms": 108,
+      "provider_active_ms": 251875,
+      "request_chars": 155802,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 4,
+          "tokens": 17488,
+          "active_ms": 46705
+        },
+        "tool_followup": {
+          "n": 8,
+          "tokens": 32032,
+          "active_ms": 205170
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 4,
+          "tokens": 17488,
+          "active_ms": 46705
+        },
+        "evidence_lookup": {
+          "n": 6,
+          "tokens": 22685,
+          "active_ms": 191869
+        },
+        "provider_retry": {
+          "n": 2,
+          "tokens": 9347,
+          "active_ms": 13301
+        }
+      },
+      "status": {
+        "success": {
+          "n": 10,
+          "tokens": 44877,
+          "active_ms": 112594
+        },
+        "error": {
+          "n": 2,
+          "tokens": 4643,
+          "active_ms": 139281
+        }
+      },
+      "model": {
+        "qwen3.8-flash": {
+          "n": 5,
+          "tokens": 18793,
+          "active_ms": 85368
+        },
+        "mimo-v2.5": {
+          "n": 7,
+          "tokens": 30727,
+          "active_ms": 166507
+        }
+      },
+      "agent_id": {
+        "main": {
+          "n": 12,
+          "tokens": 49520,
+          "active_ms": 251875
+        }
+      }
+    },
+    "delivery": false
+  },
+  "module-report-78b76fad8b604d88ad2c5f040d434789": {
+    "rows": 15,
+    "requests": 15,
+    "first": "2026-09-09T15:31:13.987519+08:00",
+    "last": "2026-09-09T15:43:01.246888+08:00",
+    "sums": {
+      "input_tokens": 1011695,
+      "output_tokens": 23314,
+      "total_tokens": 1035009,
+      "cached_input_tokens": 358592,
+      "uncached_input_tokens": 653103,
+      "duration_ms": 804870,
+      "queue_wait_ms": 210,
+      "provider_active_ms": 804806,
+      "request_chars": 2548721,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "context_compaction": {
+          "n": 2,
+          "tokens": 311452,
+          "active_ms": 152358
+        },
+        "initial": {
+          "n": 2,
+          "tokens": 321806,
+          "active_ms": 463458
+        },
+        "tool_followup": {
+          "n": 11,
+          "tokens": 401751,
+          "active_ms": 188990
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 4,
+          "tokens": 633258,
+          "active_ms": 615816
+        },
+        "evidence_lookup": {
+          "n": 11,
+          "tokens": 401751,
+          "active_ms": 188990
+        }
+      },
+      "status": {
+        "success": {
+          "n": 15,
+          "tokens": 1035009,
+          "active_ms": 804806
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 15,
+          "tokens": 1035009,
+          "active_ms": 804806
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:specialist-2.3": {
+          "n": 5,
+          "tokens": 625109,
+          "active_ms": 407961
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 10,
+          "tokens": 409900,
+          "active_ms": 396845
+        }
+      }
+    },
+    "delivery": false
+  },
+  "revise-report-0e78a3026f2e40f59d3d479157d9cc5b": {
+    "rows": 84,
+    "requests": 84,
+    "first": "2026-09-14T00:21:36.500320+08:00",
+    "last": "2026-09-14T00:47:44.282925+08:00",
+    "sums": {
+      "input_tokens": 4599402,
+      "output_tokens": 197341,
+      "total_tokens": 4796743,
+      "cached_input_tokens": 2089344,
+      "uncached_input_tokens": 2510058,
+      "duration_ms": 3640048,
+      "queue_wait_ms": 1559,
+      "provider_active_ms": 3640057,
+      "request_chars": 8978344,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 16,
+          "tokens": 957661,
+          "active_ms": 1926185
+        },
+        "tool_followup": {
+          "n": 55,
+          "tokens": 2855894,
+          "active_ms": 1356886
+        },
+        "context_compaction": {
+          "n": 13,
+          "tokens": 983188,
+          "active_ms": 356986
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 29,
+          "tokens": 1940849,
+          "active_ms": 2283171
+        },
+        "evidence_lookup": {
+          "n": 55,
+          "tokens": 2855894,
+          "active_ms": 1356886
+        }
+      },
+      "status": {
+        "success": {
+          "n": 84,
+          "tokens": 4796743,
+          "active_ms": 3640057
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 84,
+          "tokens": 4796743,
+          "active_ms": 3640057
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 21,
+          "tokens": 1211235,
+          "active_ms": 483654
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 15,
+          "tokens": 740390,
+          "active_ms": 381220
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 5,
+          "tokens": 414119,
+          "active_ms": 448503
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 1,
+          "tokens": 87587,
+          "active_ms": 298830
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 6,
+          "tokens": 315221,
+          "active_ms": 172046
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 7,
+          "tokens": 589338,
+          "active_ms": 635559
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 1,
+          "tokens": 88953,
+          "active_ms": 357397
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 1,
+          "tokens": 93385,
+          "active_ms": 374550
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 8,
+          "tokens": 353693,
+          "active_ms": 126779
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 8,
+          "tokens": 363839,
+          "active_ms": 213543
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 11,
+          "tokens": 538983,
+          "active_ms": 147976
+        }
+      }
+    },
+    "delivery": false
+  },
+  "revise-report-10bf19099b97435b9fcab285e9ad5a87": {
+    "rows": 54,
+    "requests": 54,
+    "first": "2026-09-15T21:37:26.281596+08:00",
+    "last": "2026-09-15T21:45:18.864407+08:00",
+    "sums": {
+      "input_tokens": 3362617,
+      "output_tokens": 88974,
+      "total_tokens": 3451591,
+      "cached_input_tokens": 618624,
+      "uncached_input_tokens": 2743993,
+      "duration_ms": 2219994,
+      "queue_wait_ms": 1017,
+      "provider_active_ms": 2219994,
+      "request_chars": 7276487,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "context_compaction": {
+          "n": 19,
+          "tokens": 1331583,
+          "active_ms": 659594
+        },
+        "initial": {
+          "n": 7,
+          "tokens": 510113,
+          "active_ms": 698243
+        },
+        "tool_followup": {
+          "n": 28,
+          "tokens": 1609895,
+          "active_ms": 862157
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 26,
+          "tokens": 1841696,
+          "active_ms": 1357837
+        },
+        "evidence_lookup": {
+          "n": 28,
+          "tokens": 1609895,
+          "active_ms": 862157
+        }
+      },
+      "status": {
+        "success": {
+          "n": 54,
+          "tokens": 3451591,
+          "active_ms": 2219994
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 54,
+          "tokens": 3451591,
+          "active_ms": 2219994
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 2,
+          "tokens": 171695,
+          "active_ms": 103392
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 13,
+          "tokens": 964459,
+          "active_ms": 512920
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 8,
+          "tokens": 287494,
+          "active_ms": 420427
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 2,
+          "tokens": 206907,
+          "active_ms": 137789
+        },
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 12,
+          "tokens": 756719,
+          "active_ms": 513498
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 6,
+          "tokens": 363592,
+          "active_ms": 216812
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 11,
+          "tokens": 700725,
+          "active_ms": 315156
+        }
+      }
+    },
+    "delivery": false
+  },
+  "revise-report-3e83b017cb9845a3bc5ad51294bac281": {
+    "rows": 133,
+    "requests": 133,
+    "first": "2026-09-15T21:47:47.549226+08:00",
+    "last": "2026-09-15T23:08:30.303666+08:00",
+    "sums": {
+      "input_tokens": 6887483,
+      "output_tokens": 310725,
+      "total_tokens": 7198208,
+      "cached_input_tokens": 2624064,
+      "uncached_input_tokens": 4263419,
+      "duration_ms": 7339747,
+      "queue_wait_ms": 1981,
+      "provider_active_ms": 7339698,
+      "request_chars": 13340086,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 28,
+          "tokens": 1500534,
+          "active_ms": 3422506
+        },
+        "tool_followup": {
+          "n": 82,
+          "tokens": 3950287,
+          "active_ms": 3067737
+        },
+        "context_compaction": {
+          "n": 23,
+          "tokens": 1747387,
+          "active_ms": 849455
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 51,
+          "tokens": 3247921,
+          "active_ms": 4271961
+        },
+        "evidence_lookup": {
+          "n": 81,
+          "tokens": 3913682,
+          "active_ms": 3061688
+        },
+        "provider_retry": {
+          "n": 1,
+          "tokens": 36605,
+          "active_ms": 6049
+        }
+      },
+      "status": {
+        "success": {
+          "n": 131,
+          "tokens": 7139348,
+          "active_ms": 6918182
+        },
+        "error": {
+          "n": 2,
+          "tokens": 58860,
+          "active_ms": 421516
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 133,
+          "tokens": 7198208,
+          "active_ms": 7339698
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 4,
+          "tokens": 217347,
+          "active_ms": 125544
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 7,
+          "tokens": 273700,
+          "active_ms": 187463
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 3,
+          "tokens": 226895,
+          "active_ms": 245710
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 9,
+          "tokens": 588055,
+          "active_ms": 314272
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 3,
+          "tokens": 238778,
+          "active_ms": 415722
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 6,
+          "tokens": 197618,
+          "active_ms": 271525
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 13,
+          "tokens": 867745,
+          "active_ms": 932719
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 7,
+          "tokens": 535924,
+          "active_ms": 892782
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 5,
+          "tokens": 447873,
+          "active_ms": 733893
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 16,
+          "tokens": 1129115,
+          "active_ms": 635701
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 3,
+          "tokens": 172444,
+          "active_ms": 131440
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 3,
+          "tokens": 74213,
+          "active_ms": 121616
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 4,
+          "tokens": 173656,
+          "active_ms": 243270
+        },
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 13,
+          "tokens": 984857,
+          "active_ms": 417285
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 3,
+          "tokens": 91437,
+          "active_ms": 268383
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 3,
+          "tokens": 70366,
+          "active_ms": 452190
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 13,
+          "tokens": 434846,
+          "active_ms": 574150
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 18,
+          "tokens": 473339,
+          "active_ms": 376033
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "revise-report-3e83b017cb9845a3bc5ad51294bac281",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/revise-report-3e83b017cb9845a3bc5ad51294bac281/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/revise-report-3e83b017cb9845a3bc5ad51294bac281/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/revise-report-3e83b017cb9845a3bc5ad51294bac281/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/revise-report-3e83b017cb9845a3bc5ad51294bac281/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/revise-report-3e83b017cb9845a3bc5ad51294bac281/delivery/revise-report-3e83b017cb9845a3bc5ad51294bac281-revise-report-3e83b017cb9845a3bc5ad51294bac281/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "revise_report",
+      "instruction": "????? 2.3 ??????????(REV-DEMO-??????.txt),??????????????????????",
+      "target_modules": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": "??????????_????????_v2.docx",
+      "baseline_run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "requested_changes": {
+        "2.3.1": "按用户指令复核并必要时修订 2.3.1；只使用可追溯证据，缺少依据时明确不确定性。",
+        "2.3.2": "按用户指令复核并必要时修订 2.3.2；只使用可追溯证据，缺少依据时明确不确定性。",
+        "2.3.3": "按用户指令复核并必要时修订 2.3.3；只使用可追溯证据，缺少依据时明确不确定性。"
+      },
+      "impact_mode": "auto",
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  },
+  "revise-report-433e81be3a4143a1afaa67bd9e7f7e1f": {
+    "rows": 134,
+    "requests": 134,
+    "first": "2026-09-16T00:52:52.883935+08:00",
+    "last": "2026-09-16T01:33:12.165469+08:00",
+    "sums": {
+      "input_tokens": 7356871,
+      "output_tokens": 288220,
+      "total_tokens": 7645091,
+      "cached_input_tokens": 2291136,
+      "uncached_input_tokens": 5065735,
+      "duration_ms": 6010398,
+      "queue_wait_ms": 1462,
+      "provider_active_ms": 6010434,
+      "request_chars": 14686668,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 24,
+          "tokens": 1464725,
+          "active_ms": 2496530
+        },
+        "tool_followup": {
+          "n": 79,
+          "tokens": 3848139,
+          "active_ms": 2494824
+        },
+        "context_compaction": {
+          "n": 31,
+          "tokens": 2332227,
+          "active_ms": 1019080
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 55,
+          "tokens": 3796952,
+          "active_ms": 3515610
+        },
+        "evidence_lookup": {
+          "n": 79,
+          "tokens": 3848139,
+          "active_ms": 2494824
+        }
+      },
+      "status": {
+        "success": {
+          "n": 134,
+          "tokens": 7645091,
+          "active_ms": 6010434
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 134,
+          "tokens": 7645091,
+          "active_ms": 6010434
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 18,
+          "tokens": 1038559,
+          "active_ms": 551948
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 8,
+          "tokens": 230702,
+          "active_ms": 208642
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 9,
+          "tokens": 732010,
+          "active_ms": 529730
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 3,
+          "tokens": 238044,
+          "active_ms": 309071
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 19,
+          "tokens": 1377536,
+          "active_ms": 563191
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 3,
+          "tokens": 240111,
+          "active_ms": 336886
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 10,
+          "tokens": 681648,
+          "active_ms": 310299
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 3,
+          "tokens": 244920,
+          "active_ms": 390832
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 5,
+          "tokens": 420502,
+          "active_ms": 512951
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 25,
+          "tokens": 1150662,
+          "active_ms": 842666
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 3,
+          "tokens": 163552,
+          "active_ms": 119479
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 6,
+          "tokens": 136545,
+          "active_ms": 145270
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 6,
+          "tokens": 207190,
+          "active_ms": 243945
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 12,
+          "tokens": 607823,
+          "active_ms": 599702
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 4,
+          "tokens": 175287,
+          "active_ms": 345822
+        }
+      }
+    },
+    "delivery": false
+  },
+  "revise-report-6da0b9f015a6425eab43bf7098289432": {
+    "rows": 235,
+    "requests": 235,
+    "first": "2026-09-14T00:50:20.704917+08:00",
+    "last": "2026-09-14T02:00:29.709332+08:00",
+    "sums": {
+      "input_tokens": 13356019,
+      "output_tokens": 458001,
+      "total_tokens": 13814020,
+      "cached_input_tokens": 4256320,
+      "uncached_input_tokens": 9099699,
+      "duration_ms": 8322209,
+      "queue_wait_ms": 2279,
+      "provider_active_ms": 8322268,
+      "request_chars": 25543678,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 35,
+          "tokens": 1884120,
+          "active_ms": 2860242
+        },
+        "tool_followup": {
+          "n": 143,
+          "tokens": 7449267,
+          "active_ms": 3940488
+        },
+        "context_compaction": {
+          "n": 57,
+          "tokens": 4480633,
+          "active_ms": 1521538
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 92,
+          "tokens": 6364753,
+          "active_ms": 4381780
+        },
+        "evidence_lookup": {
+          "n": 143,
+          "tokens": 7449267,
+          "active_ms": 3940488
+        }
+      },
+      "status": {
+        "success": {
+          "n": 235,
+          "tokens": 13814020,
+          "active_ms": 8322268
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 235,
+          "tokens": 13814020,
+          "active_ms": 8322268
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 49,
+          "tokens": 3064453,
+          "active_ms": 1206455
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 36,
+          "tokens": 2011090,
+          "active_ms": 934976
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 7,
+          "tokens": 602262,
+          "active_ms": 603469
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 7,
+          "tokens": 523122,
+          "active_ms": 502609
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 7,
+          "tokens": 605767,
+          "active_ms": 553964
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 5,
+          "tokens": 429981,
+          "active_ms": 597637
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 7,
+          "tokens": 618156,
+          "active_ms": 678761
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 6,
+          "tokens": 286665,
+          "active_ms": 185889
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 15,
+          "tokens": 782193,
+          "active_ms": 335953
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 7,
+          "tokens": 296426,
+          "active_ms": 132810
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 4,
+          "tokens": 112987,
+          "active_ms": 114309
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 15,
+          "tokens": 732359,
+          "active_ms": 258888
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 6,
+          "tokens": 201621,
+          "active_ms": 101671
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 12,
+          "tokens": 462863,
+          "active_ms": 295202
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 9,
+          "tokens": 429102,
+          "active_ms": 432063
+        },
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 24,
+          "tokens": 2102177,
+          "active_ms": 859479
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 1,
+          "tokens": 16362,
+          "active_ms": 83504
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 2,
+          "tokens": 35824,
+          "active_ms": 150114
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 16,
+          "tokens": 500610,
+          "active_ms": 294515
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "revise-report-6da0b9f015a6425eab43bf7098289432",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/revise-report-6da0b9f015a6425eab43bf7098289432/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/revise-report-6da0b9f015a6425eab43bf7098289432/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/revise-report-6da0b9f015a6425eab43bf7098289432/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/revise-report-6da0b9f015a6425eab43bf7098289432/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/revise-report-6da0b9f015a6425eab43bf7098289432/delivery/revise-report-6da0b9f015a6425eab43bf7098289432-revise-report-6da0b9f015a6425eab43bf7098289432/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "revise_report",
+      "instruction": "???????,??? 2.3.1:??????????;?????????????????????? Cross ??,??????",
+      "target_modules": [
+        "2.3"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": "??????????_????2.3.1_Cross2.docx",
+      "baseline_run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "requested_changes": {
+        "2.3.1": "??????????????,???????;??????????????????????"
+      },
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  },
+  "revise-report-8129b20dfb0d4bb9b1574645447375f0": {
+    "rows": 155,
+    "requests": 155,
+    "first": "2026-09-16T10:03:15.763163+08:00",
+    "last": "2026-09-16T11:27:13.026251+08:00",
+    "sums": {
+      "input_tokens": 6880081,
+      "output_tokens": 306048,
+      "total_tokens": 7186129,
+      "cached_input_tokens": 2949312,
+      "uncached_input_tokens": 3930769,
+      "duration_ms": 9939844,
+      "queue_wait_ms": 6312,
+      "provider_active_ms": 9939777,
+      "request_chars": 13909657,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 38,
+          "tokens": 1689000,
+          "active_ms": 4929719
+        },
+        "tool_followup": {
+          "n": 97,
+          "tokens": 4048902,
+          "active_ms": 3966947
+        },
+        "context_compaction": {
+          "n": 20,
+          "tokens": 1448227,
+          "active_ms": 1043111
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 53,
+          "tokens": 2864843,
+          "active_ms": 5717820
+        },
+        "evidence_lookup": {
+          "n": 96,
+          "tokens": 3979801,
+          "active_ms": 3911638
+        },
+        "provider_retry": {
+          "n": 6,
+          "tokens": 341485,
+          "active_ms": 310319
+        }
+      },
+      "status": {
+        "success": {
+          "n": 146,
+          "tokens": 6922521,
+          "active_ms": 9432576
+        },
+        "error": {
+          "n": 9,
+          "tokens": 263608,
+          "active_ms": 507201
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 155,
+          "tokens": 7186129,
+          "active_ms": 9939777
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 15,
+          "tokens": 814537,
+          "active_ms": 550690
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 14,
+          "tokens": 364853,
+          "active_ms": 512605
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.1": {
+          "n": 7,
+          "tokens": 547268,
+          "active_ms": 898284
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.2": {
+          "n": 7,
+          "tokens": 540805,
+          "active_ms": 931769
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.3": {
+          "n": 6,
+          "tokens": 432508,
+          "active_ms": 875815
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.5": {
+          "n": 5,
+          "tokens": 348887,
+          "active_ms": 877938
+        },
+        "public-reporting:module-2.2-specialist:module-2.2": {
+          "n": 6,
+          "tokens": 322301,
+          "active_ms": 158613
+        },
+        "public-reporting:cross-module-reviewer:cross-owner-2.4": {
+          "n": 2,
+          "tokens": 163202,
+          "active_ms": 672828
+        },
+        "public-reporting:module-2.4-specialist:module-2.4": {
+          "n": 5,
+          "tokens": 246470,
+          "active_ms": 279681
+        },
+        "public-reporting:module-2.5-specialist:module-2.5": {
+          "n": 7,
+          "tokens": 438883,
+          "active_ms": 446514
+        },
+        "public-reporting:module-2.1-specialist:module-2.1": {
+          "n": 9,
+          "tokens": 454143,
+          "active_ms": 335411
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.2": {
+          "n": 9,
+          "tokens": 198281,
+          "active_ms": 260806
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.4": {
+          "n": 9,
+          "tokens": 171436,
+          "active_ms": 398178
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.5": {
+          "n": 10,
+          "tokens": 264853,
+          "active_ms": 341313
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.1": {
+          "n": 4,
+          "tokens": 121154,
+          "active_ms": 210061
+        },
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 13,
+          "tokens": 1049248,
+          "active_ms": 817851
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 3,
+          "tokens": 79923,
+          "active_ms": 320933
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 3,
+          "tokens": 52841,
+          "active_ms": 409346
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 10,
+          "tokens": 301817,
+          "active_ms": 300887
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 11,
+          "tokens": 272719,
+          "active_ms": 340254
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "revise-report-8129b20dfb0d4bb9b1574645447375f0",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/revise-report-8129b20dfb0d4bb9b1574645447375f0/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/revise-report-8129b20dfb0d4bb9b1574645447375f0/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/revise-report-8129b20dfb0d4bb9b1574645447375f0/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/revise-report-8129b20dfb0d4bb9b1574645447375f0/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/revise-report-8129b20dfb0d4bb9b1574645447375f0/delivery/revise-report-8129b20dfb0d4bb9b1574645447375f0-revise-report-8129b20dfb0d4bb9b1574645447375f0/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "revise_report",
+      "instruction": "????? 2.3 ??????????(REV-DEMO-??????.txt),??????,?????????",
+      "target_modules": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": null,
+      "baseline_run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "requested_changes": {
+        "2.3.1": "按用户指令复核并必要时修订 2.3.1；只使用可追溯证据，缺少依据时明确不确定性。"
+      },
+      "impact_mode": "confirm",
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 600,
+      "max_total_tokens": 30000000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 5
+    }
+  },
+  "revise-report-83b9ceab933843ff99a23891dd277831": {
+    "rows": 102,
+    "requests": 102,
+    "first": "2026-09-11T01:05:52.398129+08:00",
+    "last": "2026-09-12T01:11:19.192227+08:00",
+    "sums": {
+      "input_tokens": 5223249,
+      "output_tokens": 174735,
+      "total_tokens": 5397984,
+      "cached_input_tokens": 1750528,
+      "uncached_input_tokens": 3472721,
+      "duration_ms": 3809167,
+      "queue_wait_ms": 358,
+      "provider_active_ms": 3809099,
+      "request_chars": 9669999,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 14,
+          "tokens": 455332,
+          "active_ms": 841737
+        },
+        "tool_followup": {
+          "n": 68,
+          "tokens": 3297718,
+          "active_ms": 2322584
+        },
+        "context_compaction": {
+          "n": 20,
+          "tokens": 1644934,
+          "active_ms": 644778
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 34,
+          "tokens": 2100266,
+          "active_ms": 1486515
+        },
+        "evidence_lookup": {
+          "n": 68,
+          "tokens": 3297718,
+          "active_ms": 2322584
+        }
+      },
+      "status": {
+        "success": {
+          "n": 102,
+          "tokens": 5397984,
+          "active_ms": 3809099
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 102,
+          "tokens": 5397984,
+          "active_ms": 3809099
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 12,
+          "tokens": 335097,
+          "active_ms": 253280
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 16,
+          "tokens": 628962,
+          "active_ms": 570357
+        },
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 47,
+          "tokens": 3748623,
+          "active_ms": 1958420
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 2,
+          "tokens": 51752,
+          "active_ms": 317606
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 2,
+          "tokens": 51419,
+          "active_ms": 374335
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 11,
+          "tokens": 279703,
+          "active_ms": 155981
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 12,
+          "tokens": 302428,
+          "active_ms": 179120
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "revise-report-83b9ceab933843ff99a23891dd277831",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/revise-report-83b9ceab933843ff99a23891dd277831/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/revise-report-83b9ceab933843ff99a23891dd277831/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/revise-report-83b9ceab933843ff99a23891dd277831/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/revise-report-83b9ceab933843ff99a23891dd277831/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/revise-report-83b9ceab933843ff99a23891dd277831/delivery/revise-report-83b9ceab933843ff99a23891dd277831-revise-report-83b9ceab933843ff99a23891dd277831/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "revise_report",
+      "instruction": "?????????,?????????? 2.3.1:??????????,?????????????????;??????????????????,??????????",
+      "target_modules": [
+        "2.3"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": "??????????_????2.3.1.docx",
+      "baseline_run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "requested_changes": {
+        "2.3.1": "???????????????,???????;??????????/??????????????"
+      },
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  },
+  "revise-report-ae52f563ccad4d4b9a761f91b3f7664e": {
+    "rows": 64,
+    "requests": 64,
+    "first": "2026-09-12T08:20:16.545539+08:00",
+    "last": "2026-09-12T08:43:39.798142+08:00",
+    "sums": {
+      "input_tokens": 2690488,
+      "output_tokens": 101257,
+      "total_tokens": 2791745,
+      "cached_input_tokens": 1494336,
+      "uncached_input_tokens": 1196152,
+      "duration_ms": 1645740,
+      "queue_wait_ms": 653,
+      "provider_active_ms": 1645697,
+      "request_chars": 5125371,
+      "repeated_chars": 0
+    },
+    "groups": {
+      "phase": {
+        "initial": {
+          "n": 11,
+          "tokens": 363350,
+          "active_ms": 668610
+        },
+        "tool_followup": {
+          "n": 47,
+          "tokens": 1961463,
+          "active_ms": 843014
+        },
+        "context_compaction": {
+          "n": 6,
+          "tokens": 466932,
+          "active_ms": 134073
+        }
+      },
+      "round_reason": {
+        "direct_submit": {
+          "n": 17,
+          "tokens": 830282,
+          "active_ms": 802683
+        },
+        "evidence_lookup": {
+          "n": 47,
+          "tokens": 1961463,
+          "active_ms": 843014
+        }
+      },
+      "status": {
+        "success": {
+          "n": 64,
+          "tokens": 2791745,
+          "active_ms": 1645697
+        }
+      },
+      "model": {
+        "mimo-v2.5": {
+          "n": 64,
+          "tokens": 2791745,
+          "active_ms": 1645697
+        }
+      },
+      "agent_id": {
+        "public-reporting:module-2.3-specialist:module-2.3": {
+          "n": 7,
+          "tokens": 323386,
+          "active_ms": 139606
+        },
+        "public-reporting:evidence-auditor:module-auditor-2.3": {
+          "n": 15,
+          "tokens": 619593,
+          "active_ms": 250604
+        },
+        "distribution-aggregate-existing:aggregate-editor:aggregate-existing": {
+          "n": 17,
+          "tokens": 1279016,
+          "active_ms": 397174
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-1": {
+          "n": 3,
+          "tokens": 76150,
+          "active_ms": 292376
+        },
+        "public-reporting:chief-editor-auditor:final-chapter-3": {
+          "n": 2,
+          "tokens": 67346,
+          "active_ms": 297388
+        },
+        "public-reporting:chief-editor:chief-chapter-1": {
+          "n": 11,
+          "tokens": 220245,
+          "active_ms": 109250
+        },
+        "public-reporting:chief-editor:chief-chapter-3": {
+          "n": 9,
+          "tokens": 206009,
+          "active_ms": 159299
+        }
+      }
+    },
+    "delivery": true,
+    "delivery-completion.json": {
+      "run_id": "revise-report-ae52f563ccad4d4b9a761f91b3f7664e",
+      "status": "delivered",
+      "delivery_status": "delivered",
+      "delivery_receipt_ref": "Work/runs/revise-report-ae52f563ccad4d4b9a761f91b3f7664e/delivery-receipt.json",
+      "final_audit_snapshot_ref": "Work/runs/revise-report-ae52f563ccad4d4b9a761f91b3f7664e/reviews/final-audit-snapshot.json",
+      "final_review_completion_ref": "Work/runs/revise-report-ae52f563ccad4d4b9a761f91b3f7664e/reviews/final-completion.json",
+      "output_artifacts": [
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.1.md",
+          "module_id": "2.1"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.2.md",
+          "module_id": "2.2"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.3.md",
+          "module_id": "2.3"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.4.md",
+          "module_id": "2.4"
+        },
+        {
+          "kind": "module",
+          "path": "Outputs/Modules/2.5.md",
+          "module_id": "2.5"
+        },
+        {
+          "kind": "review",
+          "path": "Work/runs/revise-report-ae52f563ccad4d4b9a761f91b3f7664e/reviews/final-completion.json",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/配电安全专家咨询报告.docx",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.md",
+          "module_id": null
+        },
+        {
+          "kind": "report",
+          "path": "Outputs/Reports/证据与来源索引.docx",
+          "module_id": null
+        },
+        {
+          "kind": "run",
+          "path": "Work/runs/revise-report-ae52f563ccad4d4b9a761f91b3f7664e/delivery/revise-report-ae52f563ccad4d4b9a761f91b3f7664e-revise-report-ae52f563ccad4d4b9a761f91b3f7664e/delivery-manifest.json",
+          "module_id": null
+        }
+      ]
+    },
+    "request-snapshot.json": {
+      "operation": "revise_report",
+      "instruction": "???????,??? 2.3.1:??????????,???????????????????;????????????????,??????????",
+      "target_modules": [
+        "2.3"
+      ],
+      "source_module_refs": null,
+      "source_markdown_ref": null,
+      "output_filename": "??????????_????2.3.1_????.docx",
+      "baseline_run_id": "full-report-8c70828443b9499d80f8a6bda41c670c",
+      "requested_changes": {
+        "2.3.1": "??????????????,???????;??????????/??????????????"
+      },
+      "execution_requirements": [],
+      "user_supplements": [],
+      "missing_evidence_policy": "draft",
+      "cost_control_mode": "observe",
+      "max_provider_attempts": 80,
+      "max_total_tokens": 800000,
+      "preparation_mode": "deterministic_workers",
+      "preparation_concurrency": 4
+    }
+  }
+}

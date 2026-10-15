@@ -1,0 +1,10 @@
+{
+  "kind": "module_part_evidence_binding",
+  "run_id": "module-provider-revision-result-part",
+  "task_id": "module-revision-r1-2.4",
+  "revision": 1,
+  "part_id": "2.4.1.1",
+  "evidence_ids": [
+    "E-0001"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "kind": "review_completion_record",
+  "review_protocol_version": 1,
+  "lifecycle": "module",
+  "run_id": "joint-swap",
+  "reviewer_agent_id": "evidence-auditor",
+  "reviewer_session_key": "module-auditor-2.5",
+  "subject_refs": [
+    "Work/runs/joint-swap/modules/2.5-r0.json"
+  ],
+  "finding_refs": [],
+  "verdict_refs": [],
+  "resolved_finding_ids": [],
+  "deferred_advisory_ids": []
+}

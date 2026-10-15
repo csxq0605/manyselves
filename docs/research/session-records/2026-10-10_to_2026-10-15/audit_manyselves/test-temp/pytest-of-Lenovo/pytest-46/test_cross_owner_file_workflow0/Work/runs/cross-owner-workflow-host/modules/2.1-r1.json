@@ -1,0 +1,25 @@
+{
+  "kind": "module_submission",
+  "module_id": "2.1",
+  "submodule_narratives": {
+    "2.1.1": "补充关系机制、影响路径与和 2.2 的联合验证步骤。",
+    "2.1.2": "初始内容 2.1.2。",
+    "2.1.3": "初始内容 2.1.3。",
+    "2.1.4": "初始内容 2.1.4。",
+    "2.1.5": "初始内容 2.1.5。"
+  },
+  "claims": [],
+  "source_ids": [],
+  "unresolved_questions": [],
+  "revision": 1,
+  "revision_responses": [
+    {
+      "finding_id": "X-2.1-r0-1",
+      "action": "implemented",
+      "summary": "已补充关系机制及联合验证步骤，供后续复核。",
+      "changed_target_ids": [
+        "2.1.1"
+      ]
+    }
+  ]
+}

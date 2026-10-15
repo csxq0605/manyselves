@@ -1,0 +1,2226 @@
+[
+  {
+    "run": "full-report-8c70828443b9499d80f8a6bda41c670c",
+    "requests": 525,
+    "provider_observation_span_seconds": 7082.6030740737915,
+    "provider_active_union_seconds": 6479.5993592739105,
+    "summary_active_union_seconds": 3618.9439713954926,
+    "summary_only_active_seconds": 596.4205543994904,
+    "concurrency_seconds": {
+      "0": 603.003714799881,
+      "1": 1223.1382355690002,
+      "2": 1838.6359238624573,
+      "3": 399.89562702178955,
+      "4": 802.1698291301727,
+      "5": 2215.7597436904907
+    },
+    "queue_wait_seconds_sum": 85.156,
+    "tool_time_seconds_sum": 110.798,
+    "errors": [
+      {
+        "timestamp": "2026-09-09T19:24:41.785691+08:00",
+        "phase": "context_compaction",
+        "class": "APITimeoutError",
+        "active_seconds": 55.296
+      },
+      {
+        "timestamp": "2026-09-09T19:29:02.062015+08:00",
+        "phase": "context_compaction",
+        "class": "APITimeoutError",
+        "active_seconds": 42.469
+      }
+    ],
+    "usage_sources": {
+      "provider": 523,
+      "estimated": 2
+    },
+    "retry_requests": 2,
+    "phases": {
+      "initial": {
+        "requests": 50,
+        "input_tokens": 2115506,
+        "output_tokens": 148168,
+        "cached_input_tokens": 117760,
+        "active_seconds_sum": 4000.195,
+        "duration_seconds": {
+          "min": 4.33,
+          "median": 35.485,
+          "p90": 276.149,
+          "max": 522.892
+        },
+        "input_tokens_distribution": {
+          "min": 5660,
+          "median": 48525.0,
+          "p90": 64611,
+          "max": 70454
+        }
+      },
+      "tool_followup": {
+        "requests": 355,
+        "input_tokens": 17200473,
+        "output_tokens": 355707,
+        "cached_input_tokens": 10839424,
+        "active_seconds_sum": 10518.043,
+        "duration_seconds": {
+          "min": 1.848,
+          "median": 15.946,
+          "p90": 63.072,
+          "max": 338.844
+        },
+        "input_tokens_distribution": {
+          "min": 11288,
+          "median": 50891,
+          "p90": 67977,
+          "max": 83543
+        }
+      },
+      "context_compaction": {
+        "requests": 120,
+        "input_tokens": 8334161,
+        "output_tokens": 189215,
+        "cached_input_tokens": 89280,
+        "active_seconds_sum": 5869.3369999999995,
+        "duration_seconds": {
+          "min": 21.232,
+          "median": 46.3715,
+          "p90": 70.41,
+          "max": 89.671
+        },
+        "input_tokens_distribution": {
+          "min": 39986,
+          "median": 68184.0,
+          "p90": 88423,
+          "max": 104784
+        }
+      }
+    },
+    "agents": [
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "requests": 50,
+        "summary_requests": 20,
+        "active_seconds_sum": 2088.829,
+        "first_start": "2026-09-09T18:35:34.231362",
+        "last_end": "2026-09-09T19:43:27.529972+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "requests": 39,
+        "summary_requests": 10,
+        "active_seconds_sum": 1567.463,
+        "first_start": "2026-09-09T19:47:19.921371",
+        "last_end": "2026-09-09T20:21:52.786198+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "requests": 47,
+        "summary_requests": 8,
+        "active_seconds_sum": 1422.859,
+        "first_start": "2026-09-09T19:47:19.913551",
+        "last_end": "2026-09-09T20:23:18.831226+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "requests": 25,
+        "summary_requests": 9,
+        "active_seconds_sum": 1335.2150000000001,
+        "first_start": "2026-09-09T18:44:59.482688",
+        "last_end": "2026-09-09T19:32:07.613062+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "requests": 41,
+        "summary_requests": 10,
+        "active_seconds_sum": 1328.73,
+        "first_start": "2026-09-09T18:46:34.389028",
+        "last_end": "2026-09-09T19:40:12.969209+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "requests": 32,
+        "summary_requests": 10,
+        "active_seconds_sum": 1294.783,
+        "first_start": "2026-09-09T18:38:49.283621",
+        "last_end": "2026-09-09T19:28:26.001213+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "requests": 27,
+        "summary_requests": 10,
+        "active_seconds_sum": 1284.029,
+        "first_start": "2026-09-09T18:40:14.633701",
+        "last_end": "2026-09-09T19:32:07.621108+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "requests": 40,
+        "summary_requests": 8,
+        "active_seconds_sum": 1128.426,
+        "first_start": "2026-09-09T18:28:03.861296",
+        "last_end": "2026-09-09T18:47:04.916410+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "requests": 27,
+        "summary_requests": 8,
+        "active_seconds_sum": 988.904,
+        "first_start": "2026-09-09T18:28:03.848965",
+        "last_end": "2026-09-09T18:44:46.035941+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.5",
+        "requests": 5,
+        "summary_requests": 2,
+        "active_seconds_sum": 845.3800000000001,
+        "first_start": "2026-09-09T19:04:44.338023",
+        "last_end": "2026-09-09T19:30:42.474899+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "requests": 27,
+        "summary_requests": 4,
+        "active_seconds_sum": 839.159,
+        "first_start": "2026-09-09T18:48:54.976958",
+        "last_end": "2026-09-09T19:21:05.710488+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:specialist-2.1",
+        "requests": 26,
+        "summary_requests": 3,
+        "active_seconds_sum": 706.865,
+        "first_start": "2026-09-09T18:28:03.812057",
+        "last_end": "2026-09-09T18:39:59.561940+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "requests": 39,
+        "summary_requests": 4,
+        "active_seconds_sum": 674.34,
+        "first_start": "2026-09-09T18:57:28.058766",
+        "last_end": "2026-09-09T19:27:53.073640+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.4",
+        "requests": 5,
+        "summary_requests": 2,
+        "active_seconds_sum": 666.232,
+        "first_start": "2026-09-09T19:04:44.334001",
+        "last_end": "2026-09-09T19:35:44.672344+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "requests": 27,
+        "summary_requests": 5,
+        "active_seconds_sum": 624.106,
+        "first_start": "2026-09-09T18:28:03.835713",
+        "last_end": "2026-09-09T18:38:37.346080+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "requests": 15,
+        "summary_requests": 2,
+        "active_seconds_sum": 524.1,
+        "first_start": "2026-09-09T18:50:43.832281",
+        "last_end": "2026-09-09T19:23:52.151460+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "requests": 3,
+        "summary_requests": 1,
+        "active_seconds_sum": 502.454,
+        "first_start": "2026-09-09T19:04:44.326242",
+        "last_end": "2026-09-09T19:31:24.626667+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "requests": 3,
+        "summary_requests": 1,
+        "active_seconds_sum": 493.893,
+        "first_start": "2026-09-09T19:04:44.316002",
+        "last_end": "2026-09-09T19:35:09.277469+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.5",
+        "requests": 10,
+        "summary_requests": 2,
+        "active_seconds_sum": 460.154,
+        "first_start": "2026-09-09T18:47:18.817856",
+        "last_end": "2026-09-09T19:27:18.410664+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:specialist-2.2",
+        "requests": 24,
+        "summary_requests": 0,
+        "active_seconds_sum": 432.899,
+        "first_start": "2026-09-09T18:28:03.823135",
+        "last_end": "2026-09-09T18:35:22.966382+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor-auditor:final-chapter-3",
+        "requests": 3,
+        "summary_requests": 0,
+        "active_seconds_sum": 360.10699999999997,
+        "first_start": "2026-09-09T20:10:01.766090",
+        "last_end": "2026-09-09T20:25:40.760686+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "requests": 4,
+        "summary_requests": 1,
+        "active_seconds_sum": 325.832,
+        "first_start": "2026-09-09T19:04:44.321589",
+        "last_end": "2026-09-09T19:45:58.530821+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor-auditor:final-chapter-1",
+        "requests": 2,
+        "summary_requests": 0,
+        "active_seconds_sum": 292.067,
+        "first_start": "2026-09-09T20:10:01.762123",
+        "last_end": "2026-09-09T20:26:06.415131+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:module-2.3",
+        "requests": 4,
+        "summary_requests": 0,
+        "active_seconds_sum": 200.749,
+        "first_start": "2026-09-09T19:10:50.536214",
+        "last_end": "2026-09-09T19:14:11.561120+08:00"
+      }
+    ],
+    "summary_pairs": [
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:30:27.768841+08:00",
+        "before_input": 63901,
+        "summary_input": 77270,
+        "summary_output": 2367,
+        "after_input": 72563,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 65.066
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:31:49.946795+08:00",
+        "before_input": 72563,
+        "summary_input": 78186,
+        "summary_output": 2696,
+        "after_input": 73058,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 70.58
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:33:45.174245+08:00",
+        "before_input": 73058,
+        "summary_input": 81685,
+        "summary_output": 2702,
+        "after_input": 74234,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 61.051
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:36:31.861195+08:00",
+        "before_input": 74234,
+        "summary_input": 78545,
+        "summary_output": 1925,
+        "after_input": 66258,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 54.528
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:39:03.382317+08:00",
+        "before_input": 66258,
+        "summary_input": 70151,
+        "summary_output": 2004,
+        "after_input": 70698,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 52.477
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:42:10.966233+08:00",
+        "before_input": 70698,
+        "summary_input": 75762,
+        "summary_output": 2143,
+        "after_input": 72536,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.481
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:43:29.051377+08:00",
+        "before_input": 72536,
+        "summary_input": 73858,
+        "summary_output": 2338,
+        "after_input": 74179,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.589
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:specialist-2.4",
+        "timestamp": "2026-09-09T18:44:33.722265+08:00",
+        "before_input": 74179,
+        "summary_input": 75518,
+        "summary_output": 2044,
+        "after_input": 62429,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 53.77
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "timestamp": "2026-09-09T18:31:14.858295+08:00",
+        "before_input": 61778,
+        "summary_input": 66127,
+        "summary_output": 1679,
+        "after_input": 67977,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 49.203
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "timestamp": "2026-09-09T18:32:33.539175+08:00",
+        "before_input": 67977,
+        "summary_input": 66333,
+        "summary_output": 1269,
+        "after_input": 68525,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 42.656
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "timestamp": "2026-09-09T18:33:43.721456+08:00",
+        "before_input": 68525,
+        "summary_input": 73392,
+        "summary_output": 1925,
+        "after_input": 68523,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 58.121
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "timestamp": "2026-09-09T18:37:30.732860+08:00",
+        "before_input": 68523,
+        "summary_input": 73728,
+        "summary_output": 1266,
+        "after_input": 69308,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 33.695
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:specialist-2.3",
+        "timestamp": "2026-09-09T18:38:14.216389+08:00",
+        "before_input": 69308,
+        "summary_input": 67973,
+        "summary_output": 991,
+        "after_input": 69342,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 31.664
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:35:19.713196+08:00",
+        "before_input": 59362,
+        "summary_input": 62382,
+        "summary_output": 1860,
+        "after_input": 62364,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 49.402
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:36:59.698014+08:00",
+        "before_input": 62364,
+        "summary_input": 63917,
+        "summary_output": 1821,
+        "after_input": 63671,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 57.103
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:38:29.598906+08:00",
+        "before_input": 63671,
+        "summary_input": 64976,
+        "summary_output": 2200,
+        "after_input": 64944,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 70.41
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:40:14.494837+08:00",
+        "before_input": 64944,
+        "summary_input": 66244,
+        "summary_output": 2083,
+        "after_input": 65932,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 66.785
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:42:19.779674+08:00",
+        "before_input": 65932,
+        "summary_input": 68614,
+        "summary_output": 2633,
+        "after_input": 68570,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 81.184
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:44:01.068374+08:00",
+        "before_input": 68570,
+        "summary_input": 70312,
+        "summary_output": 2413,
+        "after_input": 65218,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 61.729
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:45:42.854609+08:00",
+        "before_input": 65218,
+        "summary_input": 65967,
+        "summary_output": 2373,
+        "after_input": 66378,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 64.636
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:specialist-2.5",
+        "timestamp": "2026-09-09T18:46:55.308645+08:00",
+        "before_input": 66378,
+        "summary_input": 67122,
+        "summary_output": 2071,
+        "after_input": 67090,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 63.039
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:specialist-2.1",
+        "timestamp": "2026-09-09T18:37:14.115755+08:00",
+        "before_input": 58792,
+        "summary_input": 72634,
+        "summary_output": 1467,
+        "after_input": 64431,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 42.053
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:specialist-2.1",
+        "timestamp": "2026-09-09T18:38:52.158166+08:00",
+        "before_input": 64431,
+        "summary_input": 69129,
+        "summary_output": 1366,
+        "after_input": 66289,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 52.964
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:specialist-2.1",
+        "timestamp": "2026-09-09T18:39:39.119305+08:00",
+        "before_input": 66289,
+        "summary_input": 69854,
+        "summary_output": 1275,
+        "after_input": 64291,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 35.917
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:40:17.523538+08:00",
+        "before_input": 62337,
+        "summary_input": 71708,
+        "summary_output": 1990,
+        "after_input": 73475,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 68.116
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:41:26.139550+08:00",
+        "before_input": 73475,
+        "summary_input": 75802,
+        "summary_output": 1560,
+        "after_input": 76630,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 39.784
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:43:52.938820+08:00",
+        "before_input": 76630,
+        "summary_input": 76913,
+        "summary_output": 2649,
+        "after_input": 81830,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 61.087
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:45:03.214301+08:00",
+        "before_input": 81830,
+        "summary_input": 79166,
+        "summary_output": 1735,
+        "after_input": 83107,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 53.945
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:53:21.908880+08:00",
+        "before_input": 83107,
+        "summary_input": 88423,
+        "summary_output": 2324,
+        "after_input": 63013,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.804
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:55:28.759450+08:00",
+        "before_input": 63013,
+        "summary_input": 89327,
+        "summary_output": 2415,
+        "after_input": 63355,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.653
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:56:54.021966+08:00",
+        "before_input": 63355,
+        "summary_input": 62637,
+        "summary_output": 2701,
+        "after_input": 64107,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 74.108
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T18:58:13.107199+08:00",
+        "before_input": 64107,
+        "summary_input": 59821,
+        "summary_output": 1341,
+        "after_input": 64475,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 41.376
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:20:05.069143+08:00",
+        "before_input": 64475,
+        "summary_input": 73821,
+        "summary_output": 1819,
+        "after_input": 64395,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 51.016
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:21:49.854672+08:00",
+        "before_input": 64395,
+        "summary_input": 78761,
+        "summary_output": 1556,
+        "after_input": 64397,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 56.265
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:22:43.149912+08:00",
+        "before_input": 64397,
+        "summary_input": 65054,
+        "summary_output": 1287,
+        "after_input": 65238,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 32.736
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:23:52.570437+08:00",
+        "before_input": 65238,
+        "summary_input": 65655,
+        "summary_output": 1418,
+        "after_input": 61936,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 52.521
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:25:18.697926+08:00",
+        "before_input": 61936,
+        "summary_input": 65541,
+        "summary_output": 1405,
+        "after_input": 64764,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 36.67
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:26:19.235558+08:00",
+        "before_input": 64764,
+        "summary_input": 65259,
+        "summary_output": 1547,
+        "after_input": 63645,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 32.237
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:27:53.021748+08:00",
+        "before_input": 63645,
+        "summary_input": 67395,
+        "summary_output": 1606,
+        "after_input": 67098,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 82.701
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:29:01.972426+08:00",
+        "before_input": 67098,
+        "summary_input": 70492,
+        "summary_output": 1114,
+        "after_input": 69582,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 35.8
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:29:58.805153+08:00",
+        "before_input": 69582,
+        "summary_input": 71698,
+        "summary_output": 1462,
+        "after_input": 71328,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 34.129
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:33:08.108526+08:00",
+        "before_input": 71328,
+        "summary_input": 72579,
+        "summary_output": 1623,
+        "after_input": 76024,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 60.067
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:41:10.111823+08:00",
+        "before_input": 76024,
+        "summary_input": 84969,
+        "summary_output": 911,
+        "after_input": 41700,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 40.386
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "timestamp": "2026-09-09T19:42:33.145631+08:00",
+        "before_input": 41700,
+        "summary_input": 85629,
+        "summary_output": 1044,
+        "after_input": 43889,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": false,
+        "active_seconds": 36.192
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T18:45:45.373101+08:00",
+        "before_input": 61527,
+        "summary_input": 59943,
+        "summary_output": 2644,
+        "after_input": 67672,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 83.073
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:15:20.125866+08:00",
+        "before_input": 67672,
+        "summary_input": 96401,
+        "summary_output": 1346,
+        "after_input": 58556,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 45.224
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:16:28.854725+08:00",
+        "before_input": 58556,
+        "summary_input": 97310,
+        "summary_output": 1081,
+        "after_input": 59426,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 42.903
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:17:56.538696+08:00",
+        "before_input": 60559,
+        "summary_input": 60508,
+        "summary_output": 1908,
+        "after_input": 58161,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 49.712
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:19:17.711072+08:00",
+        "before_input": 59164,
+        "summary_input": 60913,
+        "summary_output": 1578,
+        "after_input": 58578,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 58.066
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:20:46.587976+08:00",
+        "before_input": 58578,
+        "summary_input": 56761,
+        "summary_output": 1309,
+        "after_input": 57693,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 42.022
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:21:49.969376+08:00",
+        "before_input": 57693,
+        "summary_input": 57651,
+        "summary_output": 2029,
+        "after_input": 56367,
+        "normal_calls_until_next_summary": 3,
+        "has_next_summary": true,
+        "active_seconds": 46.73
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:23:52.623447+08:00",
+        "before_input": 61164,
+        "summary_input": 63560,
+        "summary_output": 1681,
+        "after_input": 62175,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 69.822
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:25:26.022879+08:00",
+        "before_input": 62175,
+        "summary_input": 65711,
+        "summary_output": 1261,
+        "after_input": 65069,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 43.983
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "timestamp": "2026-09-09T19:27:04.451012+08:00",
+        "before_input": 65069,
+        "summary_input": 69133,
+        "summary_output": 2047,
+        "after_input": 70112,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 67.211
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T18:46:17.919997+08:00",
+        "before_input": 60868,
+        "summary_input": 62906,
+        "summary_output": 1728,
+        "after_input": 70968,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.995
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T18:47:46.526675+08:00",
+        "before_input": 70968,
+        "summary_input": 66029,
+        "summary_output": 2011,
+        "after_input": 74213,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 68.69
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T18:54:09.327035+08:00",
+        "before_input": 74213,
+        "summary_input": 89121,
+        "summary_output": 1300,
+        "after_input": 55874,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 51.938
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T18:55:29.860859+08:00",
+        "before_input": 55874,
+        "summary_input": 89465,
+        "summary_output": 1187,
+        "after_input": 57551,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 30.795
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:22:30.240252+08:00",
+        "before_input": 57551,
+        "summary_input": 93004,
+        "summary_output": 1320,
+        "after_input": 58907,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 46.013
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:23:52.156459+08:00",
+        "before_input": 58907,
+        "summary_input": 92553,
+        "summary_output": 1486,
+        "after_input": 58214,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 71.094
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:25:26.403899+08:00",
+        "before_input": 58214,
+        "summary_input": 59099,
+        "summary_output": 1582,
+        "after_input": 59569,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 44.024
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:26:18.351776+08:00",
+        "before_input": 59569,
+        "summary_input": 60353,
+        "summary_output": 1438,
+        "after_input": 57605,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 31.642
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:29:13.082341+08:00",
+        "before_input": 58638,
+        "summary_input": 60290,
+        "summary_output": 1180,
+        "after_input": 59469,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 47.086
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "timestamp": "2026-09-09T19:30:09.963936+08:00",
+        "before_input": 59469,
+        "summary_input": 59653,
+        "summary_output": 1290,
+        "after_input": 58476,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 45.277
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T18:54:09.269444+08:00",
+        "before_input": 64007,
+        "summary_input": 64817,
+        "summary_output": 1790,
+        "after_input": 78066,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 47.837
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T18:55:03.901350+08:00",
+        "before_input": 78066,
+        "summary_input": 69194,
+        "summary_output": 1882,
+        "after_input": 82371,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.827
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T18:56:18.169532+08:00",
+        "before_input": 82371,
+        "summary_input": 70295,
+        "summary_output": 1485,
+        "after_input": 83543,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 45.149
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:00:39.809828+08:00",
+        "before_input": 83543,
+        "summary_input": 81409,
+        "summary_output": 1240,
+        "after_input": 48698,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 35.57
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:20:13.983617+08:00",
+        "before_input": 48698,
+        "summary_input": 62262,
+        "summary_output": 1855,
+        "after_input": 60996,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 89.671
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:22:22.016575+08:00",
+        "before_input": 60996,
+        "summary_input": 63245,
+        "summary_output": 1336,
+        "after_input": 59142,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 31.576
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:29:02.062015+08:00",
+        "before_input": 59914,
+        "summary_input": 39986,
+        "summary_output": 0,
+        "after_input": null,
+        "normal_calls_until_next_summary": 0,
+        "has_next_summary": true,
+        "active_seconds": 42.469
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:29:40.559372+08:00",
+        "before_input": 59914,
+        "summary_input": 65239,
+        "summary_output": 1336,
+        "after_input": 60532,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.451
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "timestamp": "2026-09-09T19:31:24.735588+08:00",
+        "before_input": 60532,
+        "summary_input": 66507,
+        "summary_output": 1113,
+        "after_input": 59862,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 63.309
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:09:04.110545+08:00",
+        "before_input": 52555,
+        "summary_input": 91707,
+        "summary_output": 2183,
+        "after_input": 65465,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 54.863
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:10:17.922761+08:00",
+        "before_input": 65465,
+        "summary_input": 92044,
+        "summary_output": 1952,
+        "after_input": 65889,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 53.965
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:12:17.028049+08:00",
+        "before_input": 65889,
+        "summary_input": 67881,
+        "summary_output": 1749,
+        "after_input": 66849,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 55.591
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:14:41.784996+08:00",
+        "before_input": 68997,
+        "summary_input": 71531,
+        "summary_output": 1563,
+        "after_input": 68486,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 41.199
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:16:22.418875+08:00",
+        "before_input": 68486,
+        "summary_input": 70019,
+        "summary_output": 1986,
+        "after_input": 67630,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 45.266
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:18:19.110427+08:00",
+        "before_input": 70860,
+        "summary_input": 70642,
+        "summary_output": 1533,
+        "after_input": 67447,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.659
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:34:50.064119+08:00",
+        "before_input": 67447,
+        "summary_input": 100715,
+        "summary_output": 1131,
+        "after_input": 64611,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 44.49
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:36:55.820080+08:00",
+        "before_input": 64611,
+        "summary_input": 104784,
+        "summary_output": 1120,
+        "after_input": 67584,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 70.564
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:37:51.427711+08:00",
+        "before_input": 69393,
+        "summary_input": 72769,
+        "summary_output": 975,
+        "after_input": 70346,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 34.213
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "timestamp": "2026-09-09T19:39:50.273705+08:00",
+        "before_input": 71286,
+        "summary_input": 70505,
+        "summary_output": 1299,
+        "after_input": 68613,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": false,
+        "active_seconds": 36.505
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.5",
+        "timestamp": "2026-09-09T18:53:17.553635+08:00",
+        "before_input": 61465,
+        "summary_input": 67384,
+        "summary_output": 1438,
+        "after_input": 28271,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 74.169
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.5",
+        "timestamp": "2026-09-09T19:25:26.106075+08:00",
+        "before_input": 28271,
+        "summary_input": 68965,
+        "summary_output": 1347,
+        "after_input": 62603,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 51.101
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "timestamp": "2026-09-09T19:11:55.341547+08:00",
+        "before_input": 37930,
+        "summary_input": 70074,
+        "summary_output": 1936,
+        "after_input": 48733,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 48.711
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "timestamp": "2026-09-09T19:12:58.673998+08:00",
+        "before_input": 48733,
+        "summary_input": 71218,
+        "summary_output": 1456,
+        "after_input": 50014,
+        "normal_calls_until_next_summary": 8,
+        "has_next_summary": true,
+        "active_seconds": 32.787
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "timestamp": "2026-09-09T19:19:17.652569+08:00",
+        "before_input": 63038,
+        "summary_input": 64402,
+        "summary_output": 1764,
+        "after_input": 64036,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 65.135
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "timestamp": "2026-09-09T19:20:20.410137+08:00",
+        "before_input": 64036,
+        "summary_input": 62990,
+        "summary_output": 1491,
+        "after_input": 63646,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 45.217
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "timestamp": "2026-09-09T19:16:45.880855+08:00",
+        "before_input": 35491,
+        "summary_input": 72103,
+        "summary_output": 1609,
+        "after_input": 48035,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.897
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "timestamp": "2026-09-09T19:17:45.221126+08:00",
+        "before_input": 48035,
+        "summary_input": 72356,
+        "summary_output": 1332,
+        "after_input": 48785,
+        "normal_calls_until_next_summary": 8,
+        "has_next_summary": false,
+        "active_seconds": 33.474
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "timestamp": "2026-09-09T19:14:38.530161+08:00",
+        "before_input": 68098,
+        "summary_input": 70382,
+        "summary_output": 1466,
+        "after_input": 45895,
+        "normal_calls_until_next_summary": 15,
+        "has_next_summary": true,
+        "active_seconds": 45.903
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "timestamp": "2026-09-09T19:24:41.785691+08:00",
+        "before_input": 56618,
+        "summary_input": 48560,
+        "summary_output": 0,
+        "after_input": null,
+        "normal_calls_until_next_summary": 0,
+        "has_next_summary": true,
+        "active_seconds": 55.296
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "timestamp": "2026-09-09T19:25:26.146123+08:00",
+        "before_input": 56618,
+        "summary_input": 87248,
+        "summary_output": 1460,
+        "after_input": 55670,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 43.321
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "timestamp": "2026-09-09T19:26:12.305746+08:00",
+        "before_input": 55670,
+        "summary_input": 87428,
+        "summary_output": 1084,
+        "after_input": 55563,
+        "normal_calls_until_next_summary": 4,
+        "has_next_summary": false,
+        "active_seconds": 33.49
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "timestamp": "2026-09-09T19:44:13.598097+08:00",
+        "before_input": 63695,
+        "summary_input": 65960,
+        "summary_output": 937,
+        "after_input": 65444,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 29.056
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "timestamp": "2026-09-09T19:29:35.962540+08:00",
+        "before_input": 56643,
+        "summary_input": 63856,
+        "summary_output": 1129,
+        "after_input": 60950,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 40.829
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.4",
+        "timestamp": "2026-09-09T19:11:54.179281+08:00",
+        "before_input": 55603,
+        "summary_input": 55838,
+        "summary_output": 1776,
+        "after_input": 70483,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 60.429
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.4",
+        "timestamp": "2026-09-09T19:33:38.530258+08:00",
+        "before_input": 70483,
+        "summary_input": 64318,
+        "summary_output": 1033,
+        "after_input": 64039,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 36.826
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "timestamp": "2026-09-09T19:33:30.814062+08:00",
+        "before_input": 56494,
+        "summary_input": 68746,
+        "summary_output": 920,
+        "after_input": 64472,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 29.097
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.5",
+        "timestamp": "2026-09-09T19:14:00.868038+08:00",
+        "before_input": 56134,
+        "summary_input": 56434,
+        "summary_output": 1254,
+        "after_input": 78156,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 33.54
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.5",
+        "timestamp": "2026-09-09T19:29:02.068102+08:00",
+        "before_input": 78156,
+        "summary_input": 70804,
+        "summary_output": 1179,
+        "after_input": 70454,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 75.409
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T19:55:56.187466+08:00",
+        "before_input": 61762,
+        "summary_input": 64354,
+        "summary_output": 1632,
+        "after_input": 54105,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 42.825
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T19:57:20.624483+08:00",
+        "before_input": 54326,
+        "summary_input": 57251,
+        "summary_output": 1218,
+        "after_input": 45378,
+        "normal_calls_until_next_summary": 4,
+        "has_next_summary": true,
+        "active_seconds": 29.283
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:00:16.512609+08:00",
+        "before_input": 49542,
+        "summary_input": 53403,
+        "summary_output": 1123,
+        "after_input": 50437,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 35.559
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:02:29.606872+08:00",
+        "before_input": 50437,
+        "summary_input": 55866,
+        "summary_output": 2828,
+        "after_input": 54545,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 70.118
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:03:04.188908+08:00",
+        "before_input": 54545,
+        "summary_input": 56512,
+        "summary_output": 1246,
+        "after_input": 41388,
+        "normal_calls_until_next_summary": 3,
+        "has_next_summary": true,
+        "active_seconds": 26.005
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:05:43.029060+08:00",
+        "before_input": 44393,
+        "summary_input": 48442,
+        "summary_output": 1204,
+        "after_input": 44921,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 38.303
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:06:55.952593+08:00",
+        "before_input": 44921,
+        "summary_input": 50038,
+        "summary_output": 1144,
+        "after_input": 33137,
+        "normal_calls_until_next_summary": 4,
+        "has_next_summary": true,
+        "active_seconds": 29.555
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:17:19.994639+08:00",
+        "before_input": 37269,
+        "summary_input": 52159,
+        "summary_output": 1163,
+        "after_input": 36705,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 22.721
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:17:53.593160+08:00",
+        "before_input": 36705,
+        "summary_input": 52398,
+        "summary_output": 990,
+        "after_input": 36941,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 21.232
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "timestamp": "2026-09-09T20:19:14.671674+08:00",
+        "before_input": 38044,
+        "summary_input": 48546,
+        "summary_output": 1395,
+        "after_input": 46404,
+        "normal_calls_until_next_summary": 4,
+        "has_next_summary": false,
+        "active_seconds": 51.902
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T19:55:05.330273+08:00",
+        "before_input": 65308,
+        "summary_input": 71000,
+        "summary_output": 2702,
+        "after_input": 53275,
+        "normal_calls_until_next_summary": 7,
+        "has_next_summary": true,
+        "active_seconds": 78.348
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T19:59:03.228767+08:00",
+        "before_input": 60425,
+        "summary_input": 64079,
+        "summary_output": 1359,
+        "after_input": 60885,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 34.186
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:01:44.837485+08:00",
+        "before_input": 60885,
+        "summary_input": 68577,
+        "summary_output": 1065,
+        "after_input": 56616,
+        "normal_calls_until_next_summary": 3,
+        "has_next_summary": true,
+        "active_seconds": 47.355
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:04:24.584517+08:00",
+        "before_input": 57708,
+        "summary_input": 65863,
+        "summary_output": 1650,
+        "after_input": 49563,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": true,
+        "active_seconds": 39.627
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:17:35.111876+08:00",
+        "before_input": 50067,
+        "summary_input": 64699,
+        "summary_output": 1050,
+        "after_input": 52868,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.826
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:18:22.604157+08:00",
+        "before_input": 52868,
+        "summary_input": 68395,
+        "summary_output": 923,
+        "after_input": 55231,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 30.793
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:20:10.378833+08:00",
+        "before_input": 55231,
+        "summary_input": 57951,
+        "summary_output": 1639,
+        "after_input": 54353,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 55.54
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "timestamp": "2026-09-09T20:22:48.381684+08:00",
+        "before_input": 54353,
+        "summary_input": 59318,
+        "summary_output": 921,
+        "after_input": 53444,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": false,
+        "active_seconds": 30.302
+      }
+    ],
+    "paired_count": 118,
+    "post_pre_input_ratio": {
+      "min": 0.45995281867729604,
+      "median": 1.0133964941307716,
+      "p90": 1.1412185364817502,
+      "max": 2.214389303526582
+    },
+    "summary_spacing": {
+      "1": 79,
+      "2": 11,
+      "3": 3,
+      "0": 2,
+      "8": 1,
+      "15": 1,
+      "4": 2,
+      "7": 1
+    },
+    "gaps_over_30s": [
+      {
+        "start": "2026-09-09T19:01:44.458777",
+        "seconds": 179.85722517967224
+      },
+      {
+        "start": "2026-09-09T19:45:58.530821",
+        "seconds": 81.38273000717163
+      },
+      {
+        "start": "2026-09-09T20:08:39.017971",
+        "seconds": 82.7441520690918
+      },
+      {
+        "start": "2026-09-09T20:15:19.631758",
+        "seconds": 97.6418809890747
+      },
+      {
+        "start": "2026-09-09T20:23:18.831226",
+        "seconds": 99.64445972442627
+      }
+    ],
+    "caveats": [
+      "Intervals estimated from completion timestamp minus provider_active_ms; not exact workflow critical path.",
+      "Before/after input ratios are observed neighboring calls, not a no-compaction counterfactual.",
+      "Overlapping active seconds cannot be subtracted directly from wall time."
+    ]
+  },
+  {
+    "run": "revise-report-8129b20dfb0d4bb9b1574645447375f0",
+    "requests": 155,
+    "provider_observation_span_seconds": 5084.109087944031,
+    "provider_active_union_seconds": 3858.863832950592,
+    "summary_active_union_seconds": 978.4090163707733,
+    "summary_only_active_seconds": 334.10262513160706,
+    "concurrency_seconds": {
+      "0": 1225.2452549934387,
+      "1": 1505.6545813083649,
+      "2": 869.6948299407959,
+      "3": 161.92235350608826,
+      "4": 398.9946415424347,
+      "5": 922.5974266529083
+    },
+    "queue_wait_seconds_sum": 6.312,
+    "tool_time_seconds_sum": 23.066,
+    "errors": [
+      {
+        "timestamp": "2026-09-16T10:22:28.909747+08:00",
+        "phase": "initial",
+        "class": "APITimeoutError",
+        "active_seconds": 33.11
+      },
+      {
+        "timestamp": "2026-09-16T10:23:13.884605+08:00",
+        "phase": "context_compaction",
+        "class": "APITimeoutError",
+        "active_seconds": 45.25
+      },
+      {
+        "timestamp": "2026-09-16T10:23:56.424159+08:00",
+        "phase": "initial",
+        "class": "APITimeoutError",
+        "active_seconds": 42.764
+      },
+      {
+        "timestamp": "2026-09-16T10:23:56.434802+08:00",
+        "phase": "tool_followup",
+        "class": "APITimeoutError",
+        "active_seconds": 86.53
+      },
+      {
+        "timestamp": "2026-09-16T10:27:36.740145+08:00",
+        "phase": "context_compaction",
+        "class": "APITimeoutError",
+        "active_seconds": 46.656
+      },
+      {
+        "timestamp": "2026-09-16T10:28:09.830093+08:00",
+        "phase": "initial",
+        "class": "APITimeoutError",
+        "active_seconds": 33.235
+      },
+      {
+        "timestamp": "2026-09-16T10:39:01.235624+08:00",
+        "phase": "initial",
+        "class": "APITimeoutError",
+        "active_seconds": 47.625
+      },
+      {
+        "timestamp": "2026-09-16T10:42:45.488589+08:00",
+        "phase": "initial",
+        "class": "APITimeoutError",
+        "active_seconds": 112.546
+      },
+      {
+        "timestamp": "2026-09-16T10:51:50.570393+08:00",
+        "phase": "context_compaction",
+        "class": "APITimeoutError",
+        "active_seconds": 59.485
+      }
+    ],
+    "usage_sources": {
+      "provider": 146,
+      "estimated": 9
+    },
+    "retry_requests": 9,
+    "phases": {
+      "initial": {
+        "requests": 38,
+        "input_tokens": 1529625,
+        "output_tokens": 159375,
+        "cached_input_tokens": 208384,
+        "active_seconds_sum": 4929.719,
+        "duration_seconds": {
+          "min": 9.232,
+          "median": 73.789,
+          "p90": 442.264,
+          "max": 597.696
+        },
+        "input_tokens_distribution": {
+          "min": 8699,
+          "median": 38313.5,
+          "p90": 71334,
+          "max": 75543
+        }
+      },
+      "tool_followup": {
+        "requests": 97,
+        "input_tokens": 3920092,
+        "output_tokens": 128810,
+        "cached_input_tokens": 2737344,
+        "active_seconds_sum": 3966.947,
+        "duration_seconds": {
+          "min": 2.052,
+          "median": 28.806,
+          "p90": 96.234,
+          "max": 275.319
+        },
+        "input_tokens_distribution": {
+          "min": 9792,
+          "median": 32026,
+          "p90": 71987,
+          "max": 85368
+        }
+      },
+      "context_compaction": {
+        "requests": 20,
+        "input_tokens": 1430364,
+        "output_tokens": 17863,
+        "cached_input_tokens": 3584,
+        "active_seconds_sum": 1043.111,
+        "duration_seconds": {
+          "min": 34.801,
+          "median": 45.953,
+          "p90": 80.019,
+          "max": 112.486
+        },
+        "input_tokens_distribution": {
+          "min": 30230,
+          "median": 74008.5,
+          "p90": 87968,
+          "max": 88888
+        }
+      }
+    },
+    "agents": [
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "requests": 7,
+        "summary_requests": 3,
+        "active_seconds_sum": 931.769,
+        "first_start": "2026-09-16T10:10:15.860902",
+        "last_end": "2026-09-16T10:40:53.452745+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "requests": 7,
+        "summary_requests": 3,
+        "active_seconds_sum": 898.284,
+        "first_start": "2026-09-16T10:10:15.853227",
+        "last_end": "2026-09-16T10:42:45.695964+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.5",
+        "requests": 5,
+        "summary_requests": 1,
+        "active_seconds_sum": 877.938,
+        "first_start": "2026-09-16T10:10:15.879785",
+        "last_end": "2026-09-16T10:50:51.156768+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "requests": 6,
+        "summary_requests": 3,
+        "active_seconds_sum": 875.8149999999999,
+        "first_start": "2026-09-16T10:10:15.867347",
+        "last_end": "2026-09-16T10:53:47.623127+08:00"
+      },
+      {
+        "agent": "distribution-aggregate-existing:aggregate-editor:aggregate-existing",
+        "requests": 13,
+        "summary_requests": 4,
+        "active_seconds_sum": 817.851,
+        "first_start": "2026-09-16T10:57:09.625914",
+        "last_end": "2026-09-16T11:10:48.138753+08:00"
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.4",
+        "requests": 2,
+        "summary_requests": 0,
+        "active_seconds_sum": 672.828,
+        "first_start": "2026-09-16T10:10:15.876059",
+        "last_end": "2026-09-16T10:48:16.358100+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:module-2.3",
+        "requests": 15,
+        "summary_requests": 3,
+        "active_seconds_sum": 550.6899999999999,
+        "first_start": "2026-09-16T10:02:28.917163",
+        "last_end": "2026-09-16T10:37:14.126007+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.3",
+        "requests": 14,
+        "summary_requests": 0,
+        "active_seconds_sum": 512.605,
+        "first_start": "2026-09-16T10:04:53.869604",
+        "last_end": "2026-09-16T10:50:10.460130+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "requests": 7,
+        "summary_requests": 2,
+        "active_seconds_sum": 446.514,
+        "first_start": "2026-09-16T10:19:21.774110",
+        "last_end": "2026-09-16T10:26:50.572612+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor-auditor:final-chapter-1",
+        "requests": 3,
+        "summary_requests": 0,
+        "active_seconds_sum": 409.346,
+        "first_start": "2026-09-16T11:11:27.918734",
+        "last_end": "2026-09-16T11:26:58.676208+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.4",
+        "requests": 9,
+        "summary_requests": 0,
+        "active_seconds_sum": 398.178,
+        "first_start": "2026-09-16T10:23:56.379140",
+        "last_end": "2026-09-16T10:40:53.501994+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.5",
+        "requests": 10,
+        "summary_requests": 0,
+        "active_seconds_sum": 341.313,
+        "first_start": "2026-09-16T10:27:36.595093",
+        "last_end": "2026-09-16T10:39:53.347452+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-1",
+        "requests": 11,
+        "summary_requests": 0,
+        "active_seconds_sum": 340.254,
+        "first_start": "2026-09-16T11:19:28.048722",
+        "last_end": "2026-09-16T11:25:09.376550+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.1-specialist:module-2.1",
+        "requests": 9,
+        "summary_requests": 0,
+        "active_seconds_sum": 335.411,
+        "first_start": "2026-09-16T10:21:55.799747",
+        "last_end": "2026-09-16T10:28:20.389077+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor-auditor:final-chapter-3",
+        "requests": 3,
+        "summary_requests": 0,
+        "active_seconds_sum": 320.933,
+        "first_start": "2026-09-16T11:11:27.922705",
+        "last_end": "2026-09-16T11:27:13.026251+08:00"
+      },
+      {
+        "agent": "public-reporting:chief-editor:chief-chapter-3",
+        "requests": 10,
+        "summary_requests": 0,
+        "active_seconds_sum": 300.887,
+        "first_start": "2026-09-16T11:19:28.062669",
+        "last_end": "2026-09-16T11:24:29.562593+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "requests": 5,
+        "summary_requests": 1,
+        "active_seconds_sum": 279.681,
+        "first_start": "2026-09-16T10:20:34.247707",
+        "last_end": "2026-09-16T10:35:55.602598+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.2",
+        "requests": 9,
+        "summary_requests": 0,
+        "active_seconds_sum": 260.806,
+        "first_start": "2026-09-16T10:23:13.750826",
+        "last_end": "2026-09-16T10:27:36.705127+08:00"
+      },
+      {
+        "agent": "public-reporting:evidence-auditor:module-auditor-2.1",
+        "requests": 4,
+        "summary_requests": 0,
+        "active_seconds_sum": 210.061,
+        "first_start": "2026-09-16T10:34:41.383933",
+        "last_end": "2026-09-16T10:38:14.171928+08:00"
+      },
+      {
+        "agent": "public-reporting:module-2.2-specialist:module-2.2",
+        "requests": 6,
+        "summary_requests": 0,
+        "active_seconds_sum": 158.613,
+        "first_start": "2026-09-16T10:19:49.043889",
+        "last_end": "2026-09-16T10:22:28.876180+08:00"
+      }
+    ],
+    "summary_pairs": [
+      {
+        "agent": "public-reporting:module-2.3-specialist:module-2.3",
+        "timestamp": "2026-09-16T10:23:13.884605+08:00",
+        "before_input": 48837,
+        "summary_input": 49561,
+        "summary_output": 0,
+        "after_input": null,
+        "normal_calls_until_next_summary": 0,
+        "has_next_summary": true,
+        "active_seconds": 45.25
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:module-2.3",
+        "timestamp": "2026-09-16T10:24:38.024056+08:00",
+        "before_input": 48837,
+        "summary_input": 87968,
+        "summary_output": 936,
+        "after_input": 51034,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 41.67
+      },
+      {
+        "agent": "public-reporting:module-2.3-specialist:module-2.3",
+        "timestamp": "2026-09-16T10:25:49.160915+08:00",
+        "before_input": 51034,
+        "summary_input": 88888,
+        "summary_output": 807,
+        "after_input": 52141,
+        "normal_calls_until_next_summary": 7,
+        "has_next_summary": false,
+        "active_seconds": 48.774
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "timestamp": "2026-09-16T10:14:49.504968+08:00",
+        "before_input": 70459,
+        "summary_input": 73719,
+        "summary_output": 902,
+        "after_input": 71829,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 34.801
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "timestamp": "2026-09-16T10:20:05.028439+08:00",
+        "before_input": 71829,
+        "summary_input": 74224,
+        "summary_output": 967,
+        "after_input": 82807,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 40.173
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.1",
+        "timestamp": "2026-09-16T10:40:53.467284+08:00",
+        "before_input": 82807,
+        "summary_input": 73979,
+        "summary_output": 1265,
+        "after_input": 73887,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 112.486
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "timestamp": "2026-09-16T10:18:15.717271+08:00",
+        "before_input": 70471,
+        "summary_input": 73798,
+        "summary_output": 1179,
+        "after_input": 72256,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 37.549
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "timestamp": "2026-09-16T10:35:31.041286+08:00",
+        "before_input": 72256,
+        "summary_input": 73679,
+        "summary_output": 1457,
+        "after_input": 73812,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 49.612
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.2",
+        "timestamp": "2026-09-16T10:39:01.210461+08:00",
+        "before_input": 73812,
+        "summary_input": 74038,
+        "summary_output": 920,
+        "after_input": 76156,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 47.237
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "timestamp": "2026-09-16T10:19:49.216589+08:00",
+        "before_input": 70802,
+        "summary_input": 75299,
+        "summary_output": 735,
+        "after_input": 71975,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 61.989
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "timestamp": "2026-09-16T10:51:50.570393+08:00",
+        "before_input": 71975,
+        "summary_input": 38892,
+        "summary_output": 0,
+        "after_input": null,
+        "normal_calls_until_next_summary": 0,
+        "has_next_summary": true,
+        "active_seconds": 59.485
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.3",
+        "timestamp": "2026-09-16T10:52:35.163271+08:00",
+        "before_input": 71975,
+        "summary_input": 75865,
+        "summary_output": 1093,
+        "after_input": 75543,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 43.589
+      },
+      {
+        "agent": "public-reporting:cross-module-reviewer:cross-owner-2.5",
+        "timestamp": "2026-09-16T10:49:14.886809+08:00",
+        "before_input": 71334,
+        "summary_input": 72959,
+        "summary_output": 882,
+        "after_input": 74246,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 65.914
+      },
+      {
+        "agent": "public-reporting:module-2.4-specialist:module-2.4",
+        "timestamp": "2026-09-16T10:27:36.740145+08:00",
+        "before_input": 53455,
+        "summary_input": 30230,
+        "summary_output": 0,
+        "after_input": 51991,
+        "normal_calls_until_next_summary": 2,
+        "has_next_summary": false,
+        "active_seconds": 46.656
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "timestamp": "2026-09-16T10:25:34.118840+08:00",
+        "before_input": 66262,
+        "summary_input": 62400,
+        "summary_output": 966,
+        "after_input": 70289,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 41.258
+      },
+      {
+        "agent": "public-reporting:module-2.5-specialist:module-2.5",
+        "timestamp": "2026-09-16T10:26:18.349183+08:00",
+        "before_input": 70289,
+        "summary_input": 62863,
+        "summary_output": 981,
+        "after_input": 70630,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 35.568
+      },
+      {
+        "agent": "distribution-aggregate-existing:aggregate-editor:aggregate-existing",
+        "timestamp": "2026-09-16T11:05:15.649979+08:00",
+        "before_input": 76226,
+        "summary_input": 83658,
+        "summary_output": 1059,
+        "after_input": 82848,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 39.675
+      },
+      {
+        "agent": "distribution-aggregate-existing:aggregate-editor:aggregate-existing",
+        "timestamp": "2026-09-16T11:06:40.861607+08:00",
+        "before_input": 82848,
+        "summary_input": 84491,
+        "summary_output": 1623,
+        "after_input": 84064,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 72.798
+      },
+      {
+        "agent": "distribution-aggregate-existing:aggregate-editor:aggregate-existing",
+        "timestamp": "2026-09-16T11:08:00.309933+08:00",
+        "before_input": 84064,
+        "summary_input": 86134,
+        "summary_output": 1032,
+        "after_input": 84491,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": true,
+        "active_seconds": 38.608
+      },
+      {
+        "agent": "distribution-aggregate-existing:aggregate-editor:aggregate-existing",
+        "timestamp": "2026-09-16T11:09:49.198741+08:00",
+        "before_input": 84491,
+        "summary_input": 87719,
+        "summary_output": 1059,
+        "after_input": 85368,
+        "normal_calls_until_next_summary": 1,
+        "has_next_summary": false,
+        "active_seconds": 80.019
+      }
+    ],
+    "paired_count": 18,
+    "post_pre_input_ratio": {
+      "min": 0.8922796381948386,
+      "median": 1.0216129826247238,
+      "p90": 1.086873245349356,
+      "max": 1.152835205836083
+    },
+    "summary_spacing": {
+      "0": 2,
+      "1": 10
+    },
+    "gaps_over_30s": [
+      {
+        "start": "2026-09-16T10:07:40.903781",
+        "seconds": 154.94944596290588
+      },
+      {
+        "start": "2026-09-16T10:28:20.389077",
+        "seconds": 380.9948558807373
+      },
+      {
+        "start": "2026-09-16T10:42:45.695964",
+        "seconds": 255.50536680221558
+      },
+      {
+        "start": "2026-09-16T10:53:47.623127",
+        "seconds": 202.0027871131897
+      },
+      {
+        "start": "2026-09-16T11:10:48.138753",
+        "seconds": 39.77998113632202
+      },
+      {
+        "start": "2026-09-16T11:17:35.961016",
+        "seconds": 112.08770608901978
+      },
+      {
+        "start": "2026-09-16T11:25:09.376550",
+        "seconds": 67.94065809249878
+      }
+    ],
+    "caveats": [
+      "Intervals estimated from completion timestamp minus provider_active_ms; not exact workflow critical path.",
+      "Before/after input ratios are observed neighboring calls, not a no-compaction counterfactual.",
+      "Overlapping active seconds cannot be subtracted directly from wall time."
+    ]
+  }
+]
