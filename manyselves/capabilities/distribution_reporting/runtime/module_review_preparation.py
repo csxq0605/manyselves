@@ -347,7 +347,7 @@ def prepare_module_local_regression_review(
             "不得拆成独立小节级审查任务或会话",
             "finding 首次提出后不可改写；复审不得复述旧 finding",
             "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
             "首轮必须覆盖 input 中全部 required_submodule_ids",
             "这是原模块审查者的 local_regression，不得重新审查未修改小节",
             "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
@@ -521,7 +521,7 @@ def prepare_current_module_review(
                 "不得拆成独立小节级审查任务或会话",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-                "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+                "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
                 "首轮必须覆盖 input 中全部 required_submodule_ids",
                 "evidence 包含检查范围内未被作者引用的事实；独立检查异常、测点和资料缺口是否遗漏，不能只核对作者的引用。",
                 *user_supplement_constraints(

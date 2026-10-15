@@ -20,13 +20,21 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-15 Skill authority/frozen reads, duplicate-write request projection, structured source delivery and typed thermal observations; goal-level acceptance still in progress`
+- Current slice: `2026-10-15 Module review v3: defer optional advice without automatic author/reviewer loops; offline slice verified, goal-level quality/performance acceptance still in progress`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
 - Next automatic action: `Continue against the goal matrix below: separate missing measurement from unavailable/inapplicable rule in shared judgments, validate semantic prose and citations on synthetic production workflows, then change role ordering where measured gains justify it. Do not promote the judgment-first microbenchmark to production: it propagates an incorrect missing-rule explanation. Joint-versus-owner repeated trials, large-context splitting and restart drills remain open. Preserve 36K/0.6 until representative evaluation; customer Provider testing remains outside authorized data scope. See docs/research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md.`
+
+### 2026-10-15 — 模块审计建议留档，减少自动返工
+
+- 继续使用 PR #6（未合并）的实现与已归档运行证据；本切片不要求重新生成完整报告。历史 full-report-8c70828443b9499d80f8a6bda41c670c 共 525 请求；按 task id 归属的 Cross 审查/作者返工/本地复审链共 174 请求、294,137 output tokens（总请求 33.1%、总输出 42.4%）。这不是可全部省掉的负担，不能把并行 provider-active 时间相加当墙钟耗时，也没有逐 finding 数据支持误报率或实际节省量。
+- Characterization 先复现模块 advisory 仍进入 revise。新模块审计及 Cross 触发的本地审计采用现有 review protocol v3：全部 findings 原样不可变保存；只有 blocking 进入作者修订与同一审计员 verdict。advisory-only 直接完成，混合意见只修阻断项，复审新增建议也不创建下一轮返工。提示及 Schema 同步明确：事实、风险、引用支撑和任务必需内容缺陷仍属 blocking，纯措辞偏好/可选增强不应升级为阻断项。
+- 完成记录复用 deferred_advisory_ids，区分“建议未采纳”与“已由 reviewer 解决”；复审完成时从完整 finding_refs 重建建议列表，不另建状态副本。作者修订、机器预检纠正、序列化恢复保持协议版本与原始引用。已有持久化 v1/v2 审计按其待办继续处理，不静默丢弃建议或改写旧完成记录。完成记录原校验扩展到 module v3，仍拒绝延后 blocking、漏记建议、resolved/deferred 重叠及旧协议伪造延后记录。
+- 联合 Cross 的初审及复审输入传递当前模块完成记录引用，供按需查阅可选建议；不将全部建议正文重复内联，也不自动转成 Cross 必改项。真实声明式 Workflow 的新增 local_advice 场景通过：Cross 初审 → 作者修订 → 本地审计仅建议 → Cross 复审，共 4 次模拟 Agent 调用，模块只修订一次。未新增模型调用、编排框架、Kernel 领域分支或额外门禁；未调整 Final 审计策略。
+- 验证：12 个新增定向用例覆盖无意见/仅建议/仅阻断/混合意见、初审与复审恢复、v2/v3 修订及新发现路由、完成记录拒绝错误关闭；联合 Cross、local lifecycle、completion、revision、delta、reviewer recovery、module/public runtime 共 99 个受影响测试分批通过（其余九文件 75 passed，public runtime 24 passed）。首次受影响批次暴露 3 个旧语义断言，更新预期并保留不可变记录断言后重跑 public runtime 全文件通过。Ruff 与 diff whitespace 通过。仅离线合成材料，0 Provider 请求，未跑全量回归；未用本切片声称完整报告耗时/token/质量收益已验收。
 
 ### 2026-10-15 — 问题与目标验收表（当前维护未完成）
 

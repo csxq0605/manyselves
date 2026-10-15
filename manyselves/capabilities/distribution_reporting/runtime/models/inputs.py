@@ -1045,6 +1045,14 @@ class CrossReviewInput(StrictModel):
             "Independent module-local regression completion refs. They do not close Cross findings."
         ),
     )
+    module_review_completion_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
+        default_factory=dict,
+        description=(
+            "Current module audit records, available by reference. Their deferred_advisory_ids "
+            "identify optional suggestions in finding_refs, not resolved defects or required "
+            "Cross findings. Do not automatically turn them into mandatory revisions."
+        ),
+    )
     prior_synthesis_inputs: list[CrossSynthesisInput] = Field(
         default_factory=list,
         description="Previously supported synthesis inputs available during recheck.",
@@ -2003,7 +2011,7 @@ class ReviewCompletionRecord(StrictModel):
     )
     deferred_advisory_ids: list[str] = Field(
         default_factory=list,
-        description="Cross v3 optional advice retained without revision or a resolved verdict.",
+        description="Module/Cross v3 optional advice retained without revision or a resolved verdict.",
     )
 
     @model_validator(mode="before")

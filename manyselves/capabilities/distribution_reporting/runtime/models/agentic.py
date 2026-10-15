@@ -693,9 +693,10 @@ class ModuleReviewFinding(StrictModel):
     )
     impact: Literal["blocking", "advisory"] = Field(
         description=(
-            "blocking means the module cannot be approved without a reviewer verdict; "
-            "advisory still requires an explicit author response and reviewer disposition "
-            "but does not assert immediate technical unsafety."
+            "blocking requires correction and recheck for factual, risk, source-support or "
+            "required task/interface defects. advisory is optional improvement only: retained "
+            "without automatic author revision or a resolved verdict in module review v3. "
+            "On recheck, every required_finding still requires an explicit verdict."
         )
     )
     observation: str = Field(

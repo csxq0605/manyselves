@@ -884,7 +884,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         "不得拆成独立小节级审查任务或会话",
         "finding 首次提出后不可改写；复审不得复述旧 finding",
         "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-        "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+        "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
         "首轮必须覆盖 input 中全部 required_submodule_ids",
     }.issubset(review.envelope.constraints)
     assert "auditor-skill: preserve the review envelope" in (
@@ -1155,7 +1155,7 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
 def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     tmp_path: Path,
 ) -> None:
-    """An unresolved prior or genuinely new finding cannot complete the lane."""
+    """An open blocker keeps the lane pending while new advice is only retained."""
 
     run_id = "run-module-recheck-open"
     module = _module_submission().model_copy(
@@ -1280,7 +1280,6 @@ def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     assert accepted.review.acceptance.next_action == "continue_existing"
     assert {item.id for item in accepted.review.acceptance.findings} == {
         finding.id,
-        new_finding.id,
     }
     assert module_review_needs_recheck(accepted) is False
     assert module_review_needs_revision(accepted) is True
@@ -1294,13 +1293,16 @@ def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     assert progress["next_action"] == "revise"
     assert {item["id"] for item in progress["pending"]} == {
         finding.id,
-        new_finding.id,
     }
+    retained = json.loads((tmp_path / progress["finding_refs"][-1]).read_text())
+    assert retained["findings"] == [new_finding.model_dump(mode="json")]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [2, 3])
 async def test_module_recheck_preflight_returns_typed_author_correction(
     tmp_path: Path,
+    protocol: int,
 ) -> None:
     run_id = "run-module-recheck-preflight"
     target = "2.4.1.1"
@@ -1356,7 +1358,7 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
             scope=[target],
             reviewer_session_key="module-auditor-2.4",
             last_reviewed_subject_ref=baseline_ref,
-            review_protocol_version=2,
+            review_protocol_version=protocol,
         ).model_dump(mode="json"),
     )
     initial_preparation = ModuleInitialReviewPreparation(
@@ -1449,6 +1451,8 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
     assert restored_progress["next_action"] == "review"
     assert restored_progress["phase"] == "recheck"
     assert restored_progress["review_round"] == 1
+    assert restored_progress["review_protocol_version"] == protocol
+    assert restored_progress["finding_refs"] == [f"{review_root}/findings-r0.json"]
 
 
 @pytest.mark.parametrize("changed", [True, False])
@@ -1858,7 +1862,7 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     assert accepted.review.acceptance is not None
     assert accepted.review.acceptance.next_action == "revise"
     assert accepted.review.acceptance.findings[0].id == "M-2.4-initial-r0-1"
-    assert accepted.review.acceptance.findings[1].impact == "advisory"
+    assert accepted.review.acceptance.findings == [finding]
     assert module_review_needs_recheck(accepted) is False
     assert module_review_needs_revision(accepted) is True
     assert (
@@ -1873,7 +1877,9 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     )
     assert progress["next_action"] == "revise"
     assert progress["pending"][0]["id"] == "M-2.4-initial-r0-1"
-    assert progress["pending"][1]["id"] == "M-2.4-initial-r0-2"
+    assert len(progress["pending"]) == 1
+    retained = json.loads((tmp_path / progress["finding_refs"][0]).read_text())
+    assert retained["findings"] == [item.model_dump(mode="json") for item in (finding, advisory)]
     accepted_again = accept_current_module_review(
         {"context": context, "result": result},
         store=ReportingStore(tmp_path),

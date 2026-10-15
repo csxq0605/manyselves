@@ -85,6 +85,7 @@ def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
         changed_module_ids=progress["changed_module_ids"],
         required_findings=progress["pending"],
         revision_responses_by_module=progress["responses"],
+        module_review_completion_refs=dict(state.get("module_review_completion_refs", {})),
         local_regression_review_refs=(
             {
                 key: state["module_review_completion_refs"][key]

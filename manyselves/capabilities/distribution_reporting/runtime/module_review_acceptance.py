@@ -85,6 +85,7 @@ def _save_progress(
     phase: str,
     scope: set[str],
     subject_ref: str,
+    review_protocol_version: int,
 ) -> None:
     progress = ModuleReviewProgress(
         run_id=run_id,
@@ -100,7 +101,7 @@ def _save_progress(
         scope=sorted(scope),
         reviewer_session_key=reviewer_session_key,
         last_reviewed_subject_ref=subject_ref,
-        review_protocol_version=2,
+        review_protocol_version=review_protocol_version,
     )
     store.write_json(progress_ref, progress.model_dump(mode="json"))
 
@@ -115,9 +116,11 @@ def _save_completion(
     reviewer_session_key: str,
     subject_ref: str,
     finding_refs: list[str],
+    review_protocol_version: int,
+    deferred_advisory_ids: list[str],
 ) -> str:
     completion = ReviewCompletionRecord(
-        review_protocol_version=2,
+        review_protocol_version=review_protocol_version,
         lifecycle="module",
         run_id=run_id,
         reviewer_agent_id="evidence-auditor",
@@ -126,6 +129,7 @@ def _save_completion(
         finding_refs=finding_refs,
         verdict_refs=[],
         resolved_finding_ids=[],
+        deferred_advisory_ids=deferred_advisory_ids,
     )
     completion_ref = (
         f"Work/runs/{run_id}/reviews/module/{lifecycle_id}/{module_id}/"
@@ -166,7 +170,10 @@ def accept_module_initial_review(
         submission.model_dump(mode="json"),
     )
     finding_refs = [finding_ref]
-    pending = list(submission.findings)
+    pending = [
+        finding for finding in submission.findings
+        if prepared.review_protocol_version < 3 or finding.impact == "blocking"
+    ]
     phase = (
         prepared.review_input.phase
         if prepared.review_input is not None
@@ -185,6 +192,8 @@ def accept_module_initial_review(
             reviewer_session_key=prepared.reviewer_session_key,
             subject_ref=prepared.subject_ref,
             finding_refs=finding_refs,
+            review_protocol_version=prepared.review_protocol_version,
+            deferred_advisory_ids=[finding.id for finding in submission.findings],
         )
         store.write_text(
             f"Outputs/Modules/{prepared.module_id}.md",
@@ -205,6 +214,7 @@ def accept_module_initial_review(
         phase=phase,
         scope=scope,
         subject_ref=prepared.subject_ref,
+        review_protocol_version=prepared.review_protocol_version,
     )
     return ModuleInitialReviewAcceptance(
         run_id=prepared.run_id,

@@ -8,6 +8,7 @@ acceptance.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -264,7 +265,11 @@ def prepare_current_module_recheck(
         constraints=[
             "coverage 记录实际检查范围，不是批准状态",
             "finding 首次提出后不可改写；复审不得复述旧 finding",
-            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            (
+                "blocking 必须修订并复审；新增 advisory 为可选建议，留档但不自动返工或标记 resolved"
+                if progress.review_protocol_version >= 3
+                else "当前已持久化审计的 advisory 与 blocking 都必须获得作者响应和 reviewer verdict"
+            ),
             "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归",
             "finding id 由既有 review round 分配，审查员不得新造既有 finding id",
         ],
@@ -389,7 +394,7 @@ def _save_progress(
             scope=preparation.scope,
             reviewer_session_key=preparation.reviewer_session_key,
             last_reviewed_subject_ref=preparation.subject_ref,
-            review_protocol_version=2,
+            review_protocol_version=preparation.review_protocol_version,
         ).model_dump(mode="json"),
     )
 
@@ -403,7 +408,7 @@ def _completion(
     resolved_ids: set[str],
 ) -> str:
     completion = ReviewCompletionRecord(
-        review_protocol_version=2,
+        review_protocol_version=preparation.review_protocol_version,
         lifecycle="module",
         run_id=preparation.run_id,
         reviewer_agent_id="evidence-auditor",
@@ -412,6 +417,18 @@ def _completion(
         finding_refs=finding_refs,
         verdict_refs=verdict_refs,
         resolved_finding_ids=sorted(resolved_ids),
+        deferred_advisory_ids=(
+            sorted(
+                finding["id"]
+                for ref in finding_refs
+                for finding in json.loads(
+                    (store.workspace / ref).read_text(encoding="utf-8")
+                )["findings"]
+                if finding["impact"] == "advisory" and finding["id"] not in resolved_ids
+            )
+            if preparation.review_protocol_version >= 3
+            else []
+        ),
     )
     ref = (
         f"{preparation.review_root}/completion-r{preparation.current.revision}.json"
@@ -480,7 +497,10 @@ def accept_current_module_recheck(
             },
         )
         finding_refs.append(finding_ref)
-        next_pending.update({finding.id: finding for finding in submission.new_findings})
+        next_pending.update({
+            finding.id: finding for finding in submission.new_findings
+            if preparation.review_protocol_version < 3 or finding.impact == "blocking"
+        })
     if next_pending:
         _save_progress(
             store,

@@ -181,12 +181,23 @@ class _JointScript:
                 ],
             }
         elif task.output_contract == "declarative_module_review_agent_result":
+            prepared = value.review.prepared
+            local_advice = {
+                "id": f"M-{prepared.module_id}-{prepared.lifecycle_id}-r0-advice",
+                "target_submodule_id": prepared.scope[0],
+                "category": "editorial_quality",
+                "impact": "advisory",
+                "observation": "当前修订内容符合事实及任务要求，但可以选用更简洁的表达方式。",
+                "evidence_refs": [prepared.subject_ref],
+                "required_change": "后续编辑可以考虑精简表达，当前事实与结论不需要强制修订。",
+                "reviewer_checks": ["建议仅涉及可选措辞，不影响事实正确性。"],
+            }
             payload = {
                 "kind": "module_review_finding_submission",
                 "coverage": {
                     "submodule_ids": value.review.prepared.review_input.required_submodule_ids
                 },
-                "findings": [],
+                "findings": [local_advice] if self.mode == "local_advice" else [],
             }
         else:
             raise AssertionError(f"unexpected task {task.id}")
@@ -201,7 +212,7 @@ class _JointScript:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["empty", "advice", "swap", "regression", "escalate"])
+@pytest.mark.parametrize("mode", ["empty", "advice", "local_advice", "swap", "regression", "escalate"])
 async def test_joint_cross_closes_only_the_current_merged_snapshot(tmp_path: Path, mode: str):
     _, registry = load_distribution_reporting_capability()
     register_cross_owner_pipeline_specializations(registry)
@@ -252,7 +263,10 @@ async def test_joint_cross_closes_only_the_current_merged_snapshot(tmp_path: Pat
         (tmp_path / "Work/runs/joint-swap/reviews").glob("cross-owner-input-*-2.5.json")
     )
 
-    assert len(script.calls) == {"swap": 9, "regression": 7, "escalate": 5}.get(mode, 1)
+    assert len(script.calls) == {
+        "swap": 9, "regression": 7, "escalate": 5, "local_advice": 4,
+    }.get(mode, 1)
+    assert set(script.snapshots[0].module_review_completion_refs) == set(REPORT_TAXONOMY)
     if mode == "swap":
         assert script.snapshots[-1].module_revisions == {
             "2.1": 1,
@@ -271,6 +285,18 @@ async def test_joint_cross_closes_only_the_current_merged_snapshot(tmp_path: Pat
     elif mode == "advice":
         assert completion.deferred_advisory_ids == ["X-2.2"]
         assert completion.resolved_finding_ids == []
+    elif mode == "local_advice":
+        ref = script.snapshots[-1].module_review_completion_refs["2.2"]
+        local_completion, _ = load_current_review_completion(
+            workspace=tmp_path, run_id="joint-swap", completion_ref=ref,
+            lifecycle="module", reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.2",
+            subject_refs=[script.snapshots[-1].module_refs["2.2"]],
+        )
+        assert len(local_completion.deferred_advisory_ids) == 1
+        assert local_completion.resolved_finding_ids == []
+        assert local_completion.verdict_refs == []
+        assert script.snapshots[-1].module_revisions["2.2"] == 1
 
 
 @pytest.mark.asyncio
