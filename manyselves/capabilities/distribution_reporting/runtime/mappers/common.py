@@ -7,6 +7,7 @@ from typing import Any
 
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
+    EvidenceMeasurement,
     SourceLocation,
 )
 
@@ -48,6 +49,7 @@ def make_evidence(
     photo_refs: list[str] | None = None,
     value: str | float | int | None = None,
     unit: str | None = None,
+    measurements: list[EvidenceMeasurement] | None = None,
     confidence: float = 1.0,
     needs_confirmation: bool = False,
 ) -> EvidenceItem:
@@ -65,6 +67,7 @@ def make_evidence(
         ),
         value=value,
         unit=unit,
+        measurements=measurements or [],
         confidence=confidence,
         needs_confirmation=needs_confirmation,
         module_id=module_id,

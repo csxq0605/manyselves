@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from docx import Document
+from docx.text.paragraph import Paragraph
 from openpyxl import load_workbook
 from PIL import Image
 
@@ -47,23 +48,25 @@ class ParsedArtifactBlocks:
 def parse_artifact(path: Path) -> ParsedArtifactBlocks:
     target = Path(path)
     descriptor = descriptor_for_path(target)
-    suffix = target.suffix.casefold()
     if descriptor.kind == "document":
         try:
             document = Document(target)
-            blocks = [
-                ArtifactBlock(f"paragraph:{i + 1}", p.text)
-                for i, p in enumerate(document.paragraphs)
-                if p.text
-            ]
-            for table_index, table in enumerate(document.tables, start=1):
-                for row_index, row in enumerate(table.rows, start=1):
-                    blocks.append(
-                        ArtifactBlock(
-                            f"table:{table_index}:row:{row_index}",
-                            "\t".join(cell.text for cell in row.cells),
+            blocks = []
+            paragraph_index = table_index = 0
+            for element in document.iter_inner_content():
+                if isinstance(element, Paragraph):
+                    paragraph_index += 1
+                    if element.text:
+                        blocks.append(ArtifactBlock(f"paragraph:{paragraph_index}", element.text))
+                else:
+                    table_index += 1
+                    for row_index, row in enumerate(element.rows, start=1):
+                        blocks.append(
+                            ArtifactBlock(
+                                f"table:{table_index}:row:{row_index}",
+                                "\t".join(cell.text for cell in row.cells),
+                            )
                         )
-                    )
             return ParsedArtifactBlocks(
                 "docx", tuple(blocks), descriptor=descriptor, required_tool="inspect_document"
             )

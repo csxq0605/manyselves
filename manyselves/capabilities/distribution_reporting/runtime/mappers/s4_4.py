@@ -1,5 +1,6 @@
 """Map S4-4 diagnostic workbook observations into module 2.4 evidence."""
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,9 @@ from openpyxl.utils import get_column_letter
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     MappingGap,
     MappingResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceMeasurement,
 )
 
 from .common import dispimg_refs, make_evidence
@@ -537,6 +541,22 @@ def _map_thermal(
         measured = _numeric_value(sheet, value_sheet, row, 7)
         if not isinstance(measured, (int, float)):
             continue
+        rise = (
+            float(Decimal(str(measured)) - Decimal(str(current_environment)))
+            if current_environment is not None else None
+        )
+        measurements = [
+            EvidenceMeasurement(quantity="measured_temperature", value=float(measured), unit="℃", source_cell=f"G{row}"),
+            EvidenceMeasurement(
+                quantity="ambient_temperature", value=current_environment, unit="℃", source_cell=f"B{environment_row}",
+                missing_reason="missing_ambient_temperature" if current_environment is None else None,
+            ),
+            EvidenceMeasurement(
+                quantity="temperature_rise", value=rise, unit="K",
+                derived_from=["measured_temperature", "ambient_temperature"],
+                missing_reason="missing_ambient_temperature" if current_environment is None else None,
+            ),
+        ]
         fact_parts = []
         if position:
             fact_parts.append(f"检测部位={position}")
@@ -549,7 +569,7 @@ def _map_thermal(
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
         if current_environment is not None:
             fact_parts.append(f"环境温度={current_environment:g}℃")
-            fact_parts.append(f"相对环境温升={measured - current_environment:.1f}K")
+            fact_parts.append(f"相对环境温升={rise:.1f}K")
         if current_humidity is not None:
             fact_parts.append(f"环境湿度={current_humidity:g}%RH")
         fact = "；".join(fact_parts)
@@ -579,6 +599,7 @@ def _map_thermal(
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=float(measured),
                     unit="℃",
+                    measurements=measurements,
                     needs_confirmation=(
                         not position or not current_room or not current_cabinet
                         or current_environment is None

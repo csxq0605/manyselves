@@ -46,6 +46,10 @@ from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_c
     KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_context import (
+    render_template_skill,
+    resolve_template_inputs,
+)
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
     TEMPLATE_SKILL_BOUNDARY,
     TEMPLATE_SKILL_ROOT,
@@ -114,10 +118,11 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
     }
     boundary_ref = TEMPLATE_SKILL_BOUNDARY
     required = [*refs.values(), boundary_ref]
+    resolved = resolve_template_inputs(workspace, state, required)
     missing = [
         path.as_posix()
         for path in required
-        if not (workspace / path).is_file()
+        if not resolved[path].is_file()
     ]
     if missing:
         raise ModuleAuthoringPreparationError(
@@ -127,7 +132,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
         )
     try:
         boundary = TemplateSkillBoundaryManifest.model_validate_json(
-            (workspace / boundary_ref).read_text(encoding="utf-8")
+            resolved[boundary_ref].read_text(encoding="utf-8")
         )
     except (OSError, ValueError, AttributeError) as exc:
         raise ModuleAuthoringPreparationError(
@@ -135,7 +140,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
             "请修正该文件或单独运行 operation=distill_template_skill 重新生成"
         ) from exc
     template_skill_text = {
-        key: (workspace / path).read_text(encoding="utf-8")
+        key: resolved[path].read_text(encoding="utf-8")
         for key, path in refs.items()
     }
     poisoned = [
@@ -160,13 +165,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
 def _template_skill_context(state: Mapping[str, Any], skill_id: str) -> str:
     texts = state.get("template_skill_text", {})
     content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, content)
 
 
 def _domain_knowledge_context(text: str, provenance_ref: str) -> str:

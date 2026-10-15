@@ -49,6 +49,13 @@ def render_fact_packet(
         "附加字段省略值：module_id=当前模块，value/unit/observed_at=null，confidence=1.0，needs_confirmation=false，photo_refs=[]；confidence 是解析元数据，不是结论可信概率。",
         "逐项检查异常、缺项与矛盾；只在证据支持范围内概括。未检索到不等于未提供。",
     ]
+    if any(item.measurements for item in items):
+        lines.append(
+            "measurements 按 quantity 区分物理量：measured_temperature=测点温度，ambient_temperature=环境温度，"
+            "temperature_rise=测点减环境的温升；source_cell 属于该记录来源工作表，derived_from 为同一观测的计算输入。"
+            "value=null 与 missing_reason 表示缺数，不能写成零或正常，也不表示没有适用规则。"
+            "测点温度不能替代温升；计算结果只证明数值关系，不自动证明合规或风险等级。"
+        )
     for (file_id, path, sheet), records in groups.items():
         lines.append("\n来源：" + json.dumps(
             {"file_id": file_id, "path": path, "sheet": sheet}, ensure_ascii=False,
@@ -59,6 +66,7 @@ def render_fact_packet(
                 coordinates.pop(key, None)
             extra = item.model_dump(mode="json", exclude_defaults=True, include={
                 "value", "unit", "observed_at", "confidence", "needs_confirmation", "photo_refs",
+                "measurements",
             })
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id

@@ -219,8 +219,12 @@ class TaskContextRebuilder:
     to that history; repeated dispatches reuse the compacted working copy.
     """
 
-    def __init__(self, task_key: str, render_state: Callable[[], str]):
+    def __init__(
+        self, task_key: str, render_state: Callable[[], str],
+        *, project_history: Callable[[list[LLMMessage]], list[LLMMessage]] | None = None,
+    ):
         self.render_state = render_state
+        self.project_history = project_history
         self.boundary = "<typed_task_state>\n" + json.dumps({"task_key": task_key}) + "\n"
         self._source_tail: list[LLMMessage] = []
         self._working_tail: list[LLMMessage] = []
@@ -268,7 +272,10 @@ class TaskContextRebuilder:
         working_tail = list(compacted[1:])
         self._source_tail = source_tail
         self._working_tail = working_tail
-        projected = [messages[0], state, *working_tail]
+        # Projection does not mutate durable or compacted history. A fresh
+        # state/restart can therefore reconsider whether an exchange is redundant.
+        visible_tail = self.project_history(working_tail) if self.project_history else working_tail
+        projected = [messages[0], state, *visible_tail]
         return RebasedContext(messages=projected, tool_definitions=list(tool_definitions or ()),
                               dropped_message_count=max(0, len(messages) - len(projected)))
 

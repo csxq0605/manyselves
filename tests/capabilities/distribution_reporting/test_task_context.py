@@ -21,13 +21,68 @@ from manyselves.capabilities.distribution_reporting.runtime.task_context import 
 from manyselves.config.schema import AgentDefaults
 from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.loops.bus import MessageBus
-from manyselves.runtime.providers.base import Message
+from manyselves.runtime.providers.base import LLMToolCall, Message
 from manyselves.runtime.tools.registry import ToolRegistry
 
 
 def envelope(revision=0):
     return TaskEnvelope(task_id="author", run_id="synthetic", agent_id="author", revision=revision,
                         objective="audit", allowed_outputs=["module_submission"], target_submodule_ids=["2.4.3.1"])
+
+
+@pytest.mark.asyncio
+async def test_successful_current_draft_write_is_not_resent_but_trace_is_unchanged(tmp_path):
+    loop = AgentLoop(agent_type="author", workspace=tmp_path, tools=ToolRegistry(),
+                     bus=MessageBus(), llm_provider=None, config=AgentDefaults())
+    task = envelope()
+    projection = bind_task_context(loop, tmp_path, task, output_contract="module_submission", render_prompt=lambda: "facts")
+    writer = WriteResultPartTool(task.run_id, task.task_id, 0, ReportingStore(tmp_path))
+    prose = "UNIQUE-CURRENT-DRAFT " * 100
+    result = await writer(part_id="part-1", content=prose)
+    history = [Message(role="system", content="instructions"),
+               Message(role="user", content=projection.initial_message()),
+               Message(role="assistant", content="", tool_calls=[LLMToolCall(
+                   id="write-1", name="write_result_part", arguments={"part_id": "part-1", "content": prose})]),
+               Message(role="tool", content=json.dumps(result), is_tool_result=True, tool_call_id="write-1"),
+               Message(role="user", content="Unresolved finding F-1 still applies.")]
+    original = list(history)
+    projected = await projection.rebuild(history, loop=loop)
+    assert sum(prose in (m.content or "") for m in projected.messages) == 1
+    assert not any(m.tool_calls for m in projected.messages)
+    assert history == original and history[2].tool_calls[0].arguments["content"] == prose
+    assert projected.messages[-1] == history[-1]
+    # A fresh binding/restart reaches the same projection from the complete trace.
+    restored = bind_task_context(loop, tmp_path, task, output_contract="module_submission", render_prompt=lambda: "facts")
+    assert (await restored.rebuild(history, loop=loop)).messages == projected.messages
+    # Changed current content must not make a historical write falsely equivalent.
+    await writer(part_id="part-1", content="Revised prose")
+    revised = await projection.rebuild(history, loop=loop)
+    assert any(m.tool_calls for m in revised.messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["failed", "mixed", "reasoning", "wrong_ref", "wrong_evidence"])
+async def test_draft_projection_preserves_nonredundant_tool_exchanges(tmp_path, mode):
+    loop = AgentLoop(agent_type="author", workspace=tmp_path, tools=ToolRegistry(),
+                     bus=MessageBus(), llm_provider=None, config=AgentDefaults())
+    task = envelope()
+    projection = bind_task_context(loop, tmp_path, task, output_contract="module_submission", render_prompt=lambda: "facts")
+    result = await WriteResultPartTool(task.run_id, task.task_id, 0, ReportingStore(tmp_path))(part_id="part-1", content="prose")
+    if mode == "failed":
+        result["persisted"] = False
+    if mode == "wrong_ref":
+        result["artifact_ref"] = "Work/another.md"
+    if mode == "wrong_evidence":
+        result["evidence_ids"] = ["E-0099"]
+    calls = [LLMToolCall(id="w", name="write_result_part", arguments={"part_id": "part-1", "content": "prose"})]
+    results = [Message(role="tool", content=json.dumps(result), is_tool_result=True, tool_call_id="w")]
+    if mode == "mixed":
+        calls.append(LLMToolCall(id="r", name="open_reference", arguments={"locator": "Knowledge/rule.md"}))
+        results.append(Message(role="tool", content="new exception", is_tool_result=True, tool_call_id="r"))
+    history = [Message(role="system", content="instructions"), Message(role="user", content=projection.initial_message()),
+               Message(role="assistant", content="retain decision rationale" if mode == "reasoning" else "", tool_calls=calls), *results]
+    projected = await projection.rebuild(history, loop=loop)
+    assert projected.messages[2:] == history[2:]
 
 
 def test_fact_scope_is_complete_including_unassigned_and_last_anomaly(tmp_path):

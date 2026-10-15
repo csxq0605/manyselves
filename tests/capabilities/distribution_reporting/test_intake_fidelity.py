@@ -185,3 +185,36 @@ def test_thermal_merged_subject_does_not_leak_outside_range():
     assert all(item.subject == "A房/柜A" for item in evidence if item.source.row == 4)
     assert all("柜A" not in item.subject for item in evidence if item.source.row == 5)
     assert any(gap.code == "incomplete_thermal_context" for gap in gaps)
+
+
+def test_thermal_typed_quantities_survive_normalization_and_fact_delivery(tmp_path):
+    from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
+        render_fact_packet,
+    )
+
+    path = tmp_path / "S4-4.xlsx"
+    sheet = Workbook().active
+    sheet.title = "红外热成像检测记录表"
+    for row, ambient in ((3, 20.2), (4, None), (5, 0)):
+        for column, value in {1: "A房", 2: ambient, 4: "柜A", 6: "端子", 7: 55.3}.items():
+            sheet.cell(row, column, value)
+    sheet.parent.save(path)
+    context = _normalize(tmp_path, path)
+    for row, expected_rise in ((3, 35.1), (4, None), (5, 55.3)):
+        routed = [item for item in context.evidence_items if item.source.row == row]
+        assert len(routed) == 2
+        assert routed[0].measurements == routed[1].measurements
+        measurements = {value.quantity: value for value in routed[0].measurements}
+        measured = measurements["measured_temperature"]
+        ambient = measurements["ambient_temperature"]
+        rise = measurements["temperature_rise"]
+        assert measured.value == 55.3 and measured.source_cell == f"G{row}"
+        assert ambient.source_cell == f"B{row}"
+        assert rise.value == expected_rise and rise.unit == "K"
+        assert rise.derived_from == ["measured_temperature", "ambient_temperature"]
+        assert bool(rise.missing_reason) == (row == 4)
+        packet = render_fact_packet(routed, "2.4")
+        assert '"quantity":"measured_temperature"' in packet
+        assert '"quantity":"temperature_rise"' in packet
+        if row == 4:
+            assert "missing_ambient_temperature" in packet

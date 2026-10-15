@@ -16,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from .reference_library import ReferenceDocument, ReferenceLibrary
+from .reference_sections import select_reference_sections
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,12 +219,17 @@ class KnowledgeContextBuilder:
             "引用结论前须核对完整原文的适用范围、前提和例外；R-* 不是客户现场事实。"
         )]
         sources: dict[tuple[str, str], tuple[str, ReferenceDocument]] = {}
+        source_terms: dict[tuple[str, str], set[str]] = {}
         for heading, requirement, documents in sections:
             ids = []
             for document in documents:
                 key = (document.namespace, document.relative_path)
                 if key not in sources:
                     sources[key] = (self._register(document), document)
+                source_terms.setdefault(key, set()).update(
+                    self._special_topic_terms(heading.removeprefix("## "), requirement)
+                )
+                source_terms[key].update(heading.removeprefix("## ").split())
                 ids.append(sources[key][0])
             reference = (
                 "候选来源：" + "、".join(dict.fromkeys(ids)) if ids else
@@ -239,6 +245,8 @@ class KnowledgeContextBuilder:
                 f"### {source_id} {document.title}\n来源：{document.relative_path}\n"
                 f"完整原文文件：{ref.as_posix() if ref else document.relative_path}\n"
             )
+            if Path(document.relative_path).suffix.casefold() == ".docx":
+                prefix += "解析范围：正文段落与顶层表格；图像、文本框及嵌套表格尚未核验。\n"
             prefixes.append(prefix)
             entries.append(prefix + (
                 f"原文未展开（{len(document.text)} 字）；此目录项不是条款依据。"
@@ -246,12 +254,24 @@ class KnowledgeContextBuilder:
                 "读取完整原文；无法取得或核实适用性时保留不确定性。"
             ))
         size = len("\n\n".join([*blocks, *entries]))
-        for index, (_source_id, document) in enumerate(sources.values()):
-            full = prefixes[index] + f"完整原文（{len(document.text)} 字）：\n" + document.text
+        for index, (key, (_source_id, document)) in enumerate(sources.items()):
+            label = "完整已提取文本" if Path(document.relative_path).suffix.casefold() == ".docx" else "完整原文"
+            full = prefixes[index] + f"{label}（{len(document.text)} 字）：\n" + document.text
             increment = len(full) - len(entries[index])
             if size + increment <= self.MAX_MODULE_CHARS:
                 entries[index] = full
                 size += increment
+                continue
+            selected = select_reference_sections(document.text, tuple(sorted(source_terms[key])))
+            if selected is not None:
+                partial = prefixes[index] + selected + (
+                    f"\n其余原文未展开；open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
+                    "可读取完整来源。"
+                )
+                increment = len(partial) - len(entries[index])
+                if size + increment <= self.MAX_MODULE_CHARS:
+                    entries[index] = partial
+                    size += increment
         text = "\n\n".join([*blocks, *entries])
         path = self.store.write_text(f"Work/runs/{self.run_id}/context/{filename}", text + "\n")
         return KnowledgeContext(

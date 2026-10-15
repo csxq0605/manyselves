@@ -20,13 +20,45 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-14 intake fidelity and whole-source knowledge packets verified; long-standard automatic clause delivery and Skill rule semantics remain open`
+- Current slice: `2026-10-15 Skill authority/frozen reads, duplicate-write request projection, structured source delivery and typed thermal observations; goal-level acceptance still in progress`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Implement and evaluate automatic clause/context delivery for long standards without making every author search again; audit distilled Skill rule applicability and evidence/instruction authority separately before a synthetic judgment-led writing comparison. Whole-source packets now distinguish inlined documents from unexpanded references but do not guarantee model reading or citation entailment. Joint-versus-owner repeated model trials, semantic citation validation, large-context splitting and restart drills remain open. Preserve 36K/0.6 until representative evaluation. Customer data/environment scope remains unresolved. See docs/research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md.`
+- Next automatic action: `Continue against the goal matrix below: separate missing measurement from unavailable/inapplicable rule in shared judgments, validate semantic prose and citations on synthetic production workflows, then change role ordering where measured gains justify it. Do not promote the judgment-first microbenchmark to production: it propagates an incorrect missing-rule explanation. Joint-versus-owner repeated trials, large-context splitting and restart drills remain open. Preserve 36K/0.6 until representative evaluation; customer Provider testing remains outside authorized data scope. See docs/research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md.`
+
+### 2026-10-15 — 问题与目标验收表（当前维护未完成）
+
+| 用户问题 / 完成目标 | 已接入生产的改动与证据 | 仍未满足的验收条件 |
+| --- | --- | --- |
+| 初始化读丢资料，不能以“解析成功”代替完整性 | DOCX 表格、Excel 缺公式值、PDF 空页、合并单元格边界已修；本轮保留 DOCX 段落/表格原顺序，并让知识库复用该解析器 | OCR、图中规则、嵌套表格/文本框、其余专用映射器公式与旧缓存尚未全覆盖 |
+| 能看到却写错，混淆物理量 | 红外观测区分 measured_temperature / ambient_temperature / temperature_rise，代码计算一次温升，保留单元格和缺失原因；两个路由拿到相同量值 | 结构正确不能保证自由正文正确；其他指标及专业规则适用性仍需覆盖 |
+| 不愿意查，没读到开始编 | 全范围事实包；长 Markdown 标准自动带入完整相关章节、祖先导语、范围/定义/例外和显式条号引用；未展开/未解析引用明确标记 | 词项召回与显式关联不保证语义召回；无结构长文、超窗口分片、图像依据仍待解决 |
+| 两处同样资料结论不同 | 同一冻结输入与同一计算值；联合 Cross 检查同一合并快照 | 尚无生产级跨章节共享专业判断账本；同一 ID 也不能防止文字曲解或共同错误 |
+| 作者与审计共同遵循错误 Skill | 四条消费路径统一 method_only 边界；任务合同控制范围，审计不能以作者 Skill 为事实依据；整包一次读取冻结清单；蒸馏提示要求类型/适用条件/依据定位 | 旧 14 份 Skill 只完成问题定位与消费边界修正，未逐规则修订或证明语义合格；新标签为生成要求，非语义正确性保证 |
+| 审计效果不明显，耗时反增 | 已修复反馈闭环与误分建议；40 次合成 API 调用比较单写、写后审、先判断再写 | 判断优先原型仍把“缺环境值”写成“缺规则”；必须修正后通过真实生产链对照，不能宣布胜出或直接删除审计 |
+| 累计 token 大、反复读取 | 当前事实与正文重建；本轮只从请求投影中去除与当前草稿完全相同的成功写入工具对，完整历史不删；失败、旧版本、混合读取、推理和不同证据绑定保留 | 尚未减少压缩请求本身的重复写入；批量写入工具及过期草稿需另评估；字符节省不是 token/金额结论 |
+| 运行慢、角色编排过多 | 编译重复 Schema 消除；五路 Cross 改一次联合审查；单写/审查/判断三路真实合成对照完成 | 完整报告关键路径、输入/输出/缓存/返工总量仍未验收，尚未证明快于单主笔或 Codex+Skill |
+| 压缩、召回与中断恢复 | 权威事实/当前稿件在有损历史摘要外重建；冻结 Skill 恢复测试和写入投影重启测试通过 | 36K/0.6 不变，无证据支持最优阈值或最大压缩率；代表性长任务和阶段中断演练未完成 |
+| 引用真实、版本与适用条件正确 | 完整来源 ID/文件/原文行可定位，DOCX 限定为已提取内容；条款上下文进入请求 | R ID 有效不等于原文支持结论；现行标准验证、条件匹配、引用蕴含和成稿逐项检查未完成 |
+
+### 2026-10-15 — Skill 消费边界与真实写作组织对照
+
+- 作者、模块审计、Chief/Final 使用同一 Skill 包装：Skill 是方法资料，不能替代任务合同、现场证据或标准原文。示例不是强制工程规则，缺依据的分级、寿命预测和第四章要求不能升级为必填结论。审计须独立核实证据与适用规则。作者整包加载与审计回退读取均解析现有 Run input snapshot；真实冻结后修改 live Inputs 的测试仍读旧版，未增加快照协议/Hash/Gate。
+- 蒸馏角色与 Task 明确要求方法/示例、适用条件、建议/合同要求、来源定位；模板章节以已有程序解析结构为准。没有重写用户现有 14 份 Skill，也没有以格式检查证明其语义正确。
+- 真实官方 Claude 合成实验：两种材料长度 × 两次重复 × 三种流程，先后两批仅增加显式 quantity 字段，总计 **40 请求，213,426 input / 51,073 output tokens，缓存 0**。均为脚本编排微基准，不是完整生产工作流、报告或电气标准验证；原始输出保留在仓库外 audit_manyselves/writing_architecture_ab{,_typed}.json。
+- 显式 quantity 批次，每路四次：单写平均 **6.591s，22,732 input / 6,121 output**；写后全文审改 **11.499s，49,900 / 11,362**；规则选择+程序比较+写作 **9.835s，34,780 / 8,526**。数值为各路四次累计 token、单次流程平均 wall time；不可把前者当成单请求大小。没有用价格折算金额。
+- 结构检查通过率依次 2/4、4/4、4/4；单写失败含观测 ID 漂移与两章挤入一个章节数组项，并不等于相同数量的错误专业结论。温度被写成“温升55”的定向检查依次 1/4、1/4、0/4。但判断优先四次都把存在的 R-004 错解释为缺少规则：选择阶段 unknown 丢掉候选规则，后续传播。**此路线尚不能按零错误方案上线**。未标 quantity 批次三路温度混淆分别 4/4、4/4、1/4，也说明事实表达和编排共同影响结果，不能全归咎于幻觉。
+
+### 2026-10-15 — 请求去重、结构取证与物理量
+
+- 生产 Provider 请求投影只省略完整、成功、与当前持久正文/证据绑定完全相同的 write_result_part 工具对；Runtime 只提供中立回调，判断在 Capability。历史与内部 working tail 均不改写，原推理、失败、混合工具对、旧草稿仍保留，重启可以重建。该优化发生在历史压缩之后，不声称减少摘要模型输入。
+- 同一合成材料、真实写入 Tool 结果和 Anthropic 序列化，关闭/开启该投影回调配对：1～4 段后的 message JSON 字符 **11,890→8,889；17,371→11,369；22,852→13,849；28,333→16,329**，四请求累计 **80,446→50,436（-37.3%）**。事实和当前稿件仍完整；仅为字符与出现次数、0 API 调用，非 token、费用或时延。外部脚本 request_projection_probe_1015.py 与 JSON 可复跑。
+- 长标准保留全文优先；超出既有 14K 可选正文目标时，结构取证选完整 Markdown 子树并带祖先导语、前言、范围/定义/版本/例外，以及能明确解析的条号依赖。引用循环和重复条号有测试；不截断整条、不把片段当全文，不保证隐含规则依赖完整。候选文档 Top-K 和词项排序仍存在，这是本地检索辅助生成而非“完全没有 RAG”，没有向量服务。
+- 知识库 DOCX 旧路径也丢表格，现复用通用解析器；通用解析器按原段落/表格顺序读取，保持原 locator 编号。只标为已提取文本，图像/文本框/嵌套表格不冒充已核验。既有冻结知识快照不会被静默改写，修复主要作用于新 Run 的解析。
+- 红外将观测与计算显式分开，Decimal 计算一次差值后两章路由复用；环境缺失保留 null/missing_ambient_temperature，不计算、不默认为零，也不声称无规则。规范化→事实包链路覆盖源单元格、零环境值、跨章一致、缺失值。本地重读原 S4-4 **208 条路由 / 172 组独立来源事实 / 14 条剩余电流逐项与原表一致**，不是报告全部事实正确率；未发客户数据到 API。
+- 最终本切片 focused/affected 选择 **125 passed in 48.06s**：Module runtime、Skill authority/distillation、Final/Final Chief/Aggregate Provider、task context、intake/knowledge fidelity、fact packet/research ownership、artifact parser/gateway、Runtime projection。另此前 source-ledger/preparation snapshot/tools 组通过；批次有重叠，不求独立总数。所有改动 Python 的 Ruff 与 diff whitespace 通过；未跑全量回归。可复跑合成架构脚本已纳入 scripts/benchmarks/report_writing_architectures.py，默认只预检；本地 `--typed` 预检通过，未再调用 API。
 
 ### 2026-10-14 — whole-source knowledge delivery and explicit unexpanded references
 

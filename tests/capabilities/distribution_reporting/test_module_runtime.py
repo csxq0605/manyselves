@@ -384,6 +384,23 @@ def test_template_skill_package_can_be_supplied_directly_in_inputs(
     )
 
 
+def test_template_skill_package_uses_real_run_snapshot_after_live_inputs_change(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+        RunInputSnapshotStore,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+        load_template_skill,
+    )
+
+    _write_author_skill_fixture(tmp_path)
+    original = (tmp_path / "Inputs/report-template-role-skills/author-2.4/SKILL.md").read_text(encoding="utf-8")
+    RunInputSnapshotStore(tmp_path).freeze("frozen-skills")
+    (tmp_path / "Inputs/report-template-role-skills/author-2.4/SKILL.md").write_text("NEW METHOD", encoding="utf-8")
+    state = {"run_id": "frozen-skills"}
+    assert load_template_skill(tmp_path, state)
+    assert state["template_skill_text"]["author-2.4"] == original
+
+
 def _author_state(workspace: Path, run_id: str, *, resume: bool = False) -> dict[str, Any]:
     store = ReportingStore(workspace)
     refs = {

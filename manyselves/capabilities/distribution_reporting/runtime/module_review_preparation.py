@@ -60,8 +60,9 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
     SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
-    template_skill_ref,
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_context import (
+    read_template_skill,
+    render_template_skill,
 )
 from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
     request_user_supplements,
@@ -206,19 +207,7 @@ def _template_skill_context(
     module_id: str,
 ) -> str:
     skill_id = f"auditor-{module_id}"
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        path = workspace / template_skill_ref(skill_id)
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, read_template_skill(workspace, state, skill_id))
 
 
 def prepare_module_local_regression_review(
