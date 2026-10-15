@@ -14,19 +14,29 @@
 - Plan base: `agent/declarative-runtime-plan`
 - Implementation branch: `agent/declarative-runtime-implementation`
 - Merged PR: <https://github.com/csxq0605/manyselves/pull/4>
+- Active maintenance PR: <https://github.com/csxq0605/manyselves/pull/6>
+- Maintenance scope and acceptance: [PR #6 报告性能与质量改进指导](PR6_REPORTING_IMPROVEMENT_GUIDE.md)（S01–S06、Q01–Q07、F01–F04）
 - Governing architecture: [`../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 - Execution protocol: [`../CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-15 Module review v3: defer optional advice without automatic author/reviewer loops; offline slice verified, goal-level quality/performance acceptance still in progress`
+- Current slice: `2026-10-15 PR #6 full-scope guidance committed for implementation: speed/cost, correctness, workflow/evaluation; only the S01 advisory-routing subitem is offline verified; overall maintenance remains in progress`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: `Continue against the goal matrix below: separate missing measurement from unavailable/inapplicable rule in shared judgments, validate semantic prose and citations on synthetic production workflows, then change role ordering where measured gains justify it. Do not promote the judgment-first microbenchmark to production: it propagates an incorrect missing-rule explanation. Joint-versus-owner repeated trials, large-context splitting and restart drills remain open. Preserve 36K/0.6 until representative evaluation; customer Provider testing remains outside authorized data scope. See docs/research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md.`
+- Next automatic action: 按 [PR #6 指导清单](PR6_REPORTING_IMPROVEMENT_GUIDE.md)先完成证据与依赖核查：S02/S03 的 Cross 综合职责及重复提交，随后覆盖 S04–S06 的摘要/缓存/作者开销及 Q01–Q07 的正确性缺口，形成 F03 的旧问题→当前路径→剩余工作的完整对应。Q02 缺 dimension 读取问题先保留最小复现。沿清单决定完整链路改动，不重复 S01 已完成子项，也不以其测试替代总目标。复用已有数据，不以新完整报告为前提；36K/0.6 在有代表性证据前保持不变，判断优先原型尚不能推广。
+
+### 2026-10-15 — PR #6 总范围与实施指导
+
+- 用户确认沿完整清单推进，先提交清单作为 PR 指导。[PR6_REPORTING_IMPROVEMENT_GUIDE.md](PR6_REPORTING_IMPROVEMENT_GUIDE.md) 固定三大项、17 个编号条目、依赖顺序、交付物和验收边界；本文件继续作为唯一动态状态入口。
+- **S01–S06 速度与成本：未完成。** `927aef5` 仅完成 S01 的模块可选建议处理；S02/S03 综合写作与重复提交尚待完整核查，S04–S06 摘要、缓存和作者调用组织尚未形成经验证的改动。
+- **Q01–Q07 质量：未完成。** 完整事实包、温度类型与 Skill 边界已有局部修复；对象覆盖、数值/规则适用性、跨章一致、标准版本和正文语义仍需按旧样本逐项验证。Q02 表格读取维度缺陷尚未修复。
+- **F01–F04 流程与评估：未完成。** 保留现有历史成本和缺陷证据，建立与当前实现的映射，再决定角色职责及阶段调整；没有要求用户重新生成整份报告作为分析前置条件。
+- 本次仅提交指导及状态文档，核查相对链接、清单编号和 diff whitespace；未运行业务测试或 Provider，不增加性能/质量已验收的主张。
 
 ### 2026-10-15 — 模块审计建议留档，减少自动返工
 
