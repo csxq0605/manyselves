@@ -22,13 +22,21 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-15 PR #6 full-scope guidance committed for implementation: speed/cost, correctness, workflow/evaluation; only the S01 advisory-routing subitem is offline verified; overall maintenance remains in progress`
+- Current slice: `PR #6 full-scope evidence audit recorded; Q02 dimension handling and S02 compact synthesis verified offline, S03 direct-submit guidance applied; overall maintenance remains in progress`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: 按 [PR #6 指导清单](PR6_REPORTING_IMPROVEMENT_GUIDE.md)先完成证据与依赖核查：S02/S03 的 Cross 综合职责及重复提交，随后覆盖 S04–S06 的摘要/缓存/作者开销及 Q01–Q07 的正确性缺口，形成 F03 的旧问题→当前路径→剩余工作的完整对应。Q02 缺 dimension 读取问题先保留最小复现。沿清单决定完整链路改动，不重复 S01 已完成子项，也不以其测试替代总目标。复用已有数据，不以新完整报告为前提；36K/0.6 在有代表性证据前保持不变，判断优先原型尚不能推广。
+- Next automatic action: 沿[首轮取证结论](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)推进 S04/S05 请求布局、压缩前后去重及缓存边界，保留36K/0.6；同时建立 Q01/Q03/Q05 的对象—观测—判断—正文/行动离线差异样本。S06与F01/F02依赖上述结果后再改角色/并行结构；Q06/Q07继续查版本来源及实际模型证据。不要重复Q02与S02已完成的离线切片，不以提示/schema改动宣称实测收益；复用已有数据，不以新完整报告为分析前提。
+
+### PR #6 / 全清单首轮取证（F03/F04）
+
+- [静态证据报告](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)逐项覆盖S01–S06、Q01–Q07、F01–F04，列明生产路径、历史证据、已修/未修及实施依赖；[可复跑脚本](../../scripts/benchmarks/reporting_scope_audit.py)与[汇总JSON](../research/decisions/reporting_pr6_evidence_audit.json)纳入仓库，无原始项目正文导出。
+- S04的重要更正：当前TaskContextRebuilder先压缩system+历史，再放入精确任务状态。295,000字符事实包及两版草稿均完整，历史压缩器每次仅接收29字符。旧120次摘要不能直接归咎于当前事实包；继续关注历史写入去重发生在压缩之后。S05探针仍为system缓存标记1、message标记0；动态草稿主要在user capsule，task board是否变化另论。
+- F03/Q03重算时区分原记录评分与当前评分器。untyped原记录零错误均为0，重算三路4/4、3/4、4/4；typed为2/4、4/4、4/4。窄温升混淆计数untyped为4/4、4/4、1/4，typed为1/4、1/4、0/4；不能再沿用“24次全错”。评分器也不能覆盖自由正文全部语义。判断优先的缺规则误解释仍未解决。
+- S06已核实实际Task工具数：2.4初写16、模块初审/复审各11。Q01已有316条事实的归档送达回放，不等于成稿覆盖；Q05对象覆盖、Q06标准有效状态、Q07规则/选模仍待处理。全清单有取证记录，不表示各项实现或整体效果已完成。
+- 首组已推送：Q02 `c44c390`、S02/S03 `a858f16`。本轮77项受影响测试加1项非空关系工作流测试通过；脚本离线复跑、Ruff和文档链接检查通过。Provider调用0、完整报告重跑0；下一组按上面的Next automatic action接续。
 
 ### PR #6 / S02、S03 — 精简审查综合材料并明确直接提交
 
