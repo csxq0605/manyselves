@@ -3703,7 +3703,13 @@ class WriteResultPartTool(_ResultPartTool):
             "part_id": part_id,
             "characters": len(content),
             "artifact_ref": relative.as_posix(),
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use this receipt and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "A successful write does not require a list_result_parts round trip. "
+                "Use that tool when saved state or remaining requirements are unclear."
+            ),
             "rewrite_policy": (
                 "Do not rewrite this persisted part unless list_result_parts includes "
                 "its part_id in rewrite_part_ids or submit_result correction feedback "
@@ -3781,7 +3787,13 @@ class WriteResultPartsTool(WriteResultPartTool):
             "count": len(results),
             "saved_part_ids": [result["part_id"] for result in results],
             "parts": results,
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use these receipts and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "Use list_result_parts only when saved state or remaining requirements "
+                "are unclear; a successful batch does not require listing again."
+            ),
             "rewrite_policy": (
                 "Do not rewrite persisted parts unless list_result_parts or submit_result "
                 "correction feedback explicitly includes them in rewrite_part_ids."

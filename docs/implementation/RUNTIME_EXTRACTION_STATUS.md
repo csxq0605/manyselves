@@ -22,13 +22,41 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 full-scope evidence audit recorded; Q02/S02 first fixes and S04/S05 request construction verified offline; overall maintenance remains in progress`
+- Current slice: `PR #6 full-scope audit and first implementation series pushed: Q02/S02, S04/S05, quality replay and S06 write receipts verified offline; overall semantic quality and measured performance remain unaccepted`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: 沿[首轮取证结论](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)推进 Q01/Q03/Q04/Q05 的对象—观测—判断—正文/行动离线差异样本；复用已有事实和成稿。S04/S05请求构造切片已验证，保留36K/0.6，实际缓存命中率尚待最终测量。S06与F01/F02依赖质量差异后再决定角色/并行结构；Q06/Q07继续查版本来源及实际模型证据。不要重复Q02/S02已完成切片，不以提示/schema改动宣称实测收益。
+- Next automatic action: 依据下表继续处理尚未验收的语义项：Q01/Q05逐对象正文与行动映射、Q06原规则与标准现行性核验；不要再将图证或ID命中当成完成。当前没有模型配置，真实代表性质量/缓存/token/墙钟对照须在配置明确后执行，不自动重跑完整报告。已验证的读取、上下文和Cross切片不重复。模型选型/阶段重组仍依据新证据决定。
+
+### PR #6 / S06 — 成功写入无需固定再列举
+
+- 单条及批量写入成功回执改为continue_task：依据回执和当前任务状态继续剩余正文或完成合同后提交；只在状态/剩余要求不明时调用list_result_parts。错误回执及其恢复要求保持原语义，未删工具、未提高并行4、未删Claims或拆2.4。
+- 52项定向测试通过（Chief修订反馈、模块runtime、任务投影及请求成本），覆盖直接使用已保存正文提交、校验反馈不重写已保存正文和恢复。变更的是工具引导，不能据此声称模型必然减少一次请求；完全冗余写入已在S04投影中移除。
+- 本轮前序提交：全清单证据 `2ae6f4a`、摘要/缓存 `667f871`、质量回放与判断边界 `01f531c`；此前Q02 `c44c390`、S02/S03 `a858f16`。未合并PR，未创建新完整报告。
+
+#### 17项清单的当前处置
+
+| 清单 | 已交付 | 仍未验收/处置依据 |
+| --- | --- | --- |
+| S01 | 建议留档且不强制返工；原findings/verdicts保持 | 实际误报率/返工成本缺逐意见历史证据 |
+| S02 | Cross15→10字段，旧材料保留，Chief/Final/恢复贯通 | 模型生成质量及实际token收益 |
+| S03 | 审计直接结构化提交指引 | 实际遵循率 |
+| S04 | 当前状态不参与历史摘要；精确去重先于压缩 | 不调整36K/0.6；真实摘要量待测 |
+| S05 | 稳定输入与草稿分块，原生/兼容序列化验证 | system变化仍会失效；实际缓存/费用待测 |
+| S06 | 成功写入无需固定列举；实际Task工具已核查 | 保留Claims语义、工具恢复与并行4；拆2.4尚无收益证据 |
+| Q01 | 冻结事实36项对象回放，当前送达14/13/9 | 新正文语义覆盖尚未生成核验 |
+| Q02 | 六类dimension反例修复，公式缺缓存/错误保留 | 大表内存、OCR及其他映射器不在已验证范围 |
+| Q03 | 数值/单位/温升边界反例；原型缺规则上下文修复 | 原型未推广；实际规则适用与自由正文语义 |
+| Q04 | 联合共同快照；同条件矛盾/异条件合理差异离线反例 | 未新增未经证实的共享专业判断机制 |
+| Q05 | 图证/正文/行动分开回放，生产提示明确区别 | 通用逐对象语义与行动映射未自动化；不新增门禁 |
+| Q06 | 标准状态来源、核验日期、历史/当前依据边界 | 原14份规则及逐条标准语义/现行性尚未验收 |
+| Q07 | 实际配置无Provider/route，历史模型与继承配置分开 | 暂无当前运行模型可供角色对照，不猜选模型 |
+| F01 | 全阶段责任图；本轮不合并仍有独立检查职责的阶段 | 阶段调整须有缺陷与新增信息证据 |
+| F02 | 判断优先原型v2保留候选规则和未知原因 | 只通过离线边界，未获模型质量证据，暂不推广 |
+| F03 | 历史525请求、实验重算、当前请求及质量回放 | 缺逐finding数据无法追补；当前完整耗时待测 |
+| F04 | 分组定向测试、恢复/序列化与历史缺陷明确区分 | 不以结构通过代替专业质量或宣称整项完成 |
 
 ### PR #6 / Q01、Q03–Q07、F01/F02 — 对象覆盖回放与判断原型边界
 

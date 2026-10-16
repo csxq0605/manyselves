@@ -152,6 +152,7 @@ async def test_chief_revision_feedback_repairs_ids_without_rewriting_saved_prose
         ReportingStore(tmp_path), expected_part_ids=["findings_overview"],
     )
     written = await writer(part_id="findings_overview", content="已修订的完整小节正文，其他正文保持不变。")
+    assert written["next_action"] == "continue_task"
     prose_path = tmp_path / written["artifact_ref"]
     original_prose = prose_path.read_bytes()
     tool = SubmitResultTool(
