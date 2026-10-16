@@ -241,6 +241,7 @@ def prepare_current_module_recheck(
             store.workspace,
             run_id,
             active_evidence_ids,
+            current_claims=[claim for claim in current.claims if claim.submodule_id in scope],
         ),
         required_submodule_ids=sorted(scope),
         required_findings=pending,

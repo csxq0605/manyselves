@@ -47,8 +47,9 @@ def _review_claim_statement(claim: ClaimRecord) -> ReviewClaimStatement:
         submodule_id=claim.submodule_id,
         text=claim.text,
         statement_type=claim.claim_type,
+        origin=claim.origin,
         evidence_ids=claim.source_ids,
-        confidence=claim.confidence,
+        confidence=None if claim.origin == "runtime_part_binding" else claim.confidence,
         unresolved=claim.unresolved,
     )
 

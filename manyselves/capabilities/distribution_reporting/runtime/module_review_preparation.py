@@ -153,13 +153,17 @@ def _review_evidence(
     items = ProjectEvidenceIndex(workspace, run_id).module_items(subject.module_id, scope)
     register_fact_sources(workspace, run_id, items)
     selected_ids.update(item.id for item in items)
-    return _review_evidence_by_ids(workspace, run_id, selected_ids)
+    return _review_evidence_by_ids(
+        workspace, run_id, selected_ids,
+        current_claims=[claim for claim in subject.claims if claim.submodule_id in scope],
+    )
 
 
 def _review_evidence_by_ids(
     workspace: Path,
     run_id: str,
     selected_ids: set[str],
+    *, current_claims: list[ClaimRecord] | None = None,
 ) -> list[ReviewEvidenceExcerpt]:
     ledger = SourceLedger(workspace, run_id)
     records = {record.id: record for record in ledger.records}
@@ -174,6 +178,10 @@ def _review_evidence_by_ids(
         packet.append(
             ReviewEvidenceExcerpt(
                 evidence_id=evidence_id,
+                bound_submodule_ids=(sorted({
+                    claim.submodule_id for claim in current_claims
+                    if evidence_id in claim.source_ids
+                }) if current_claims is not None else None),
                 title=record.title,
                 locator=record.locator,
                 content=(workspace / content_ref).read_text(encoding="utf-8"),
@@ -192,8 +200,9 @@ def _claim_statements(
             submodule_id=claim.submodule_id,
             text=claim.text,
             statement_type=claim.claim_type,
+            origin=claim.origin,
             evidence_ids=claim.source_ids,
-            confidence=claim.confidence,
+            confidence=None if claim.origin == "runtime_part_binding" else claim.confidence,
             unresolved=claim.unresolved,
         )
         for claim in claims

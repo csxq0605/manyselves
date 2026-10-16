@@ -4,7 +4,7 @@
 
 核查基线：`927aef5`，2026-10-15（Asia/Taipei）。依据：[原始会话归档](../../run.md)、[既有质量与编排研究](../research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md)、当前源码及归档实验。下表的“当前证据和状态”是这一基线的核查快照，不代表后续实时进度。
 
-后续取证：[全清单首轮证据与实施依据](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)已对下表基线补充核查，包括S04摘要范围与实验评分版本的更正；实现进度仍见唯一状态文件。
+后续取证：[全清单首轮证据与实施依据](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)已对下表基线补充核查，包括S04摘要范围与实验评分版本的更正；实现进度仍见唯一状态文件。[后续生产链核查](../research/decisions/REPORTING_PR6_RULES_AND_BINDINGS.md)进一步更正S06：内部ModuleSubmission包含Claims，不表示当前模型重复提交Claims；当前作者已使用紧凑提交，运行时生成整段来源绑定。
 
 本文固定本 PR 的完整工作范围、条目编号、实施顺序和验收口径。动态进度、当前切片、验证结果与下一步统一记录在 [RUNTIME_EXTRACTION_STATUS.md](RUNTIME_EXTRACTION_STATUS.md)，引用本清单编号；不另建一份会逐渐分叉的状态账本。架构边界继续遵循 [AGENTS.md](../../AGENTS.md) 和[最终架构方案](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)。
 

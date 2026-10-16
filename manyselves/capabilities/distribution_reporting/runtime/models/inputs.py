@@ -115,6 +115,14 @@ class ReviewEvidenceExcerpt(StrictModel):
         pattern=r"^E-",
         description="Registered current-run project evidence id.",
     )
+    bound_submodule_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Current reviewed submodules explicitly binding this exact E ID. [] means no "
+            "current binding; null means not computed for this persisted input. A binding "
+            "does not prove the observation was judged or has a corresponding action."
+        ),
+    )
     title: str = Field(min_length=1, description="Source title from the current-run ledger.")
     locator: str = Field(
         min_length=1,
@@ -154,10 +162,14 @@ class ReviewClaimStatement(StrictModel):
         default_factory=list,
         description="Registered sources currently supporting the statement.",
     )
-    confidence: float = Field(
+    origin: Literal["unspecified", "runtime_part_binding"] = Field(
+        default="unspecified",
+        description="A runtime_part_binding carries complete section prose and sources, not independently classified facts/judgments/actions.",
+    )
+    confidence: float | None = Field(
         ge=0.0,
         le=1.0,
-        description="Current author confidence in the statement.",
+        description="Stored statement confidence; null for runtime bindings whose source parsing confidence is not a judgment probability.",
     )
     unresolved: bool = Field(
         description="Whether the statement still carries an explicit unresolved boundary.",

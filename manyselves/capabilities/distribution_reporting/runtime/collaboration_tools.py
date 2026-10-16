@@ -458,6 +458,7 @@ class SubmitResultTool(_ResultTool):
         confidence, unresolved = self._runtime_claim_boundary(evidence_ids)
         return {
             "id": claim_id,
+            "origin": "runtime_part_binding",
             "module_id": module_id,
             "submodule_id": part_id,
             "text": prose.strip(),

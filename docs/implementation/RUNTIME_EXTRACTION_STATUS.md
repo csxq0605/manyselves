@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 full-scope audit and first implementation series pushed: Q02/S02, S04/S05, quality replay and S06 write receipts verified offline; overall semantic quality and measured performance remain unaccepted`
+- Current slice: `PR #6 Q01/Q05 review provenance and Q06 shipped-rule audit verified offline; original 14 distilled Skills, current official standards and actual model quality/performance remain unaccepted`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
-- Blockers: `None`
-- Next automatic action: 依据下表继续处理尚未验收的语义项：Q01/Q05逐对象正文与行动映射、Q06原规则与标准现行性核验；不要再将图证或ID命中当成完成。当前没有模型配置，真实代表性质量/缓存/token/墙钟对照须在配置明确后执行，不自动重跑完整报告。已验证的读取、上下文和Cross切片不重复。模型选型/阶段重组仍依据新证据决定。
+- Blockers: 当前维护的原14份蒸馏Skill原文位置未找到（已询问）；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。三者分别影响原规则核查、官方现行性核验、真实模型测量，不妨碍其他离线实施。
+- Next automatic action: 继续按17项清单验证逐对象判断、正文与行动语义。拿到原14份Skill位置后逐条核查；官方域名配置发布后核验标准状态与条款；实际模型配置明确后做代表性质量/缓存/token/墙钟对照，不以完整报告重跑作为分析前置条件。已验证的读取、上下文、Cross、成功写入及审计来源映射不重复；不以来源绑定冒充语义覆盖。
+
+### PR #6 / Q01、Q05、Q06、S06 — 正文来源绑定与专业判断分开
+
+- [规则核查与语义更正](../research/decisions/REPORTING_PR6_RULES_AND_BINDINGS.md)纠正前次S06推论：实际作者已用紧凑ModuleSubmissionInput提交；内部整段Claims由Runtime生成，不是作者逐项重复输出。新记录标记runtime_part_binding，审计投影不再把来源解析置信度显示成专业判断概率，旧记录不猜测来源。
+- 初审/复审的完整证据包增加当前小节的精确E-ID绑定映射，保留未引用事实及旧finding需要的已移除来源。空列表与旧输入未计算分开；有绑定不等于已有判断/行动，缺绑定不自动产生阻断。提示、序列化及恢复贯通，没有新增专业门禁、模型轮次或裁剪正文。
+- 核查8份仓库自带方法，修正2.1和2.4配置中缺工况/依据的100%绝对断言及80%统一提示线。原14份真实蒸馏Skill尚未找到，不以8份分发方法或测试夹具代替验收。官方来源请求403；网络草稿保存尚未应用。
+- 验证：先复现4项失败，再完成来源/绑定、完整准备输入、初审/复审、公开runtime、联合Cross与恢复测试；受影响组86 passed，新增准备输入集成1 passed，合同所有权6 passed，共93个不同用例。保留1个既有测试夹具Pydantic序列化警告。无Provider调用，无完整报告重跑；整体专业质量及成本收益仍未验收。
 
 ### PR #6 / S06 — 成功写入无需固定再列举
 
@@ -45,13 +52,13 @@
 | S03 | 审计直接结构化提交指引 | 实际遵循率 |
 | S04 | 当前状态不参与历史摘要；精确去重先于压缩 | 不调整36K/0.6；真实摘要量待测 |
 | S05 | 稳定输入与草稿分块，原生/兼容序列化验证 | system变化仍会失效；实际缓存/费用待测 |
-| S06 | 成功写入无需固定列举；实际Task工具已核查 | 保留Claims语义、工具恢复与并行4；拆2.4尚无收益证据 |
+| S06 | 成功写入无需固定列举；实际作者紧凑提交与Runtime整段绑定已核实 | 已纠正“作者重复输出Claims”的推论；保留恢复与并行4，拆2.4尚无收益证据 |
 | Q01 | 冻结事实36项对象回放，当前送达14/13/9 | 新正文语义覆盖尚未生成核验 |
 | Q02 | 六类dimension反例修复，公式缺缓存/错误保留 | 大表内存、OCR及其他映射器不在已验证范围 |
 | Q03 | 数值/单位/温升边界反例；原型缺规则上下文修复 | 原型未推广；实际规则适用与自由正文语义 |
 | Q04 | 联合共同快照；同条件矛盾/异条件合理差异离线反例 | 未新增未经证实的共享专业判断机制 |
-| Q05 | 图证/正文/行动分开回放，生产提示明确区别 | 通用逐对象语义与行动映射未自动化；不新增门禁 |
-| Q06 | 标准状态来源、核验日期、历史/当前依据边界 | 原14份规则及逐条标准语义/现行性尚未验收 |
+| Q05 | 图证/正文/行动分开回放；初审/复审传递来源类型与当前小节绑定 | 精确E-ID绑定仍不是逐对象判断/行动语义；不自动产生门禁 |
+| Q06 | 8份分发方法核查、2份阈值表述修正；历史/当前依据分开 | 原14份原文未找到；官方站403、网络草稿待发布，逐条语义/现行性未验收 |
 | Q07 | 实际配置无Provider/route，历史模型与继承配置分开 | 暂无当前运行模型可供角色对照，不猜选模型 |
 | F01 | 全阶段责任图；本轮不合并仍有独立检查职责的阶段 | 阶段调整须有缺陷与新增信息证据 |
 | F02 | 判断优先原型v2保留候选规则和未知原因 | 只通过离线边界，未获模型质量证据，暂不推广 |

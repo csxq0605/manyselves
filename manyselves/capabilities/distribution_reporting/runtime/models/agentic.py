@@ -242,6 +242,10 @@ class ResearchNote(StrictModel):
 
 class ClaimRecord(StrictModel):
     id: str = Field(pattern=r"^C-")
+    origin: Literal["unspecified", "runtime_part_binding"] = Field(
+        default="unspecified",
+        description="runtime_part_binding denotes whole-part citation bookkeeping, not a separately authored semantic judgment.",
+    )
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     submodule_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
