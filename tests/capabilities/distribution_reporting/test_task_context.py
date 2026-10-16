@@ -82,7 +82,7 @@ async def test_draft_projection_preserves_nonredundant_tool_exchanges(tmp_path, 
     history = [Message(role="system", content="instructions"), Message(role="user", content=projection.initial_message()),
                Message(role="assistant", content="retain decision rationale" if mode == "reasoning" else "", tool_calls=calls), *results]
     projected = await projection.rebuild(history, loop=loop)
-    assert projected.messages[2:] == history[2:]
+    assert projected.messages[3:] == history[2:]
 
 
 def test_fact_scope_is_complete_including_unassigned_and_last_anomaly(tmp_path):

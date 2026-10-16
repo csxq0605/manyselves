@@ -222,15 +222,18 @@ class TaskContextRebuilder:
     def __init__(
         self, task_key: str, render_state: Callable[[], str],
         *, project_history: Callable[[list[LLMMessage]], list[LLMMessage]] | None = None,
+        render_prefix: Callable[[], str] | None = None,
     ):
         self.render_state = render_state
         self.project_history = project_history
+        self.render_prefix = render_prefix
         self.boundary = "<typed_task_state>\n" + json.dumps({"task_key": task_key}) + "\n"
         self._source_tail: list[LLMMessage] = []
         self._working_tail: list[LLMMessage] = []
 
     def initial_message(self) -> str:
-        return self.boundary + self.render_state() + "\n</typed_task_state>"
+        prefix = self.render_prefix() + "\n\n" if self.render_prefix else ""
+        return self.boundary + prefix + self.render_state() + "\n</typed_task_state>"
 
     async def rebuild(
         self,
@@ -259,11 +262,28 @@ class TaskContextRebuilder:
             message for message in messages[boundary + 1:]
             if not (message.role == "user" and str(message.content or "").startswith(self.boundary))
         ] if boundary is not None else []
+        # Render before projection so the Capability can compare writes with
+        # the exact current state. Keep stable inputs before mutable state for
+        # providers that support prefix caching; both remain authoritative.
+        if self.render_prefix is None:
+            state_messages = [LLMMessage(role="user", content=self.initial_message())]
+        else:
+            prefix = self.render_prefix()
+            state = self.render_state()
+            state_messages = [
+                LLMMessage(role="user", content=self.boundary + prefix + "\n</typed_task_state>",
+                           cache_control=True),
+                LLMMessage(role="user", content="<current_task_state>\n" + state + "\n</current_task_state>"),
+            ]
+        # Compare projected source histories, not forensic histories. If a
+        # formerly redundant exchange becomes relevant again, reconstruct from
+        # source instead of silently retaining an obsolete compacted view.
+        if self.project_history:
+            source_tail = self.project_history(source_tail)
         if source_tail[:len(self._source_tail)] == self._source_tail:
             tail = [*self._working_tail, *source_tail[len(self._source_tail):]]
         else:
             tail = source_tail
-        state = LLMMessage(role="user", content=self.initial_message())
         # The working-memory threshold governs transient history here. Exact
         # task state is added afterwards and protected by the existing typed
         # context-window check. A large mandatory packet must not itself cause
@@ -272,10 +292,7 @@ class TaskContextRebuilder:
         working_tail = list(compacted[1:])
         self._source_tail = source_tail
         self._working_tail = working_tail
-        # Projection does not mutate durable or compacted history. A fresh
-        # state/restart can therefore reconsider whether an exchange is redundant.
-        visible_tail = self.project_history(working_tail) if self.project_history else working_tail
-        projected = [messages[0], state, *visible_tail]
+        projected = [messages[0], *state_messages, *working_tail]
         return RebasedContext(messages=projected, tool_definitions=list(tool_definitions or ()),
                               dropped_message_count=max(0, len(messages) - len(projected)))
 

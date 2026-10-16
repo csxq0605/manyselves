@@ -107,7 +107,7 @@ def bind_task_context(
                 "evidence_binding": json.loads(binding.read_text(encoding="utf-8")) if binding.is_file() else None,
             })
         current_drafts = drafts
-        return render_prompt() + "\n\n" + json.dumps({
+        return json.dumps({
             "current_draft_parts": drafts,
             "draft_status": "Persisted working prose, not accepted conclusions; retain unresolved findings from the task input.",
         }, ensure_ascii=False, separators=(",", ":"))
@@ -115,6 +115,7 @@ def bind_task_context(
     key = json.dumps([envelope.run_id, envelope.task_id, envelope.revision, output_contract], separators=(",", ":"))
     rebuilder = TaskContextRebuilder(
         key, render, project_history=lambda messages: _project_persisted_writes(messages, current_drafts),
+        render_prefix=render_prompt,
     )
     setter(rebuilder)
     return rebuilder

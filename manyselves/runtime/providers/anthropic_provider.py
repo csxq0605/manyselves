@@ -205,9 +205,9 @@ class AnthropicProvider(LLMProvider):
            with type="tool_result" blocks
         3. Regular messages -> simple role/content dicts
 
-        When a system message has ``cache_control=True`` the system parameter is
-        emitted as a list of content blocks so the last block can carry an
-        ephemeral cache-control marker.
+        Cacheable system and regular text messages carry an ephemeral marker
+        on their text block. Preserve that boundary through same-role merging;
+        compatible endpoints receive ordinary strings without cache metadata.
 
         Per Anthropic API spec:
         - tool_use blocks go in assistant messages
@@ -274,9 +274,13 @@ class AnthropicProvider(LLMProvider):
                 continue
 
             # Regular text message
+            content = self._normalize_message_content(msg.content)
+            if msg.cache_control and self._supports_cache_control() and msg.content:
+                content = [{"type": "text", "text": self._safe_text(msg.content),
+                            "cache_control": {"type": "ephemeral"}}]
             anthropic_messages.append({
                 "role": msg.role,
-                "content": self._normalize_message_content(msg.content),
+                "content": content,
             })
 
         # Flush any remaining tool results
@@ -321,7 +325,7 @@ class AnthropicProvider(LLMProvider):
         so collapse text-only results back to a string. Mixed blocks that
         contain ``tool_use`` / ``tool_result`` must stay as arrays.
         """
-        if all(isinstance(b, dict) and b.get("type") == "text" for b in blocks):
+        if all(isinstance(b, dict) and b.get("type") == "text" and "cache_control" not in b for b in blocks):
             return "\n".join(
                 AnthropicProvider._safe_text(b.get("text")) for b in blocks
             )

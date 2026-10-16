@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 full-scope evidence audit recorded; Q02 dimension handling and S02 compact synthesis verified offline, S03 direct-submit guidance applied; overall maintenance remains in progress`
+- Current slice: `PR #6 full-scope evidence audit recorded; Q02/S02 first fixes and S04/S05 request construction verified offline; overall maintenance remains in progress`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: `None`
-- Next automatic action: 沿[首轮取证结论](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)推进 S04/S05 请求布局、压缩前后去重及缓存边界，保留36K/0.6；同时建立 Q01/Q03/Q05 的对象—观测—判断—正文/行动离线差异样本。S06与F01/F02依赖上述结果后再改角色/并行结构；Q06/Q07继续查版本来源及实际模型证据。不要重复Q02与S02已完成的离线切片，不以提示/schema改动宣称实测收益；复用已有数据，不以新完整报告为分析前提。
+- Next automatic action: 沿[首轮取证结论](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)推进 Q01/Q03/Q04/Q05 的对象—观测—判断—正文/行动离线差异样本；复用已有事实和成稿。S04/S05请求构造切片已验证，保留36K/0.6，实际缓存命中率尚待最终测量。S06与F01/F02依赖质量差异后再决定角色/并行结构；Q06/Q07继续查版本来源及实际模型证据。不要重复Q02/S02已完成切片，不以提示/schema改动宣称实测收益。
+
+### PR #6 / S04、S05 — 先去重再摘要，稳定输入与动态草稿分开
+
+- 已复现：34,500字符的成功写入与当前草稿完全一致，旧顺序仍调用一次摘要；改为Capability先从原始历史精确投影，再由通用重建器复用/压缩投影后的历史。草稿变化导致旧写入重新相关时，从完整trace重新构造，不能永久删除它；重复请求复用已有摘要。原始trace不改，失败/混合工具/推理/错误来源绑定仍保留。
+- Reporting请求现在为system→任务输入→当前草稿→历史。任务输入单独标记cache_control，原生Anthropic合并相邻user消息时保留块边界；兼容端点仍发送无缓存标记的纯文本。输入每轮重新渲染，变更或恢复不会沿用旧事实。总缓存标记为system 1、任务输入1；system/task board变化仍可导致前缀失效，不能据此推断命中率或MiMo费用收益。
+- 新反例先失败后通过；95项定向测试通过（请求成本3、任务上下文9、通用投影7及受影响compaction/provider/Chief恢复/输入所有权测试）。Ruff、diff检查及全清单脚本当前代码探针通过；此前静态取证JSON保留为首轮快照，不改写历史结论。无真实Provider调用、无完整报告重跑；阈值36K/0.6未改。
+- 未验证：大事实包真实缓存命中和端到端费用；历史投影资格变化时可能需要重新摘要，这是保留恢复语义的代价。S04/S05的请求构造已验证，整体收益仍未验收。
 
 ### PR #6 / 全清单首轮取证（F03/F04）
 
