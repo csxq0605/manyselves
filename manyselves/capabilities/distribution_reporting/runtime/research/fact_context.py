@@ -48,6 +48,8 @@ def render_fact_packet(
         "每条 JSON 数组列为 [证据ID, 子模块(null=未分配), 对象, 原始事实, 来源坐标, 附加字段]。",
         "附加字段省略值：module_id=当前模块，value/unit/observed_at=null，confidence=1.0，needs_confirmation=false，photo_refs=[]；confidence 是解析元数据，不是结论可信概率。",
         "逐项检查异常、缺项与矛盾；只在证据支持范围内概括。未检索到不等于未提供。",
+        "按对象与来源坐标核对正文和行动：记录出现在图证、图片、来源索引或引用列表中，不等于已完成判断。"
+        "原表NG逐对象解释为已核实问题或明确待确认项，不能直接推断器件损坏；不能用‘全体正常’覆盖未处理记录。",
     ]
     if any(item.measurements for item in items):
         lines.append(

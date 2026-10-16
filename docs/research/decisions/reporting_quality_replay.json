@@ -1,0 +1,642 @@
+{
+  "provider_calls": 0,
+  "new_report_runs": 0,
+  "source_run": "full-report-8c70828443b9499d80f8a6bda41c670c",
+  "historical_report_run": "revise-report-8129b20dfb0d4bb9b1574645447375f0",
+  "groups": {
+    "residual_current": {
+      "module": "2.4",
+      "section": "2.4.3.1",
+      "records": 14,
+      "delivered": 14,
+      "section_id_mentions": 10,
+      "narrative_id_mentions": 9,
+      "rows": [
+        {
+          "evidence_id": "E-0028",
+          "evidence_aliases": [
+            "E-0028"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C3;J3:L3"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0031",
+          "evidence_aliases": [
+            "E-0031"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C4;J4:L4"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0034",
+          "evidence_aliases": [
+            "E-0034"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C5;J5:L5"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0037",
+          "evidence_aliases": [
+            "E-0037"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C6;J6:L6"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0042",
+          "evidence_aliases": [
+            "E-0042"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C7;J7:L7"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0045",
+          "evidence_aliases": [
+            "E-0045"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C8;J8:L8"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0048",
+          "evidence_aliases": [
+            "E-0048"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C9;J9:L9"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0052",
+          "evidence_aliases": [
+            "E-0052"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C10;J10:L10"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0055",
+          "evidence_aliases": [
+            "E-0055"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C11;J11:L11"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0058",
+          "evidence_aliases": [
+            "E-0058"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C12;J12:L12"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0062",
+          "evidence_aliases": [
+            "E-0062"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C13;J13:L13"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0065",
+          "evidence_aliases": [
+            "E-0065"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C14;J14:L14"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0068",
+          "evidence_aliases": [
+            "E-0068"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C15;J15:L15"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0071",
+          "evidence_aliases": [
+            "E-0071"
+          ],
+          "source": {
+            "sheet": "低配评估详情",
+            "cell": "C16;J16:L16"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        }
+      ]
+    },
+    "thermal": {
+      "module": "2.2",
+      "section": "2.2.2.1",
+      "records": 13,
+      "delivered": 13,
+      "section_id_mentions": 11,
+      "narrative_id_mentions": 11,
+      "rows": [
+        {
+          "evidence_id": "E-0209",
+          "evidence_aliases": [
+            "E-0208",
+            "E-0209"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A3:K3"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0211",
+          "evidence_aliases": [
+            "E-0210",
+            "E-0211"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A6:K6"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0213",
+          "evidence_aliases": [
+            "E-0212",
+            "E-0213"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A6:K7"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0215",
+          "evidence_aliases": [
+            "E-0214",
+            "E-0215"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A6:K8"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0217",
+          "evidence_aliases": [
+            "E-0216",
+            "E-0217"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A9:K9"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0219",
+          "evidence_aliases": [
+            "E-0218",
+            "E-0219"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A10:K10"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0221",
+          "evidence_aliases": [
+            "E-0220",
+            "E-0221"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A11:K11"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0223",
+          "evidence_aliases": [
+            "E-0222",
+            "E-0223"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A12:K12"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0225",
+          "evidence_aliases": [
+            "E-0224",
+            "E-0225"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A13:K13"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0227",
+          "evidence_aliases": [
+            "E-0226",
+            "E-0227"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A14:K14"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0229",
+          "evidence_aliases": [
+            "E-0228",
+            "E-0229"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A15:K15"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": true,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0231",
+          "evidence_aliases": [
+            "E-0230",
+            "E-0231"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A16:K16"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0233",
+          "evidence_aliases": [
+            "E-0232",
+            "E-0233"
+          ],
+          "source": {
+            "sheet": "红外热成像检测记录表",
+            "cell": "A17:K17"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        }
+      ]
+    },
+    "spd": {
+      "module": "2.3",
+      "section": "2.3.3",
+      "records": 9,
+      "delivered": 9,
+      "section_id_mentions": 4,
+      "narrative_id_mentions": 0,
+      "rows": [
+        {
+          "evidence_id": "E-0079",
+          "evidence_aliases": [
+            "E-0079"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R3:S3"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0088",
+          "evidence_aliases": [
+            "E-0088"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R4:S4"
+          },
+          "input_marked_ng": true,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0097",
+          "evidence_aliases": [
+            "E-0097"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R5:S5"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0106",
+          "evidence_aliases": [
+            "E-0106"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R6:S6"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0115",
+          "evidence_aliases": [
+            "E-0115"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R7:S7"
+          },
+          "input_marked_ng": true,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0124",
+          "evidence_aliases": [
+            "E-0124"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R8:S8"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0133",
+          "evidence_aliases": [
+            "E-0133"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R9:S9"
+          },
+          "input_marked_ng": true,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0142",
+          "evidence_aliases": [
+            "E-0142"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R10:S10"
+          },
+          "input_marked_ng": true,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": true,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        },
+        {
+          "evidence_id": "E-0150",
+          "evidence_aliases": [
+            "E-0150"
+          ],
+          "source": {
+            "sheet": "总配评估详情表",
+            "cell": "R11:S11"
+          },
+          "input_marked_ng": false,
+          "delivered_by_current_packet": true,
+          "source_alias_in_historical_section_including_captions": false,
+          "source_alias_in_historical_narrative": false,
+          "judgment_coverage": "requires_semantic_review",
+          "action_coverage": "requires_object_mapping"
+        }
+      ]
+    }
+  },
+  "known_historical_defect_checks": {
+    "residual_caption_has_E0071_but_narrative_omits_it": true,
+    "residual_narrative_still_says_all_at_most_2_1A_and_overall_OK": true,
+    "spd_all_four_NG_ids_in_captions": true,
+    "spd_narrative_still_limits_confirmed_defects_to_two": true,
+    "spd_action_still_targets_two": true,
+    "thermal_last_two_source_rows_not_cited_in_section": true
+  },
+  "limits": [
+    "Frozen normalized evidence is replayed; original workbooks are not reparsed here.",
+    "Current routing is checked against an old report, not current model output.",
+    "An ID in prose or a caption does not establish correct judgment or action coverage.",
+    "Missing literal IDs do not prove an object is absent under a different name or citation.",
+    "No domain risk threshold is inferred from NG or source-ID presence."
+  ]
+}

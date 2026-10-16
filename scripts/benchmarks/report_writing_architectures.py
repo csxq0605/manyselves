@@ -1,8 +1,9 @@
 """Synthetic architecture microbenchmark: 2 sizes x 2 repeats x (1+2+2) calls.
 
-Not a production full-report benchmark. The experimental ledger intentionally
-retains the measured missing-rule failure: a selection of unknown loses candidate
-rule context. Do not use it as a production diagnosis implementation.
+Not a production full-report benchmark. Ledger v2 retains candidate rules and
+separates missing measurements, missing selections and inapplicable rules. The
+archived v1 model outputs are unchanged; v2 has only offline validation so far.
+Do not use this synthetic ledger as a production diagnosis implementation.
 Not a complete semantic evaluator; passing structural scores is not prose accuracy. Uses production Provider and role bodies,
 same model/observations/rules/answer contract. Never reads customer Inputs.
 """
@@ -125,41 +126,77 @@ FINAL = obj(
 SELECTION = obj({"selections": array(obj({"id": STRING, "rule_id": STRING, "reason": STRING}), 8)})
 
 
-def deterministic_ledger(selection):
+def deterministic_ledger(selection, *, observations=None, rules=None):
+    """Compare explicit synthetic conditions, retaining why a comparison is unknown.
+
+    Candidate rules remain available even when selection says unknown. A missing
+    ambient observation must never erase the existing temperature-rise rule.
+    This is an experiment over supplied rules, not a production rule selector.
+    """
+    observations = OBSERVATIONS if observations is None else observations
+    rules = RULES if rules is None else rules
     rows = []
     for eid in IDS:
-        observation = next((o for o in OBSERVATIONS if o["id"] == eid), None)
+        observation = next((o for o in observations if o["id"] == eid), None)
         choices = [s for s in selection.get("selections", []) if s.get("id") == eid]
         rid = choices[0].get("rule_id") if len(choices) == 1 else None
-        rule = RULES.get(rid)
-        status, comparison = "unknown", "资料、规则或适用条件不完整"
-        if observation and rule and rule["valid"] and observation["condition"] == rule["condition"]:
-            value = Decimal(observation["value"])
+        rule = rules.get(rid)
+        candidates = {
+            key: value for key, value in rules.items()
+            if observation and observation.get("condition") is not None
+            and value["condition"] == observation["condition"] and value["valid"]
+        }
+        missing_inputs = []
+        if observation and observation.get("value") is None:
+            missing_inputs.append("value")
+        if observation and observation.get("ambient") is None and (
+            (rule and rule.get("requires_ambient"))
+            or (candidates and all(r.get("requires_ambient") for r in candidates.values()))
+        ):
+            missing_inputs.append("ambient_temperature")
+        status = "unknown"
+        if observation is None:
+            state, comparison = "missing_observation", "没有该对象的观测记录"
+        elif observation.get("condition") is None:
+            state, comparison = "missing_condition", "观测工况未知，不能判定规则适用性"
+        elif len(choices) > 1:
+            state, comparison = "ambiguous_selection", "同一观测选择了多个规则，需先消解"
+        elif rule is None:
+            state = "rule_not_selected" if candidates else "no_applicable_rule"
+            comparison = "存在候选规则，尚未选定" if candidates else "给定规则集中没有对应工况的现行规则"
+            if missing_inputs:
+                comparison += "；同时缺少观测量：" + ", ".join(missing_inputs)
+        elif not rule["valid"]:
+            state, comparison = "retired_rule", "所选规则已废止；需核对替代版本及其适用性"
+        elif observation["condition"] != rule["condition"]:
+            state, comparison = "inapplicable_rule", "所选规则与观测工况不匹配"
+        elif missing_inputs:
+            state, comparison = "missing_measurement", "规则存在，缺少比较所需观测量：" + ", ".join(missing_inputs)
+        else:
+            value = Decimal(str(observation["value"]))
             unit = observation["unit"]
-            if rule.get("requires_ambient"):
-                if observation.get("ambient") is not None:
-                    value -= Decimal(str(observation["ambient"]))
-                    unit = "K"
+            state, comparison = "incompatible_quantity_or_unit", "物理量或单位不匹配，不能直接比较"
+            thermal_ok = not rule.get("requires_ambient") or (
+                observation.get("quantity") == "measured_temperature" and unit in ("C", "℃")
+                and rule["unit"] == "K"
+            )
+            if rule.get("requires_ambient") and thermal_ok:
+                value -= Decimal(str(observation["ambient"]))
+                unit = "K"
             if unit == "A" and rule["unit"] == "mA":
                 value *= 1000
                 unit = "mA"
-            if unit == rule["unit"]:
+            if thermal_ok and unit == rule["unit"]:
                 status = "abnormal" if value > Decimal(rule["max"]) else "normal"
-                comparison = (
-                    f"{value} {unit} {'>' if status == 'abnormal' else '<='} {rule['max']} {unit}"
-                )
-        rows.append(
-            {
-                "judgment_id": "J-" + eid,
-                "id": eid,
-                "status": status,
-                "evidence_ids": [eid] if observation else [],
-                "rule_ids": [rid] if rule else [],
-                "comparison": comparison,
-                "observation": observation,
-                "rule": rule,
-            }
-        )
+                state = "compared"
+                comparison = f"{value} {unit} {'>' if status == 'abnormal' else '<='} {rule['max']} {unit}"
+        rows.append({
+            "judgment_id": "J-" + eid, "id": eid, "status": status,
+            "evidence_ids": [eid] if observation else [],
+            "rule_ids": [rid] if rule else [], "comparison": comparison,
+            "comparison_state": state, "missing_inputs": missing_inputs,
+            "candidate_rules": candidates, "observation": observation, "rule": rule,
+        })
     return rows
 
 
@@ -232,6 +269,7 @@ async def main():
         "cases": [],
         "attempts": 0,
         "explicit_quantity": typed,
+        "ledger_version": 2,
     }
 
     def save():
@@ -342,7 +380,7 @@ async def main():
                         selection = await call(
                             entry,
                             "select_rules",
-                            full + "\n先为每个观测选择适用规则ID，无法确定填unknown，不写报告。",
+                            full + "\n先按对象和工况选择适用规则ID；缺测量值不等于缺规则。无法确定适用性填unknown，不写报告。",
                             SELECTION,
                         )
                         ledger = deterministic_ledger(selection)
@@ -368,7 +406,8 @@ async def main():
                             )
                     entry.update(
                         result=result,
-                        errors=score(result) if live else [],
+                        errors=score(result) if live else None,
+                        evaluated=live,
                         wall_seconds=time.perf_counter() - start,
                     )
                     save()
@@ -376,7 +415,7 @@ async def main():
                         json.dumps(
                             {
                                 k: entry[k]
-                                for k in ("repeat", "size", "arm", "errors", "wall_seconds")
+                                for k in ("repeat", "size", "arm", "evaluated", "errors", "wall_seconds")
                             },
                             ensure_ascii=False,
                         ),
