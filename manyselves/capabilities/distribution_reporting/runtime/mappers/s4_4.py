@@ -690,12 +690,15 @@ def _missing_sheet_gap(sheet: str, submodule_id: str) -> MappingGap:
 def map_s4_4(path: Path, *, file_id: str) -> MappingResult:
     path = Path(path)
     workbook = load_workbook(path, read_only=False, data_only=False)
-    value_workbook = load_workbook(path, read_only=True, data_only=True)
+    # Both views must derive their bounds from actual cells, not optional XLSX
+    # dimension metadata. Normal mode also supports repeated coordinate reads
+    # below without rescanning a streaming worksheet for each measurement.
+    value_workbook = load_workbook(path, read_only=False, data_only=True)
     try:
         evidence = []
         gaps: list[MappingGap] = []
         # Do not equate an uncalculated formula with an empty measurement. Reuse
-        # the already-open workbooks and stream cached cells once per sheet.
+        # the already-open workbooks and inspect cached cells once per sheet.
         for sheet in workbook.worksheets:
             for row, cached in zip(sheet.iter_rows(), value_workbook[sheet.title].iter_rows(), strict=True):
                 for cell, cached_cell in zip(row, cached, strict=True):

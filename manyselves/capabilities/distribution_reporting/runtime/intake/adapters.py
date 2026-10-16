@@ -79,11 +79,13 @@ def _parse_image(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
 
 def _parse_workbook(path: Path, manifest: ManifestFile) -> list[ParsedArtifact]:
     # Raw cells are observations, not an inferred header/value schema. Normal
-    # mode exposes merge ranges; the second stream supplies cached formula values.
+    # mode exposes merge ranges. Load cached values in normal mode too: a
+    # read-only stream trusts optional/stale worksheet dimension metadata and
+    # can yield a different row shape or omit cells present in the formula view.
     workbook = load_workbook(path, read_only=False, data_only=False)
     artifacts: list[ParsedArtifact] = []
     try:
-        values = load_workbook(path, read_only=True, data_only=True)
+        values = load_workbook(path, read_only=False, data_only=True)
         try:
             for sheet in workbook.worksheets:
                 cached_rows = values[sheet.title].iter_rows()

@@ -1,9 +1,12 @@
 """Synthetic intake regressions: preserve observations, surface unreadable data."""
 
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from zipfile import ZipFile
 
+import pytest
 from docx import Document
 from openpyxl import Workbook
 
@@ -148,6 +151,53 @@ def test_cached_formula_zero_is_a_value_and_formula_error_is_a_gap(tmp_path):
     assert not any(gap.get("cell") == "B2" for gap in context.mapping_gaps)
     assert any(gap.get("reason") == "formula_result_error" and gap["cell"] == "B3"
                for gap in context.mapping_gaps)
+
+
+@pytest.mark.parametrize("dimension", [None, "A1:A1", "A1:Z100"])
+@pytest.mark.parametrize("specialized", [False, True])
+def test_workbook_dimension_metadata_cannot_drop_observations_or_formula_gaps(
+    tmp_path, dimension, specialized,
+):
+    path = tmp_path / ("S4-4.xlsx" if specialized else "measurements.xlsx")
+    sheet = Workbook().active
+    sheet.title = "红外热成像检测记录表"
+    sheet.append(["标题"])
+    sheet.merge_cells("A1:B1")
+    for row, value in ((3, "=30+5"), (4, "=1+2"), (5, "=1/0")):
+        for column, item in {1: "A房", 2: 20, 4: f"柜{row}", 6: "端子", 7: value}.items():
+            sheet.cell(row, column, item)
+    sheet.parent.save(path)
+    with ZipFile(path) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    key = "xl/worksheets/sheet1.xml"
+    entries[key] = entries[key].replace(b"<f>30+5</f><v></v>", b"<f>30+5</f><v>35</v>")
+    entries[key] = entries[key].replace(
+        b'<c r="G5"><f>1/0</f><v></v></c>',
+        b'<c r="G5" t="e"><f>1/0</f><v>#DIV/0!</v></c>',
+    )
+    entries[key] = re.sub(
+        rb'<dimension\b[^>]*/>',
+        b"" if dimension is None else f'<dimension ref="{dimension}"/>'.encode(),
+        entries[key],
+    )
+    with ZipFile(path, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    context = _normalize(tmp_path, path)
+    assert not any(gap.get("code") == "file_parse_failed" for gap in context.mapping_gaps)
+    assert context.evidence_items
+    if specialized:
+        measured = [m.value for e in context.evidence_items for m in e.measurements
+                    if m.quantity == "measured_temperature"]
+        assert measured == [35.0, 35.0]
+    else:
+        assert any("G3=35" in item.fact for item in context.evidence_items)
+        artifacts = IntakeAdapterRegistry().parse(path, _manifest(path))
+        assert any(a.payload.get("merged_ranges") == ["A1:B1"] for a in artifacts)
+    gaps = {(gap.get("code", gap.get("reason")), gap.get("cell"))
+            for gap in context.mapping_gaps}
+    assert ("formula_result_unavailable", "G4") in gaps
+    assert ("formula_result_error", "G5") in gaps
 
 
 def test_thermal_uses_only_real_merged_ranges_even_across_room_change():
