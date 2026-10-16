@@ -106,7 +106,7 @@ class _JointScript:
             if contract.phase == "initial":
                 findings = (
                     []
-                    if self.mode == "empty"
+                    if self.mode in {"empty", "relation"}
                     else [_finding("2.2", advisory=self.mode == "advice")]
                 )
                 if self.mode == "swap":
@@ -117,6 +117,17 @@ class _JointScript:
                     "findings": findings,
                     "synthesis_inputs": [],
                 }
+                if self.mode == "relation":
+                    payload["synthesis_inputs"] = [{
+                        "id": "S-merged", "related_module_ids": ["2.1", "2.2"],
+                        "cluster_type": "same-condition verification",
+                        "causal_chain": "Two synthetic observations require the same operating condition before comparing their stated values.",
+                        "decision_implication": "Coordinate verification of both measurements before any change of priority.",
+                        "verification_method": "Confirm both observations under condition A; no threshold is inferred.",
+                        "module_statement_refs": ["2.1.1", "2.2.1.1"],
+                        "confidence_and_boundary": "Condition A only; the relationship is not established under condition B.",
+                        "target_report_section_ids": ["3.2"], "evidence_refs": ["E-0001"],
+                    }]
             else:
                 # Swapping values satisfies each old peer independently; the joint snapshot must expose both edits.
                 if self.mode == "swap" and len(self.snapshots) == 2:
@@ -212,13 +223,22 @@ class _JointScript:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["empty", "advice", "local_advice", "swap", "regression", "escalate"])
+@pytest.mark.parametrize("mode", ["empty", "advice", "local_advice", "relation", "swap", "regression", "escalate"])
 async def test_joint_cross_closes_only_the_current_merged_snapshot(tmp_path: Path, mode: str):
     _, registry = load_distribution_reporting_capability()
     register_cross_owner_pipeline_specializations(registry)
     workflow = registry.require(DefinitionKind.WORKFLOW, "distribution-cross-joint-review")
     plan = WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
     runtime = CrossOwnerRuntime(tmp_path)
+    if mode == "relation":
+        from manyselves.capabilities.distribution_reporting.runtime.source_ledger import (
+            SourceLedger,
+        )
+
+        SourceLedger(tmp_path, "joint-swap").register_project(
+            "E-0001", "Synthetic observations", "Inputs/synthetic.txt",
+            "Two observations require verification under the same condition A.",
+        )
     script = _JointScript(mode)
     state = WorkflowState.for_plan(
         "joint-swap", plan, initial_variables={"reporting-state": _state(tmp_path)}
@@ -297,6 +317,20 @@ async def test_joint_cross_closes_only_the_current_merged_snapshot(tmp_path: Pat
         assert local_completion.resolved_finding_ids == []
         assert local_completion.verdict_refs == []
         assert script.snapshots[-1].module_revisions["2.2"] == 1
+    elif mode == "relation":
+        from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+            latest_cross_synthesis,
+        )
+
+        _, artifacts = load_current_review_completion(
+            workspace=tmp_path, run_id="joint-swap", completion_ref=result["cross_review_completion_ref"],
+            lifecycle="cross", reviewer_agent_id="cross-relation-reviewer", reviewer_session_key="cross-joint",
+        )
+        restored = latest_cross_synthesis(artifacts)
+        assert restored == result["cross_synthesis_inputs"]
+        assert len(restored[0].model_dump()) == 10
+        assert restored[0].evidence_refs == ["E-0001"]
+        assert "condition B" in restored[0].confidence_and_boundary
 
 
 @pytest.mark.asyncio

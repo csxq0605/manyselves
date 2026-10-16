@@ -39,6 +39,7 @@ limits:
 <tools_and_loop>
 当前章节、phase、正文增量、未变哈希、review_focus、findings、responses 和输出形状完全服从 final_chapter_lane_input 与工具 Schema。
 source_refs 中 CrossDecisionPack 的 deferred_advisories 只是未实施的可选建议；未采用建议本身不构成成稿缺陷。若当前成稿另有实质错误，应以当前正文及依据提出独立 finding，不能直接把建议当成已确认问题。
+第三章的 Cross 综合材料使用合并后的紧凑字段；检查最终正文是否保留关系、依赖、验证条件与边界，不以未重复列出旧字段作为缺陷。
 </tools_and_loop>
 <collaboration>
 finding 只归属当前 Chief lane；作者响应不等于关闭。
@@ -52,3 +53,5 @@ assigned lane 忠实、完整、连贯、可追溯且可交付；不把其它章
 <deliverables>
 只提交当前 contract 允许的 finding 或 verdict 结果；完成状态由工作流推导。
 </deliverables>
+
+完成必要核查后直接调用 submit_result，结论与证据写入对应结构化字段；不要先输出一份完整自然语言审查报告再在工具参数中重复提交。需要查证时仍使用当前开放工具，材料不足时如实保留缺口。

@@ -30,6 +30,13 @@
 - Blockers: `None`
 - Next automatic action: 按 [PR #6 指导清单](PR6_REPORTING_IMPROVEMENT_GUIDE.md)先完成证据与依赖核查：S02/S03 的 Cross 综合职责及重复提交，随后覆盖 S04–S06 的摘要/缓存/作者开销及 Q01–Q07 的正确性缺口，形成 F03 的旧问题→当前路径→剩余工作的完整对应。Q02 缺 dimension 读取问题先保留最小复现。沿清单决定完整链路改动，不重复 S01 已完成子项，也不以其测试替代总目标。复用已有数据，不以新完整报告为前提；36K/0.6 在有代表性证据前保持不变，判断优先原型尚不能推广。
 
+### PR #6 / S02、S03 — 精简审查综合材料并明确直接提交
+
+- S02 将 CrossSynthesisInput 从 15 个必填字段收敛为 10 个：root_causes/propagation_steps 合入 causal_chain，action_dependencies/joint_actions 合入 decision_implication，acceptance_criteria 合入 verification_method；保留关系 ID、模块与正文定位、证据、目标章节、置信与适用边界。没有取消必要接口缺陷的作者修订，也没有增加写作 Agent；最终叙事仍由 Chief 展开，Final 核对语义保留。
+- 同步 Pydantic 合同、实际 submit_result Schema、Cross/Chief/Final 提示。既有已保存的 15 字段材料在加载时把明细逐字保留到相应紧凑字段，不重写原工件；再次序列化/恢复不重复追加。新模型输出不再要求五组重复列表；不设置会截断条件/来源的字符上限。
+- S03 依据已有 13 次合成请求中 8,092 字符正文与 7,940 字符紧凑 JSON 提交参数，要求模块审计、联合 Cross、Final 完成必要核查后直接 submit_result，避免先输出完整审查报告再重复提交。没有删除内部推理或必要查证；提示改动本身尚不能证明实际模型会减少多少输出。
+- 先以紧凑材料无法通过旧合同复现失败；新用例覆盖 Chief/Final 消费、旧记录无损恢复和真实 Provider Schema。受影响组 **77 passed**；另新增非空紧凑关系的真实联合 Cross Workflow/完成记录恢复用例 **1 passed**（其余8例未重跑，前一组已覆盖）。Ruff 通过，无 Provider 调用。S02 合同与消费链离线闭合、S03 指导接入；新输出量、专业内容质量和整份报告收益仍未实测。
+
 ### PR #6 / Q02 — 不可信 Excel 尺寸声明导致整表丢失
 
 - 在通用 intake 和 S4-4 路径加入缺失、过小、过大 dimension 的六个合成用例；修改前确认通用路径把文件整体标成 file_parse_failed。根因是公式视图普通模式与缓存值只读模式的行/列边界不一致，strict zip 抛错，错误尺寸还可能限制读取范围。

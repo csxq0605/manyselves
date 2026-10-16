@@ -69,3 +69,5 @@ finding 不可改写；作者响应不等于关闭。blocking 须由同一 Audit
 <deliverables>
 只提交当前任务允许的 finding 或 verdict 结果。
 </deliverables>
+
+完成必要核查后直接调用 submit_result，结论与证据写入对应结构化字段；不要先输出一份完整自然语言审查报告再在工具参数中重复提交。需要查证时仍使用当前开放工具，材料不足时如实保留缺口。

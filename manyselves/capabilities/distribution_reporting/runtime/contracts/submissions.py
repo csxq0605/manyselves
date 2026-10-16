@@ -21,9 +21,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 
 FIELD_GUIDANCE: dict[str, str] = {
     "action": "Stage-specific action selected from the declared enum; use exactly one allowed value.",
-    "action_dependencies": "Ordered or conditional implementation dependencies supported by reviewed evidence.",
-    "joint_actions": "Cross-owner actions that must be implemented as one coordinated package.",
-    "acceptance_criteria": "Observable joint acceptance criteria for the complete relationship.",
     "agent_id": "Canonical responsibility Agent id assigned by the workflow.",
     "allowed_outputs": "Submission kinds this task is permitted to return.",
     "allowed_tools": "Tool names available to the assigned Agent for this task.",
@@ -35,10 +32,8 @@ FIELD_GUIDANCE: dict[str, str] = {
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
-    "causal_chain": "Evidence-bounded causal, dependency, or propagation chain connecting reviewed modules.",
+    "causal_chain": "One supported relationship with its preconditions and ordered links; do not repeat it in report-length prose.",
     "cluster_type": "Evidence-based label for the supported cross-module relationship.",
-    "root_causes": "Evidence-bounded common causes or preconditions shared across modules.",
-    "propagation_steps": "Ordered mechanism or dependency steps across the related modules.",
     "module_statement_refs": "Existing module or submodule refs proving every local link is already written back.",
     "confidence_and_boundary": "Confidence, missing evidence, and inference limits for the relationship.",
     "target_report_section_ids": "Final synthesis sections that must account for a supported Cross input.",
@@ -62,7 +57,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "coverage_ref": "Current-run immutable coverage artifact consumed by this exact authoring task.",
     "data_gap_analysis": "Final report section 3.1.3 body explaining evidence gaps, impact, and collection priority.",
     "decision": "Main exception decision for escalated findings only.",
-    "decision_implication": "Why a supported cross-module relationship changes priority, sequencing, or residual risk.",
+    "decision_implication": "Concise decision consequence, including necessary action dependencies or coordination supported by the modules; Chief expands the final explanation.",
     "description": "Human-readable contract or Skill description matching the submitted content.",
     "discovery_summary": "Complete evidence-bounded discovery summary for the assigned scope.",
     "dispositions": "One answered or explicitly unresolved disposition for every exact inbox request.",
@@ -201,7 +196,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "unresolved_questions": "Concrete module evidence questions that remain unresolved and visible.",
     "verdict": "Original reviewer decision for one immutable finding: resolved, open, or escalate.",
     "verdicts": "Exactly one reviewer verdict for every required prior finding id.",
-    "verification_method": "Joint acceptance or monitoring method for a supported Cross synthesis input.",
+    "verification_method": "Joint verification method and observable acceptance conditions in one statement, preserving applicable conditions without inventing thresholds.",
     "finding_ids": "Escalated immutable finding ids covered by one Main exception decision.",
 }
 
