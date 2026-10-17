@@ -3,8 +3,6 @@
 from pathlib import Path
 from typing import Any
 
-from openpyxl import load_workbook
-
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     resolve_submodule,
@@ -14,7 +12,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     MappingResult,
 )
 
-from .common import dispimg_refs, make_evidence
+from .common import cached_formula_workbook, dispimg_refs, make_evidence
 
 _PATH_ALIASES = (
     ("配电系统负荷分配与过载风险", "2.1.1"),
@@ -101,10 +99,9 @@ def _submodule_from_conclusion(path_value: Any, observation: str) -> str | None:
 
 def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
     path = Path(path)
-    workbook = load_workbook(path, read_only=False, data_only=False)
-    try:
+    with cached_formula_workbook(path) as (workbook, formula_gaps):
         evidence = []
-        gaps: list[MappingGap] = []
+        gaps: list[MappingGap] = list(formula_gaps)
         if "评估信息汇总表" in workbook.sheetnames:
             sheet = workbook["评估信息汇总表"]
             for row in range(4, sheet.max_row + 1):
@@ -249,5 +246,3 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                     )
                 )
         return MappingResult(evidence_items=evidence, gaps=gaps)
-    finally:
-        workbook.close()

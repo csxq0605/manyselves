@@ -2,9 +2,14 @@
 
 import hashlib
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from openpyxl import Workbook, load_workbook
+
+from manyselves.capabilities.distribution_reporting.runtime.models.preparation import MappingGap
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
     EvidenceMeasurement,
@@ -21,6 +26,45 @@ def dispimg_refs(*values: Any) -> list[str]:
             continue
         refs.extend(match.group(1) for match in _DISPIMG_PATTERN.finditer(value))
     return list(dict.fromkeys(refs))
+
+
+@contextmanager
+def cached_formula_workbook(path: Path) -> Iterator[tuple[Workbook, list[MappingGap]]]:
+    """Resolve saved scalar results in memory, retaining DISPIMG for photo binding.
+
+    Both views derive dimensions from cells. Missing/error caches remain gaps,
+    even if an unresolved routing cell prevents its row from becoming evidence.
+    The source workbook is never saved or recalculated.
+    """
+    workbook = load_workbook(path, read_only=False, data_only=False)
+    try:
+        values = load_workbook(path, read_only=False, data_only=True)
+        gaps = []
+        try:
+            for sheet in workbook.worksheets:
+                cached_sheet = values[sheet.title]
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        if cell.data_type != "f" or dispimg_refs(cell.value):
+                            continue
+                        cached = cached_sheet.cell(cell.row, cell.column)
+                        if cached.value is None or cached.data_type == "e":
+                            error = cached.data_type == "e"
+                            detail = f"；缓存错误={cached.value}" if error else ""
+                            gaps.append(MappingGap(
+                                code="formula_result_error" if error else "formula_result_unavailable",
+                                message=f"公式缺少可用缓存结果：{sheet.title}!{cell.coordinate}；{cell.value}{detail}",
+                                sheet=sheet.title,
+                                cell=cell.coordinate,
+                            ))
+                            cell.value = None
+                        else:
+                            cell.value = cached.value
+        finally:
+            values.close()
+        yield workbook, gaps
+    finally:
+        workbook.close()
 
 
 def evidence_id(

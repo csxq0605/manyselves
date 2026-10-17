@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 uploaded 14-Skill audit and 316-fact replay complete offline; current official standards, remaining Knowledge semantics and actual model quality/performance remain unaccepted`
+- Current slice: `PR #6 Q02 S2-1/S4-6 formula-cache fidelity fixed and 316 uploaded facts preserved; official standards, remaining Knowledge semantics and actual model quality/performance remain unaccepted`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 继续按17项清单验证逐对象判断、正文与行动语义。原14份逐份核查与知识库具体冲突见下方上传材料审计；继续核查余下专业规则与输入适用条件，官方域名配置发布后核验标准状态与条款；实际模型配置明确后做代表性质量/缓存/token/墙钟对照，不以完整报告重跑作为分析前置条件。已验证的读取、上下文、Cross、成功写入及审计来源映射不重复；不以来源绑定冒充语义覆盖。
+- Next automatic action: 继续按17项清单验证逐对象判断、正文与行动语义。原14份逐份核查与知识库具体冲突见下方上传材料审计；继续核查余下专业规则与输入适用条件，官方域名配置发布后核验标准状态与条款；实际模型配置明确后做代表性质量/缓存/token/墙钟对照，不以完整报告重跑作为分析前置条件。已验证的dimension及S2-1/S4-6公式缓存读取、上下文、Cross、成功写入及审计来源映射不重复；不以来源绑定冒充语义覆盖。
+
+### PR #6 / Q02 — 收资与汇总表公式缓存读取
+
+- 生产准备入口反例复现：S2-1将公式表达式当作具备/有效性值；S4-6分类编号由公式计算时直接漏掉有缓存结果的汇总行。未缓存公式与计算错误也未进入缺口。新增9个用例覆盖两表、三类dimension、文字/零/布尔结果、不可用分类、缺备注及图片公式；先确认失败后修复（图片用例先补齐真实OOXML图片关系，再确认分类公式漏行）。
+- 两个映射器共用Capability内的缓存读取上下文：普通模式读取原单元格及已保存结果，原始文件不重算不写回；缺缓存/错误作为定位缺口，不能当结论。DISPIMG仍交既有图片绑定处理。S2-1未知分类不再沿用上一类别，备注等已知读取缺口保留needs_confirmation；S4-6依旧是需复核的既有评估。
+- 47项定向测试通过（新公式9、intake16及受影响准备/持久化/所有权22），Ruff/diff通过。上传三表再次映射25/208/83条，共316条全部与旧归档匹配，已有缺口不变、原文件字节不变。修复的是支持公式输入的生产路径；不据此声称上传样本此前有公式漏行。
+- 剩余限制：仅使用文件已保存缓存，不能判断缓存是否过期或执行Excel重算；第二份普通模式工作簿增加内存，大工作簿未基准测量。图片内容/OCR与其余格式完整性仍未验收。没有Provider请求或完整报告重跑。
 
 ### PR #6 / Q01、Q03、Q06、Q07、S01 — 上传原始材料核查
 
@@ -61,7 +68,7 @@
 | S05 | 稳定输入与草稿分块，原生/兼容序列化验证 | system变化仍会失效；实际缓存/费用待测 |
 | S06 | 成功写入无需固定列举；实际作者紧凑提交与Runtime整段绑定已核实 | 已纠正“作者重复输出Claims”的推论；保留恢复与并行4，拆2.4尚无收益证据 |
 | Q01 | 冻结事实36项回放；上传三表316条当前映射事实与旧归档匹配，送达14/13/9 | 新正文语义覆盖尚未生成核验 |
-| Q02 | 六类dimension反例修复，公式缺缓存/错误保留 | 大表内存、OCR及其他映射器不在已验证范围 |
+| Q02 | dimension及S2-1/S4-6公式缓存修复，缺缓存/错误/零值与图片绑定验证；上传316条不变 | 缓存新鲜度、Excel重算、大表内存、OCR及其他格式未验收 |
 | Q03 | 数值/单位/温升边界反例；原型缺规则上下文修复 | 原型未推广；实际规则适用与自由正文语义 |
 | Q04 | 联合共同快照；同条件矛盾/异条件合理差异离线反例 | 未新增未经证实的共享专业判断机制 |
 | Q05 | 图证/正文/行动分开回放；初审/复审传递来源类型与当前小节绑定 | 精确E-ID绑定仍不是逐对象判断/行动语义；不自动产生门禁 |
