@@ -1,0 +1,10 @@
+id: accept-joint-cross-exception
+version: 1.0.0
+description: accept joint cross exception
+implementation: capability:distribution-reporting:accept-joint-cross-exception
+input_contract: reporting_tool_input
+output_contract: declarative_cross_joint_runtime_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

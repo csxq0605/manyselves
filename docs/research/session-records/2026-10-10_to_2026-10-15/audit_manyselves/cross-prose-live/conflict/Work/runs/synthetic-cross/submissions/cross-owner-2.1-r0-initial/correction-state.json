@@ -1,0 +1,57 @@
+{
+  "kind": "submission_correction_state",
+  "run_id": "synthetic-cross",
+  "task_id": "cross-owner-2.1-r0-initial",
+  "revision": 0,
+  "status": "resolved",
+  "accepted": true,
+  "submission_kind": "cross_owner_finding_submission",
+  "raw_payload": {
+    "kind": "cross_owner_finding_submission",
+    "owner_module_id": "2.1",
+    "coverage": {
+      "module_id": "2.1",
+      "checked_dimensions": [
+        "terminology",
+        "facts",
+        "risk_levels",
+        "dependencies",
+        "propagation",
+        "joint_verification"
+      ]
+    },
+    "findings": [
+      {
+        "id": "CX-2.1-001",
+        "owner_module_id": "2.1",
+        "target_submodule_ids": [
+          "2.1.1"
+        ],
+        "related_module_ids": [
+          "2.2"
+        ],
+        "category": "facts",
+        "impact": "blocking",
+        "observation": "2.1.1 与 2.2.1.1 描述同一对象 T、同一时点 2026-01-01、同一工况 A、同一读数 16.58 mA，且引用的判据相同（工况 A 读数 >10 mA 为异常）。但 2.1.1 结论为“异常”，2.2.1.1 结论为“正常”。按该判据 16.58 mA > 10 mA 应判异常，因此 2.2.1.1 的结论与其自身判据不符，两模块对同一事实的结论直接冲突。",
+        "evidence_refs": [
+          "Work/runs/synthetic-cross/modules/2.1-r0.json#2.1.1",
+          "Work/runs/synthetic-cross/modules/2.2-r0.json#2.2.1.1"
+        ],
+        "required_change": "2.1.1 须保持其“异常”结论并明确写出判据依据（工况 A，>10 mA 为异常，16.58 mA 超阈值）；同时在模块内注明该结论与 2.2.1.1 的“正常”表述存在冲突，待 2.2 修正或由共同证据裁定后方可作为联合结论引用。不得在本模块内改写 2.2 的结论。",
+        "reviewer_checks": [
+          "2.1.1 明确给出对象 T、工况 A、16.58 mA、阈值 10 mA 及“异常”结论的对应关系。",
+          "2.1.1 显式指出与 2.2.1.1“正常”结论的冲突，并标注待裁定状态。",
+          "2.1.1 未将 2.2 的“正常”结论作为依据引用，且未使用工况 B 的 20 mA 阈值替代工况 A。",
+          "2.2 修正后，两侧对 T 在工况 A 下的结论一致，或冲突标注保留为未解决问题。"
+        ]
+      }
+    ],
+    "synthesis_inputs": []
+  },
+  "transport_normalization": null,
+  "correction_mode": "none",
+  "validation_errors": [],
+  "affected_part_ids": [],
+  "validation_failures": 1,
+  "fingerprint_occurrences": 0
+}

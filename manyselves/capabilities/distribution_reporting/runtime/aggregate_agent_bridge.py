@@ -18,6 +18,7 @@ from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     AgentResult,
     EditedReportSubmission,
+    TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     AggregateEditorInput,
@@ -36,6 +37,8 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+
+from .task_context import bind_task_context
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
@@ -57,6 +60,7 @@ class AggregateEditorAgentBridge:
         session_factory: SessionFactory,
         workflow_id: str = "distribution-aggregate-existing-tail",
         completed_result_loader: CompletedResultLoader | None = None,
+        envelope: TaskEnvelope | None = None,
         terminal_sender: str | None = None,
         terminal_task_id: str | None = None,
         terminal_task_attempt_id: str | None = None,
@@ -68,6 +72,7 @@ class AggregateEditorAgentBridge:
         self.session_factory = session_factory
         self.workflow_id = workflow_id
         self.completed_result_loader = completed_result_loader
+        self.envelope = envelope
         self.terminal_sender = terminal_sender
         self.terminal_task_id = terminal_task_id
         self.terminal_task_attempt_id = terminal_task_attempt_id
@@ -196,8 +201,16 @@ class AggregateEditorAgentBridge:
                 }
             )
 
+        projection = (
+            bind_task_context(
+                session.loop, self.workspace, self.envelope,
+                output_contract=task.output_contract,
+                render_prompt=lambda: self._prompt(agent, task, contract),
+            ) if self.envelope is not None else None
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, contract),
+            content=(projection.initial_message() if projection is not None
+                     else self._prompt(agent, task, contract)),
             message_id=f"{task_id}:{contract.run_id}:initial",
             workflow_id=self.workflow_id,
             run_id=contract.run_id,
@@ -236,6 +249,7 @@ class AggregateEditorAgentBridge:
                 task,
                 contract,
                 event_kind,
+                include_context=projection is None,
             ),
             result_decoder=self._decode_result,
             recovery=self.recovery_driver,
@@ -255,6 +269,8 @@ class AggregateEditorAgentBridge:
         task: TaskDefinition,
         contract: AggregateEditorInput,
         event_kind: Any,
+        *,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         return "\n\n".join(
@@ -262,7 +278,8 @@ class AggregateEditorAgentBridge:
                 f"<{event_name}>",
                 "继续当前 Aggregate Editor 会话，复用已完成的分析和工具结果；"
                 "立即调用 submit_result 提交符合 output contract 的类型化汇总。",
-                self._prompt(agent, task, contract),
+                (self._prompt(agent, task, contract) if include_context
+                 else "当前任务输入与最新稿件由 typed_task_state 提供。"),
                 f"</{event_name}>",
             )
         )

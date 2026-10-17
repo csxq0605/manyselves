@@ -115,6 +115,42 @@ class EvidenceResearchMemory:
             self._save(payload)
             return EvidenceItem.model_validate(raw)
 
+    def remember_page(
+        self, context: dict, items: list[EvidenceItem], total_matches: int,
+    ) -> None:
+        """Persist the exact query page, separately from legacy top-k caches."""
+        with self._lock:
+            payload = self._load()
+            evidence = payload.setdefault("evidence", {})
+            for item in items:
+                evidence[item.id] = item.model_dump(mode="json")
+            pages = payload.setdefault("query_pages", [])
+            pages[:] = [page for page in pages if page.get("context") != context]
+            pages.append({
+                "context": context, "total_matches": total_matches,
+                "evidence_ids": [item.id for item in items],
+            })
+            self._save(payload)
+
+    def recall_page(self, context: dict) -> tuple[list[EvidenceItem], int] | None:
+        with self._lock:
+            payload = self._load()
+            metrics = payload.setdefault("metrics", {})
+            metrics["query_calls"] = int(metrics.get("query_calls", 0)) + 1
+            evidence = payload.get("evidence", {})
+            for page in payload.get("query_pages", []):
+                if page.get("context") != context:
+                    continue
+                ids = page.get("evidence_ids", [])
+                if any(source_id not in evidence for source_id in ids):
+                    continue
+                metrics["cache_hits"] = int(metrics.get("cache_hits", 0)) + 1
+                self._save(payload)
+                return [EvidenceItem.model_validate(evidence[source_id]) for source_id in ids], page["total_matches"]
+            metrics["index_searches"] = int(metrics.get("index_searches", 0)) + 1
+            self._save(payload)
+            return None
+
     @property
     def evidence_ids(self) -> list[str]:
         with self._lock:

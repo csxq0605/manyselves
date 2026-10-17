@@ -10,6 +10,8 @@ results are one indivisible :class:`AtomicToolUnit`.
 from __future__ import annotations
 
 import inspect
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, Sequence, runtime_checkable
 
@@ -209,6 +211,92 @@ class RebasedContext:
         return self.tool_definitions
 
 
+class TaskContextRebuilder:
+    """Reconstruct one current task without resetting its durable conversation.
+
+    The Capability owns ``render_state``. This class only separates its exact
+    current state from the active task's protocol history. Compaction applies
+    to that history; repeated dispatches reuse the compacted working copy.
+    """
+
+    def __init__(
+        self, task_key: str, render_state: Callable[[], str],
+        *, project_history: Callable[[list[LLMMessage]], list[LLMMessage]] | None = None,
+        render_prefix: Callable[[], str] | None = None,
+    ):
+        self.render_state = render_state
+        self.project_history = project_history
+        self.render_prefix = render_prefix
+        self.boundary = "<typed_task_state>\n" + json.dumps({"task_key": task_key}) + "\n"
+        self._source_tail: list[LLMMessage] = []
+        self._working_tail: list[LLMMessage] = []
+
+    def initial_message(self) -> str:
+        prefix = self.render_prefix() + "\n\n" if self.render_prefix else ""
+        return self.boundary + prefix + self.render_state() + "\n</typed_task_state>"
+
+    async def rebuild(
+        self,
+        messages: Sequence[LLMMessage],
+        tool_definitions: Sequence[dict[str, Any]] | None = None,
+        *,
+        loop: Any,
+        **kwargs: Any,
+    ) -> RebasedContext:
+        if not messages:
+            return RebasedContext(messages=[], tool_definitions=list(tool_definitions or ()))
+        boundary = None
+        for index, message in enumerate(messages):
+            if message.role != "user" or not str(message.content or "").startswith("<typed_task_state>\n"):
+                continue
+            if message.content.startswith(self.boundary):
+                if boundary is None:
+                    boundary = index
+            else:
+                boundary = None
+        # A newly bound task is always dispatched with its initial capsule.
+        # Never use a previous task's forensic history as fallback evidence.
+        # On same-task restart the bridge emits another capsule: replace it,
+        # but keep completed exchanges since this contiguous task began.
+        source_tail = [
+            message for message in messages[boundary + 1:]
+            if not (message.role == "user" and str(message.content or "").startswith(self.boundary))
+        ] if boundary is not None else []
+        # Render before projection so the Capability can compare writes with
+        # the exact current state. Keep stable inputs before mutable state for
+        # providers that support prefix caching; both remain authoritative.
+        if self.render_prefix is None:
+            state_messages = [LLMMessage(role="user", content=self.initial_message())]
+        else:
+            prefix = self.render_prefix()
+            state = self.render_state()
+            state_messages = [
+                LLMMessage(role="user", content=self.boundary + prefix + "\n</typed_task_state>",
+                           cache_control=True),
+                LLMMessage(role="user", content="<current_task_state>\n" + state + "\n</current_task_state>"),
+            ]
+        # Compare projected source histories, not forensic histories. If a
+        # formerly redundant exchange becomes relevant again, reconstruct from
+        # source instead of silently retaining an obsolete compacted view.
+        if self.project_history:
+            source_tail = self.project_history(source_tail)
+        if source_tail[:len(self._source_tail)] == self._source_tail:
+            tail = [*self._working_tail, *source_tail[len(self._source_tail):]]
+        else:
+            tail = source_tail
+        # The working-memory threshold governs transient history here. Exact
+        # task state is added afterwards and protected by the existing typed
+        # context-window check. A large mandatory packet must not itself cause
+        # a fresh history summary on every subsequent tool call.
+        compacted = await loop._compact_working_memory_async([messages[0], *tail])
+        working_tail = list(compacted[1:])
+        self._source_tail = source_tail
+        self._working_tail = working_tail
+        projected = [messages[0], *state_messages, *working_tail]
+        return RebasedContext(messages=projected, tool_definitions=list(tool_definitions or ()),
+                              dropped_message_count=max(0, len(messages) - len(projected)))
+
+
 @runtime_checkable
 class ContextRebuilder(Protocol):
     """Protocol accepted by :class:`~manyselves.runtime.loops.agent_loop.AgentLoop`.
@@ -296,6 +384,7 @@ __all__ = [
     "AtomicToolUnit",
     "ContextRebuilder",
     "RebasedContext",
+    "TaskContextRebuilder",
     "atomic_tool_units",
     "invoke_rebuilder",
     "normalize_rebased_context",

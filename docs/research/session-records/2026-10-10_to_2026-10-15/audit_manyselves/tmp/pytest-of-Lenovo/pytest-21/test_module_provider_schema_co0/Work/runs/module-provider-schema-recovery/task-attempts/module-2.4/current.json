@@ -1,0 +1,17 @@
+{
+  "workflow_id": "public-reporting",
+  "run_id": "module-provider-schema-recovery",
+  "task_id": "module-2.4",
+  "task_attempt_id": "attempt-1c8ef39cce3841f0b6c4076f5b611134",
+  "agent_id": "module-2.4-specialist",
+  "identity_key": "module-2.4-specialist",
+  "session_id": "public-reporting:module-2.4",
+  "task_envelope_sha256": "bbfa7a1f48b0f002a79a9352cf733b43b8980783fb5bfa847dbf17dd4a9a31f7",
+  "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "input_contract_ref": null,
+  "input_contract_sha256": null,
+  "subject_ref": null,
+  "subject_sha256": null,
+  "lease_owner_id": "Csxq-Laptop:25088:59be875ca6dc48c59fd6e8ba1d60a759:attempt-1c8ef39cce3841f0b6c4076f5b611134",
+  "lease_epoch": 1
+}

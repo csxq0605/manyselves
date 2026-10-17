@@ -1,0 +1,19 @@
+{
+  "kind": "module_review_verdict_submission",
+  "coverage": {
+    "submodule_ids": [
+      "2.4.1.1"
+    ]
+  },
+  "verdicts": [
+    {
+      "finding_id": "F-reviewer",
+      "verdict": "escalate",
+      "reason": "作者与审查者对该 finding 仍存在无法在本轮消解的分歧。",
+      "evidence_refs": [
+        "Work/runs/module-main-reviewer-route/modules/2.4-r1.json"
+      ]
+    }
+  ],
+  "new_findings": []
+}

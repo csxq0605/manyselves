@@ -1,0 +1,364 @@
+{
+  "scope": "synthetic_only",
+  "design": "replay original failing G3 late payload, replace fact packet scope header only; stochastic spot check, not controlled causal evidence",
+  "attempts": 3,
+  "cases": [
+    {
+      "trial": 0,
+      "requests": [
+        {
+          "messages": [
+            {
+              "role": "system",
+              "content": "你在审计完全虚构的实验室数据，不评估真实设施或法律规范。仅以当前任务事实为依据，旧任务不适用。精确保留数值、单位、否定、缺失、冲突和证据编号。虚构实验规则：读数>10标abnormal，<=10标normal；未测或来源不存在标missing，同一对象相互矛盾且未明确取代标conflict。明确更正优先。只有缺少必要原始记录时才调用lookup_local_fact，不用搜索已经给出的记录。不得编造数值或来源。回答只用JSON。每个对象包含values（数值字符串数组），status，sources（证据ID数组）。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": true
+            },
+            {
+              "role": "user",
+              "content": "<typed_task_state>\n{\"task_key\": \"[\\\"synthetic\\\",\\\"lab-audit\\\",0,\\\"lab-json\\\"]\"}\n当前任务：核查虚构记录A、B、C、D。只依据以下当前事实。\n# 模块 2.4 项目事实清单\n记录总数：35。以下完整枚举当前规范化快照的指定范围，不是 Top-K 搜索结果。\n检索范围：{\"module_id\":\"2.4\",\"submodule_ids\":[\"2.4.3.1\"],\"includes_unassigned\":true}\nsubmodule_ids=null 表示不限定子模块；未归属模块/子模块记录按相同范围规则纳入。\n完整性仅限该快照与既有分类；不代表原始资料已全部解析，也不代表现场合格。\n范围外对象需要定向查询；尚未查询时标注未核验，不得声称已确认整个快照或客户资料中不存在。\n每条 JSON 数组列为 [证据ID, 子模块(null=未分配), 对象, 原始事实, 来源坐标, 附加字段]。\n附加字段省略值：module_id=当前模块，value/unit/observed_at=null，confidence=1.0，needs_confirmation=false，photo_refs=[]；confidence 是解析元数据，不是结论可信概率。\n逐项检查异常、缺项与矛盾；只在证据支持范围内概括。未检索到不等于未提供。\n\n来源：{\"file_id\": \"fiction\", \"path\": \"Inputs/fictional-lab.txt\", \"sheet\": null}\n[\"SYN0-E001\",\"2.4.3.1\",\"A\",\"读数27.6 mA，明确更正旧任务0.1 mA；旧值无效。\",{\"cell\":\"A1\"},{}]\n[\"SYN0-E002\",\"2.4.3.1\",\"B\",\"未测量，未确认；不得记作合格。\",{\"cell\":\"A2\"},{\"needs_confirmation\":true}]\n[\"SYN0-E003\",\"2.4.3.1\",\"C\",\"同名仪器读数3.2 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A3\"},{}]\n[\"SYN0-E004\",\"2.4.3.1\",\"C\",\"同名仪器读数18.0 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A4\"},{}]\n[\"SYN0-E005\",\"2.4.3.1\",\"D\",\"读数0 mA；零是有效测量值。\",{\"cell\":\"A5\"},{\"value\":0,\"unit\":\"mA\"}]\n[\"SYN0-E006\",\"2.4.3.1\",\"T6\",\"读数28.42 mA；虚构观测，未作现场认证。\",{\"cell\":\"A6\"},{}]\n[\"SYN0-E007\",\"2.4.3.1\",\"T7\",\"读数14.17 mA；虚构观测，未作现场认证。\",{\"cell\":\"A7\"},{}]\n[\"SYN0-E008\",\"2.4.3.1\",\"T8\",\"读数7.98 mA；虚构观测，未作现场认证。\",{\"cell\":\"A8\"},{}]\n[\"SYN0-E009\",\"2.4.3.1\",\"T9\",\"读数19.33 mA；虚构观测，未作现场认证。\",{\"cell\":\"A9\"},{}]\n[\"SYN0-E010\",\"2.4.3.1\",\"T10\",\"读数27.52 mA；虚构观测，未作现场认证。\",{\"cell\":\"A10\"},{}]\n[\"SYN0-E011\",\"2.4.3.1\",\"T11\",\"读数6.68 mA；虚构观测，未作现场认证。\",{\"cell\":\"A11\"},{}]\n[\"SYN0-E012\",\"2.4.3.1\",\"T12\",\"读数28.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A12\"},{}]\n[\"SYN0-E013\",\"2.4.3.1\",\"T13\",\"读数22.81 mA；虚构观测，未作现场认证。\",{\"cell\":\"A13\"},{}]\n[\"SYN0-E014\",\"2.4.3.1\",\"T14\",\"读数17.38 mA；虚构观测，未作现场认证。\",{\"cell\":\"A14\"},{}]\n[\"SYN0-E015\",\"2.4.3.1\",\"T15\",\"读数23.78 mA；虚构观测，未作现场认证。\",{\"cell\":\"A15\"},{}]\n[\"SYN0-E016\",\"2.4.3.1\",\"T16\",\"读数12.76 mA；虚构观测，未作现场认证。\",{\"cell\":\"A16\"},{}]\n[\"SYN0-E017\",\"2.4.3.1\",\"T17\",\"读数1.18 mA；虚构观测，未作现场认证。\",{\"cell\":\"A17\"},{}]\n[\"SYN0-E018\",\"2.4.3.1\",\"T18\",\"读数6.70 mA；虚构观测，未作现场认证。\",{\"cell\":\"A18\"},{}]\n[\"SYN0-E019\",\"2.4.3.1\",\"T19\",\"读数9.43 mA；虚构观测，未作现场认证。\",{\"cell\":\"A19\"},{}]\n[\"SYN0-E020\",\"2.4.3.1\",\"T20\",\"读数5.53 mA；虚构观测，未作现场认证。\",{\"cell\":\"A20\"},{}]\n[\"SYN0-E021\",\"2.4.3.1\",\"T21\",\"读数12.55 mA；虚构观测，未作现场认证。\",{\"cell\":\"A21\"},{}]\n[\"SYN0-E022\",\"2.4.3.1\",\"T22\",\"读数22.68 mA；虚构观测，未作现场认证。\",{\"cell\":\"A22\"},{}]\n[\"SYN0-E023\",\"2.4.3.1\",\"T23\",\"读数26.59 mA；虚构观测，未作现场认证。\",{\"cell\":\"A23\"},{}]\n[\"SYN0-E024\",\"2.4.3.1\",\"T24\",\"读数2.47 mA；虚构观测，未作现场认证。\",{\"cell\":\"A24\"},{}]\n[\"SYN0-E025\",\"2.4.3.1\",\"T25\",\"读数14.14 mA；虚构观测，未作现场认证。\",{\"cell\":\"A25\"},{}]\n[\"SYN0-E026\",\"2.4.3.1\",\"T26\",\"读数7.60 mA；虚构观测，未作现场认证。\",{\"cell\":\"A26\"},{}]\n[\"SYN0-E027\",\"2.4.3.1\",\"T27\",\"读数24.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A27\"},{}]\n[\"SYN0-E028\",\"2.4.3.1\",\"T28\",\"读数13.28 mA；虚构观测，未作现场认证。\",{\"cell\":\"A28\"},{}]\n[\"SYN0-E029\",\"2.4.3.1\",\"T29\",\"读数1.65 mA；虚构观测，未作现场认证。\",{\"cell\":\"A29\"},{}]\n[\"SYN0-E030\",\"2.4.3.1\",\"T30\",\"读数22.43 mA；虚构观测，未作现场认证。\",{\"cell\":\"A30\"},{}]\n[\"SYN0-E031\",\"2.4.3.1\",\"T31\",\"读数26.27 mA；虚构观测，未作现场认证。\",{\"cell\":\"A31\"},{}]\n[\"SYN0-E032\",\"2.4.3.1\",\"T32\",\"读数20.00 mA；虚构观测，未作现场认证。\",{\"cell\":\"A32\"},{}]\n[\"SYN0-E033\",\"2.4.3.1\",\"T33\",\"读数11.50 mA；虚构观测，未作现场认证。\",{\"cell\":\"A33\"},{}]\n[\"SYN0-E034\",\"2.4.3.1\",\"T34\",\"读数11.52 mA；虚构观测，未作现场认证。\",{\"cell\":\"A34\"},{}]\n[\"SYN0-E035\",\"2.4.3.1\",\"T35\",\"读数16.58 mA；虚构观测，未作现场认证。\",{\"cell\":\"A35\"},{}]\n\n\n{\"current_draft_parts\":[],\"draft_status\":\"Persisted working prose, not accepted conclusions; retain unresolved findings from the task input.\"}\n</typed_task_state>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "<context_handoff_summary>\n{\"active_task\":{\"objective\":\"虚构专题审查\",\"task_id\":\"lab-audit\"},\"constraints\":[\"Active task (task_id lab-audit): 虚构专题审查 (fictional topic review). Constraint: 仅当前事实，缺失不合格，矛盾不关闭 (only current facts; missing evidence fails; contradictions are not closed).\",\"仅当前事实，缺失不合格，矛盾不关闭。\"],\"critical_refs\":[],\"decisions\":[\"No conclusions have been reached in the evicted batches; all items are explicitly marked as pending final evaluation.\",\"Original evidence from the evicted batches is to be kept intact rather than summarized away.\"],\"progress\":[\"Evicted history covers process batches 0 through 15 (each with work items 0-0 through 15-25), all recorded as sorting/title-and-order checks completed, with raw evidence retained and no conclusions drawn.\",\"Every evicted item states the same status: checked titles and ordering, original evidence preserved, final assessment deferred until the current task is evaluated.\"],\"remaining_work\":[\"Complete the 虚构专题审查 for task lab-audit using only current facts.\",\"Make the final judgment on the evicted batch items 0-0 through 15-25, which remain pending.\",\"No tool protocol is documented as unfinished in the transcript; do not assume any tool call was run.\"],\"sequence\":1,\"source\":\"model\",\"tool_state\":[],\"version\":1}\n</context_handoff_summary>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"A\",\"B\",\"C\",\"D\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "assistant",
+              "content": "```json\n{\"rows\":{\"A\":{\"values\":[\"27.6\"],\"status\":\"abnormal\",\"sources\":[\"SYN0-E001\"]},\"B\":{\"values\":[],\"status\":\"missing\",\"sources\":[\"SYN0-E002\"]},\"C\":{\"values\":[\"3.2\",\"18.0\"],\"status\":\"conflict\",\"sources\":[\"SYN0-E003\",\"SYN0-E004\"]},\"D\":{\"values\":[\"0\"],\"status\":\"normal\",\"sources\":[\"SYN0-E005\"]}},\"paragraph\":\"A：读数27.6 mA，明确更正旧值0.1 mA，旧值无效，判为abnormal（SYN0-E001）。B：未测量、未确认，不得记作合格，判为missing（SYN0-E002）。C：同名仪器存在3.2 mA与18.0 mA两个读数，且无先后取代说明，判为conflict（SYN0-E003、SYN0-E004）。D：读数0 mA为有效测量值，判为normal（SYN0-E005）。以上结论仅依据当前快照事实，未调用外部查询。\"}\n```",
+              "tool_calls": [],
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"T35\",\"Z\",\"W\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "assistant",
+              "content": "I'll look up the three requested objects, since they aren't in the current snapshot I reviewed earlier.",
+              "tool_calls": [
+                {
+                  "id": "toolu_01MV29s7WpZ34cSWJ4dK7yEG",
+                  "name": "lookup_local_fact",
+                  "arguments": {
+                    "subjects": [
+                      "T35",
+                      "Z",
+                      "W"
+                    ]
+                  }
+                }
+              ],
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "tool",
+              "content": "{\"records\":[{\"id\":\"SYN0-E035\",\"subject\":\"T35\",\"fact\":\"读数16.58 mA；虚构观测，未作现场认证。\",\"source\":{\"file_id\":\"fiction\",\"path\":\"Inputs/fictional-lab.txt\",\"sheet\":null,\"cell\":\"A35\",\"page\":null,\"row\":null,\"column\":null,\"image_id\":null},\"value\":null,\"unit\":null,\"observed_at\":null,\"confidence\":1.0,\"needs_confirmation\":false,\"module_id\":\"2.4\",\"submodule_id\":\"2.4.3.1\",\"photo_refs\":[]},{\"id\":\"SYN0-E099\",\"subject\":\"Z\",\"fact\":\"读数44.8 mA；另一个模块的当前观测。\",\"source\":{\"file_id\":\"fiction\",\"path\":\"Inputs/fictional-lab.txt\",\"sheet\":null,\"cell\":\"A99\",\"page\":null,\"row\":null,\"column\":null,\"image_id\":null},\"value\":null,\"unit\":null,\"observed_at\":null,\"confidence\":1.0,\"needs_confirmation\":false,\"module_id\":\"2.2\",\"submodule_id\":\"2.2.1.1\",\"photo_refs\":[]}],\"missing_subjects\":[\"W\"],\"scope\":\"current synthetic snapshot\"}",
+              "tool_calls": null,
+              "tool_call_id": "toolu_01MV29s7WpZ34cSWJ4dK7yEG",
+              "is_tool_result": true,
+              "thinking": null,
+              "cache_control": false
+            }
+          ],
+          "usage": {
+            "input_tokens": 4779,
+            "output_tokens": 638,
+            "cached_input_tokens": 572,
+            "cache_write_input_tokens": 0,
+            "duration_ms": 4203
+          },
+          "raw_response": "```json\n{\"rows\":{\"T35\":{\"values\":[\"16.58\"],\"status\":\"normal\",\"sources\":[\"SYN0-E035\"]},\"Z\":{\"values\":[\"44.8\"],\"status\":\"abnormal\",\"sources\":[\"SYN0-E099\"]},\"W\":{\"values\":[],\"status\":\"missing\",\"sources\":[]}},\"paragraph\":\"T35：读数16.58 mA，未作现场认证，按规则（≤10为normal，>10为abnormal）判为abnormal，但依据规则16.58>10应判abnormal，故修正为abnormal（SYN0-E035）。Z：读数44.8 mA，来自模块2.2.1.1，不在本次2.4.3.1范围内，按规则判为abnormal（SYN0-E099），需注意范围外记录。W：本地快照无记录，判为missing，不得作正常处理（无证据来源）。\"}\n```\n\nCorrection note: T35 is 16.58 mA, which is greater than 10, so under the stated rule it is **abnormal**, not normal as written in the paragraph's first draft. The JSON row above already reflects `\"status\":\"abnormal\"` only if corrected; to be explicit, the T35 row should read:\n\n```json\n{\"rows\":{\"T35\":{\"values\":[\"16.58\"],\"status\":\"abnormal\",\"sources\":[\"SYN0-E035\"]},\"Z\":{\"values\":[\"44.8\"],\"status\":\"abnormal\",\"sources\":[\"SYN0-E099\"]},\"W\":{\"values\":[],\"status\":\"missing\",\"sources\":[]}},\"paragraph\":\"T35：读数16.58 mA，未作现场认证，16.58>10，判为abnormal（SYN0-E035）。Z：读数44.8 mA，来自模块2.2.1.1，超出本次2.4.3.1审查范围，但有记录，按规则判为abnormal（SYN0-E099）。W：本地快照无记录，判为missing，不得作正常处理。\"}\n```"
+        }
+      ],
+      "tool_reads": [],
+      "changed_header_count": 1,
+      "actual": {
+        "rows": {
+          "T35": {
+            "values": [
+              "16.58"
+            ],
+            "status": "normal",
+            "sources": [
+              "SYN0-E035"
+            ]
+          },
+          "Z": {
+            "values": [
+              "44.8"
+            ],
+            "status": "abnormal",
+            "sources": [
+              "SYN0-E099"
+            ]
+          },
+          "W": {
+            "values": [],
+            "status": "missing",
+            "sources": []
+          }
+        },
+        "paragraph": "T35：读数16.58 mA，未作现场认证，按规则（≤10为normal，>10为abnormal）判为abnormal，但依据规则16.58>10应判abnormal，故修正为abnormal（SYN0-E035）。Z：读数44.8 mA，来自模块2.2.1.1，不在本次2.4.3.1范围内，按规则判为abnormal（SYN0-E099），需注意范围外记录。W：本地快照无记录，判为missing，不得作正常处理（无证据来源）。"
+      },
+      "score": {
+        "correct_fields": 8,
+        "total_fields": 9,
+        "errors": [
+          {
+            "subject": "T35",
+            "field": "status",
+            "expected": "abnormal",
+            "actual": "normal"
+          }
+        ],
+        "unexpected_subjects": []
+      }
+    },
+    {
+      "trial": 1,
+      "requests": [
+        {
+          "messages": [
+            {
+              "role": "system",
+              "content": "你在审计完全虚构的实验室数据，不评估真实设施或法律规范。仅以当前任务事实为依据，旧任务不适用。精确保留数值、单位、否定、缺失、冲突和证据编号。虚构实验规则：读数>10标abnormal，<=10标normal；未测或来源不存在标missing，同一对象相互矛盾且未明确取代标conflict。明确更正优先。只有缺少必要原始记录时才调用lookup_local_fact，不用搜索已经给出的记录。不得编造数值或来源。回答只用JSON。每个对象包含values（数值字符串数组），status，sources（证据ID数组）。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": true
+            },
+            {
+              "role": "user",
+              "content": "<typed_task_state>\n{\"task_key\": \"[\\\"synthetic\\\",\\\"lab-audit\\\",0,\\\"lab-json\\\"]\"}\n当前任务：核查虚构记录A、B、C、D。只依据以下当前事实。\n# 模块 2.4 项目事实清单\n记录总数：35。以下完整枚举当前规范化快照的指定范围，不是 Top-K 搜索结果。\n检索范围：{\"module_id\":\"2.4\",\"submodule_ids\":[\"2.4.3.1\"],\"includes_unassigned\":true}\nsubmodule_ids=null 表示不限定子模块；未归属模块/子模块记录按相同范围规则纳入。\n完整性仅限该快照与既有分类；不代表原始资料已全部解析，也不代表现场合格。\n范围外对象需要定向查询；尚未查询时标注未核验，不得声称已确认整个快照或客户资料中不存在。\n每条 JSON 数组列为 [证据ID, 子模块(null=未分配), 对象, 原始事实, 来源坐标, 附加字段]。\n附加字段省略值：module_id=当前模块，value/unit/observed_at=null，confidence=1.0，needs_confirmation=false，photo_refs=[]；confidence 是解析元数据，不是结论可信概率。\n逐项检查异常、缺项与矛盾；只在证据支持范围内概括。未检索到不等于未提供。\n\n来源：{\"file_id\": \"fiction\", \"path\": \"Inputs/fictional-lab.txt\", \"sheet\": null}\n[\"SYN1-E001\",\"2.4.3.1\",\"A\",\"读数28.6 mA，明确更正旧任务0.1 mA；旧值无效。\",{\"cell\":\"A1\"},{}]\n[\"SYN1-E002\",\"2.4.3.1\",\"B\",\"未测量，未确认；不得记作合格。\",{\"cell\":\"A2\"},{\"needs_confirmation\":true}]\n[\"SYN1-E003\",\"2.4.3.1\",\"C\",\"同名仪器读数3.2 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A3\"},{}]\n[\"SYN1-E004\",\"2.4.3.1\",\"C\",\"同名仪器读数18.0 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A4\"},{}]\n[\"SYN1-E005\",\"2.4.3.1\",\"D\",\"读数0 mA；零是有效测量值。\",{\"cell\":\"A5\"},{\"value\":0,\"unit\":\"mA\"}]\n[\"SYN1-E006\",\"2.4.3.1\",\"T6\",\"读数1.47 mA；虚构观测，未作现场认证。\",{\"cell\":\"A6\"},{}]\n[\"SYN1-E007\",\"2.4.3.1\",\"T7\",\"读数29.47 mA；虚构观测，未作现场认证。\",{\"cell\":\"A7\"},{}]\n[\"SYN1-E008\",\"2.4.3.1\",\"T8\",\"读数27.27 mA；虚构观测，未作现场认证。\",{\"cell\":\"A8\"},{}]\n[\"SYN1-E009\",\"2.4.3.1\",\"T9\",\"读数14.07 mA；虚构观测，未作现场认证。\",{\"cell\":\"A9\"},{}]\n[\"SYN1-E010\",\"2.4.3.1\",\"T10\",\"读数6.58 mA；虚构观测，未作现场认证。\",{\"cell\":\"A10\"},{}]\n[\"SYN1-E011\",\"2.4.3.1\",\"T11\",\"读数26.64 mA；虚构观测，未作现场认证。\",{\"cell\":\"A11\"},{}]\n[\"SYN1-E012\",\"2.4.3.1\",\"T12\",\"读数27.02 mA；虚构观测，未作现场认证。\",{\"cell\":\"A12\"},{}]\n[\"SYN1-E013\",\"2.4.3.1\",\"T13\",\"读数22.98 mA；虚构观测，未作现场认证。\",{\"cell\":\"A13\"},{}]\n[\"SYN1-E014\",\"2.4.3.1\",\"T14\",\"读数20.70 mA；虚构观测，未作现场认证。\",{\"cell\":\"A14\"},{}]\n[\"SYN1-E015\",\"2.4.3.1\",\"T15\",\"读数21.87 mA；虚构观测，未作现场认证。\",{\"cell\":\"A15\"},{}]\n[\"SYN1-E016\",\"2.4.3.1\",\"T16\",\"读数29.67 mA；虚构观测，未作现场认证。\",{\"cell\":\"A16\"},{}]\n[\"SYN1-E017\",\"2.4.3.1\",\"T17\",\"读数18.45 mA；虚构观测，未作现场认证。\",{\"cell\":\"A17\"},{}]\n[\"SYN1-E018\",\"2.4.3.1\",\"T18\",\"读数26.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A18\"},{}]\n[\"SYN1-E019\",\"2.4.3.1\",\"T19\",\"读数16.92 mA；虚构观测，未作现场认证。\",{\"cell\":\"A19\"},{}]\n[\"SYN1-E020\",\"2.4.3.1\",\"T20\",\"读数7.28 mA；虚构观测，未作现场认证。\",{\"cell\":\"A20\"},{}]\n[\"SYN1-E021\",\"2.4.3.1\",\"T21\",\"读数17.28 mA；虚构观测，未作现场认证。\",{\"cell\":\"A21\"},{}]\n[\"SYN1-E022\",\"2.4.3.1\",\"T22\",\"读数13.18 mA；虚构观测，未作现场认证。\",{\"cell\":\"A22\"},{}]\n[\"SYN1-E023\",\"2.4.3.1\",\"T23\",\"读数9.31 mA；虚构观测，未作现场认证。\",{\"cell\":\"A23\"},{}]\n[\"SYN1-E024\",\"2.4.3.1\",\"T24\",\"读数25.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A24\"},{}]\n[\"SYN1-E025\",\"2.4.3.1\",\"T25\",\"读数18.26 mA；虚构观测，未作现场认证。\",{\"cell\":\"A25\"},{}]\n[\"SYN1-E026\",\"2.4.3.1\",\"T26\",\"读数18.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A26\"},{}]\n[\"SYN1-E027\",\"2.4.3.1\",\"T27\",\"读数21.73 mA；虚构观测，未作现场认证。\",{\"cell\":\"A27\"},{}]\n[\"SYN1-E028\",\"2.4.3.1\",\"T28\",\"读数12.70 mA；虚构观测，未作现场认证。\",{\"cell\":\"A28\"},{}]\n[\"SYN1-E029\",\"2.4.3.1\",\"T29\",\"读数1.39 mA；虚构观测，未作现场认证。\",{\"cell\":\"A29\"},{}]\n[\"SYN1-E030\",\"2.4.3.1\",\"T30\",\"读数25.08 mA；虚构观测，未作现场认证。\",{\"cell\":\"A30\"},{}]\n[\"SYN1-E031\",\"2.4.3.1\",\"T31\",\"读数10.51 mA；虚构观测，未作现场认证。\",{\"cell\":\"A31\"},{}]\n[\"SYN1-E032\",\"2.4.3.1\",\"T32\",\"读数7.21 mA；虚构观测，未作现场认证。\",{\"cell\":\"A32\"},{}]\n[\"SYN1-E033\",\"2.4.3.1\",\"T33\",\"读数8.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A33\"},{}]\n[\"SYN1-E034\",\"2.4.3.1\",\"T34\",\"读数23.31 mA；虚构观测，未作现场认证。\",{\"cell\":\"A34\"},{}]\n[\"SYN1-E035\",\"2.4.3.1\",\"T35\",\"读数27.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A35\"},{}]\n\n\n{\"current_draft_parts\":[],\"draft_status\":\"Persisted working prose, not accepted conclusions; retain unresolved findings from the task input.\"}\n</typed_task_state>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "<context_handoff_summary>\n{\"active_task\":{\"objective\":\"虚构专题审查\",\"task_id\":\"lab-audit\"},\"constraints\":[\"Task constraint: only current facts count; missing evidence is disqualifying; contradictions do not close a finding.\",\"Active task: 虚构专题审查 (fictional topic review), task_id lab-audit.\",\"Do not treat missing evidence as a confirmed finding.\",\"仅当前事实，缺失不合格，矛盾不关闭。\"],\"critical_refs\":[],\"decisions\":[\"No conclusions have been drawn; all evicted items are explicitly marked as pending final evaluation.\",\"Original evidence is to be preserved rather than summarized away.\"],\"progress\":[\"Evicted history covers process batches 0 through 15 (each with work items 0-0 to N-25), all recorded as sorted with no conclusions reached.\",\"Each work item records only a check of titles and ordering, with original evidence retained for later evaluation against the current task.\",\"No specific findings, verdicts, or tool results are recorded in the evicted history.\"],\"remaining_work\":[\"Evaluate all preserved evidence from batches 0-15 against the active task before reaching any conclusion.\",\"No tool protocol is recorded as in progress in the evicted history; any unfinished tool call status is unknown from this transcript.\",\"Resolve or explicitly flag any contradictions in the evidence; none are recorded as closed.\"],\"sequence\":1,\"source\":\"model\",\"tool_state\":[],\"version\":1}\n</context_handoff_summary>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"A\",\"B\",\"C\",\"D\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "assistant",
+              "content": "```json\n{\"rows\":{\"A\":{\"values\":[\"28.6\"],\"status\":\"abnormal\",\"sources\":[\"SYN1-E001\"]},\"B\":{\"values\":[],\"status\":\"missing\",\"sources\":[\"SYN1-E002\"]},\"C\":{\"values\":[\"3.2\",\"18.0\"],\"status\":\"conflict\",\"sources\":[\"SYN1-E003\",\"SYN1-E004\"]},\"D\":{\"values\":[\"0\"],\"status\":\"normal\",\"sources\":[\"SYN1-E005\"]}},\"paragraph\":\"对象A读数28.6 mA（SYN1-E001），明确更正旧任务0.1 mA，旧值无效，超过10，标记abnormal。对象B未测量、未确认（SYN1-E002），无有效数值，标记missing，不得记作合格。对象C存在两条同名仪器读数3.2 mA（SYN1-E003）与18.0 mA（SYN1-E004），二者无先后取代说明，标记conflict，未予关闭。对象D读数0 mA（SYN1-E005），零为有效测量值，≤10，标记normal。\"}\n```",
+              "tool_calls": [],
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"T35\",\"Z\",\"W\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            }
+          ],
+          "usage": {
+            "input_tokens": 4277,
+            "output_tokens": 144,
+            "cached_input_tokens": 572,
+            "cache_write_input_tokens": 0,
+            "duration_ms": 1688
+          },
+          "raw_response": "The three requested objects are T35, Z and W. The snapshot in this task lists T35 directly (SYN1-E035), but contains no records for Z or W. Per the task rules, I should check whether those objects exist elsewhere in the local store before marking them missing."
+        },
+        {
+          "messages": [
+            {
+              "role": "system",
+              "content": "你在审计完全虚构的实验室数据，不评估真实设施或法律规范。仅以当前任务事实为依据，旧任务不适用。精确保留数值、单位、否定、缺失、冲突和证据编号。虚构实验规则：读数>10标abnormal，<=10标normal；未测或来源不存在标missing，同一对象相互矛盾且未明确取代标conflict。明确更正优先。只有缺少必要原始记录时才调用lookup_local_fact，不用搜索已经给出的记录。不得编造数值或来源。回答只用JSON。每个对象包含values（数值字符串数组），status，sources（证据ID数组）。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": true
+            },
+            {
+              "role": "user",
+              "content": "<typed_task_state>\n{\"task_key\": \"[\\\"synthetic\\\",\\\"lab-audit\\\",0,\\\"lab-json\\\"]\"}\n当前任务：核查虚构记录A、B、C、D。只依据以下当前事实。\n# 模块 2.4 项目事实清单\n记录总数：35。以下完整枚举当前规范化快照的指定范围，不是 Top-K 搜索结果。\n检索范围：{\"module_id\":\"2.4\",\"submodule_ids\":[\"2.4.3.1\"],\"includes_unassigned\":true}\nsubmodule_ids=null 表示不限定子模块；未归属模块/子模块记录按相同范围规则纳入。\n完整性仅限该快照与既有分类；不代表原始资料已全部解析，也不代表现场合格。\n范围外对象需要定向查询；尚未查询时标注未核验，不得声称已确认整个快照或客户资料中不存在。\n每条 JSON 数组列为 [证据ID, 子模块(null=未分配), 对象, 原始事实, 来源坐标, 附加字段]。\n附加字段省略值：module_id=当前模块，value/unit/observed_at=null，confidence=1.0，needs_confirmation=false，photo_refs=[]；confidence 是解析元数据，不是结论可信概率。\n逐项检查异常、缺项与矛盾；只在证据支持范围内概括。未检索到不等于未提供。\n\n来源：{\"file_id\": \"fiction\", \"path\": \"Inputs/fictional-lab.txt\", \"sheet\": null}\n[\"SYN1-E001\",\"2.4.3.1\",\"A\",\"读数28.6 mA，明确更正旧任务0.1 mA；旧值无效。\",{\"cell\":\"A1\"},{}]\n[\"SYN1-E002\",\"2.4.3.1\",\"B\",\"未测量，未确认；不得记作合格。\",{\"cell\":\"A2\"},{\"needs_confirmation\":true}]\n[\"SYN1-E003\",\"2.4.3.1\",\"C\",\"同名仪器读数3.2 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A3\"},{}]\n[\"SYN1-E004\",\"2.4.3.1\",\"C\",\"同名仪器读数18.0 mA；与另一记录没有先后取代说明。\",{\"cell\":\"A4\"},{}]\n[\"SYN1-E005\",\"2.4.3.1\",\"D\",\"读数0 mA；零是有效测量值。\",{\"cell\":\"A5\"},{\"value\":0,\"unit\":\"mA\"}]\n[\"SYN1-E006\",\"2.4.3.1\",\"T6\",\"读数1.47 mA；虚构观测，未作现场认证。\",{\"cell\":\"A6\"},{}]\n[\"SYN1-E007\",\"2.4.3.1\",\"T7\",\"读数29.47 mA；虚构观测，未作现场认证。\",{\"cell\":\"A7\"},{}]\n[\"SYN1-E008\",\"2.4.3.1\",\"T8\",\"读数27.27 mA；虚构观测，未作现场认证。\",{\"cell\":\"A8\"},{}]\n[\"SYN1-E009\",\"2.4.3.1\",\"T9\",\"读数14.07 mA；虚构观测，未作现场认证。\",{\"cell\":\"A9\"},{}]\n[\"SYN1-E010\",\"2.4.3.1\",\"T10\",\"读数6.58 mA；虚构观测，未作现场认证。\",{\"cell\":\"A10\"},{}]\n[\"SYN1-E011\",\"2.4.3.1\",\"T11\",\"读数26.64 mA；虚构观测，未作现场认证。\",{\"cell\":\"A11\"},{}]\n[\"SYN1-E012\",\"2.4.3.1\",\"T12\",\"读数27.02 mA；虚构观测，未作现场认证。\",{\"cell\":\"A12\"},{}]\n[\"SYN1-E013\",\"2.4.3.1\",\"T13\",\"读数22.98 mA；虚构观测，未作现场认证。\",{\"cell\":\"A13\"},{}]\n[\"SYN1-E014\",\"2.4.3.1\",\"T14\",\"读数20.70 mA；虚构观测，未作现场认证。\",{\"cell\":\"A14\"},{}]\n[\"SYN1-E015\",\"2.4.3.1\",\"T15\",\"读数21.87 mA；虚构观测，未作现场认证。\",{\"cell\":\"A15\"},{}]\n[\"SYN1-E016\",\"2.4.3.1\",\"T16\",\"读数29.67 mA；虚构观测，未作现场认证。\",{\"cell\":\"A16\"},{}]\n[\"SYN1-E017\",\"2.4.3.1\",\"T17\",\"读数18.45 mA；虚构观测，未作现场认证。\",{\"cell\":\"A17\"},{}]\n[\"SYN1-E018\",\"2.4.3.1\",\"T18\",\"读数26.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A18\"},{}]\n[\"SYN1-E019\",\"2.4.3.1\",\"T19\",\"读数16.92 mA；虚构观测，未作现场认证。\",{\"cell\":\"A19\"},{}]\n[\"SYN1-E020\",\"2.4.3.1\",\"T20\",\"读数7.28 mA；虚构观测，未作现场认证。\",{\"cell\":\"A20\"},{}]\n[\"SYN1-E021\",\"2.4.3.1\",\"T21\",\"读数17.28 mA；虚构观测，未作现场认证。\",{\"cell\":\"A21\"},{}]\n[\"SYN1-E022\",\"2.4.3.1\",\"T22\",\"读数13.18 mA；虚构观测，未作现场认证。\",{\"cell\":\"A22\"},{}]\n[\"SYN1-E023\",\"2.4.3.1\",\"T23\",\"读数9.31 mA；虚构观测，未作现场认证。\",{\"cell\":\"A23\"},{}]\n[\"SYN1-E024\",\"2.4.3.1\",\"T24\",\"读数25.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A24\"},{}]\n[\"SYN1-E025\",\"2.4.3.1\",\"T25\",\"读数18.26 mA；虚构观测，未作现场认证。\",{\"cell\":\"A25\"},{}]\n[\"SYN1-E026\",\"2.4.3.1\",\"T26\",\"读数18.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A26\"},{}]\n[\"SYN1-E027\",\"2.4.3.1\",\"T27\",\"读数21.73 mA；虚构观测，未作现场认证。\",{\"cell\":\"A27\"},{}]\n[\"SYN1-E028\",\"2.4.3.1\",\"T28\",\"读数12.70 mA；虚构观测，未作现场认证。\",{\"cell\":\"A28\"},{}]\n[\"SYN1-E029\",\"2.4.3.1\",\"T29\",\"读数1.39 mA；虚构观测，未作现场认证。\",{\"cell\":\"A29\"},{}]\n[\"SYN1-E030\",\"2.4.3.1\",\"T30\",\"读数25.08 mA；虚构观测，未作现场认证。\",{\"cell\":\"A30\"},{}]\n[\"SYN1-E031\",\"2.4.3.1\",\"T31\",\"读数10.51 mA；虚构观测，未作现场认证。\",{\"cell\":\"A31\"},{}]\n[\"SYN1-E032\",\"2.4.3.1\",\"T32\",\"读数7.21 mA；虚构观测，未作现场认证。\",{\"cell\":\"A32\"},{}]\n[\"SYN1-E033\",\"2.4.3.1\",\"T33\",\"读数8.49 mA；虚构观测，未作现场认证。\",{\"cell\":\"A33\"},{}]\n[\"SYN1-E034\",\"2.4.3.1\",\"T34\",\"读数23.31 mA；虚构观测，未作现场认证。\",{\"cell\":\"A34\"},{}]\n[\"SYN1-E035\",\"2.4.3.1\",\"T35\",\"读数27.15 mA；虚构观测，未作现场认证。\",{\"cell\":\"A35\"},{}]\n\n\n{\"current_draft_parts\":[],\"draft_status\":\"Persisted working prose, not accepted conclusions; retain unresolved findings from the task input.\"}\n</typed_task_state>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "<context_handoff_summary>\n{\"active_task\":{\"objective\":\"虚构专题审查\",\"task_id\":\"lab-audit\"},\"constraints\":[\"Task constraint: only current facts count; missing evidence is disqualifying; contradictions do not close a finding.\",\"Active task: 虚构专题审查 (fictional topic review), task_id lab-audit.\",\"Do not treat missing evidence as a confirmed finding.\",\"仅当前事实，缺失不合格，矛盾不关闭。\"],\"critical_refs\":[],\"decisions\":[\"No conclusions have been drawn; all evicted items are explicitly marked as pending final evaluation.\",\"Original evidence is to be preserved rather than summarized away.\"],\"progress\":[\"Evicted history covers process batches 0 through 15 (each with work items 0-0 to N-25), all recorded as sorted with no conclusions reached.\",\"Each work item records only a check of titles and ordering, with original evidence retained for later evaluation against the current task.\",\"No specific findings, verdicts, or tool results are recorded in the evicted history.\"],\"remaining_work\":[\"Evaluate all preserved evidence from batches 0-15 against the active task before reaching any conclusion.\",\"No tool protocol is recorded as in progress in the evicted history; any unfinished tool call status is unknown from this transcript.\",\"Resolve or explicitly flag any contradictions in the evidence; none are recorded as closed.\"],\"sequence\":1,\"source\":\"model\",\"tool_state\":[],\"version\":1}\n</context_handoff_summary>",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"A\",\"B\",\"C\",\"D\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "assistant",
+              "content": "```json\n{\"rows\":{\"A\":{\"values\":[\"28.6\"],\"status\":\"abnormal\",\"sources\":[\"SYN1-E001\"]},\"B\":{\"values\":[],\"status\":\"missing\",\"sources\":[\"SYN1-E002\"]},\"C\":{\"values\":[\"3.2\",\"18.0\"],\"status\":\"conflict\",\"sources\":[\"SYN1-E003\",\"SYN1-E004\"]},\"D\":{\"values\":[\"0\"],\"status\":\"normal\",\"sources\":[\"SYN1-E005\"]}},\"paragraph\":\"对象A读数28.6 mA（SYN1-E001），明确更正旧任务0.1 mA，旧值无效，超过10，标记abnormal。对象B未测量、未确认（SYN1-E002），无有效数值，标记missing，不得记作合格。对象C存在两条同名仪器读数3.2 mA（SYN1-E003）与18.0 mA（SYN1-E004），二者无先后取代说明，标记conflict，未予关闭。对象D读数0 mA（SYN1-E005），零为有效测量值，≤10，标记normal。\"}\n```",
+              "tool_calls": [],
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "user",
+              "content": "返回JSON：{\"rows\":{对象:{\"values\":[],\"status\":\"...\",\"sources\":[]}},\"paragraph\":\"附证据编号的简短中文发现\"}。本轮对象为[\"T35\",\"Z\",\"W\"]。禁止以无资料作正常。",
+              "tool_calls": null,
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "assistant",
+              "content": "The three requested objects are T35, Z and W. The snapshot in this task lists T35 directly (SYN1-E035), but contains no records for Z or W. Per the task rules, I should check whether those objects exist elsewhere in the local store before marking them missing.",
+              "tool_calls": [
+                {
+                  "id": "toolu_01J2MUfHRJRNg66zHhVhVFqr",
+                  "name": "lookup_local_fact",
+                  "arguments": {
+                    "subjects": [
+                      "Z",
+                      "W"
+                    ]
+                  }
+                }
+              ],
+              "tool_call_id": null,
+              "is_tool_result": false,
+              "thinking": null,
+              "cache_control": false
+            },
+            {
+              "role": "tool",
+              "content": "{\"records\":[{\"id\":\"SYN1-E099\",\"subject\":\"Z\",\"fact\":\"读数44.8 mA；另一个模块的当前观测。\",\"source\":{\"file_id\":\"fiction\",\"path\":\"Inputs/fictional-lab.txt\",\"sheet\":null,\"cell\":\"A99\",\"page\":null,\"row\":null,\"column\":null,\"image_id\":null},\"value\":null,\"unit\":null,\"observed_at\":null,\"confidence\":1.0,\"needs_confirmation\":false,\"module_id\":\"2.2\",\"submodule_id\":\"2.2.1.1\",\"photo_refs\":[]}],\"missing_subjects\":[\"W\"]}",
+              "tool_calls": null,
+              "tool_call_id": "toolu_01J2MUfHRJRNg66zHhVhVFqr",
+              "is_tool_result": true,
+              "thinking": null,
+              "cache_control": false
+            }
+          ],
+          "usage": {
+            "input_tokens": 4630,
+            "output_tokens": 446,
+            "cached_input_tokens": 572,
+            "cache_write_input_tokens": 0,
+            "duration_ms": 2671
+          },
+          "raw_response": "Z has a record outside the 2.4.3.1 scope (module 2.2), and W has no record at all. Applying the rules to the object set as requested:\n\n- Z: the only record is SYN1-E099, reading 44.8 mA, which is >10 → abnormal. It is from module 2.2 / 2.2.1.1, outside the current scope (2.4.3.1), so I flag this and do not treat it as an in-scope finding.\n- W: no record in the snapshot or the lookup → missing.\n\n```json\n{\"rows\":{\"T35\":{\"values\":[\"27.15\"],\"status\":\"abnormal\",\"sources\":[\"SYN1-E035\"]},\"Z\":{\"values\":[\"44.8\"],\"status\":\"abnormal\",\"sources\":[\"SYN1-E099\"]},\"W\":{\"values\":[],\"status\":\"missing\",\"sources\":[]}},\"paragraph\":\"对象T35读数27.15 mA（SYN1-E035），超过10，标记abnormal；该记录未作现场认证。对象Z读数44.8 mA（SYN1-E099），超过10，标记abnormal；但该记录属于模块2.2/子模块2.2.1.1，不在本轮2.4.3.1范围内，属范围外定向查询结果，需另行确认归属。对象W在本快照及定向查询中均无记录，标记missing，不得记作正常或合格。\"}\n```"
+        }
+      ],
+      "tool_reads": [
+        {
+          "subjects": [
+            "Z",
+            "W"
+          ],
+          "returned": [
+            "SYN1-E099"
+          ]
+        }
+      ],
+      "changed_header_count": 1,
+      "actual": {
+        "rows": {
+          "T35": {
+            "values": [
+              "27.15"
+            ],
+            "status": "abnormal",
+            "sources": [
+              "SYN1-E035"
+            ]
+          },
+          "Z": {
+            "values": [
+              "44.8"
+            ],
+            "status": "abnormal",
+            "sources": [
+              "SYN1-E099"
+            ]
+          },
+          "W": {
+            "values": [],
+            "status": "missing",
+            "sources": []
+          }
+        },
+        "paragraph": "对象T35读数27.15 mA（SYN1-E035），超过10，标记abnormal；该记录未作现场认证。对象Z读数44.8 mA（SYN1-E099），超过10，标记abnormal；但该记录属于模块2.2/子模块2.2.1.1，不在本轮2.4.3.1范围内，属范围外定向查询结果，需另行确认归属。对象W在本快照及定向查询中均无记录，标记missing，不得记作正常或合格。"
+      },
+      "score": {
+        "correct_fields": 9,
+        "total_fields": 9,
+        "errors": [],
+        "unexpected_subjects": []
+      }
+    }
+  ],
+  "completed": true
+}

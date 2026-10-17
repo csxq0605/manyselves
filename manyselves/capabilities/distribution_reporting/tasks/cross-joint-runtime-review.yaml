@@ -1,0 +1,14 @@
+id: cross-joint-runtime-review
+version: 1.0.0
+description: Review the exact merged five-module snapshot and dispatch genuine defects
+  to their actual owner.
+agent: cross-relation-reviewer
+objective: Review the exact merged five-module snapshot and dispatch genuine defects
+  to their actual owner.
+input_contract: declarative_cross_joint_runtime_context
+output_contract: declarative_cross_joint_agent_result
+tools:
+- search_text
+- open_artifact
+- submit_result
+recovery: current-reporting-recovery

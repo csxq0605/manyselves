@@ -71,12 +71,14 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     WorkflowDecisionSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
+    DeclarativeCrossJointAgentResult,
     DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRecheckAgentResult,
     DeclarativeCrossOwnerRuntimeContext,
     DeclarativeMainExceptionAgentResult,
     DeclarativeMainExceptionUserInput,
+    cross_runtime_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
     CrossOwnerInput,
@@ -153,6 +155,8 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+
+from .task_context import bind_task_context
 
 REPORT_MODULE_IDS = tuple(REPORT_TAXONOMY)
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -256,6 +260,7 @@ def _build_owner_input(
     metadata: Mapping[str, Any],
     owner_module_id: str,
     review_round: int,
+    phase: str = "initial",
 ) -> tuple[CrossOwnerInput, str]:
     owner = modules[owner_module_id]
     owner_ref = _module_subject_ref(state, metadata, owner)
@@ -276,7 +281,7 @@ def _build_owner_input(
 
     owner_view: ModuleContentView = module_content_view(owner)
     contract = CrossOwnerInput(
-        phase="initial",
+        phase=phase,
         run_id=str(state["run_id"]),
         review_round=review_round,
         owner_module_id=owner_module_id,
@@ -317,7 +322,7 @@ def _build_initial_envelope(
             f"以 Cross owner {owner_module_id} 身份审查本模块与其他四模块的关系；"
             "只创建归属本模块的 finding，并且 related 模块只读。"
         ),
-        input_refs=[input_ref],
+        input_refs=[input_ref, *contract.related_module_refs.values()],
         constraints=[
             f"唯一 Cross owner 写作范围是模块 {owner_module_id}",
             "related_module_views 是紧凑只读关系视图，不得修改或创建其他模块 finding",
@@ -325,9 +330,12 @@ def _build_initial_envelope(
             "coverage 仅证明当前 owner 检查过六个维度，不代表 approved",
         ],
         allowed_outputs=["cross_owner_finding_submission"],
-        allowed_tools=["submit_result"],
+        allowed_tools=["search_text", "open_artifact", "submit_result"],
         revision=review_round,
-        artifact_delivery_modes={input_ref: "inline"},
+        artifact_delivery_modes={
+            input_ref: "inline",
+            **{ref: "reference" for ref in contract.related_module_refs.values()},
+        },
         target_submodule_ids=list(contract.owner_scope_submodule_ids),
         input_contract_kind="cross_owner_input",
         input_contract_ref=input_ref,
@@ -399,7 +407,7 @@ class CrossOwnerAgentInvoker:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentInvocationOutcome:
-        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        context = cross_runtime_context(value)
         preparation = self.preparation_for_output(context, task.output_contract)
         if preparation is None or preparation.envelope is None:
             return AgentInvocationOutcome(
@@ -484,8 +492,15 @@ class CrossOwnerAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        def render_prompt() -> str:
+            return self._prompt(agent, task, preparation)
+
+        projection = bind_task_context(
+            session.loop, self.workspace, preparation.envelope,
+            output_contract=task.output_contract, render_prompt=render_prompt,
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, preparation),
+            content=projection.initial_message() if projection is not None else render_prompt(),
             message_id=f"{task_id}:{run_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,
@@ -570,7 +585,7 @@ class CrossOwnerAgentInvoker:
                 json.dumps(
                     {
                         "run_id": preparation.run_id,
-                        "owner_module_id": preparation.owner_module_id,
+                        "owner_module_id": getattr(preparation, "owner_module_id", "joint"),
                         "output_contract": task.output_contract,
                     },
                     ensure_ascii=False,
@@ -585,7 +600,7 @@ class CrossOwnerAgentInvoker:
         context: DeclarativeCrossOwnerRuntimeContext,
         output_contract: str,
     ) -> Any:
-        local = context.local_module_context
+        local = getattr(context, "local_module_context", None)
         if output_contract == "declarative_module_review_agent_result":
             return local.review.prepared if local is not None and local.review else None
         if output_contract == "declarative_module_recheck_agent_result":
@@ -632,6 +647,10 @@ class CrossOwnerAgentInvoker:
 
     @staticmethod
     def _decode_payload(payload: Any, *, output_contract: str) -> dict[str, Any]:
+        if output_contract == "declarative_cross_joint_agent_result":
+            return DeclarativeCrossJointAgentResult(
+                status="completed", submission=payload,
+            ).model_dump(mode="json")
         if output_contract == "declarative_module_review_agent_result":
             return DeclarativeModuleReviewAgentResult(
                 status="completed",
@@ -667,6 +686,11 @@ class CrossOwnerAgentInvoker:
 class CrossOwnerRuntime:
     """Compose Cross owner preparation, initial acceptance, and reduction."""
 
+    @property
+    def joint_tools(self):
+        from .cross_joint import build_joint_tools
+        return build_joint_tools(self)
+
     def __init__(
         self,
         workspace: Path,
@@ -690,6 +714,7 @@ class CrossOwnerRuntime:
             )
             self.agent_invokers: Mapping[str, Any] = {
                 "cross-module-reviewer": invoker,
+                "cross-relation-reviewer": invoker,
                 "main-agent": invoker,
             }
         else:
@@ -879,7 +904,9 @@ class CrossOwnerRuntime:
     @staticmethod
     def initial_has_findings(value: Any) -> bool:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
-        return bool(context.acceptance and context.acceptance.result.findings)
+        return bool(context.acceptance and any(
+            finding.impact == "blocking" for finding in context.acceptance.result.findings
+        ))
 
     async def prepare_revision(
         self,
@@ -903,7 +930,7 @@ class CrossOwnerRuntime:
             owner_input_ref = progress.next_owner_input_ref
             prior_completion_ref = progress.lane.local_review_ref
         else:
-            findings = list(acceptance.result.findings)
+            findings = [f for f in acceptance.result.findings if f.impact == "blocking"]
             owner_subject_path = self.workspace / initial_preparation.owner_input.owner_subject_ref
             current = ModuleSubmission.model_validate_json(
                 owner_subject_path.read_text(encoding="utf-8")
@@ -1921,7 +1948,7 @@ class CrossOwnerRuntime:
         acceptance = context.acceptance
         if context.status != "initial_accepted" or acceptance is None:
             raise ValueError("Cross owner pipeline cannot complete before initial acceptance")
-        if acceptance.result.findings:
+        if any(f.impact == "blocking" for f in acceptance.result.findings):
             raise ValueError("Cross owner findings require the revision/recheck lifecycle")
         review_round = context.preparation.review_round if context.preparation else 0
         completion_ref = (
@@ -1929,6 +1956,7 @@ class CrossOwnerRuntime:
             f"cross-owner-completion-r{review_round}-{acceptance.owner_module_id}.json"
         )
         completion = ReviewCompletionRecord(
+            review_protocol_version=3,
             lifecycle="cross",
             run_id=acceptance.run_id,
             reviewer_agent_id="cross-module-reviewer",
@@ -1938,9 +1966,10 @@ class CrossOwnerRuntime:
                 if context.preparation is not None
                 else acceptance.owner_input_ref
             ],
-            finding_refs=[],
+            finding_refs=[acceptance.result_ref] if acceptance.result.findings else [],
             verdict_refs=[],
             resolved_finding_ids=[],
+            deferred_advisory_ids=[f.id for f in acceptance.result.findings],
         )
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
         pipeline = {
@@ -1950,7 +1979,7 @@ class CrossOwnerRuntime:
             "initial_result": acceptance.result.model_dump(mode="json"),
             "completion_ref": completion_ref,
             "completion": completion.model_dump(mode="json"),
-            "findings": [],
+            "findings": [f.model_dump(mode="json") for f in acceptance.result.findings],
             "synthesis_inputs": [
                 item.model_dump(mode="json")
                 for item in acceptance.result.synthesis_inputs
@@ -1990,7 +2019,7 @@ class CrossOwnerRuntime:
             result = _model(outcome.pipeline.get("initial_result"), CrossOwnerFindingSubmission)
             if result.owner_module_id != owner_module_id:
                 raise ValueError("Cross owner outcome owner/result mismatch")
-            if result.findings:
+            if any(f.impact == "blocking" for f in result.findings) or outcome.pipeline.get("lane") is not None:
                 completed = _model(outcome.pipeline, _CrossOwnerPipelineResult)
                 state.setdefault("module_submissions", {})[owner_module_id] = (
                     completed.lane.module
@@ -2070,7 +2099,7 @@ class CrossOwnerRuntime:
         self.store.write_json(verdict_ref, cross_verdicts.model_dump(mode="json"))
         completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
         completion = ReviewCompletionRecord(
-            review_protocol_version=2,
+            review_protocol_version=3,
             lifecycle="cross",
             run_id=run_id,
             reviewer_agent_id="cross-module-reviewer",
@@ -2079,13 +2108,23 @@ class CrossOwnerRuntime:
             finding_refs=[finding_ref],
             verdict_refs=[verdict_ref],
             resolved_finding_ids=sorted(item.finding_id for item in verdicts),
+            deferred_advisory_ids=sorted(
+                f.id for f in cross_findings.findings
+                if f.impact == "advisory"
+                and f.id not in {v.finding_id for v in verdicts}
+            ),
         )
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
         pack = CrossDecisionPack(
+            version=2,
             run_id=run_id,
             module_ids=list(REPORT_MODULE_IDS),
             cross_review_completion_ref=completion_ref,
             synthesis_inputs=cross_findings.synthesis_inputs,
+            deferred_advisories=[
+                f for f in cross_findings.findings
+                if f.id in completion.deferred_advisory_ids
+            ],
         )
         pack_ref = f"Work/runs/{run_id}/reviews/cross-decision-pack.json"
         self.store.write_json(pack_ref, pack.model_dump(mode="json"))

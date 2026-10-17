@@ -458,6 +458,7 @@ class SubmitResultTool(_ResultTool):
         confidence, unresolved = self._runtime_claim_boundary(evidence_ids)
         return {
             "id": claim_id,
+            "origin": "runtime_part_binding",
             "module_id": module_id,
             "submodule_id": part_id,
             "text": prose.strip(),
@@ -2245,12 +2246,12 @@ class SubmitResultTool(_ResultTool):
             out_of_lane = [
                 finding
                 for finding in findings
-                if finding.owner_module_id != contract.owner_module_id
+                if contract.owner_module_id is not None and (finding.owner_module_id != contract.owner_module_id
                 or any(
                     resolve_submodule(target_id).module_id
                     != contract.owner_module_id
                     for target_id in finding.target_submodule_ids
-                )
+                ))
             ]
             if out_of_lane:
                 raise SubmissionValidationError(
@@ -2265,7 +2266,7 @@ class SubmitResultTool(_ResultTool):
             wrong_synthesis_owner = [
                 synthesis
                 for synthesis in payload.synthesis_inputs
-                if min(synthesis.related_module_ids) != contract.owner_module_id
+                if contract.owner_module_id is not None and min(synthesis.related_module_ids) != contract.owner_module_id
             ]
             if wrong_synthesis_owner:
                 raise SubmissionValidationError(
@@ -2959,12 +2960,13 @@ class SubmitResultTool(_ResultTool):
                 for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
             ]
             existing_ids = [finding.id for finding in contract.required_findings]
+            identity = contract.owner_module_id or f"joint-r{contract.review_round}"
             synthesis_values = normalized.get("synthesis_inputs")
             if isinstance(synthesis_values, list):
                 normalized["synthesis_inputs"] = [
                     {
                         **dict(item),
-                        "id": f"CSI-{contract.owner_module_id}-{index:03d}",
+                        "id": f"CSI-{identity}-{index:03d}",
                     }
                     if isinstance(item, dict)
                     else item
@@ -2973,12 +2975,12 @@ class SubmitResultTool(_ResultTool):
             if kind == "cross_review_finding_submission":
                 normalized["findings"] = self._runtime_finding_ids(
                     normalized.get("findings", []),
-                    prefix=f"XMR-{contract.owner_module_id}-",
+                    prefix=f"XMR-{identity}-",
                     existing_ids=[],
                 )
             elif kind == "cross_review_verdict_submission":
                 verdicts = normalized.get("verdicts")
-                if isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
+                if contract.owner_module_id is not None and isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
                     normalized["verdicts"] = [
                         {**dict(verdict), "finding_id": finding_id}
                         if isinstance(verdict, dict)
@@ -2987,7 +2989,7 @@ class SubmitResultTool(_ResultTool):
                     ]
                 normalized["new_findings"] = self._runtime_finding_ids(
                     normalized.get("new_findings", []),
-                    prefix="XMR-",
+                    prefix=f"XMR-{identity}-" if contract.owner_module_id is None else "XMR-",
                     existing_ids=existing_ids,
                 )
         elif isinstance(contract, CrossOwnerInput):
@@ -3702,7 +3704,13 @@ class WriteResultPartTool(_ResultPartTool):
             "part_id": part_id,
             "characters": len(content),
             "artifact_ref": relative.as_posix(),
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use this receipt and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "A successful write does not require a list_result_parts round trip. "
+                "Use that tool when saved state or remaining requirements are unclear."
+            ),
             "rewrite_policy": (
                 "Do not rewrite this persisted part unless list_result_parts includes "
                 "its part_id in rewrite_part_ids or submit_result correction feedback "
@@ -3780,7 +3788,13 @@ class WriteResultPartsTool(WriteResultPartTool):
             "count": len(results),
             "saved_part_ids": [result["part_id"] for result in results],
             "parts": results,
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use these receipts and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "Use list_result_parts only when saved state or remaining requirements "
+                "are unclear; a successful batch does not require listing again."
+            ),
             "rewrite_policy": (
                 "Do not rewrite persisted parts unless list_result_parts or submit_result "
                 "correction feedback explicitly includes them in rewrite_part_ids."

@@ -1,0 +1,10 @@
+id: merge-joint-cross-repairs
+version: 1.0.0
+description: merge joint cross repairs
+implementation: capability:distribution-reporting:merge-joint-cross-repairs
+input_contract: reporting_tool_input
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

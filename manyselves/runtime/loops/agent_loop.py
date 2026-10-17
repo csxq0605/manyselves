@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -871,6 +872,8 @@ def _compact_messages_for_working_memory(
     messages: list[LLMMessage],
     *,
     target_tokens: int = 36000,
+    task_context: Mapping[str, Any] | None = None,
+    handoff_payload: Mapping[str, Any] | None = None,
 ) -> list[LLMMessage]:
     """Replace old working context with one structured model handoff.
 
@@ -884,7 +887,7 @@ def _compact_messages_for_working_memory(
     expressions.
     """
 
-    if not messages or _estimate_tokens(messages) <= target_tokens:
+    if not messages or (handoff_payload is None and _estimate_tokens(messages) <= target_tokens):
         return messages
 
     system_msg = messages[0]
@@ -893,7 +896,8 @@ def _compact_messages_for_working_memory(
         for message in messages[1:]
         if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
     ]
-    summary_payload = _build_handoff_summary(history)
+    summary_payload = (dict(handoff_payload) if handoff_payload is not None
+                       else _build_handoff_summary(messages[1:], task_context=task_context))
     summary_content = _render_handoff_summary(summary_payload)
     handoff = LLMMessage(role="user", content=summary_content)
 
@@ -901,36 +905,35 @@ def _compact_messages_for_working_memory(
     recent_budget = max(0, int(target_tokens) - fixed_tokens)
 
     units = _atomic_history_units(history)
-    kept: list[LLMMessage] = []
+    selected_indices: set[int] = set()
     kept_tokens = 0
     # Keep the newest unit no matter how large it is.  This is the active task
     # boundary/tool exchange and is required to finish an unfinished protocol.
     if units:
         newest = units[-1]
-        kept = list(newest)
+        selected_indices.add(len(units) - 1)
         kept_tokens = _estimate_tokens(newest)
-        for unit in reversed(units[:-1]):
-            unit_tokens = _estimate_tokens(unit)
-            if kept_tokens + unit_tokens > recent_budget:
-                continue
-            kept[0:0] = unit
-            kept_tokens += unit_tokens
 
-    # A current user boundary can be a standalone unit after a very large tool
-    # exchange.  Ensure the newest user task remains visible even if the latest
-    # atomic unit is an assistant/tool pair.
-    latest_user = next(
-        (
-            message
-            for message in reversed(history)
-            if message.role == "user" and not message.is_tool_result
-        ),
-        None,
-    )
-    if latest_user is not None and latest_user not in kept:
-        user_tokens = _estimate_tokens([latest_user])
-        if user_tokens <= recent_budget:
-            kept.insert(0, latest_user)
+    # Reserve the latest task boundary before filling the remaining budget.
+    # Appending it after filling the history used to exceed the target.
+    latest_user_index = next((index for index in reversed(range(len(units)))
+                              if any(m.role == "user" and not m.is_tool_result
+                                     for m in units[index])), None)
+    if latest_user_index is not None and latest_user_index not in selected_indices:
+        user_tokens = _estimate_tokens(units[latest_user_index])
+        if kept_tokens + user_tokens <= recent_budget:
+            selected_indices.add(latest_user_index)
+            kept_tokens += user_tokens
+    for index in reversed(range(len(units))):
+        if index in selected_indices:
+            continue
+        unit_tokens = _estimate_tokens(units[index])
+        if kept_tokens + unit_tokens > recent_budget:
+            continue
+        selected_indices.add(index)
+        kept_tokens += unit_tokens
+    kept = [message for index, unit in enumerate(units)
+            if index in selected_indices for message in unit]
 
     result = [system_msg, handoff, *kept]
     logger.info(
@@ -1044,6 +1047,8 @@ def _structured_reference_values(value: Any, *, parent_key: str = "") -> list[st
         "evidence_ref",
         "evidence_refs",
         "result_ref",
+        "full_result_ref",
+        "readable_refs",
         "result_refs",
         "subject_ref",
         "input_ref",
@@ -1065,9 +1070,12 @@ def _structured_reference_values(value: Any, *, parent_key: str = "") -> list[st
                 values.extend(
                     _structured_reference_values(child, parent_key=child_key)
                 )
-    elif isinstance(value, (list, tuple)) and key in reference_keys:
+    elif isinstance(value, (list, tuple)):
         for child in value:
-            values.extend(_flatten_reference_values(child))
+            if key in reference_keys:
+                values.extend(_flatten_reference_values(child))
+            else:
+                values.extend(_structured_reference_values(child))
     return values
 
 
@@ -1082,7 +1090,9 @@ def _flatten_reference_values(value: Any) -> list[str]:
     return []
 
 
-def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
+def _build_handoff_summary(
+    history: Sequence[LLMMessage], *, task_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a deterministic Codex-style handoff payload from typed history."""
 
     progress: list[str] = []
@@ -1091,18 +1101,33 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
     remaining: list[str] = []
     references: list[str] = []
     tool_state: list[dict[str, Any]] = []
-    active_task: dict[str, str] = {}
+    active_task: dict[str, Any] = {}
 
     def append_unique(target: list[str], value: Any, *, limit: int = 12) -> None:
         rendered = _bounded_text(value)
-        if rendered and rendered not in target and len(target) < limit:
+        if rendered and rendered not in target:
             target.append(rendered)
+            del target[:-limit]
 
     for message in history:
         content = str(message.content or "")
-        if _HANDOFF_SUMMARY_MARKER in content:
+        if content.startswith(_HANDOFF_SUMMARY_MARKER) and content.endswith(_HANDOFF_SUMMARY_END):
+            previous = _json_object(content[len(_HANDOFF_SUMMARY_MARKER):-len(_HANDOFF_SUMMARY_END)])
+            if previous is None:
+                continue
+            for key, target in (("progress", progress), ("decisions", decisions),
+                                ("constraints", constraints), ("remaining_work", remaining)):
+                for item in previous.get(key) or ():
+                    append_unique(target, item)
+            references.extend(_flatten_reference_values(previous.get("critical_refs")))
+            tool_state.extend(dict(item) for item in previous.get("tool_state", ()) if isinstance(item, Mapping))
+            if isinstance(previous.get("active_task"), Mapping):
+                active_task = dict(previous["active_task"])
             continue
         if message.role == "user" and not message.is_tool_result:
+            structured = _json_object(content)
+            if structured is not None:
+                references.extend(_structured_reference_values(structured))
             # XML task boundaries are explicit structured state.  Keep the
             # current task identity/objective and constraints without copying
             # the entire contract into the handoff.
@@ -1136,7 +1161,7 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
                         "status": "requested",
                     }
                 )
-        if message.is_tool_result:
+        if message.is_tool_result or message.role == "tool":
             payload = _json_object(message.content)
             if payload is not None:
                 references.extend(_structured_reference_values(payload))
@@ -1152,6 +1177,15 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
                         "missing_part_ids",
                         "rewrite_part_ids",
                         "result_path",
+                        "ref",
+                        "full_result_ref",
+                        "offset",
+                        "next_offset",
+                        "total",
+                        "total_matches",
+                        "returned",
+                        "has_more",
+                        "query_context",
                     )
                     if key in payload
                 }
@@ -1166,6 +1200,18 @@ def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
             else:
                 append_unique(progress, message.content, limit=8)
 
+    if task_context:
+        active_task = {
+            key: task_context[key]
+            for key in ("task_id", "run_id", "revision", "objective", "input_contract",
+                        "output_contract", "input_refs", "readable_refs")
+            if key in task_context
+        }
+        for constraint in task_context.get("constraints") or ():
+            append_unique(constraints, constraint)
+        # Task refs have priority over older incidental tool refs in the bounded tail.
+        task_refs = _structured_reference_values(active_task)
+        references = [item for item in references if item not in task_refs] + task_refs
     references = list(dict.fromkeys(item for item in references if item))[-64:]
     # The active unit is the final source of truth for unfinished work.  Keep a
     # concise tail of structured tool state rather than arbitrary old output.
@@ -1457,11 +1503,11 @@ class AgentLoop:
         restart context without adding business state.
         """
 
-        latest = _build_handoff_summary(self._conversation_history)
+        latest = _build_handoff_summary(self._conversation_history, task_context=self.active_task_identity)
         previous = self.handoff_summary or {}
         summary = dict(latest)
 
-        def merged_values(key: str, *, limit: int) -> list[Any]:
+        def merged_values(key: str, *, limit: int | None) -> list[Any]:
             merged: list[Any] = []
             seen: set[str] = set()
             for item in (
@@ -1473,10 +1519,17 @@ class AgentLoop:
                     continue
                 seen.add(marker)
                 merged.append(item)
-            return merged[-limit:]
+            return merged[-limit:] if limit is not None else merged
 
+        model_handoff = previous.get("source") == "model"
         for key in ("progress", "decisions", "constraints"):
-            summary[key] = merged_values(key, limit=12)
+            summary[key] = merged_values(key, limit=None if model_handoff else 12)
+        if model_handoff:
+            # Restart must not undo the model summary's information preservation.
+            # New deterministic observations remain bounded by their extractor;
+            # the next semantic handoff, not tail slicing, rewrites older prose.
+            summary["source"] = "model"
+            summary["remaining_work"] = merged_values("remaining_work", limit=None)
         summary["critical_refs"] = merged_values("critical_refs", limit=64)
         summary["tool_state"] = merged_values("tool_state", limit=24)
         if not latest.get("active_task") and previous.get("active_task"):
@@ -2779,7 +2832,7 @@ class AgentLoop:
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
         rebuild_count = 0
-        if self.context_rebuilder is not None:
+        if self.context_rebuilder is not None and phase != "context_compaction":
             # Rebase only the Provider-facing copy.  The lossless local
             # ``_conversation_history`` remains available to the forensic
             # trace and is never used as a fallback source by the rebaser.
@@ -3616,9 +3669,12 @@ class AgentLoop:
         placed in model-visible context.
         """
 
+        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+            return messages
         compacted = _compact_messages_for_working_memory(
             messages,
-            target_tokens=self.config.working_memory_tokens,
+            target_tokens=int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio),
+            task_context=self.active_task_identity,
         )
         if compacted is messages:
             return messages
@@ -3636,7 +3692,7 @@ class AgentLoop:
                 raw = raw.rsplit("\n", 1)[0]
                 payload = json.loads(raw)
             except (IndexError, TypeError, ValueError, json.JSONDecodeError):
-                payload = _build_handoff_summary(messages[1:])
+                payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
             self._compaction_sequence += 1
             payload["sequence"] = self._compaction_sequence
             self._handoff_summary = payload
@@ -3662,19 +3718,13 @@ class AgentLoop:
         """Ask the configured Provider for a handoff summary at compaction.
 
         This is a normal Provider round (and therefore uses the same admission,
-        retry, and usage ledger hooks as task work).  A failed/ambiguous summary
-        call is never treated as a successful model compaction; callers retain a
-        clearly marked deterministic fallback instead.
+        retry, and usage ledger hooks as task work). A failed/ambiguous summary
+        is never treated as a successful compaction; the caller keeps history.
         """
 
-        source = [
-            message
-            for message in messages
-            if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
-        ]
-        # Preserve protocol units and keep the summarizer request within the
-        # configured context window.  This is only the summarizer input; the
-        # lossless local transcript remains untouched.
+        # The caller supplies only previous handoffs and whole evicted units.
+        # Do not select a recent subset here: omitted old units would otherwise
+        # disappear without ever being seen by the summarizer.
         summary_system = LLMMessage(
             role="system",
             content=(
@@ -3684,67 +3734,14 @@ class AgentLoop:
                 "Summarize only facts present in the transcript. Preserve exact refs "
                 "from structured tool arguments/results; never invent ids or claim a "
                 "tool was run when it was not. State the active task and unfinished "
-                "tool protocol in remaining_work."
+                "tool protocol in remaining_work. Update previous handoff summaries "
+                "with the newly evicted history. Retain unresolved exceptions and "
+                "uncertainties; do not turn missing evidence into a confirmed finding. "
+                "The recent working exchanges remain available separately."
             ),
         )
-        # Build the summarizer input from complete protocol units under the
-        # same context budget used for ordinary requests.  The deterministic
-        # state snapshot covers older evicted units; recent units remain exact.
-        units = _atomic_history_units(source)
-        selected_units: list[list[LLMMessage]] = []
-        if units:
-            selected_units = [units[-1]]
-            selected_chars = sum(
-                len(str(item.content or ""))
-                for item in selected_units[0]
-            )
-            char_budget = max(
-                4_096,
-                int(
-                    max(
-                        4_096,
-                        self._context_window_for_request()
-                        - self.config.max_tokens
-                        - _SAFETY_BUFFER,
-                    )
-                    / _TOKENS_PER_CHAR
-                    * 0.5
-                ),
-            )
-            for unit in reversed(units[:-1]):
-                unit_chars = sum(len(str(item.content or "")) for item in unit)
-                if selected_chars + unit_chars > char_budget:
-                    continue
-                selected_units.insert(0, unit)
-                selected_chars += unit_chars
-        selected_source = [
-            item for unit in selected_units for item in unit
-        ] or source[-8:]
-        older_snapshot = _build_handoff_summary(source)
-        older_snapshot_for_prompt = {
-            key: (
-                {
-                    field: _bounded_text(field_value, limit=160)
-                    for field, field_value in (
-                        value.items() if isinstance(value, Mapping) else ()
-                    )
-                }
-                if key == "active_task" and isinstance(value, Mapping)
-                else [
-                    _bounded_text(item, limit=160)
-                    for item in (value or ())
-                ]
-                if isinstance(value, (list, tuple))
-                else value
-            )
-            for key, value in older_snapshot.items()
-            if key != "tool_state"
-        }
-        older_snapshot_for_prompt["tool_state"] = list(
-            older_snapshot.get("tool_state") or ()
-        )[-4:]
         transcript = []
-        for message in selected_source:
+        for message in messages:
             calls = [
                 {
                     "id": str(getattr(call, "id", "") or ""),
@@ -3772,17 +3769,36 @@ class AgentLoop:
         summary_user = LLMMessage(
             role="user",
             content=(
-                "<older_state_snapshot>\n"
-                f"{json.dumps(older_snapshot_for_prompt, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n"
-                "</older_state_snapshot>\n"
+                "<active_task>\n"
+                f"{json.dumps(self.active_task_identity or {}, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n"
+                "</active_task>\n"
                 "<compaction_transcript>\n"
                 f"{serialized}\n"
                 "</compaction_transcript>"
             ),
         )
+        summary_messages = [summary_system, summary_user]
+        input_limit = self._context_window_for_request() - self.config.max_tokens - _SAFETY_BUFFER
+        # Count the serialized arguments and wrapper too. An oversized source
+        # is left intact by the caller instead of silently dropping a subset.
+        if _estimate_tokens(summary_messages) > input_limit:
+            logger.warning("Complete handoff input exceeds context for {}; preserving history", self.agent_type)
+            return None
+        original_provider = self.llm_provider
+        original_admission_model = self.provider_admission_model
+        had_resolved_model = hasattr(self, "usage_resolved_model")
+        original_resolved_model = getattr(self, "usage_resolved_model", None)
+        summary_model = self.config.context_compaction_model
+        if summary_model:
+            # Each loop owns this temporary reference. Sharing the immutable
+            # credentials/SDK client avoids mutating another agent's model.
+            self.llm_provider = copy.copy(original_provider)
+            self.llm_provider.model = summary_model
+            self.provider_admission_model = summary_model
+            self.usage_resolved_model = summary_model
         try:
             response = await self._chat_with_retries(
-                [summary_system, summary_user],
+                summary_messages,
                 None,
                 f"compaction-{self._compaction_sequence + 1}",
                 phase="context_compaction",
@@ -3791,6 +3807,15 @@ class AgentLoop:
             )
         except Exception as exc:
             logger.warning("Model handoff summary failed for {}: {}", self.agent_type, exc)
+            return None
+        finally:
+            self.llm_provider = original_provider
+            self.provider_admission_model = original_admission_model
+            if had_resolved_model:
+                self.usage_resolved_model = original_resolved_model
+            elif hasattr(self, "usage_resolved_model"):
+                del self.usage_resolved_model
+        if getattr(response, "stop_reason", None) in {"max_tokens", "refusal", "model_context_window_exceeded"}:
             return None
         content = str(getattr(response, "content", "") or "").strip()
         if not content:
@@ -3835,14 +3860,24 @@ class AgentLoop:
         self,
         messages: list[LLMMessage],
     ) -> list[LLMMessage]:
-        """Compact with a model handoff, clearly marking deterministic fallback."""
+        """Compact evicted units; failed model summaries leave history intact."""
 
         if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
             return messages
+        target_tokens = int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio)
         baseline = _compact_messages_for_working_memory(
             messages,
-            target_tokens=self.config.working_memory_tokens,
+            target_tokens=target_tokens,
+            task_context=self.active_task_identity,
         )
+        retained_ids = {id(message) for message in baseline[2:]}
+        evicted = [message for message in messages[1:]
+                   if id(message) not in retained_ids
+                   and _HANDOFF_SUMMARY_MARKER not in str(message.content or "")]
+        if not evicted:
+            # A summary cannot shrink the mandatory current input. Do not pay
+            # for a model summary that leaves every original message in place.
+            return messages
         summary_message = next(
             (
                 item
@@ -3853,24 +3888,45 @@ class AgentLoop:
         )
         if summary_message is None:
             return baseline
-        model_summary = await self._request_model_handoff_summary(messages[1:])
-        if model_summary is None:
-            try:
-                raw = str(summary_message.content).split("\n", 1)[1]
-                raw = raw.rsplit("\n", 1)[0]
-                fallback = json.loads(raw)
-            except (IndexError, TypeError, ValueError, json.JSONDecodeError):
-                fallback = _build_handoff_summary(messages[1:])
-            fallback["source"] = "deterministic_fallback"
-            fallback["fallback_reason"] = "model_handoff_unavailable"
-            payload = fallback
+        payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
+        if self.config.context_compaction_strategy == "structured_handoff":
+            payload["source"] = "structured_handoff"
         else:
-            payload = model_summary
+            summary_source = [message for message in messages[1:]
+                              if id(message) not in retained_ids]
+            model_summary = await self._request_model_handoff_summary(summary_source)
+            if model_summary is None:
+                logger.warning("Handoff unavailable for {}; leaving working history unchanged", self.agent_type)
+                return messages
+            else:
+                # Generated prose cannot replace exact task identity, refs or cursors.
+                for key in ("progress", "decisions", "constraints", "remaining_work"):
+                    # The completed model output already has a request token bound.
+                    # Cutting strings/items here can remove a negation, correction
+                    # or source locator after the raw history has been evicted.
+                    # An empty array is also meaningful: do not resurrect stale
+                    # decisions from the deterministic extraction in that case.
+                    payload[key] = list(model_summary.get(key) or ())
+                payload["source"] = "model"
+        # Explicit task constraints remain authoritative even when prose is summarized.
+        for constraint in (self.active_task_identity or {}).get("constraints") or ():
+            value = str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
+            if value and value not in payload["constraints"]:
+                payload["constraints"].append(value)
+        if payload["source"] != "model":
+            payload["constraints"] = payload["constraints"][-12:]
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload
-        index = baseline.index(summary_message)
-        baseline[index] = LLMMessage(role="user", content=_render_handoff_summary(payload))
+        # Freeze the partition used to prepare the summary. Reselecting after
+        # a larger model summary could evict additional, unsummarized content.
+        retained = baseline[2:]
+        baseline = [messages[0], LLMMessage(role="user", content=_render_handoff_summary(payload)), *retained]
+        logger.info(
+            "Context compaction for {}: estimated_tokens={} -> {}; trigger={}; target={}; source={}",
+            self.agent_type, _estimate_tokens(messages), _estimate_tokens(baseline),
+            self.config.working_memory_tokens, target_tokens, payload["source"],
+        )
         self._persist_handoff_summary(payload)
         return baseline
 
@@ -4236,6 +4292,43 @@ class AgentLoop:
         if len(rendered) <= max_chars:
             return rendered
 
+        # A page already has a stable source and cursor. Fit its content to
+        # the wire budget (including JSON escaping) instead of persisting a
+        # second truncation envelope around it. The next read stays on the
+        # original artifact and advances by the characters actually shown.
+        if (
+            tool_name in {"open_artifact", "open_tool_result"}
+            and isinstance(result, dict)
+            and isinstance(result.get("ref"), str)
+            and isinstance(result.get("content"), str)
+            and isinstance(result.get("offset"), int)
+            and isinstance(result.get("total"), int)
+            and isinstance(result.get("returned"), int)
+        ):
+            page = dict(filtered)
+            content = result["content"]
+            low, high = 0, len(content)
+            fitted = None
+            while low <= high:
+                size = (low + high) // 2
+                end = result["offset"] + size
+                page.update(
+                    content=content[:size], returned=size,
+                    truncated=end < result["total"],
+                    next_offset=end if end < result["total"] else None,
+                )
+                encoded = _sanitize_provider_visible_text(
+                    json.dumps(page, ensure_ascii=False, default=str)
+                )
+                if len(encoded) <= max_chars:
+                    if size > 0:
+                        fitted = encoded
+                    low = size + 1
+                else:
+                    high = size - 1
+            if fitted is not None:
+                return fitted
+
         safe_agent = "".join(
             char if char.isalnum() or char in "-_." else "_"
             for char in str(self.agent_type)
@@ -4263,7 +4356,7 @@ class AgentLoop:
                 "instruction": (
                     "如需剩余内容，调用 open_tool_result，ref 使用 full_result_ref，"
                     "offset 使用 next_offset，省略 limit 即按 8000 字符读取；"
-                    "不得从 offset=0 重读 preview。"
+                    "已有内容仍在上下文时无需重读；压缩后遗失内容时可重读原引用。"
                 ),
                 "preview": preview,
             }

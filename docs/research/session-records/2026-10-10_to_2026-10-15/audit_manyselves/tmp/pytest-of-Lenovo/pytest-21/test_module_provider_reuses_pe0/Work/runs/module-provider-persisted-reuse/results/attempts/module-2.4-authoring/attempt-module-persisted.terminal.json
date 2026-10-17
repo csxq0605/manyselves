@@ -1,0 +1,26 @@
+{
+  "kind": "task_terminal",
+  "correlation": {
+    "workflow_id": "public-reporting",
+    "run_id": "module-provider-persisted-reuse",
+    "task_id": "module-2.4-authoring",
+    "task_attempt_id": "attempt-module-persisted",
+    "agent_id": "module-2.4-specialist",
+    "identity_key": "module-2.4-specialist",
+    "session_id": "session-module-persisted",
+    "task_envelope_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "input_contract_ref": null,
+    "input_contract_sha256": null,
+    "subject_ref": null,
+    "subject_sha256": null,
+    "lease_owner_id": "Csxq-Laptop:25088:e8d422679931477faaf0159bde809426",
+    "lease_epoch": 1
+  },
+  "status": "completed",
+  "result_ref": "Work/runs/module-provider-persisted-reuse/results/attempts/module-2.4-authoring/attempt-module-persisted.json",
+  "result_sha256": "eb886e75fc99bf52e08bead65d8da345391fa6cf68c97648073dac298074c5ac",
+  "payload_sha256": "474d7cdee859cabe4548e6f436c004b3c5e48ba22e362755c7401186c50eacf8",
+  "promoted_to_canonical": true,
+  "persisted_at_ns": 1792024836319771100
+}

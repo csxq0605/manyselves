@@ -1,0 +1,37 @@
+{
+  "kind": "submission_correction_state",
+  "run_id": "synthetic-closure",
+  "task_id": "module-2.4-initial-review-r1",
+  "revision": 1,
+  "status": "resolved",
+  "accepted": true,
+  "submission_kind": "module_review_verdict_submission",
+  "raw_payload": {
+    "kind": "module_review_verdict_submission",
+    "coverage": {
+      "submodule_ids": [
+        "2.4.1.1"
+      ]
+    },
+    "new_findings": [],
+    "verdicts": [
+      {
+        "finding_id": "M-2.4-initial-r0-001",
+        "verdict": "resolved",
+        "evidence_refs": [
+          "Work/runs/synthetic-closure/modules/2.4-r1.json",
+          "E-0001",
+          "E-0002",
+          "Work/runs/synthetic-closure/context/module-2.4-knowledge.md"
+        ],
+        "reason": "当前正文为工况 A、2026-01-01、读数 16.58 mA 结论异常，符合虚构规则（工况 A >10 mA 异常），数值保持 16.58 mA 未改。工况 B 同读数 16.58 mA 按 B 的规则（>20 mA 异常）判为正常，属于不同工况各自独立判断，不构成同条件冲突。E-0001/E-0002 均支持对应读数。原 reviewer_checks 两项均已满足。"
+      }
+    ]
+  },
+  "transport_normalization": null,
+  "correction_mode": "none",
+  "validation_errors": [],
+  "affected_part_ids": [],
+  "validation_failures": 0,
+  "fingerprint_occurrences": 0
+}

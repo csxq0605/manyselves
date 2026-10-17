@@ -289,6 +289,7 @@ class AggregateProviderRuntime:
                 task_attempt=task_attempt,
                 expected=dependencies.task_correlation,
             ),
+            envelope=envelope,
             terminal_sender=envelope.agent_id,
             terminal_task_id=envelope.task_id,
             terminal_task_attempt_id=(

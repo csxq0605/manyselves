@@ -1,0 +1,8 @@
+{
+  "kind": "workflow_decision_submission",
+  "decision": "accept_dispute",
+  "rationale": "Main 接受作者对该 finding 的明确争议。",
+  "finding_ids": [
+    "F-author"
+  ]
+}

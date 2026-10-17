@@ -8,6 +8,7 @@ acceptance.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -44,8 +45,11 @@ from manyselves.capabilities.distribution_reporting.runtime.module_review_delta 
     build_module_recheck_delta,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_review_preparation import (
+    _review_evidence,
     _review_evidence_by_ids,
+    _review_knowledge,
     _structure_report,
+    _template_skill_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
@@ -209,6 +213,13 @@ def prepare_current_module_recheck(
         for evidence_ref in finding.evidence_refs
         if evidence_ref.startswith("E-")
     )
+    # Include uncited scope facts as well as old/new/finding references. A
+    # persistent reviewer identity does not guarantee visible earlier messages.
+    scope_evidence = _review_evidence(store.workspace, current, run_id, scope)
+    active_evidence_ids.difference_update(item.evidence_id for item in scope_evidence)
+    knowledge_ref, knowledge_context = _review_knowledge(
+        store.workspace, context.reporting_state, context.module_id, scope,
+    )
     review_input = ModuleReviewInput(
         report_instruction=report_instruction_from_state(context.reporting_state),
         input_changes=context.reporting_state.get("revision_input_changes"),
@@ -224,10 +235,13 @@ def prepare_current_module_recheck(
         prior_claim_statements=delta["prior_claim_statements"],
         unchanged_submodule_sha256=delta["unchanged_submodule_sha256"],
         unchanged_statement_sha256=delta["unchanged_statement_sha256"],
-        evidence=_review_evidence_by_ids(
+        knowledge_ref=knowledge_ref,
+        knowledge_context=knowledge_context,
+        evidence=scope_evidence + _review_evidence_by_ids(
             store.workspace,
             run_id,
             active_evidence_ids,
+            current_claims=[claim for claim in current.claims if claim.submodule_id in scope],
         ),
         required_submodule_ids=sorted(scope),
         required_findings=pending,
@@ -252,7 +266,11 @@ def prepare_current_module_recheck(
         constraints=[
             "coverage 记录实际检查范围，不是批准状态",
             "finding 首次提出后不可改写；复审不得复述旧 finding",
-            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            (
+                "blocking 必须修订并复审；新增 advisory 为可选建议，留档但不自动返工或标记 resolved"
+                if progress.review_protocol_version >= 3
+                else "当前已持久化审计的 advisory 与 blocking 都必须获得作者响应和 reviewer verdict"
+            ),
             "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归",
             "finding id 由既有 review round 分配，审查员不得新造既有 finding id",
         ],
@@ -265,7 +283,9 @@ def prepare_current_module_recheck(
         target_submodule_ids=sorted({finding.target_submodule_id for finding in pending}),
         input_contract_kind="module_review_input",
         input_contract_ref=input_ref,
-        inline_context=None,
+        inline_context=_template_skill_context(
+            store.workspace, context.reporting_state, context.module_id,
+        ),
         allowed_tools=["submit_result"],
     )
     prepared = ModuleRecheckPreparation(
@@ -375,7 +395,7 @@ def _save_progress(
             scope=preparation.scope,
             reviewer_session_key=preparation.reviewer_session_key,
             last_reviewed_subject_ref=preparation.subject_ref,
-            review_protocol_version=2,
+            review_protocol_version=preparation.review_protocol_version,
         ).model_dump(mode="json"),
     )
 
@@ -389,7 +409,7 @@ def _completion(
     resolved_ids: set[str],
 ) -> str:
     completion = ReviewCompletionRecord(
-        review_protocol_version=2,
+        review_protocol_version=preparation.review_protocol_version,
         lifecycle="module",
         run_id=preparation.run_id,
         reviewer_agent_id="evidence-auditor",
@@ -398,6 +418,18 @@ def _completion(
         finding_refs=finding_refs,
         verdict_refs=verdict_refs,
         resolved_finding_ids=sorted(resolved_ids),
+        deferred_advisory_ids=(
+            sorted(
+                finding["id"]
+                for ref in finding_refs
+                for finding in json.loads(
+                    (store.workspace / ref).read_text(encoding="utf-8")
+                )["findings"]
+                if finding["impact"] == "advisory" and finding["id"] not in resolved_ids
+            )
+            if preparation.review_protocol_version >= 3
+            else []
+        ),
     )
     ref = (
         f"{preparation.review_root}/completion-r{preparation.current.revision}.json"
@@ -466,7 +498,10 @@ def accept_current_module_recheck(
             },
         )
         finding_refs.append(finding_ref)
-        next_pending.update({finding.id: finding for finding in submission.new_findings})
+        next_pending.update({
+            finding.id: finding for finding in submission.new_findings
+            if preparation.review_protocol_version < 3 or finding.impact == "blocking"
+        })
     if next_pending:
         _save_progress(
             store,

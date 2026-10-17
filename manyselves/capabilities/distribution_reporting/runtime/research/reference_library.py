@@ -11,11 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from docx import Document
-
 from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
     exclusive_file_lock,
 )
+from manyselves.runtime.artifacts import parse_artifact
 
 KnowledgeNamespace = Literal["project", "global"]
 _RETIRED_HISTORY_SENTINEL = "<persisted_result_part"
@@ -146,9 +145,10 @@ class ReferenceLibrary:
                 text = re.sub(r"<[^>]+>", " ", text)
             return text
         if suffix == ".docx":
-            document = Document(path)
-            text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-            return text
+            parsed = parse_artifact(path)
+            if parsed.error:
+                raise ValueError(parsed.error)
+            return "\n".join(block.text for block in parsed.blocks)
         raise ValueError(f"unsupported reference file type: {suffix or '<none>'}")
 
     def _source_inventory(self) -> list[dict]:

@@ -1,0 +1,177 @@
+{
+  "kind": "cross_owner_input",
+  "report_instruction": "",
+  "input_changes": null,
+  "phase": "initial",
+  "run_id": "cross-owner-workflow-host",
+  "review_round": 0,
+  "owner_module_id": "2.4",
+  "review_focus": [
+    "核对设备选型、额定和分断能力判断是否建立在 2.1 拓扑/负荷、2.2 工况和 2.3 故障参数的共同边界上。",
+    "核对闭锁、接地、连接、封堵和安装缺陷是否削弱保护动作、切换操作或故障隔离屏障。",
+    "核对带病运行及末端抽查发现是否进入 2.5 的维护优先级、LOTO、备件和生命周期处置。"
+  ],
+  "owner_subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.4-r0.json",
+  "owner_subject_revision": 0,
+  "owner_subject": {
+    "module_id": "2.4",
+    "revision": 0,
+    "submodule_narratives": {
+      "2.4.1.1": "初始内容 2.4.1.1。",
+      "2.4.1.2": "初始内容 2.4.1.2。",
+      "2.4.1.3": "初始内容 2.4.1.3。",
+      "2.4.1.4": "初始内容 2.4.1.4。",
+      "2.4.2.1": "初始内容 2.4.2.1。",
+      "2.4.2.2": "初始内容 2.4.2.2。",
+      "2.4.2.3": "初始内容 2.4.2.3。",
+      "2.4.2.4": "初始内容 2.4.2.4。",
+      "2.4.2.5": "初始内容 2.4.2.5。",
+      "2.4.2.6": "初始内容 2.4.2.6。",
+      "2.4.3.1": "初始内容 2.4.3.1。",
+      "2.4.3.2": "初始内容 2.4.3.2。",
+      "2.4.3.3": "初始内容 2.4.3.3。",
+      "2.4.4": "初始内容 2.4.4。"
+    },
+    "evidence_ids_by_submodule": {
+      "2.4.1.1": [],
+      "2.4.1.2": [],
+      "2.4.1.3": [],
+      "2.4.1.4": [],
+      "2.4.2.1": [],
+      "2.4.2.2": [],
+      "2.4.2.3": [],
+      "2.4.2.4": [],
+      "2.4.2.5": [],
+      "2.4.2.6": [],
+      "2.4.3.1": [],
+      "2.4.3.2": [],
+      "2.4.3.3": [],
+      "2.4.4": []
+    },
+    "unresolved_questions": []
+  },
+  "owner_scope_submodule_ids": [
+    "2.4.1.1",
+    "2.4.1.2",
+    "2.4.1.3",
+    "2.4.1.4",
+    "2.4.2.1",
+    "2.4.2.2",
+    "2.4.2.3",
+    "2.4.2.4",
+    "2.4.2.5",
+    "2.4.2.6",
+    "2.4.3.1",
+    "2.4.3.2",
+    "2.4.3.3",
+    "2.4.4"
+  ],
+  "related_module_refs": {
+    "2.1": "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json",
+    "2.2": "Work/runs/cross-owner-workflow-host/modules/2.2-r0.json",
+    "2.3": "Work/runs/cross-owner-workflow-host/modules/2.3-r0.json",
+    "2.5": "Work/runs/cross-owner-workflow-host/modules/2.5-r0.json"
+  },
+  "related_module_revisions": {
+    "2.1": 0,
+    "2.2": 0,
+    "2.3": 0,
+    "2.5": 0
+  },
+  "related_module_views": {
+    "2.1": {
+      "module_id": "2.1",
+      "revision": 0,
+      "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json",
+      "submodule_ids": [
+        "2.1.1",
+        "2.1.2",
+        "2.1.3",
+        "2.1.4",
+        "2.1.5"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.1.1": [],
+        "2.1.2": [],
+        "2.1.3": [],
+        "2.1.4": [],
+        "2.1.5": []
+      },
+      "unresolved_questions": []
+    },
+    "2.2": {
+      "module_id": "2.2",
+      "revision": 0,
+      "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.2-r0.json",
+      "submodule_ids": [
+        "2.2.1.1",
+        "2.2.1.2",
+        "2.2.1.3",
+        "2.2.2.1",
+        "2.2.2.2",
+        "2.2.2.3"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.2.1.1": [],
+        "2.2.1.2": [],
+        "2.2.1.3": [],
+        "2.2.2.1": [],
+        "2.2.2.2": [],
+        "2.2.2.3": []
+      },
+      "unresolved_questions": []
+    },
+    "2.3": {
+      "module_id": "2.3",
+      "revision": 0,
+      "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.3-r0.json",
+      "submodule_ids": [
+        "2.3.1",
+        "2.3.2",
+        "2.3.3"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.3.1": [],
+        "2.3.2": [],
+        "2.3.3": []
+      },
+      "unresolved_questions": []
+    },
+    "2.5": {
+      "module_id": "2.5",
+      "revision": 0,
+      "subject_ref": "Work/runs/cross-owner-workflow-host/modules/2.5-r0.json",
+      "submodule_ids": [
+        "2.5.1",
+        "2.5.2",
+        "2.5.3.1",
+        "2.5.3.2",
+        "2.5.3.3",
+        "2.5.4",
+        "2.5.5",
+        "2.5.6",
+        "2.5.7"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.5.1": [],
+        "2.5.2": [],
+        "2.5.3.1": [],
+        "2.5.3.2": [],
+        "2.5.3.3": [],
+        "2.5.4": [],
+        "2.5.5": [],
+        "2.5.6": [],
+        "2.5.7": []
+      },
+      "unresolved_questions": []
+    }
+  },
+  "required_findings": [],
+  "revision_responses": [],
+  "prior_synthesis_inputs": [],
+  "local_regression_review_ref": null
+}

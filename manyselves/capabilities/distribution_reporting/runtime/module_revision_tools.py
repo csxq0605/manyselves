@@ -535,7 +535,7 @@ def _save_progress(
                 existing.reviewer_session_key if existing else f"module-auditor-{context.module_id}"
             ),
             last_reviewed_subject_ref=(existing.last_reviewed_subject_ref if existing else None),
-            review_protocol_version=2,
+            review_protocol_version=existing.review_protocol_version if existing else 3,
         ).model_dump(mode="json"),
     )
 

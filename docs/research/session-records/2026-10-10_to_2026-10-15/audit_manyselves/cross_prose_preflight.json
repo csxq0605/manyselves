@@ -1,0 +1,19 @@
+{
+  "synthetic_only": true,
+  "complete_workflow": false,
+  "max_api_calls": 8,
+  "attempts": 0,
+  "cases": [
+    {
+      "case": "conflict",
+      "requests": [],
+      "tool_reads": []
+    },
+    {
+      "case": "different_conditions",
+      "requests": [],
+      "tool_reads": []
+    }
+  ],
+  "completed": true
+}

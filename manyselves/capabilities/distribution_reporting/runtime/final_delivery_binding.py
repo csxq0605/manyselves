@@ -44,7 +44,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from .final_review_tools import build_final_review_tool_implementations
-from .template_skill_paths import template_skill_ref
+from .template_skill_context import read_template_skill, render_template_skill
 
 _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
@@ -60,19 +60,7 @@ def _template_skill_context(
     workspace: Path,
     skill_id: str,
 ) -> str:
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        path = workspace / template_skill_ref(skill_id)
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, read_template_skill(workspace, state, skill_id))
 
 
 def _final_inline_context(

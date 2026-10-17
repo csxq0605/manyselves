@@ -1,0 +1,107 @@
+{
+  "baseline": "d0eabff",
+  "changed": "d3a011a",
+  "synthetic_only": true,
+  "max_requests": 24,
+  "design": "2 repeats x 3 fixtures x 2 arms, seeded randomized within-pair order; no cache hint; same flat submit tool",
+  "attempts": 0,
+  "cases": [
+    {
+      "repeat": 0,
+      "case": "unchanged",
+      "arm": "after",
+      "expected": "open",
+      "request_chars": 6514,
+      "requests": []
+    },
+    {
+      "repeat": 0,
+      "case": "unchanged",
+      "arm": "before",
+      "expected": "open",
+      "request_chars": 4898,
+      "requests": []
+    },
+    {
+      "repeat": 0,
+      "case": "fixed",
+      "arm": "after",
+      "expected": "resolved",
+      "request_chars": 6680,
+      "requests": []
+    },
+    {
+      "repeat": 0,
+      "case": "fixed",
+      "arm": "before",
+      "expected": "resolved",
+      "request_chars": 5470,
+      "requests": []
+    },
+    {
+      "repeat": 0,
+      "case": "different_conditions",
+      "arm": "before",
+      "expected": "resolved",
+      "request_chars": 5753,
+      "requests": []
+    },
+    {
+      "repeat": 0,
+      "case": "different_conditions",
+      "arm": "after",
+      "expected": "resolved",
+      "request_chars": 6963,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "unchanged",
+      "arm": "after",
+      "expected": "open",
+      "request_chars": 6514,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "unchanged",
+      "arm": "before",
+      "expected": "open",
+      "request_chars": 4898,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "fixed",
+      "arm": "after",
+      "expected": "resolved",
+      "request_chars": 6680,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "fixed",
+      "arm": "before",
+      "expected": "resolved",
+      "request_chars": 5470,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "different_conditions",
+      "arm": "before",
+      "expected": "resolved",
+      "request_chars": 5753,
+      "requests": []
+    },
+    {
+      "repeat": 1,
+      "case": "different_conditions",
+      "arm": "after",
+      "expected": "resolved",
+      "request_chars": 6963,
+      "requests": []
+    }
+  ],
+  "completed": true
+}

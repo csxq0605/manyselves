@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "run_id": "distill-template-skill-60000000000040008000000000000002",
+  "inventory_digest": "b21783a3d2e504287a28099765b514b0891d8702168879108f52ae500d5424a2",
+  "files": [
+    {
+      "logical_ref": "Templates/report_template.docx",
+      "snapshot_ref": "Work/runs/distill-template-skill-60000000000040008000000000000002/frozen-project/Templates/report_template.docx",
+      "sha256": "c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6",
+      "size": 15,
+      "blob_ref": "Work/content/sha256/c6/f1/c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6",
+      "trusted_handle_ref": "Work/content/verified/c6/c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6/9c13fc4914c0f35ada64e620a38881a3e856e90ad61c596fe0f7e6975786aea2.json"
+    }
+  ]
+}

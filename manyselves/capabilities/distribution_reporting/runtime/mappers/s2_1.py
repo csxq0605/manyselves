@@ -1,8 +1,7 @@
 """Map the S2-1 collection checklist into traceable availability evidence."""
 
 from pathlib import Path
-
-from openpyxl import load_workbook
+from typing import Any
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import resolve_submodule
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
@@ -10,7 +9,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     MappingResult,
 )
 
-from .common import make_evidence
+from .common import cached_formula_workbook, make_evidence
 
 _DOCUMENT_EXACT_ROUTES = {
     "中低压电气系统图": "2.5.2",
@@ -66,27 +65,35 @@ def _route_document(document_name: str) -> str | None:
     return None
 
 
+def _text(value: Any, default: str = "") -> str:
+    return str(value).strip() if value not in (None, "") else default
+
+
 def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
     path = Path(path)
-    workbook = load_workbook(path, read_only=False, data_only=False)
-    try:
+    with cached_formula_workbook(path) as (workbook, formula_gaps):
         if "收资表" not in workbook.sheetnames:
             return MappingResult(
                 evidence_items=[],
-                gaps=[MappingGap(code="missing_sheet", message="缺少收资表", sheet="收资表")],
+                gaps=[*formula_gaps, MappingGap(code="missing_sheet", message="缺少收资表", sheet="收资表")],
             )
         sheet = workbook["收资表"]
         evidence = []
-        gaps: list[MappingGap] = []
+        gaps: list[MappingGap] = list(formula_gaps)
+        unresolved_cells = {gap.cell for gap in formula_gaps if gap.sheet == sheet.title}
         category: str | None = None
         for row in range(2, sheet.max_row + 1):
-            category = str(sheet.cell(row, 1).value or category or "未分类").strip()
-            document_name = str(sheet.cell(row, 2).value or "").strip()
+            # An unresolved category is not a blank/merged continuation of the previous one.
+            category = (
+                "未分类" if f"A{row}" in unresolved_cells
+                else _text(sheet.cell(row, 1).value, category or "未分类")
+            )
+            document_name = _text(sheet.cell(row, 2).value)
             if not document_name:
                 continue
-            availability = str(sheet.cell(row, 7).value or "未填写").strip()
-            effectiveness = str(sheet.cell(row, 8).value or "未填写").strip()
-            note = str(sheet.cell(row, 9).value or "").strip()
+            availability = _text(sheet.cell(row, 7).value, "未填写")
+            effectiveness = _text(sheet.cell(row, 8).value, "未填写")
+            note = _text(sheet.cell(row, 9).value)
             fact = f"具备情况={availability}；有效性={effectiveness}"
             if note:
                 fact += f"；备注={note}"
@@ -114,9 +121,8 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
                     module_id=module_id,
                     submodule_id=submodule_id,
                     needs_confirmation=availability.upper() != "OK"
-                    or effectiveness.upper() != "OK",
+                    or effectiveness.upper() != "OK"
+                    or any(f"{column}{row}" in unresolved_cells for column in ("A", "B", "G", "H", "I")),
                 )
             )
         return MappingResult(evidence_items=evidence, gaps=gaps)
-    finally:
-        workbook.close()

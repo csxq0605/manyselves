@@ -90,6 +90,10 @@ class ModuleInitialReviewPreparation(StrictModel):
     preflight_progress: ModuleReviewPreflightProgress | None = None
     regression_context: ModuleLocalRegressionContext | None = None
 
+    @property
+    def review_protocol_version(self) -> int:
+        return self.progress.review_protocol_version if self.progress is not None else 3
+
 
 class ModuleInitialReviewAcceptance(StrictModel):
     """Typed result after accepting an initial module-review submission."""
@@ -155,6 +159,10 @@ class ModuleRecheckPreparation(StrictModel):
     validation_ref: str | None = None
     validation_target_submodule_ids: list[str] = Field(default_factory=list)
     preflight_progress: ModuleReviewPreflightProgress | None = None
+
+    @property
+    def review_protocol_version(self) -> int:
+        return self.progress.review_protocol_version if self.progress is not None else 3
 
 
 class ModuleRecheckAcceptance(StrictModel):

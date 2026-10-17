@@ -205,9 +205,9 @@ class AnthropicProvider(LLMProvider):
            with type="tool_result" blocks
         3. Regular messages -> simple role/content dicts
 
-        When a system message has ``cache_control=True`` the system parameter is
-        emitted as a list of content blocks so the last block can carry an
-        ephemeral cache-control marker.
+        Cacheable system and regular text messages carry an ephemeral marker
+        on their text block. Preserve that boundary through same-role merging;
+        compatible endpoints receive ordinary strings without cache metadata.
 
         Per Anthropic API spec:
         - tool_use blocks go in assistant messages
@@ -274,9 +274,13 @@ class AnthropicProvider(LLMProvider):
                 continue
 
             # Regular text message
+            content = self._normalize_message_content(msg.content)
+            if msg.cache_control and self._supports_cache_control() and msg.content:
+                content = [{"type": "text", "text": self._safe_text(msg.content),
+                            "cache_control": {"type": "ephemeral"}}]
             anthropic_messages.append({
                 "role": msg.role,
-                "content": self._normalize_message_content(msg.content),
+                "content": content,
             })
 
         # Flush any remaining tool results
@@ -321,7 +325,7 @@ class AnthropicProvider(LLMProvider):
         so collapse text-only results back to a string. Mixed blocks that
         contain ``tool_use`` / ``tool_result`` must stay as arrays.
         """
-        if all(isinstance(b, dict) and b.get("type") == "text" for b in blocks):
+        if all(isinstance(b, dict) and b.get("type") == "text" and "cache_control" not in b for b in blocks):
             return "\n".join(
                 AnthropicProvider._safe_text(b.get("text")) for b in blocks
             )
@@ -356,6 +360,28 @@ class AnthropicProvider(LLMProvider):
     # Non-streaming chat
     # ------------------------------------------------------------------
 
+    def _generation_parameters(
+        self, temperature: float, reasoning_enabled: bool | None, *, tool_loop: bool = False,
+    ) -> dict[str, Any]:
+        # Haiku 5.5 rejects legacy sampling values and uses adaptive thinking.
+        # A no-reasoning hint maps to low effort, not an unsupported budget.
+        if self.model == "claude-haiku-5-5":
+            if tool_loop:
+                # Runtime replay currently retains thinking text, not signed
+                # content blocks. Adaptive tool turns require exact signatures.
+                # Haiku supports disabled thinking at medium/low effort; use
+                # that legal path until signed, append-only replay is supported.
+                return {"thinking": {"type": "disabled"},
+                        "output_config": {"effort": "low" if reasoning_enabled is False else "medium"}}
+            params: dict[str, Any] = {"thinking": {"type": "adaptive"}}
+            if reasoning_enabled is False:
+                params["output_config"] = {"effort": "low"}
+            return params
+        params = {"temperature": temperature}
+        if reasoning_enabled is False:
+            params["thinking"] = {"type": "disabled"}
+        return params
+
     async def chat(
         self,
         messages: list[Message],
@@ -372,15 +398,13 @@ class AnthropicProvider(LLMProvider):
         params: dict[str, Any] = {
             "model": self.model,
             "messages": anthropic_messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
+            **self._generation_parameters(temperature, reasoning_enabled, tool_loop=bool(tools) or any(
+                message.tool_calls or message.is_tool_result for message in messages)),
         }
 
         if system_message:
             params["system"] = system_message
-
-        if reasoning_enabled is False:
-            params["thinking"] = {"type": "disabled"}
 
         if tools:
             params["tools"] = self._convert_tools(tools, tool_names)
@@ -465,15 +489,13 @@ class AnthropicProvider(LLMProvider):
         params: dict[str, Any] = {
             "model": self.model,
             "messages": anthropic_messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
+            **self._generation_parameters(temperature, reasoning_enabled, tool_loop=bool(tools) or any(
+                message.tool_calls or message.is_tool_result for message in messages)),
         }
 
         if system_message:
             params["system"] = system_message
-
-        if reasoning_enabled is False:
-            params["thinking"] = {"type": "disabled"}
 
         if tools:
             params["tools"] = self._convert_tools(tools, tool_names)

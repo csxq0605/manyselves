@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -285,6 +286,31 @@ class _TypedCrossScript:
         raise AssertionError(f"unexpected scripted Cross task: {task_id}")
 
 
+class _AdvisoryCrossScript(_TypedCrossScript):
+    def __init__(self, run_id: str, mode: str) -> None:
+        super().__init__(run_id)
+        self.mode = mode
+
+    def _result(self, task_id: str, *, occurrence: int = 1) -> Any:
+        if self.mode == "advisory" and task_id != "cross-owner-runtime-initial-review":
+            raise AssertionError("An advisory must not dispatch a corrective agent")
+        if occurrence > 1:
+            raise AssertionError("Advisory must not reopen a completed blocking round")
+        result = super()._result(task_id, occurrence=occurrence)
+        initial = super()._result("cross-owner-runtime-initial-review").submission
+        advice = initial.findings[0].model_copy(
+            update={"id": "X-advice", "impact": "advisory"}
+        )
+        if task_id == "cross-owner-runtime-initial-review":
+            if self.mode == "advisory":
+                result.submission.findings = [advice]
+            elif self.mode == "mixed":
+                result.submission.findings.append(advice)
+        elif task_id == "cross-owner-runtime-recheck" and self.mode == "new_advisory":
+            result.submission.new_findings.append(advice)
+        return result
+
+
 def _module_submission(module_id: str) -> ModuleSubmission:
     return ModuleSubmission(
         module_id=module_id,
@@ -336,8 +362,10 @@ def _reporting_state(workspace: Path, run_id: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["blocking", "advisory", "mixed", "new_advisory"])
 async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_completes(
     tmp_path: Path,
+    mode: str,
 ) -> None:
     """Run one packaged owner pipeline through the real generic Host."""
 
@@ -353,7 +381,7 @@ async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_com
         registry,
     )
     runtime = CrossOwnerRuntime(tmp_path)
-    script = _TypedCrossScript(run_id)
+    script = _AdvisoryCrossScript(run_id, mode)
     context = RuntimeContext(
         tools=build_cross_owner_tool_implementations(runtime),
         agents={
@@ -369,11 +397,11 @@ async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_com
         initial_variables={"reporting-state": _reporting_state(tmp_path, run_id)},
     )
     state_store = InMemoryWorkflowStateStore()
-    final = await WorkflowRuntimeHost(
+    final = await asyncio.wait_for(WorkflowRuntimeHost(
         build_builtin_executor_registry(),
         state_store,
         InMemoryWorkflowEventSink(),
-    ).execute(plan, state, context)
+    ).execute(plan, state, context), timeout=10)
 
     assert final.status == "completed"
     outcome = final.outputs["result"]
@@ -381,9 +409,17 @@ async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_com
     assert outcome.pipeline["initial_result_ref"].endswith(
         "cross-owner-findings-r0-2.1.json"
     )
-    assert outcome.pipeline["verdict_ref"].endswith(
-        "cross-owner-verdicts-r1-2.1.json"
-    )
+    if mode == "advisory":
+        assert len(script.calls) == 1
+        assert outcome.pipeline["completion"]["resolved_finding_ids"] == []
+        assert outcome.pipeline["completion"]["deferred_advisory_ids"] == ["X-advice"]
+        assert outcome.pipeline["completion"]["finding_refs"] == [
+            outcome.pipeline["initial_result_ref"]
+        ]
+        assert outcome.pipeline["findings"][0]["id"] == "X-advice"
+        assert not (tmp_path / f"Work/runs/{run_id}/modules/2.1-r1.json").exists()
+        return
+    assert outcome.pipeline["verdict_ref"].endswith("cross-owner-verdicts-r1-2.1.json")
     assert [task_id for _agent, task_id, _conversation, _result in script.calls] == [
         "cross-owner-runtime-initial-review",
         "cross-owner-module-2.1-revision-r1",
@@ -399,6 +435,10 @@ async def test_cross_owner_file_workflow_host_finding_revision_local_recheck_com
     assert isinstance(revision_inputs[0], DeclarativeModuleRuntimeLaneContext)
     assert revision_inputs[0].revision is not None
     assert revision_inputs[0].revision.prepared.module_id == _OWNER
+    assert revision_inputs[0].revision.prepared.required_finding_ids == ["X-2.1-r0-1"]
+    if mode != "blocking":
+        assert "X-advice" in [f["id"] for f in outcome.pipeline["findings"]]
+        assert "X-advice" not in [v["finding_id"] for v in outcome.pipeline["verdicts"]]
     reviewer_calls = [
         conversation_id
         for agent_id, _task_id, conversation_id, _result in script.calls

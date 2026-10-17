@@ -1,0 +1,24 @@
+[
+  {
+    "id": "E-0001",
+    "kind": "project_evidence",
+    "title": "虚构实验记录",
+    "locator": "Inputs/fiction.txt",
+    "publisher": null,
+    "published_at": null,
+    "accessed_at": null,
+    "scope_note": null,
+    "content_sha256": "696ae6b5bc3883f04478346519a6e263c6d2eff148d60074e12224730114b5b4"
+  },
+  {
+    "id": "E-0002",
+    "kind": "project_evidence",
+    "title": "虚构实验记录 B",
+    "locator": "Inputs/fiction.txt",
+    "publisher": null,
+    "published_at": null,
+    "accessed_at": null,
+    "scope_note": null,
+    "content_sha256": "fd372e95a9a6c85590bccb72172bc08c644d7a8a283a2676ba59be97b611992c"
+  }
+]

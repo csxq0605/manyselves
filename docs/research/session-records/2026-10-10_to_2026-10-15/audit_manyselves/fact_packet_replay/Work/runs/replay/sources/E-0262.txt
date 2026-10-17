@@ -1,0 +1,1 @@
+{"id":"E-0262","subject":"评估总表 2.5.2","fact":"既有评估结论=不规范；既有行动建议=规范化管理","source":{"file_id":"file-013a9efb52231caa","path":"Inputs/S4-6评估总表.xlsx","sheet":"评估信息汇总表","cell":"F43:G43","page":null,"row":43,"column":"F","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":0.65,"needs_confirmation":true,"module_id":"2.5","submodule_id":"2.5.2","photo_refs":[]}

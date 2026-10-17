@@ -1,0 +1,12 @@
+{
+  "device": 2308899235109236720,
+  "handle_version": 1,
+  "inode": 2814749768686250,
+  "issued_at_ns": 1792024824064602300,
+  "lineage_id": "run-input:frozen-skills:Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+  "manifest_ref": "Work/content/verified/32/3208d7e0ed02b4f70d451226a863048617e52bcc2985fdf2af6d1d28d192f8c3/b1887834dd77c4e09b7db893f9fa32cdc780b358ffeacae6cd3e68485d94e84b.json",
+  "mtime_ns": 1792024823802921200,
+  "relative_path": "Work/content/sha256/32/08/3208d7e0ed02b4f70d451226a863048617e52bcc2985fdf2af6d1d28d192f8c3",
+  "sha256": "3208d7e0ed02b4f70d451226a863048617e52bcc2985fdf2af6d1d28d192f8c3",
+  "size": 1325
+}

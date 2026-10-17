@@ -1,0 +1,22 @@
+{
+  "agent_id": "cross-module-reviewer",
+  "task_id": "cross-owner-2.1-r0-initial",
+  "revision": 0,
+  "raw_payload": {
+    "kind": "cross_owner_finding_submission",
+    "owner_module_id": "2.1",
+    "coverage": {
+      "module_id": "2.1",
+      "checked_dimensions": [
+        "terminology",
+        "facts",
+        "risk_levels",
+        "dependencies",
+        "propagation",
+        "joint_verification"
+      ]
+    },
+    "findings": [],
+    "synthesis_inputs": []
+  }
+}

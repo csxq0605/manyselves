@@ -47,6 +47,12 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
 from manyselves.capabilities.distribution_reporting.runtime.module_preflight_revision import (
     advance_module_review_preflight_progress,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
+    register_fact_sources,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
+    ProjectEvidenceIndex,
+)
 from manyselves.capabilities.distribution_reporting.runtime.review_preflight import (
     evaluate_module_review_preflight,
 )
@@ -54,8 +60,9 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
     SourceLedger,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
-    template_skill_ref,
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_context import (
+    read_template_skill,
+    render_template_skill,
 )
 from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
     request_user_supplements,
@@ -110,6 +117,10 @@ def _review_knowledge(
 ) -> tuple[str | None, str]:
     refs = state.get("module_knowledge_refs", {})
     knowledge_ref = refs.get(module_id) if isinstance(refs, Mapping) else None
+    if not knowledge_ref and state.get("run_id"):
+        canonical_ref = f"Work/runs/{state['run_id']}/context/module-{module_id}-knowledge.md"
+        if (workspace / canonical_ref).is_file():
+            knowledge_ref = canonical_ref
     if not knowledge_ref:
         return None, ""
     text = (workspace / str(knowledge_ref)).read_text(encoding="utf-8")
@@ -137,13 +148,22 @@ def _review_evidence(
         for source_id in claim.source_ids
         if source_id.startswith("E-")
     }
-    return _review_evidence_by_ids(workspace, run_id, selected_ids)
+    # Coverage is independent of what the author chose to cite. Keep cited
+    # cross-module sources as well as every fact in the review's own scope.
+    items = ProjectEvidenceIndex(workspace, run_id).module_items(subject.module_id, scope)
+    register_fact_sources(workspace, run_id, items)
+    selected_ids.update(item.id for item in items)
+    return _review_evidence_by_ids(
+        workspace, run_id, selected_ids,
+        current_claims=[claim for claim in subject.claims if claim.submodule_id in scope],
+    )
 
 
 def _review_evidence_by_ids(
     workspace: Path,
     run_id: str,
     selected_ids: set[str],
+    *, current_claims: list[ClaimRecord] | None = None,
 ) -> list[ReviewEvidenceExcerpt]:
     ledger = SourceLedger(workspace, run_id)
     records = {record.id: record for record in ledger.records}
@@ -158,6 +178,10 @@ def _review_evidence_by_ids(
         packet.append(
             ReviewEvidenceExcerpt(
                 evidence_id=evidence_id,
+                bound_submodule_ids=(sorted({
+                    claim.submodule_id for claim in current_claims
+                    if evidence_id in claim.source_ids
+                }) if current_claims is not None else None),
                 title=record.title,
                 locator=record.locator,
                 content=(workspace / content_ref).read_text(encoding="utf-8"),
@@ -176,8 +200,9 @@ def _claim_statements(
             submodule_id=claim.submodule_id,
             text=claim.text,
             statement_type=claim.claim_type,
+            origin=claim.origin,
             evidence_ids=claim.source_ids,
-            confidence=claim.confidence,
+            confidence=None if claim.origin == "runtime_part_binding" else claim.confidence,
             unresolved=claim.unresolved,
         )
         for claim in claims
@@ -191,19 +216,7 @@ def _template_skill_context(
     module_id: str,
 ) -> str:
     skill_id = f"auditor-{module_id}"
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        path = workspace / template_skill_ref(skill_id)
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, read_template_skill(workspace, state, skill_id))
 
 
 def prepare_module_local_regression_review(
@@ -290,7 +303,7 @@ def prepare_module_local_regression_review(
         state["module_knowledge_refs"] = {
             module_id: str(knowledge_path.relative_to(store.workspace))
         }
-    knowledge_ref, _knowledge_context = _review_knowledge(
+    knowledge_ref, knowledge_context = _review_knowledge(
         store.workspace,
         state,
         module_id,
@@ -312,7 +325,7 @@ def prepare_module_local_regression_review(
         unchanged_submodule_sha256={},
         unchanged_statement_sha256={},
         knowledge_ref=knowledge_ref,
-        knowledge_context="",
+        knowledge_context=knowledge_context,
         evidence=_review_evidence(store.workspace, current, run_id, scope),
         required_submodule_ids=sorted(scope),
         required_findings=[],
@@ -343,7 +356,7 @@ def prepare_module_local_regression_review(
             "不得拆成独立小节级审查任务或会话",
             "finding 首次提出后不可改写；复审不得复述旧 finding",
             "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
             "首轮必须覆盖 input 中全部 required_submodule_ids",
             "这是原模块审查者的 local_regression，不得重新审查未修改小节",
             "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
@@ -517,8 +530,9 @@ def prepare_current_module_review(
                 "不得拆成独立小节级审查任务或会话",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-                "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+                "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
                 "首轮必须覆盖 input 中全部 required_submodule_ids",
+                "evidence 包含检查范围内未被作者引用的事实；独立检查异常、测点和资料缺口是否遗漏，不能只核对作者的引用。",
                 *user_supplement_constraints(
                     request_user_supplements(state.get("request")),
                     stage="module_review",

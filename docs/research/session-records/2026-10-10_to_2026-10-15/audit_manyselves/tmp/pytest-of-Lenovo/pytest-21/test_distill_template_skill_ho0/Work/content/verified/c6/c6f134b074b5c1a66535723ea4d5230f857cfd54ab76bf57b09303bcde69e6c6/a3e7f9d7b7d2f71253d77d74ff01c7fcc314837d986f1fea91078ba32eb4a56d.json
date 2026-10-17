@@ -1,0 +1,12 @@
+{
+  "device": 2308899235109236720,
+  "handle_version": 1,
+  "inode": 2814749768686601,
+  "issued_at_ns": 1792024837347129700,
+  "lineage_id": "run-input:distill-template-skill-60000000000040008000000000000001:Templates/report_template.docx",
+  "manifest_ref": "Work/content/verified/c6/c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6/a3e7f9d7b7d2f71253d77d74ff01c7fcc314837d986f1fea91078ba32eb4a56d.json",
+  "mtime_ns": 1792024837344106300,
+  "relative_path": "Work/content/sha256/c6/f1/c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6",
+  "sha256": "c6f134b074b5c1a66535723ea4d5230f857cfd54ab76bf57b09303bcde69e6c6",
+  "size": 15
+}

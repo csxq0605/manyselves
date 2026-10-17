@@ -27,6 +27,9 @@ background: true
 当前章节、phase、材料、findings、输出类型和 part 形状完全服从 chief_chapter_lane_input、当前章节 Skill 与工具 Schema。不得重新打开全报告或其它章节。
 phase=initial 时必须先用 open_artifact/search_text 查阅 source_refs 中与拟写事实相关的来源；source_context 中只有标识符或摘要时，不得把它扩写为未经来源支持的地点、设备、数量、负载率或风险事实。
 phase=revision 时 Chapter 1/3 只重写被 finding 指定的目标小节，并用 write_result_part 保存完整修订后正文；未命中的小节不得写入 part_refs。Chapter 4 仍以一个完整 special_topic_analysis part 保留计划内全部 4.x 小节。增加或调整事实前必须先用 open_artifact/search_text 查阅 source_refs 中的第二章批准正文或证据，不得自行补造地点、设备、数字和风险事实。
+source_refs 中 CrossDecisionPack 的 deferred_advisories 是未实施的可选建议，不是批准事实、风险或强制写作要求。仅在当前章节有用且已由材料支持时采用，不为消除建议而新增事实或重写第二章。
+第三章依据紧凑 cross_synthesis 关系及已批准模块来源展开一次最终叙事；causal_chain 含前提和传播机制，decision_implication 含必要行动依赖与协调，verification_method 含验证和验收条件。完整保留条件与限制，不因来源未单列旧字段而要求 Cross 重写分析，不扩写没有依据的机制、阈值或行动。
+第三章合并行动时保留上游全部异常及待核查对象和各自状态，不只采用汇总表中已有详细建议的部分对象。原表NG、已确认原因与待核实原因分别表达；图注出现不等于正文已有处置。硬性前置与可选协调分开，不能将管理制度完善、同一计划或相关风险自动变成技术处置的先决条件；时限、数量与验收值只用有来源支持的内容。未知条件保留为待核实，不用固定阶段和任务配额补齐。
 </tools_and_loop>
 <collaboration>
 编辑意见只针对读者理解和交付质量，不以句式偏好触发返工。

@@ -1,0 +1,17 @@
+{
+  "workflow_id": "distribution-aggregate-existing",
+  "run_id": "aggregate-provider-persisted-reuse",
+  "task_id": "aggregate-existing",
+  "task_attempt_id": "attempt-994a9e26002c4c359451f8898fb82605",
+  "agent_id": "aggregate-editor",
+  "identity_key": "aggregate-editor",
+  "session_id": "aggregate-existing",
+  "task_envelope_sha256": "72f29c2aeb2ab6856f3a16c0c7e293ddb9c2b344cb4ab464b0f56ede04bd95b7",
+  "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "input_contract_ref": "Work/runs/aggregate-provider-persisted-reuse/context/aggregate-editor-input.json",
+  "input_contract_sha256": "46dce4e9f250ed63067a977c23cd02fbfc7a86a67f0e76292437ea1b07a72051",
+  "subject_ref": null,
+  "subject_sha256": null,
+  "lease_owner_id": "Csxq-Laptop:25088:09354ac97b2b483aa3b5e124479b3d88",
+  "lease_epoch": 1
+}

@@ -65,7 +65,7 @@ async def test_search_text_clamps_model_bounds_instead_of_triggering_retry_loop(
 
 
 @pytest.mark.asyncio
-async def test_open_artifact_clamps_oversized_pages_and_suppresses_duplicate_reads() -> None:
+async def test_open_artifact_clamps_pages_and_allows_rereading_after_context_loss() -> None:
     gateway = _Gateway()
     tool = OpenArtifactTool(gateway)  # type: ignore[arg-type]
 
@@ -73,8 +73,16 @@ async def test_open_artifact_clamps_oversized_pages_and_suppresses_duplicate_rea
     duplicate = await tool("module.json", limit=80_000)
 
     assert first["limit"] == 8000
-    assert duplicate["status"] == "already_read"
-    assert gateway.open_calls == [("module.json", 0, 8000)]
+    assert duplicate["content"] == first["content"] == "正文"
+    assert gateway.open_calls == [("module.json", 0, 8000)] * 2
+
+
+@pytest.mark.asyncio
+async def test_open_tool_result_can_reread_a_page_after_context_loss() -> None:
+    tool = OpenToolResultTool(_Gateway())  # type: ignore[arg-type]
+    first = await tool("tool-result-ref", offset=4000)
+    repeated = await tool("tool-result-ref", offset=4000)
+    assert repeated == first
 
 
 @pytest.mark.asyncio

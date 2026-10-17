@@ -68,6 +68,7 @@ def mock_gui():
 def mock_provider():
     provider = AsyncMock()
     provider.model = "test-model"
+    provider.context_window = 128000
     provider.chat.return_value = LLMResponse(
         content="I will help you.",
         tool_calls=[],
@@ -720,6 +721,31 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert not (workspace / ".manyselves/tool-results").exists()
 
 
+def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_loop):
+    """Escaping overhead must not create an endless chain of tool-result refs."""
+    text = ('数值="11.3"\n' * 1600) + "TAIL"
+    offset = 0
+    delivered = []
+    while offset < len(text):
+        content = text[offset:offset + 8000]
+        page = {
+            "ref": "original-ref", "content": content, "offset": offset,
+            "returned": len(content), "total": len(text),
+            "truncated": offset + len(content) < len(text),
+            "next_offset": offset + len(content) if offset + len(content) < len(text) else None,
+        }
+        rendered = agent_loop._format_tool_result(page, tool_name="open_tool_result")
+        actual = json.loads(rendered)
+        assert len(rendered) <= agent_loop.config.max_tool_result_chars
+        assert actual.get("ref") == "original-ref"
+        assert "full_result_ref" not in actual
+        assert actual["returned"] > 0
+        delivered.append(actual["content"])
+        offset += actual["returned"]
+        assert actual["next_offset"] == (offset if offset < len(text) else None)
+    assert "".join(delivered) == text
+
+
 def test_working_memory_compaction_persists_handoff_summary(agent_loop, workspace):
     messages = [
         LLMMessage(role="system", content="system"),
@@ -844,7 +870,7 @@ async def test_model_handoff_disables_anthropic_reasoning_on_wire(agent_loop):
 
 
 @pytest.mark.asyncio
-async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop):
+async def test_working_memory_compaction_failure_preserves_history(agent_loop):
     agent_loop.config = AgentDefaults(max_tool_iterations=5, working_memory_tokens=5120)
     agent_loop._chat_with_retries = AsyncMock(side_effect=RuntimeError("provider unavailable"))
     messages = [
@@ -855,12 +881,45 @@ async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop
 
     compacted = await agent_loop._compact_working_memory_async(messages)
 
-    assert '"source":"deterministic_fallback"' in compacted[1].content
-    assert "model_handoff_unavailable" in compacted[1].content
+    assert compacted is messages
+    agent_loop._chat_with_retries.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
+@pytest.mark.parametrize("strategy", ["model_summary", "structured_handoff"])
+async def test_compaction_keeps_task_refs_independent_of_summary_model(agent_loop, strategy):
+    ref = "Work/runs/example/context/module-2.4-facts.md"
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy=strategy,
+    )
+    agent_loop.begin_typed_task({
+        "task_id": "author", "input_refs": [ref], "objective": "review all measurements",
+        "constraints": ["Use only verified source facts"],
+    })
+    agent_loop._request_model_handoff_summary = AsyncMock(return_value={
+        "progress": ["some work"], "decisions": [], "constraints": ["another constraint"],
+        "remaining_work": ["continue"], "critical_refs": ["invented-ref"],
+        "source": "model",
+    })
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old work " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ]
+    compacted = await agent_loop._compact_working_memory_async(messages)
+    payload = json.loads(compacted[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["active_task"]["task_id"] == "author"
+    assert ref in payload["critical_refs"]
+    assert "invented-ref" not in payload["critical_refs"]
+    assert "Use only verified source facts" in payload["constraints"]
+    assert agent_loop._request_model_handoff_summary.await_count == (strategy == "model_summary")
+    assert payload["source"] == ("model" if strategy == "model_summary" else "structured_handoff")
+    restored = agent_loop.durable_handoff_summary()
+    assert ref in restored["critical_refs"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_handoff_keeps_history_instead_of_summarizing_a_subset(agent_loop):
     agent_loop.config = AgentDefaults(
         max_tool_iterations=5,
         max_tokens=512,
@@ -907,12 +966,9 @@ async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
         )
     messages.append(LLMMessage(role="user", content="current task"))
 
-    await agent_loop._compact_working_memory_async(messages)
-
-    summary_request = agent_loop._chat_with_retries.await_args.args[0]
-    assert len(summary_request[-1].content) < 20_000
-    assert "<older_state_snapshot>" in summary_request[-1].content
-    assert "<compaction_transcript>" in summary_request[-1].content
+    result = await agent_loop._compact_working_memory_async(messages)
+    assert result is messages
+    agent_loop._chat_with_retries.assert_not_awaited()
 
 
 def test_identity_task_boundary_and_restart_restore_keep_lossless_history(agent_loop):

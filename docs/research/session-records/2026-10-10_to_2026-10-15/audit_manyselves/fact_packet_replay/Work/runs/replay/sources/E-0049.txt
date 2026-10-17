@@ -1,0 +1,1 @@
+{"id":"E-0049","subject":"文体中心配电房/1D1","fact":"其他检查发现=过热（负荷高、出风口积灰、散热差）","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"低配评估详情","cell":"X9:Z9","page":null,"row":9,"column":"X","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.2.1","photo_refs":[]}

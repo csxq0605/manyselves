@@ -50,7 +50,7 @@ from manyselves.capabilities.distribution_reporting.runtime.storage import Repor
 from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
 from .report_validation import validate_final_report_structure
-from .template_skill_paths import template_skill_ref
+from .template_skill_context import read_template_skill, render_template_skill
 
 _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
@@ -70,19 +70,7 @@ def _template_skill_context(
 ) -> str:
     """Embed one materialized template Skill in the Agent task envelope."""
 
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        path = workspace / template_skill_ref(skill_id)
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, read_template_skill(workspace, state, skill_id))
 
 
 def _chief_template_skill_context(
@@ -211,6 +199,8 @@ def _source_projection(
     source_refs = [
         str(state["cross_review_completion_ref"])
     ] if state.get("cross_review_completion_ref") else []
+    if state.get("cross_decision_pack_ref"):
+        source_refs.append(str(state["cross_decision_pack_ref"]))
     modules = state.get("module_submissions", {})
     if chapter_id == "1":
         source_context = {
@@ -228,7 +218,7 @@ def _source_projection(
                 },
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:2400]
+            )
             for module_id, module in sorted(
                 modules.items(), key=lambda item: float(item[0])
             )
@@ -247,7 +237,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:6000],
+            ),
             "module_boundaries": ",".join(
                 f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
                 for module_id, module in sorted(
@@ -261,7 +251,7 @@ def _source_projection(
                 plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:12_000]
+            )
         }
         if state.get("special_topic_knowledge_ref"):
             source_refs.append(str(state["special_topic_knowledge_ref"]))

@@ -42,6 +42,8 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .task_context import bind_task_context
+
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
 
@@ -190,17 +192,15 @@ class FinalChiefAgentBridge:
                 }
             )
 
+        def render_prompt() -> str:
+            return self._prompt(agent, task, contract, inline_context=envelope.inline_context)
+
+        projection = bind_task_context(
+            session.loop, self.workspace, envelope,
+            output_contract=task.output_contract, render_prompt=render_prompt,
+        )
         request = AgentTurnRequest(
-            content=self._prompt(
-                agent,
-                task,
-                contract,
-                inline_context=(
-                    context.envelope.inline_context
-                    if context.envelope is not None
-                    else None
-                ),
-            ),
+            content=projection.initial_message() if projection is not None else render_prompt(),
             message_id=(
                 f"{task_id}:{contract.run_id}:chapter-"
                 f"{context.chapter_id}:revision-{contract.revision}"
@@ -248,6 +248,7 @@ class FinalChiefAgentBridge:
                 contract,
                 inline_context=envelope.inline_context,
                 event_kind=event_kind,
+                include_context=projection is None,
             ),
             result_decoder=decode_result,
             recovery=self.recovery_driver,
@@ -269,6 +270,7 @@ class FinalChiefAgentBridge:
         *,
         inline_context: str | None,
         event_kind: Any,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         return "\n\n".join(
@@ -276,12 +278,8 @@ class FinalChiefAgentBridge:
                 f"<{event_name}>",
                 "继续当前 Final Chief 会话，复用已完成的分析和工具结果；"
                 "立即调用 submit_result 提交符合 output contract 的类型化修订。",
-                self._prompt(
-                    agent,
-                    task,
-                    contract,
-                    inline_context=inline_context,
-                ),
+                (self._prompt(agent, task, contract, inline_context=inline_context)
+                 if include_context else "当前任务输入与最新稿件由 typed_task_state 提供。"),
                 f"</{event_name}>",
             )
         )

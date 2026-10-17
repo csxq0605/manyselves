@@ -1,0 +1,13 @@
+[
+  {
+    "id": "R-001",
+    "kind": "local_reference",
+    "title": "规程0",
+    "locator": "Knowledge/rule-0.md",
+    "publisher": null,
+    "published_at": null,
+    "accessed_at": null,
+    "scope_note": "knowledge_namespace=project",
+    "content_sha256": "6ad5a189c141f93374bd458efea37dc4296e0e1f52ae5bdcec5bcd665ee560a7"
+  }
+]

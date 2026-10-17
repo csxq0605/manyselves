@@ -1,0 +1,38 @@
+{
+  "kind": "cross_owner_finding_submission",
+  "owner_module_id": "2.1",
+  "coverage": {
+    "module_id": "2.1",
+    "checked_dimensions": [
+      "terminology",
+      "facts",
+      "risk_levels",
+      "dependencies",
+      "propagation",
+      "joint_verification"
+    ]
+  },
+  "findings": [
+    {
+      "id": "X-2.1-r0-1",
+      "owner_module_id": "2.1",
+      "target_submodule_ids": [
+        "2.1.1"
+      ],
+      "related_module_ids": [
+        "2.2"
+      ],
+      "category": "dependencies",
+      "impact": "blocking",
+      "observation": "当前模块没有把该关系写入可验证正文，导致关联模块无法复核其依赖边界。",
+      "evidence_refs": [
+        "Work/runs/cross-owner-workflow-host/modules/2.1-r0.json"
+      ],
+      "required_change": "在 2.1.1 中补充关系机制、影响路径和与 2.2 的联合验证步骤，并明确后续复核方法。",
+      "reviewer_checks": [
+        "确认关系机制已写入目标小节并能由关联模块复核。"
+      ]
+    }
+  ],
+  "synthesis_inputs": []
+}
