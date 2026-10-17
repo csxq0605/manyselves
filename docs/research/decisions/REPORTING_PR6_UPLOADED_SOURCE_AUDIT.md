@@ -2,6 +2,8 @@
 
 对应 S01/S06、Q01/Q03/Q06/Q07、F01/F03。2026-10-17（Asia/Taipei），代码基线 `113e132`。本轮依据用户上传的 `归档.zip`；原件及本地探针产物保存在云端附件目录，不复制到公开仓库。动态状态见[唯一状态文件](../../implementation/RUNTIME_EXTRACTION_STATUS.md)。
 
+后续实际修订见[36对象语义复核](REPORTING_PR6_OBJECT_SEMANTIC_REVIEW.md)和[修订包](../../../manyselves/templates/reporting/reviewed-role-skills/README.md)；下文仍为113e132时点审计快照，不代表原14份目前仍未修订。
+
 ## 资料身份及已有数据复用
 
 - 包含14份 `Inputs/report-template-role-skills/*/SKILL.md`、source.json、boundary.json，3份Excel输入、1份修订补充，以及15份Knowledge Markdown；忽略macOS目录元数据。ZIP中文文件名编码已恢复。

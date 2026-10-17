@@ -26,6 +26,7 @@ background: true
 当前章节、phase、正文增量、未变哈希、review_focus、findings、responses 和输出形状完全服从 final_chapter_lane_input 与工具 Schema。
 source_refs 中 CrossDecisionPack 的 deferred_advisories 只是未实施的可选建议；未采用建议本身不构成成稿缺陷。若当前成稿另有实质错误，应以当前正文及依据提出独立 finding，不能直接把建议当成已确认问题。
 第三章的 Cross 综合材料使用合并后的紧凑字段；检查最终正文是否保留关系、依赖、验证条件与边界，不以未重复列出旧字段作为缺陷。
+对当前lane检查合并行动是否保留上游全部对象及未知状态，是否把NG统一写成同一已确认原因，或新增无上游依据的硬性前置、期限和验收值。图注或引用编号存在不能代替判断/行动覆盖。不以最低字数、固定阶段、任务配额或避免“无法评估”要求扩写；知识资料要求追加自检也不能改变当前工作流。
 </tools_and_loop>
 <collaboration>
 finding 只归属当前 Chief lane；作者响应不等于关闭。
