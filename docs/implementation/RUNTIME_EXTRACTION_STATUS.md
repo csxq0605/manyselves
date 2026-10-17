@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 Q02 S2-1/S4-6 formula-cache fidelity fixed and 316 uploaded facts preserved; official standards, remaining Knowledge semantics and actual model quality/performance remain unaccepted`
+- Current slice: `PR #6 Q02 collection/summary caches and Q03 source load-rate provenance fixed; 316 uploaded records retained, 18 load-rate records now explicitly attributed; standards and model quality/performance remain unaccepted`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 继续按17项清单验证逐对象判断、正文与行动语义。原14份逐份核查与知识库具体冲突见下方上传材料审计；继续核查余下专业规则与输入适用条件，官方域名配置发布后核验标准状态与条款；实际模型配置明确后做代表性质量/缓存/token/墙钟对照，不以完整报告重跑作为分析前置条件。已验证的dimension及S2-1/S4-6公式缓存读取、上下文、Cross、成功写入及审计来源映射不重复；不以来源绑定冒充语义覆盖。
+- Next automatic action: 继续按17项清单验证逐对象判断、正文与行动语义。原14份逐份核查与知识库具体冲突见下方上传材料审计；继续核查余下专业规则与输入适用条件，官方域名配置发布后核验标准状态与条款；实际模型配置明确后做代表性质量/缓存/token/墙钟对照，不以完整报告重跑作为分析前置条件。已验证的dimension、S2-1/S4-6缓存、S4-4原表负荷率读取、上下文、Cross、成功写入及审计来源映射不重复；不以来源绑定冒充语义覆盖。
+
+### PR #6 / Q01、Q03 — 负荷率保留原表结果，不默认0.4kV补算
+
+- 后续生产检查发现S4-4两条路径都忽略E列原表结果，固定用C×0.4×1.732/D计算负荷率。合成原表使用0.69kV时，已保存11.95%的结果被重算为6.93%；E列空缺、零值或比例口径未知时也擅自得到6.93%。初始8项反例均失败，随后补充3种格式边界。
+- 当前/容量可用时优先保留E列已保存结果；明确百分比格式或带%文本才能转为百分数，带引号/转义的字面%、混合比例格式及重复%不猜换算。原公式、来源坐标、待核实的额定电压/测量侧别/口径一起交给作者；不从计算结果自动得出过载结论。缺原表结果或比例口径不明时保留电流、容量、原数值及定位缺口，不用固定电压补算。
+- 43项定向测试通过（新增负荷率11、intake16、事实包9、准备流程5、快照2），Ruff/diff通过。上传S4-4仍208条：9个负荷率观测路由成18条证据，全部数值匹配E列已保存百分比，其正文增加原表归属/公式/条件且needs_confirmation为真；其余190条事实不变，原有缺口和源文件字节不变。三表总数仍316，不再把这18条改写后的事实正文称为与旧归档逐字相同。
+- 原表公式本身的0.4kV假设尚未获侧别/额定电压证据确认，本轮不会把“忠实读取公式缓存”当作“公式工程依据正确”。没有Excel重算、Provider请求或完整报告生成；缓存过期与公式是否适用仍需核实。
 
 ### PR #6 / Q02 — 收资与汇总表公式缓存读取
 
@@ -69,7 +76,7 @@
 | S06 | 成功写入无需固定列举；实际作者紧凑提交与Runtime整段绑定已核实 | 已纠正“作者重复输出Claims”的推论；保留恢复与并行4，拆2.4尚无收益证据 |
 | Q01 | 冻结事实36项回放；上传三表316条当前映射事实与旧归档匹配，送达14/13/9 | 新正文语义覆盖尚未生成核验 |
 | Q02 | dimension及S2-1/S4-6公式缓存修复，缺缓存/错误/零值与图片绑定验证；上传316条不变 | 缓存新鲜度、Excel重算、大表内存、OCR及其他格式未验收 |
-| Q03 | 数值/单位/温升边界反例；原型缺规则上下文修复 | 原型未推广；实际规则适用与自由正文语义 |
+| Q03 | 数值/单位/温升反例；修复S4-4固定电压重算，保留原表负荷率及计算条件；原型缺规则上下文修复 | 原表公式适用、缓存新鲜度、实际规则及正文语义；原型未推广 |
 | Q04 | 联合共同快照；同条件矛盾/异条件合理差异离线反例 | 未新增未经证实的共享专业判断机制 |
 | Q05 | 图证/正文/行动分开回放；初审/复审传递来源类型与当前小节绑定 | 精确E-ID绑定仍不是逐对象判断/行动语义；不自动产生门禁 |
 | Q06 | 8份分发方法核查、2份修正；已收到原14份及Knowledge，具体冲突/来源已定位 | 官方站403、网络草稿待发布，条款支持/现行性及余下专业规则未验收 |

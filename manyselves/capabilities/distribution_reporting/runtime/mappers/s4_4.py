@@ -1,6 +1,7 @@
 """Map S4-4 diagnostic workbook observations into module 2.4 evidence."""
 
-from decimal import Decimal
+import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,47 @@ def _numeric_value(sheet: Any, value_sheet: Any, row: int, column: int) -> Any:
     return cached_value if isinstance(cached_value, (int, float)) else value
 
 
+def _source_load_rate(sheet: Any, value_sheet: Any, row: int, gaps: list[MappingGap]) -> tuple[str, float | None]:
+    """Read E as reported, without substituting an assumed voltage or phase basis."""
+    source = sheet.cell(row, 5)
+    cached = value_sheet.cell(row, 5) if source.data_type == "f" else source
+    value = None if cached.data_type == "e" else cached.value
+    if value in (None, ""):
+        # Formula failures are already reported by map_s4_4's cache scan.
+        if source.data_type != "f":
+            gaps.append(MappingGap(
+                code="missing_load_rate_result",
+                message="原表缺少负荷率结果；额定电压、测量侧别和计算口径须核实后才能计算",
+                sheet=sheet.title, cell=source.coordinate,
+            ))
+        return "；原表负荷率结果不可用，需核实额定电压、测量侧别和计算口径后计算", None
+
+    percent = None
+    # Quoted/escaped percent signs are literal display text, not Excel's scale operator.
+    number_format = re.sub(r'"[^\"]*"|\\.', "", source.number_format)
+    numeric_sections = number_format.split(";")[:3]
+    percent_format = all(section.count("%") == 1 for section in numeric_sections)
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and percent_format:
+            percent = Decimal(str(value)) * 100
+        elif isinstance(value, str) and value.strip().endswith("%"):
+            percent = Decimal(value.strip()[:-1].strip())
+    except InvalidOperation:
+        pass
+    if percent is not None and percent.is_finite():
+        fact = f"；原表负荷率={percent:.2f}%"
+        if source.data_type == "f":
+            fact += f"；原表公式={source.value}"
+        return fact + "；需核对额定电压、测量侧别及计算口径，不单凭此值判断过载", float(percent)
+
+    gaps.append(MappingGap(
+        code="ambiguous_load_rate_scale",
+        message=f"原表负荷率未能确定百分比口径（单元格格式={source.number_format}），不自动换算",
+        sheet=sheet.title, cell=source.coordinate,
+    ))
+    return f"；原表负荷率数值={_text(value)}；比例口径待核实", None
+
+
 def _map_low_voltage(
     path: Path,
     file_id: str,
@@ -62,11 +104,13 @@ def _map_low_voltage(
             unit = "A"
             fact = f"运行电流={current:g}A"
             if isinstance(capacity, (int, float)) and capacity:
-                value = current * 0.4 * 1.732 / capacity * 100
-                unit = "%"
-                fact += f"；变压器容量={capacity:g}kVA；计算负荷率={value:.2f}%"
+                fact += f"；变压器容量={capacity:g}kVA"
+                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                fact += reported_fact
+                if load_rate is not None:
+                    value, unit = load_rate, "%"
                 routes = (("2.4", "2.4.1.1"), ("2.1", "2.1.1"))
-                needs_confirmation = False
+                needs_confirmation = True
             else:
                 current_only_rows.append(row)
                 fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
@@ -256,9 +300,11 @@ def _map_total_distribution(
             unit = "A"
             fact = f"运行电流={current:g}A"
             if isinstance(capacity, (int, float)) and capacity:
-                value = current * 0.4 * 1.732 / capacity * 100
-                unit = "%"
-                fact += f"；变压器容量={capacity:g}kVA；计算负荷率={value:.2f}%"
+                fact += f"；变压器容量={capacity:g}kVA"
+                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                fact += reported_fact
+                if load_rate is not None:
+                    value, unit = load_rate, "%"
             for module_id, submodule_id in (
                 ("2.4", "2.4.1.1"),
                 ("2.1", "2.1.1"),
@@ -277,6 +323,7 @@ def _map_total_distribution(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        needs_confirmation=True,
                     )
                 )
         elif isinstance(capacity, (int, float)) and capacity:
