@@ -31,7 +31,8 @@ def prepare(project: Path, output: Path) -> dict:
     amendments = json.loads((reviewed / "amendments.json").read_text(encoding="utf-8"))
     relative = amendments["file"]
     original = (project / "Knowledge" / relative).read_text(encoding="utf-8-sig")
-    parts = re.split(r"(?m)(?=^### KU-)", original)
+    # A unit ends at the next heading, including the appendix after the last KU.
+    parts = re.split(r"(?m)(?=^#{1,3} )", original)
     changed_units = set()
     for index, part in enumerate(parts):
         match = re.match(r"### (KU-[\d.]+-\d+)\s", part)
@@ -52,6 +53,8 @@ def prepare(project: Path, output: Path) -> dict:
             "\n依据状态：相关标准仅为候选检索入口，原条款支持、现行性及项目适用条件尚未核实；"
             "本次修订不宣称已完成专业标准认证。\n\n"
         )
+        if topic := amendments.get("unit_topics", {}).get(unit):
+            parts[index] += f"检索关联主题：{topic}。仅辅助检索，不改变原KU身份或证明适用性。\n\n"
         changed_units.add(unit)
     if changed_units != set(amendments["unit_fields"]):
         raise ValueError("source edition is missing expected knowledge units")
@@ -97,7 +100,7 @@ def prepare(project: Path, output: Path) -> dict:
     )
     # Old hashes and template-distiller producer describe the original only.
     source = {
-        "source": "manual-reference-review", "revision": "pr6-2026-10-17",
+        "source": "manual-reference-review", "revision": "pr6-2026-10-18",
         "producer": "manual-editorial-revision",
         "skill_root": "Inputs/report-template-role-skills",
         "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
@@ -118,7 +121,7 @@ def prepare(project: Path, output: Path) -> dict:
         "knowledge_units_revised": sorted(changed_units),
         "knowledge_files_revised": sorted(replacements),
         "provider_calls": 0, "report_runs": 0,
-        "limits": ["Other knowledge units remain unreviewed.",
+        "limits": ["Editorial review does not certify professional conclusions.",
                    "No official standard status or applicability was certified.",
                    "Existing frozen runs are unchanged; this is a separate project copy."],
     }
