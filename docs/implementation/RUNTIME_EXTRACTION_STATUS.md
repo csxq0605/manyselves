@@ -28,7 +28,7 @@
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，Q04同源观测比较与Q05最终行动映射已接通，通用参考召回和Q06规则原文可读性已实施；继续核对跨run修订的旧判断/新事实边界及各入口恢复一致性，不用新增样例修订材料结项。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
+- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，Q04同源观测比较与Q05最终行动映射已接通，通用参考召回和Q06规则原文可读性已实施；跨Run规则/状态来源变化已接入影响分析，旧来源归档及引用重定位已核验。下一步按原17项核对剩余Q03量纲/工况判断和F01重复推导；仅对有证据的通用缺口改代码，真实模型与费用验收按用户要求暂缓。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
 
 ### 2026-10-18 — 设备/环境续核与全部来源处置
 
@@ -60,6 +60,13 @@
 - **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
 - 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
 - **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / Q03–Q06、F04 — 跨Run判断依赖与知识变更
+
+- 核对现有`prepare_report_revision`确认新增判断记录、最终链接及规则原文引用会随业务快照迁移；现有递归重定位把工件引用移至新Run，完整旧来源字节随sources归档保留，不将旧依据偷偷替换成新知识内容。
+- 修复另一处实际消费缺口：原修订影响分析仅扫描正文/Claims，尚不识别新判断记录所使用的规则和状态依据。现在显式观测及规则/状态ID也进入依赖；项目Knowledge修改/删除时，按已注册来源的规范化路径（含条款定位符）定位受影响小节，交回既有auto/confirm修订流程。只是影响建议，不自动认证新规则或增加确认流程；没有依赖绑定的其他小节不机械追加。
+- 既有跨Run修订/影响分析检查通过，Ruff/diff通过，无新增测试文件。私有跨Run协议验证确认：原文引用已重定位、旧依据字节保持、没有用户小节提示时仍能从规则依赖定位一节、未关联小节不加入，unverified状态不被升级。没有Provider调用或完整报告重跑。
+- 本轮实际交付共六个聚焦提交：判断交接、稳定缓存前缀、同源观测/最终行动、通用知识召回、规则原文读取、知识变更的修订依赖。已重新核对原三大项/17项的实施与未验收边界；人工样例修订不再充当通用实现进度，未将上述协议结果当作专业成稿成功。
 
 ### PR #6 / Q03、Q06、S06 — 审查实际可读的规则原文
 
