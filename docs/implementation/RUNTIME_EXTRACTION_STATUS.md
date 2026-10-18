@@ -28,7 +28,7 @@
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按原17项继续通用结构实施：完成本轮判断交接与恢复核验后处理S05动态task board破坏缓存前缀；继续Q04同源观测的跨章比较、Q05最终章行动映射及Q06/Q07参考召回/规则适用消费。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
+- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，继续Q04同源观测的跨章比较、Q05最终章行动映射及Q06/Q07参考召回/规则适用消费。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
 
 ### 2026-10-18 — 设备/环境续核与全部来源处置
 
@@ -60,6 +60,12 @@
 - **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
 - 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
 - **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / S04–S05 — 动态任务状态离开缓存前缀
+
+- 复现任务board从running到completed使system正文改变；现改为稳定system及任务输入在前，运行时状态在每个逻辑请求重建后、预算核对前单独注入，真实重试沿用同一请求。不写回对话历史，不参与历史摘要，下一轮重新读取。
+- 同时修复既有预算裁剪遗漏：`current_task_state`（当前草稿）与新增`runtime_task_state`同为必保留块；超出预算时沿用原exhausted返回，不靠丢弃当前事实/草稿/board来适配。
+- 既有21项受影响检查通过。离线请求捕获确认两版board的system与稳定输入相同、动态块改变，原生Anthropic/兼容序列化符合各自缓存协议，工具配对与原trace保持，必需块超预算不被裁掉。首次捕获脚本因离线Provider未提供model元数据失败，补齐离线元数据后完成；没有真实网络模型调用。真实缓存费用与整体耗时仍未测。
 
 ### PR #6 / 原计划重新核对：停止以样例材料修订代替通用实现
 
@@ -111,7 +117,7 @@
 | S02 | Cross 共同快照及15→10字段，Chief/Final与恢复贯通 | 模型质量、实际输出/token收益未测 |
 | S03 | 审查直接结构化提交指引 | 是提示层改进；实际重复输出减少未测 |
 | S04 | 当前事实/草稿独立重建，精确冗余写入先去重再压缩 | 真实摘要量/成本未测；新增判断记录也须参与等价比较 |
-| S05 | 稳定任务输入与动态草稿分块 | **动态task board仍拼进system，是尚待修复的生产结构缺口**；缓存费用另待测 |
+| S05 | 稳定system/任务输入在前，动态task board在重建后单独插入；当前草稿与任务状态受既有预算保护 | 请求及原生/兼容序列化已离线核验；真实缓存命中/费用仍未测 |
 | S06 | 作者本来已紧凑提交；成功写入不再固定要求列举 | 本轮判断随同一次正文写入，不另加提交轮次；实际开销未测，不靠样例字数宣称提速 |
 | Q01 | 完整事实送达、未引用事实可审；本轮独立预期观测范围与作者判断记录相对照 | 输入范围不等于现实对象全集；自动显示未处理项仍不保证模型正确处理 |
 | Q02 | dimension、公式缓存/缺值/错误/零值修复 | 缓存新鲜度、其他格式/OCR及大表开销未验收 |

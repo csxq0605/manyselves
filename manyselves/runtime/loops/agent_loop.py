@@ -833,6 +833,8 @@ def _trim_typed_context_to_budget(
                 marker in content
                 for marker in (
                     "<typed_task_state>",
+                    "<current_task_state>",
+                    "<runtime_task_state>",
                     "<task_state_capsule>",
                     "<bounded_context>",
                     "<context_budget>",
@@ -2852,6 +2854,10 @@ class AgentLoop:
             rebuild_count = 1
             self._apply_rebased_usage_metadata(rebased)
 
+        if phase != "context_compaction":
+            messages = self._with_live_task_state(messages)
+
+        if self.context_rebuilder is not None and phase != "context_compaction":
             # Typed contexts are rebase-first.  Only after the typed view
             # exists may we remove older complete units; max_tokens and
             # max_tool_iterations remain untouched.
@@ -4460,16 +4466,30 @@ class AgentLoop:
         return self._cached_system_prompt
 
     async def _get_system_prompt(self) -> str:
-        """Return the system prompt with live task state appended.
+        """Return stable instructions; live board data is inserted at dispatch."""
+        return await self._get_cached_system_prompt()
 
-        The base prompt is cached once; the task-state section is rebuilt
-        fresh each time so it reflects the current board state.
+    def _with_live_task_state(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Keep current board state after the stable prefix and outside history.
+
+        Called once per logical request after context rebuilding and before
+        budget accounting. Retries reuse the same payload; the next request
+        reads fresh state. Never append to the persisted conversation.
         """
-        base = await self._get_cached_system_prompt()
-        task_section = self._build_task_state_section()
-        if task_section:
-            return base + task_section
-        return base
+        state = self._build_task_state_section()
+        if not state or not messages:
+            return messages
+        position = 1
+        while position < len(messages):
+            message = messages[position]
+            if message.role != "user" or message.is_tool_result or not message.cache_control:
+                break
+            position += 1
+        return [
+            *messages[:position],
+            LLMMessage(role="user", content="<runtime_task_state>\n" + state + "\n</runtime_task_state>"),
+            *messages[position:],
+        ]
 
     async def _build_messages(self) -> list[LLMMessage]:
         """Build the message list for any LLM request.
@@ -4512,7 +4532,7 @@ class AgentLoop:
         ]
 
     def _build_task_state_section(self) -> str:
-        """Build current task state section for the system prompt.
+        """Build current task-board data for the dynamic dispatch block.
 
         Rules:
         - Incomplete tasks: show all
