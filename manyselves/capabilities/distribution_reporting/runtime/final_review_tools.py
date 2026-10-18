@@ -47,7 +47,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
-from .assessment_context import assessment_source_context
+from .assessment_context import (
+    assessment_source_context,
+    final_observation_context,
+    source_observation_groups,
+)
 from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
 from .report_validation import validate_final_report_structure
@@ -257,6 +261,9 @@ def _source_projection(
         if state.get("special_topic_knowledge_ref"):
             source_refs.append(str(state["special_topic_knowledge_ref"]))
     source_context["module_assessments"] = assessment_source_context(modules)
+    source_context["source_observation_groups"] = json.dumps(
+        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
@@ -378,6 +385,9 @@ class FinalReviewTools:
             edited.special_topic_plan,
             store=self.store,
         )
+        source_context.update(final_observation_context(
+            state.get("module_submissions", {}), edited, _section_bodies(edited, chapter_id),
+        ))
         revision = review.revision_number
         run_id = str(state["run_id"])
         contract = ChiefChapterLaneInput(
@@ -647,6 +657,13 @@ class FinalReviewTools:
         plan = state.get("special_topic_plan") or review.current.special_topic_plan
         current = review.current.model_copy(
             update={
+                "observation_links": [
+                    link for link in review.current.observation_links
+                    if link.section_id not in updates
+                ] + [
+                    link for chapter_id in active
+                    for link in outcomes[chapter_id].submission.observation_links
+                ],
                 **{
                     field_for_section[section_id]: body
                     for section_id, body in updates.items()

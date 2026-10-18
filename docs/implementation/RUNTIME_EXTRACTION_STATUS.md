@@ -28,7 +28,7 @@
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，继续Q04同源观测的跨章比较、Q05最终章行动映射及Q06/Q07参考召回/规则适用消费。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
+- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，Q04同源观测比较与Q05最终行动映射已接通，继续Q06/Q07参考召回/规则适用消费。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
 
 ### 2026-10-18 — 设备/环境续核与全部来源处置
 
@@ -60,6 +60,14 @@
 - **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
 - 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
 - **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / Q04–Q05、F01–F02 — 跨章同源观测与最终行动交接
+
+- 来源对齐基于原始路径、工作表、精确坐标、对象及观测时间；仅完全相同的规范化内容（除路由ID）标记为同一来源观测副本。不同坐标、同名对象不自动合并，内容不同也不自动判矛盾。Cross和Chief读取同一对照，继续按工况和规则判断。
+- Chief在原有分章提交中提供短`observation_links`，把E-ID对应到最终小节、正文和行动位置。初始装配保存；局部修订只替换改动小节的链接，其他链接保留；改正文却不更新链接时旧锚点不会被算作覆盖。第3.2节以已提交concern/undetermined记录为行动预期集合；仍未判断的原始观测继续在模块遗漏列表显示。
+- **生产入口更正：** 前一提交将材料接到了Chief及Final回改作者的source_context，但Final分章审查者的真实合同原来只有本章正文。此次已把判断及当前章链接投影接到`final_delivery_binding.py`的实际初审和复审入口，避免用相近文件名误认为已贯通。
+- 既有受影响检查（Cross/Chief/Final Provider、边界、aggregate入口）通过，更新一个Chief来源键断言，无新增测试文件。归档协议回放经过实际正文工具、提交、Chief装配、Final准备和局部回改：36组同源观测副本可对齐，最终链接持久化、旧锚点失效可见、其他章节链接保留。脚本首次因/tmp临时材料已不存在而停止，重新在私有临时目录准备后完成；不包含专业判断生成，不宣称真实成稿质量通过。
+- 通用Runtime文件Ruff现有两条N818命名问题位于本轮未修改的异常类（前一S05检查已报出），本轮Capability改动Ruff/diff通过。下一项继续Q06/Q07通用参考召回与适用依据消费，真实模型与官方状态核验仍暂缓。
 
 ### PR #6 / S04–S05 — 动态任务状态离开缓存前缀
 
@@ -122,8 +130,8 @@
 | Q01 | 完整事实送达、未引用事实可审；本轮独立预期观测范围与作者判断记录相对照 | 输入范围不等于现实对象全集；自动显示未处理项仍不保证模型正确处理 |
 | Q02 | dimension、公式缓存/缺值/错误/零值修复 | 缓存新鲜度、其他格式/OCR及大表开销未验收 |
 | Q03 | 保留物理量/单位；撤销固定电压补算；本轮判断携带工况和规则适用依据 | 没有通用规则选择/量纲推理正确性保证；人工规则改写不是实现 |
-| Q04 | Cross共同快照；本轮各模块显式判断与范围进入同一输入 | **同源观测跨ID对齐、冲突裁决和共享修订仍未完整实现**；不能称统一结论已完成 |
-| Q05 | 本轮预期观测→判断→模块正文/行动锚点；遗漏可见，旧数据未知，修订不继承过时锚点 | **最终章行动归属/覆盖映射仍需接线**；锚点存在不证明语义覆盖 |
+| Q04 | Cross共同快照；本轮各模块显式判断与范围进入同一输入 | 本轮加入同一精确来源位置/对象/时点的跨ID对照，完全相同路由副本明确标记；不同坐标的对象身份与专业冲突仍由Cross审查，不能自动合并结论 |
+| Q05 | 本轮预期观测→判断→模块正文/行动锚点；遗漏可见，旧数据未知，修订不继承过时锚点 | 本轮已接通最终章链接与3.2行动遗漏投影；Final实际初审/复审入口读取它，锚点存在仍不证明语义覆盖 |
 | Q06 | 来源注册/定位；本轮规则版本、核验来源/日期及适用范围随判断传递 | 状态是作者声明；官方核验受403阻挡；引用蕴含/规则选择未实现自动证明 |
 | Q07 | Skill方法边界与实际配置已查明 | **通用专业知识召回仍依赖标题/编号词面，样例unit_topics人工映射不是机制修复**；选模待真实配置 |
 | F01 | 沿现有任务交接一次作者判断，Cross补关系，Chief汇总，Final核传递 | 不凭角色名称删阶段；阶段成本收益未测 |

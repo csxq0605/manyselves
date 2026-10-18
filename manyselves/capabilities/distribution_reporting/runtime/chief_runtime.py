@@ -75,7 +75,7 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
-from .assessment_context import assessment_source_context
+from .assessment_context import assessment_source_context, source_observation_groups
 from .task_context import bind_task_context
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -199,6 +199,9 @@ def _source_projection(
             source_refs.append(str(knowledge_ref))
 
     source_context["module_assessments"] = assessment_source_context(modules)
+    source_context["source_observation_groups"] = json.dumps(
+        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
@@ -810,6 +813,10 @@ class ChiefChapterRuntime:
             special_topic_plan=plan,
             special_topic_analysis=special_topic_body,
             protected_claim_ids=sorted(claim.id for claim in claims),
+            observation_links=[
+                link for chapter_id in active_chapters
+                for link in outcomes[chapter_id].submission.observation_links
+            ],
             tables=[],
             photo_ids=runtime_photo_ids(
                 [

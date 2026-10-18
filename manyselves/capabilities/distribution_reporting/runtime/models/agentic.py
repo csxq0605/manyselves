@@ -1441,6 +1441,15 @@ def _chapter_lane_target_ids(
     return set(section_ids)
 
 
+class ReportObservationLink(StrictModel):
+    """Chief-owned placement of existing observations, not a new judgment."""
+
+    evidence_ids: list[str] = Field(min_length=1, description="E-* observations represented by this passage; one passage may retain several separately identified objects.")
+    section_id: str = Field(min_length=1, description="Exact final section ID containing the passage.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating the observation/judgment in this final section; empty means not expressed.")
+    action_anchor: str = Field(default="", description="Short exact substring locating the action, verification step or explicit justified deferral in this final section; empty means not expressed.")
+
+
 class ChiefChapterLaneSubmission(StrictModel):
     """Initial Chief result for one chapter; reducer assembles the report."""
 
@@ -1450,6 +1459,7 @@ class ChiefChapterLaneSubmission(StrictModel):
     section_ids: list[str] = Field(min_length=1)
     part_refs: dict[str, str] = Field(min_length=1)
     revision: int = Field(default=0, ge=0)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Compact links from module observations to this chapter's prose/actions; do not repeat judgments or full paragraphs.")
 
     @model_validator(mode="before")
     @classmethod
@@ -1474,6 +1484,8 @@ class ChiefChapterLaneSubmission(StrictModel):
 
     @model_validator(mode="after")
     def section_maps_match(self) -> "ChiefChapterLaneSubmission":
+        if any(link.section_id not in self.section_ids for link in self.observation_links):
+            raise ValueError("observation links must stay inside the submitted sections")
         if len(self.section_ids) != len(set(self.section_ids)):
             raise ValueError("Chief lane section_ids must be unique")
         expected_parts = (
@@ -1501,6 +1513,7 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
     base_subject_ref: str = Field(min_length=1)
     chapter_id: Literal["1", "3", "4"]
     revision: int = Field(ge=1)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Replacement observation links only for changed section_ids; runtime retains links for unchanged sections.")
     section_ids: list[str] = Field(
         min_length=1,
         description=(
@@ -1515,6 +1528,8 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
 
     @model_validator(mode="after")
     def patch_stays_in_one_chapter(self) -> "ChiefChapterLaneRevisionSubmission":
+        if any(link.section_id not in self.section_ids for link in self.observation_links):
+            raise ValueError("observation links must stay inside the changed sections")
         scope = _chapter_lane_target_ids(self.chapter_id, self.section_ids)
         expected_parts = (
             {"special_topic_analysis"}
@@ -1689,6 +1704,7 @@ class EditedReportSubmission(StrictModel):
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -1828,6 +1844,7 @@ class EditedReportSubmissionInput(StrictModel):
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Explicit observation-to-final-prose/action links; these locate content and do not certify semantic coverage.")
 
 
 class SkillEvolutionSubmission(StrictModel):

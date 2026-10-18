@@ -65,6 +65,8 @@ def _progress(state: dict) -> dict:
 
 
 def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
+    from .assessment_context import source_observation_groups
+
     state = _state_from(value)
     progress = _progress(state)
     modules = _module_submissions(state)
@@ -82,6 +84,7 @@ def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
         module_refs=refs,
         module_revisions={key: modules[key].revision for key in REPORT_MODULE_IDS},
         modules={key: module_content_view(modules[key]) for key in REPORT_MODULE_IDS},
+        source_observation_groups=source_observation_groups(runtime.store.workspace, state["run_id"]),
         changed_module_ids=progress["changed_module_ids"],
         required_findings=progress["pending"],
         revision_responses_by_module=progress["responses"],

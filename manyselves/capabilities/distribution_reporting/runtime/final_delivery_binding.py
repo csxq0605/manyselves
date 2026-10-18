@@ -43,6 +43,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .assessment_context import final_observation_context
 from .final_review_tools import build_final_review_tool_implementations
 from .template_skill_context import read_template_skill, render_template_skill
 
@@ -181,6 +182,9 @@ class FinalChapterTools:
             review_focus=list(final_lane_specialization(typed_chapter).review_focus),
             section_ids=list(section_ids),
             section_bodies=_section_bodies(edited, typed_chapter),
+            source_context=final_observation_context(
+                state.get("module_submissions", {}), edited, _section_bodies(edited, typed_chapter),
+            ),
             special_topic_plan=edited.special_topic_plan,
             revision=0,
         )
@@ -377,6 +381,9 @@ class FinalChapterTools:
             review_focus=list(final_lane_specialization(typed_chapter).review_focus),
             section_ids=list(section_ids),
             section_bodies=changed_bodies,
+            source_context=final_observation_context(
+                state.get("module_submissions", {}), review.current, changed_bodies,
+            ),
             unchanged_section_sha256=unchanged_section_sha256,
             required_findings=list(findings),
             revision_responses=list(review.revision_responses[typed_chapter]),

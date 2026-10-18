@@ -10,7 +10,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models.agentic import ModuleSubmission, ObservationAssessment, PartAssessment
+from .models.agentic import (
+    EditedReportSubmission,
+    ModuleSubmission,
+    ObservationAssessment,
+    PartAssessment,
+)
 from .research.project_evidence import ProjectEvidenceIndex
 
 
@@ -73,6 +78,80 @@ def assessment_source_context(modules: dict) -> str:
         )
         for module_id, module in modules.items()
     }, ensure_ascii=False, separators=(",", ":"))
+
+
+def source_observation_groups(workspace: Path, run_id: str) -> list[dict] | None:
+    """Link routed source observations, never merge real-world objects by name.
+
+    A shared precise source location is a comparison candidate. Only complete
+    normalized payload equality (apart from routing IDs) identifies an exact
+    routed copy; neither case asserts identical professional conclusions.
+    """
+    index = ProjectEvidenceIndex(workspace, run_id)
+    if not index.path.is_file():
+        return None
+    groups: dict[tuple, list] = {}
+    for item in index.items():
+        source = item.source
+        if not source.cell and not (source.row and source.column):
+            continue  # A whole file/page is not a precise observation identity.
+        key = (
+            source.path.as_posix().replace("\\", "/"), source.sheet,
+            source.cell, source.row, source.column, source.image_id,
+            item.subject, item.observed_at,
+        )
+        groups.setdefault(key, []).append(item)
+    result = []
+    for items in groups.values():
+        if len({(item.module_id, item.submodule_id) for item in items}) < 2:
+            continue
+        payloads = {
+            json.dumps(item.model_dump(mode="json", exclude={"id", "module_id", "submodule_id"}), sort_keys=True)
+            for item in items
+        }
+        result.append({
+            "source": items[0].source.model_dump(mode="json"),
+            "subject": items[0].subject,
+            "observed_at": items[0].observed_at,
+            "exact_routed_copy": len(payloads) == 1,
+            "routes": [{"evidence_id": item.id, "module_id": item.module_id,
+                        "submodule_id": item.submodule_id} for item in items],
+        })
+    return result
+
+
+def final_observation_context(
+    modules: dict, report: EditedReportSubmission, bodies: dict[str, str],
+) -> dict[str, str]:
+    """Final checks actual current passages, including after a bounded revision."""
+    typed = {
+        key: value if isinstance(value, ModuleSubmission) else ModuleSubmission.model_validate(value)
+        for key, value in modules.items()
+    }
+    required_actions = {
+        eid for module in typed.values() for part in module.assessments.values()
+        for record in part.records or [] if record.disposition in {"concern", "undetermined"}
+        for eid in record.evidence_ids
+    }
+    links = [link for link in report.observation_links if link.section_id in bodies]
+    action_mapped = {
+        eid for link in links if link.section_id == "3.2" and link.action_anchor.strip()
+        and link.action_anchor in bodies[link.section_id] for eid in link.evidence_ids
+    }
+    return {
+        "module_assessments": assessment_source_context(typed),
+        "observation_delivery": json.dumps({
+            "links": [link.model_dump(mode="json") for link in links],
+            "invalid_narrative_links": [index for index, link in enumerate(links)
+                if not link.narrative_anchor.strip() or link.narrative_anchor not in bodies[link.section_id]],
+            "invalid_action_links": [index for index, link in enumerate(links)
+                if link.action_anchor and link.action_anchor not in bodies[link.section_id]],
+            "unmapped_action_evidence_ids": (
+                sorted(required_actions - action_mapped) if "3.2" in bodies else None
+            ),
+            "coverage_limit": "Explicit author judgments only; unassessed observations remain in module_assessments. Anchors locate text, not semantic correctness.",
+        }, ensure_ascii=False, separators=(",", ":")),
+    }
 
 
 def normalize_assessments(

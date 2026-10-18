@@ -859,6 +859,15 @@ class SubmitResultTool(_ResultTool):
                     })
                 ),
             )
+        linked_ids = {eid for link in commit.observation_links for eid in link.evidence_ids}
+        known_ids = {record.id for record in SourceLedger(self.store.workspace, self.run_id).records}
+        if any(not eid.startswith("E-") for eid in linked_ids) or linked_ids - known_ids:
+            raise SubmissionValidationError(
+                "observation_links must reference registered current-run E-* sources",
+                field="observation_links.evidence_ids",
+                expected="registered E-* ids from module assessments",
+                received=sorted(linked_ids - known_ids),
+            )
         canonical_refs: dict[str, str] = {}
         for part_id in expected_part_ids:
             prose, relative = self._bound_text_part(part_id)

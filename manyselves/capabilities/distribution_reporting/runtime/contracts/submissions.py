@@ -248,10 +248,12 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Runtime materializes the assigned result parts and deterministically inherits every unassigned field.",
     ],
     "chief_chapter_lane_submission": [
-        "Return only this lane's section_ids and part_refs; the reducer assembles Chapters 1, 3, and optional 4 and inherits Chapter 2 and metadata.",
+        "Return this lane's section_ids, part_refs and compact observation_links; the reducer assembles Chapters 1, 3, and optional 4 and inherits Chapter 2 and metadata.",
+        "Use observation_links to locate module observations in final prose. Chapter 3 links each concern/undetermined observation to the action, verification or justified deferral passage in 3.2. Group shared passages without losing any object's E-* ids. Anchors are short exact substrings, not duplicate paragraphs.",
         "Never include a full report, other chapter bodies, tables, photos, or Cross state.",
     ],
     "chief_chapter_lane_revision_submission": [
+        "Supply replacement observation_links only for changed sections. Unchanged sections retain their links; changed sections never inherit stale anchors.",
         "Return only changed section_ids and matching part_refs for this chapter lane; "
         "do not copy unchanged sections from the input contract's complete lane scope.",
         "section_ids and revision_responses[].changed_target_ids use numeric section "

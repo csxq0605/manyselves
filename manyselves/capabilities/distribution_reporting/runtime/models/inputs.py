@@ -429,6 +429,7 @@ class FinalChapterLaneInput(StrictModel):
     )
     section_ids: list[str] = Field(min_length=1)
     section_bodies: dict[str, str] = Field(min_length=1)
+    source_context: dict[str, str] = Field(default_factory=dict, description="Upstream observation judgments and current final-section placement diagnostics; does not include other final chapters' prose.")
     unchanged_section_sha256: dict[str, str] = Field(
         default_factory=dict,
         description="Recheck-only hashes for unchanged sections retained in identity history.",
@@ -1009,6 +1010,10 @@ class ModuleReviewInput(StrictModel):
 
 class CrossReviewInput(StrictModel):
     kind: Literal["cross_review_input"] = "cross_review_input"
+    source_observation_groups: list[dict] | None = Field(
+        default=None,
+        description="Shared precise source-location candidates across routes; exact_routed_copy means normalized input equality, not shared judgment. Null means snapshot unavailable. Compare scope/conditions before alleging a conflict; never count routes as devices.",
+    )
     owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = Field(
         default=None,
         description=(
