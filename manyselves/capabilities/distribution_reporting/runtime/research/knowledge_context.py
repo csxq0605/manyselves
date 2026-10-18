@@ -16,6 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 from .reference_library import ReferenceDocument, ReferenceLibrary
+from .reference_matching import fallback_reference_scores, reference_fragments
 from .reference_sections import select_reference_sections
 
 
@@ -157,25 +158,25 @@ class KnowledgeContextBuilder:
         return sum(lowered.count(term.casefold()) for term in terms if term)
 
     @classmethod
-    def _domain_terms(cls) -> tuple[str, ...]:
-        return tuple(
-            value
-            for module in REPORT_TAXONOMY.values()
-            for submodule_id, submodule in module.submodules.items()
-            for value in (submodule_id, submodule.title)
-        )
-
-    @classmethod
     def _is_reporting_only(cls, document: ReferenceDocument) -> bool:
+        """Exclude explicitly named writing guides, not ambiguous mixed sources.
+
+        A professional document can mention report requirements. Treating that
+        mention plus a missing exact taxonomy title as proof it is writing-only
+        used to hide relevant rules before retrieval even began.
+        """
         identity = f"{document.title}\n{document.relative_path}".casefold()
-        if any(term.casefold() in identity for term in cls.REPORTING_RULE_TERMS):
-            return True
-        body = document.text.casefold()
-        has_reporting_rule = any(
-            term.casefold() in body for term in cls.REPORTING_RULE_TERMS
+        return any(term.casefold() in identity for term in cls.REPORTING_RULE_TERMS)
+
+    def _fallback_ranked(
+        self, documents: list[ReferenceDocument], terms: tuple[str, ...], limit: int,
+    ) -> list[ReferenceDocument]:
+        scores = fallback_reference_scores([document.text for document in documents], terms)
+        ranked = sorted(
+            zip(scores, documents, strict=True),
+            key=lambda item: (-item[0], item[1].relative_path),
         )
-        has_domain_content = any(term in document.text for term in cls._domain_terms())
-        return has_reporting_rule and not has_domain_content
+        return [document for score, document in ranked if score > 0][:limit]
 
     def _ranked(
         self,
@@ -184,15 +185,19 @@ class KnowledgeContextBuilder:
         *,
         professional_only: bool = False,
     ) -> list[ReferenceDocument]:
+        documents = [document for document in self._load_documents()
+                     if not professional_only or not self._is_reporting_only(document)]
         ranked = sorted(
             (
                 (self._score(document, terms), document)
-                for document in self._load_documents()
-                if not professional_only or not self._is_reporting_only(document)
+                for document in documents
             ),
             key=lambda item: (-item[0], item[1].relative_path),
         )
-        return [document for score, document in ranked if score > 0][:limit]
+        selected = [document for score, document in ranked if score > 0][:limit]
+        if not selected and professional_only:
+            return self._fallback_ranked(documents, terms, limit)
+        return selected
 
     def _register(self, document: ReferenceDocument) -> str:
         return self.ledger.register_local(
@@ -207,6 +212,7 @@ class KnowledgeContextBuilder:
         header: str,
         sections: list[tuple[str, str, list[ReferenceDocument]]],
         filename: str,
+        *, include_catalog: bool = False,
     ) -> KnowledgeContext:
         """Share whole sources across sections; never slice a purported rule.
 
@@ -225,6 +231,13 @@ class KnowledgeContextBuilder:
             "来源内的冲突应说明并核实，不能拼接成统一规则；缺少依据时不补造寿命损失、"
             "整改期限，也不将停用、更换或调整保护定值的示例直接转成现场操作建议。"
         )]
+        if include_catalog:
+            blocks.append("\n".join([
+                "## 冻结知识来源目录（含未被自动选中的来源）",
+                "下方排名只提供候选；词面无匹配不表示无适用规则。可用open_reference读取目录中的任一locator；目录和命中数不证明内容正确、现行或适用。",
+                *(f"- {document.title}；locator={json.dumps(document.relative_path, ensure_ascii=False)}"
+                  for document in self._load_documents()),
+            ]))
         sources: dict[tuple[str, str], tuple[str, ReferenceDocument]] = {}
         source_terms: dict[tuple[str, str], set[str]] = {}
         for heading, requirement, documents in sections:
@@ -237,6 +250,8 @@ class KnowledgeContextBuilder:
                     self._special_topic_terms(heading.removeprefix("## "), requirement)
                 )
                 source_terms[key].update(heading.removeprefix("## ").split())
+                if include_catalog and not self._score(document, tuple(source_terms[key])):
+                    source_terms[key].update(reference_fragments(tuple(source_terms[key])))
                 ids.append(sources[key][0])
             reference = (
                 "候选来源：" + "、".join(dict.fromkeys(ids)) if ids else
@@ -306,7 +321,7 @@ class KnowledgeContextBuilder:
             )
             sections.append((f"## {submodule_id} {submodule.title}", "", documents))
         return self._assemble(
-            header, sections, f"module-{module_id}-knowledge.md",
+            header, sections, f"module-{module_id}-knowledge.md", include_catalog=True,
         )
 
     def build_quality(self) -> KnowledgeContext:

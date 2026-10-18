@@ -16,6 +16,8 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
 )
 from manyselves.runtime.artifacts import parse_artifact
 
+from .reference_matching import fallback_reference_scores, reference_fragments
+
 KnowledgeNamespace = Literal["project", "global"]
 _RETIRED_HISTORY_SENTINEL = "<persisted_result_part"
 
@@ -374,10 +376,14 @@ class ReferenceLibrary:
         if not terms or limit <= 0:
             return []
 
+        documents = self.documents()
+        scores = [sum(document.text.casefold().count(term) for term in terms) for document in documents]
+        if not any(scores):
+            scores = fallback_reference_scores([document.text for document in documents], tuple(terms))
+            terms = list(reference_fragments(tuple(terms)))
         hits: list[ReferenceHit] = []
-        for document in self.documents():
+        for document, score in zip(documents, scores, strict=True):
             lowered = document.text.casefold()
-            score = sum(lowered.count(term) for term in terms)
             if not score:
                 continue
             first = min(lowered.find(term) for term in terms if term in lowered)
