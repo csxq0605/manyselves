@@ -75,6 +75,7 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .assessment_context import assessment_source_context
 from .task_context import bind_task_context
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -197,6 +198,7 @@ def _source_projection(
         if knowledge_ref:
             source_refs.append(str(knowledge_ref))
 
+    source_context["module_assessments"] = assessment_source_context(modules)
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))

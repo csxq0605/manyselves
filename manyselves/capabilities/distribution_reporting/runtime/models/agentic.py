@@ -313,6 +313,39 @@ class RevisionResponse(StrictModel):
         return self
 
 
+class AssessmentRuleBasis(StrictModel):
+    """An author's rule selection, not a runtime certification of that rule."""
+
+    source_id: str = Field(description="Registered R-*, W-* or E-* source containing the rule.")
+    locator: str = Field(min_length=1, description="Version and precise clause/section within the source.")
+    verification: Literal["verified", "unverified", "superseded", "not_applicable"] = Field(
+        description="Author-declared status; verified requires a status source and checked_at."
+    )
+    status_source_id: str | None = Field(default=None, description="Registered source supporting the version/status check, when available.")
+    checked_at: str | None = Field(default=None, description="Actual status-check date, not the report generation date.")
+    applicability: str = Field(min_length=1, description="Object, quantity/unit, operating conditions and limits; explicitly identify missing conditions.")
+
+
+class ObservationAssessment(StrictModel):
+    """Compact reasoning handoff authored alongside one section's prose."""
+
+    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations considered together; group only when scope, reasoning and disposition are the same.")
+    scope: str = Field(min_length=1, description="Object/part, observation time and conditions; never merge objects merely because their names match.")
+    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment within this scope; source OK/NG alone is not a verified judgment.")
+    basis: str = Field(min_length=1, description="Concise reasoning including quantity/unit and comparison when used; distinguish missing observation, missing condition, unverified rule and inapplicability.")
+    rules: list[AssessmentRuleBasis] = Field(default_factory=list, description="Rules actually considered, with their applicability/status; [] means no rule was selected, not that none exists.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose; empty means it is not expressed there.")
+    action_anchor: str = Field(default="", description="Short exact substring locating the action or verification step in the same prose; empty means no action is expressed there.")
+    no_action_reason: str = Field(default="", description="Reason no action is needed or why action must be deferred; not a substitute for a missing necessary action.")
+
+
+class PartAssessment(StrictModel):
+    """Persisted scope and author records; absence is never inferred as success."""
+
+    expected_evidence_ids: list[str] | None = Field(default=None, description="Runtime-enumerated observations in the frozen section scope; null means the snapshot was unavailable.")
+    records: list[ObservationAssessment] | None = Field(default=None, description="Explicit author assessments; null means not supplied (including older saved drafts).")
+
+
 class ModuleSubmission(StrictModel):
     kind: Literal["module_submission"] = "module_submission"
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
@@ -322,10 +355,13 @@ class ModuleSubmission(StrictModel):
     unresolved_questions: list[str]
     revision: int = Field(ge=0)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    assessments: dict[str, PartAssessment] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def uses_exact_fixed_submodules(self) -> "ModuleSubmission":
         expected = set(REPORT_TAXONOMY[self.module_id].submodules)
+        if set(self.assessments) - expected:
+            raise ValueError("module assessments must belong to its fixed submodules")
         actual = set(self.submodule_narratives)
         if actual != expected:
             missing = sorted(expected - actual)
@@ -404,6 +440,7 @@ class ModuleRevisionSubmission(StrictModel):
             "Unassigned submodules must be omitted, not repeated."
         ),
     )
+    assessments: dict[str, PartAssessment] = Field(default_factory=dict)
     claims_upsert: list[ClaimRecord] = Field(
         default_factory=list,
         description=(
@@ -434,6 +471,8 @@ class ModuleRevisionSubmission(StrictModel):
 
     @model_validator(mode="after")
     def patch_is_internally_consistent(self) -> "ModuleRevisionSubmission":
+        if set(self.assessments) - set(self.submodule_narratives):
+            raise ValueError("assessment replacements must accompany changed section prose")
         if self.revision != self.base_revision + 1:
             raise ValueError("module revision must equal base_revision plus one")
         for submodule_id, narrative in self.submodule_narratives.items():

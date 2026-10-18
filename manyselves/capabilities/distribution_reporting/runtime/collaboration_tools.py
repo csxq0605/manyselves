@@ -100,6 +100,7 @@ from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool
 
+from .assessment_context import normalize_assessments, part_assessment
 from .message_router import artifact_path_refs, source_record_ids
 
 _PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
@@ -504,8 +505,12 @@ class SubmitResultTool(_ResultTool):
         )
         narratives: dict[str, str] = {}
         claims: list[dict[str, object]] = []
+        assessments = {}
         for part_id in required_part_ids:
-            prose, evidence_ids, _ = self._bound_module_part(part_id)
+            prose, evidence_ids, binding = self._bound_module_part(part_id)
+            assessments[part_id] = part_assessment(
+                self.store.workspace, self.run_id, commit.module_id, part_id, binding,
+            )
             claim = self._runtime_claim_for_part(
                 module_id=commit.module_id,
                 part_id=part_id,
@@ -522,6 +527,7 @@ class SubmitResultTool(_ResultTool):
                 "kind": "module_submission",
                 "module_id": commit.module_id,
                 "submodule_narratives": narratives,
+                "assessments": assessments,
                 "claims": claims,
                 "source_ids": sorted(
                     {source_id for claim in claims for source_id in claim["source_ids"]}
@@ -608,10 +614,14 @@ class SubmitResultTool(_ResultTool):
         )
         narratives: dict[str, str] = {}
         claims_upsert: list[dict[str, object]] = []
+        assessments = {}
         for part_id in contract.target_submodule_ids:
             if part_id not in materialized_target_ids:
                 continue
-            prose, evidence_ids, _ = self._bound_module_part(part_id)
+            prose, evidence_ids, binding = self._bound_module_part(part_id)
+            assessments[part_id] = part_assessment(
+                self.store.workspace, self.run_id, commit.module_id, part_id, binding,
+            )
             claim = self._runtime_claim_for_part(
                 module_id=commit.module_id,
                 part_id=part_id,
@@ -647,6 +657,7 @@ class SubmitResultTool(_ResultTool):
                 "base_revision": commit.base_revision,
                 "revision": commit.revision,
                 "submodule_narratives": narratives,
+                "assessments": assessments,
                 "claims_upsert": claims_upsert,
                 "claim_ids_remove": removed_claim_ids,
                 "source_ids": sorted(resulting_source_ids),
@@ -3534,6 +3545,7 @@ class WriteResultPartTool(_ResultPartTool):
         part_id: str,
         content: str,
         evidence_ids: list[str] | None = None,
+        assessments: list[dict] | None = None,
     ) -> dict:
         """Write one resumable prose part.
 
@@ -3541,6 +3553,7 @@ class WriteResultPartTool(_ResultPartTool):
             part_id: Stable identifier such as 2.4.1, overview, or conclusion.
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
+            assessments: Module-only observation judgments; provide scope, disposition, basis, rules and exact prose/action anchors. Missing records remain visible to reviewers.
         """
         try:
             normalized_evidence_ids = self._validate_part(
@@ -3548,6 +3561,7 @@ class WriteResultPartTool(_ResultPartTool):
                 content,
                 evidence_ids,
             )
+            assessments = self._validate_assessments(assessments, normalized_evidence_ids)
         except ValueError as exc:
             affected_part_ids = (
                 [part_id]
@@ -3557,7 +3571,9 @@ class WriteResultPartTool(_ResultPartTool):
             )
             problem = str(exc)
             field = (
-                "part_id"
+                "assessments"
+                if "assessments" in problem
+                else "part_id"
                 if "part_id" in problem
                 else "evidence_ids"
                 if "evidence_ids" in problem
@@ -3585,7 +3601,20 @@ class WriteResultPartTool(_ResultPartTool):
                     "module-only evidence_ids field when required."
                 ),
             }
-        return self._persist_part(part_id, content, normalized_evidence_ids)
+        return self._persist_part(part_id, content, normalized_evidence_ids, assessments)
+
+    def _validate_assessments(self, assessments, evidence_ids):
+        if assessments is None:
+            return None
+        if assessments is not None and not self.evidence_binding_required:
+            raise ValueError("assessments are only valid for module result parts")
+        try:
+            return normalize_assessments(
+                assessments, evidence_ids,
+                {source.id for source in SourceLedger(self.store.workspace, self.run_id).records},
+            )
+        except ValueError as exc:
+            raise ValueError(f"assessments: {exc}") from exc
 
     def _validate_part(
         self,
@@ -3677,12 +3706,27 @@ class WriteResultPartTool(_ResultPartTool):
         part_id: str,
         content: str,
         evidence_ids: list[str] | None,
+        assessments: list[dict] | None = None,
     ) -> dict:
         """Persist one already validated part using atomic file replacement."""
 
         relative = self.relative_root / f"{part_id}.md"
         target = self.store.workspace / relative
         previous = target.read_text(encoding="utf-8") if target.is_file() else None
+        binding_path = self.store.workspace / self.relative_root / "_evidence" / f"{part_id}.json"
+        try:
+            previous_binding = (
+                json.loads(binding_path.read_text(encoding="utf-8"))
+                if self.evidence_binding_required and binding_path.is_file() else {}
+            )
+        except (OSError, ValueError):
+            previous_binding = {}
+        if not isinstance(previous_binding, dict):
+            previous_binding = {}
+        binding_unchanged = not self.evidence_binding_required or (
+            previous_binding.get("evidence_ids") == evidence_ids
+            and previous_binding.get("assessments") == assessments
+        )
         self.store.write_text(relative.as_posix(), content)
         if self.evidence_binding_required:
             self.store.write_json(
@@ -3694,11 +3738,12 @@ class WriteResultPartTool(_ResultPartTool):
                     "revision": self.revision,
                     "part_id": part_id,
                     "evidence_ids": evidence_ids,
+                    "assessments": assessments,
                 },
             )
         return {
             "status": "unchanged"
-            if previous == content
+            if previous == content and binding_unchanged
             else ("updated" if previous else "created"),
             "persisted": True,
             "part_id": part_id,
@@ -3717,7 +3762,7 @@ class WriteResultPartTool(_ResultPartTool):
                 "explicitly includes it in rewrite_part_ids."
             ),
             **(
-                {"evidence_ids": evidence_ids}
+                {"evidence_ids": evidence_ids, "assessments": assessments}
                 if self.evidence_binding_required
                 else {}
             ),
@@ -3752,8 +3797,8 @@ class WriteResultPartsTool(WriteResultPartTool):
                 f"parts must contain 1-{self.max_batch_size} result part objects"
             )
 
-        allowed_fields = {"part_id", "content", "evidence_ids"}
-        validated: list[tuple[str, str, list[str] | None]] = []
+        allowed_fields = {"part_id", "content", "evidence_ids", "assessments"}
+        validated: list[tuple[str, str, list[str] | None, list[dict] | None]] = []
         seen_part_ids: set[str] = set()
         for index, part in enumerate(parts):
             if not isinstance(part, dict):
@@ -3775,12 +3820,13 @@ class WriteResultPartsTool(WriteResultPartTool):
                 content,
                 evidence_ids,
             )
+            assessments = self._validate_assessments(part.get("assessments"), normalized_evidence_ids)
             seen_part_ids.add(part_id)
-            validated.append((part_id, content, normalized_evidence_ids))
+            validated.append((part_id, content, normalized_evidence_ids, assessments))
 
         results = [
-            self._persist_part(part_id, content, evidence_ids)
-            for part_id, content, evidence_ids in validated
+            self._persist_part(part_id, content, evidence_ids, assessments)
+            for part_id, content, evidence_ids, assessments in validated
         ]
         return {
             "status": "completed",
@@ -3838,6 +3884,7 @@ class ListResultPartsTool(_ResultPartTool):
                 if self.evidence_binding_required:
                     binding_path = root / "_evidence" / f"{path.stem}.json"
                     evidence_ids = None
+                    assessments = None
                     if binding_path.is_file():
                         try:
                             binding = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -3845,6 +3892,7 @@ class ListResultPartsTool(_ResultPartTool):
                             binding = None
                         if isinstance(binding, dict):
                             evidence_ids = binding.get("evidence_ids")
+                            assessments = binding.get("assessments")
                     structural_errors.extend(
                         extra_numbered_submodule_headings(path.stem, content)
                     )
@@ -3855,6 +3903,7 @@ class ListResultPartsTool(_ResultPartTool):
                     part.update(
                         {
                             "evidence_ids": evidence_ids,
+                            "assessments": assessments,
                             "ready": (
                                 isinstance(evidence_ids, list)
                                 and not structural_errors

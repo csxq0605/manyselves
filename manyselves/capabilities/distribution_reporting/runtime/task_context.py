@@ -62,6 +62,7 @@ def _project_persisted_writes(messages: list[Message], drafts: list[dict]) -> li
                 break
             binding = draft["evidence_binding"]
             expected_ids = binding.get("evidence_ids") if isinstance(binding, dict) else None
+            expected_assessments = binding.get("assessments") if isinstance(binding, dict) else None
             if not (
                 isinstance(result, dict) and result.get("persisted") is True
                 and result.get("part_id") == draft["part_id"]
@@ -69,6 +70,8 @@ def _project_persisted_writes(messages: list[Message], drafts: list[dict]) -> li
                 and call.arguments.get("content") == draft["content"]
                 and call.arguments.get("evidence_ids") == expected_ids
                 and result.get("evidence_ids") == expected_ids
+                and call.arguments.get("assessments") == expected_assessments
+                and result.get("assessments") == expected_assessments
             ):
                 matched = False
                 break

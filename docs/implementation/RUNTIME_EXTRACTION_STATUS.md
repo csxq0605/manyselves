@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 original-plan continuation; 38 KU revised and loaded, all 316 archived Excel facts have source dispositions; 47 detailed records and additional equipment/environment omissions reviewed; source statements separated from verified judgments; model validation deferred at user request`
+- Current slice: `PR #6 original 17-item reconciliation; production observation assessments and coverage handoff through author → review → Cross → Chief/Final; sample revisions reclassified as diagnostic evidence`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 原17项保持实施/人工复核/真实效果分开。离线材料已交付38个KU修订、316条来源处置和三份定向编辑稿；不再用新增测试数量或重复解析作为进展。模型配置及代表性生成按用户“先做别的”暂缓，待有配置后仅验收无法离线回答的遵循、真实返工、缓存/token/墙钟；官方标准编号/原文/现行性/适用性仍待可访问的一手来源。来源处置索引不是全报告专业签发或逐句正确率，原图及参考建议也须保留适用边界。
+- Next automatic action: 按原17项继续通用结构实施：完成本轮判断交接与恢复核验后处理S05动态task board破坏缓存前缀；继续Q04同源观测的跨章比较、Q05最终章行动映射及Q06/Q07参考召回/规则适用消费。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
 
 ### 2026-10-18 — 设备/环境续核与全部来源处置
 
@@ -60,6 +60,14 @@
 - **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
 - 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
 - **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / 原计划重新核对：停止以样例材料修订代替通用实现
+
+- **偏移更正：** `38f322d`、`6d35f36`、`e55892f` 中人工编辑的14份Skill、38个KU、来源处置索引及报告稿是样例诊断/参考交付，不是Q01/Q04/Q05/Q06/Q07通用实现完成。旧“只剩标准与模型验收”的下一步表述不准确；保留材料，不继续以其数量累积实施进度。
+- **实际结构缺口：** 原ModuleSubmission仅有长正文和整段来源Claims，不能表示每项观测的判断/工况/规则/行动；审查、Cross和总编需重新从长文推导。本轮在现有write_result_part及批量写入中增加紧凑assessments，和正文、来源一次持久化；运行时从冻结事实独立列出预期范围。提交、局部修订、ModuleContentView、初审/复审、联合Cross以及Chief/Final source_context均传递同一份记录。
+- **缺口如实可见：** 未提交判断、缺少正文锚点、行动既无位置也无处置理由、规则核验未提供分别列出；旧记录/缺快照为unknown，不自动补为通过。来源ID和锚点仅证明结构定位，仍由现有审查判断事实/规则/处置是否正确，无新审批、审查Agent或质量门禁。
+- **恢复边界：** 局部改写同时替换该节判断；旧式patch改正文时清除过时判断，保留其他小节。判断单独变化进入revision diff；写入去重包含判断内容，不能因正文相同删掉不同判断的历史。没有写入客户名称、特定数值、设备清单或标准结论。
+- **本轮验证与剩余范围：** 已运行既有模块提交/修订、初审绑定、复审delta、联合Cross、Chief及Final Provider相关检查。Chief来源键预期因新增交接字段首次失败，更新既有断言后通过；没有新增测试文件。用归档事实经生产写入/submit_result持久化五模块，预期范围31/97/16/126/46全部保留；刻意不提供其余判断时279条保持未处理可见（不是旧报告缺陷计数），旧式局部patch失效清除和共享交接验证通过。Ruff/diff通过；这次协议回放没有生成专业判断、没有模型调用或完整报告重跑。Q04观测身份比较、Q05最终章行动映射、Q06/Q07通用召回/规则消费与S05动态system仍是具体实施任务，不归咎于缺Provider。
 
 ### PR #6 / Q01、Q03 — 负荷率保留原表结果，不默认0.4kV补算
 
@@ -97,25 +105,25 @@
 
 #### 17项清单的当前处置
 
-| 清单 | 已交付 | 仍未验收/处置依据 |
+| 清单 | 生产结构的实际进度 | 未完成项（样例修订不充当完成证据） |
 | --- | --- | --- |
-| S01 | 建议留档且不强制返工；原findings/verdicts保持；修订材料撤销字数/配额/格式诱发返工 | 实际误报率/返工成本缺逐意见历史证据 |
-| S02 | Cross15→10字段，旧材料保留，Chief/Final/恢复贯通 | 模型生成质量及实际token收益 |
-| S03 | 审计直接结构化提交指引 | 实际遵循率 |
-| S04 | 当前状态不参与历史摘要；精确去重先于压缩 | 不调整36K/0.6；真实摘要量待测 |
-| S05 | 稳定输入与草稿分块，原生/兼容序列化验证 | system变化仍会失效；实际缓存/费用待测 |
-| S06 | 成功写入无需固定列举；作者紧凑提交已核实；14份方法正文18459→9426字符 | 已纠正“作者重复输出Claims”的推论；保留恢复与并行4，拆2.4尚无收益证据 |
-| Q01 | 316条来源处置索引；36对象、25收资、56房间状态/7占位符及47详细记录复核；补噪声、温差、消防等对象行动稿 | 人工稿不是新模型输出；实际生成覆盖待验收 |
-| Q02 | dimension及S2-1/S4-6公式缓存修复，缺缓存/错误/零值与图片绑定验证；上传316条数量保持 | 缓存新鲜度、Excel重算、大表内存、OCR及其他格式未验收 |
-| Q03 | 数值/单位/温升反例；修复S4-4固定电压重算，保留原表负荷率及计算条件；原型缺规则上下文修复 | 原表公式适用、缓存新鲜度、实际规则及正文语义；原型未推广 |
-| Q04 | 联合共同快照；11.3A/THDu、SPD与暂降混同、接地目视未见升级、不同部位OK/NG误抵消均有具体处置 | 新模型是否保持同条件一致待验证；不新增判断Agent |
-| Q05 | 三份实际对象修订稿；A-01对象合并、噪声/温差/消防遗漏及47详细记录处置；来源建议不自动成为已验证行动 | 新模型正文与行动待验收；无新增门禁 |
-| Q06 | 15份Knowledge全范围审阅、14份修订；38个KU均修正内部/条件边界并列候选标准，11份报告规则完成修订 | 官方站403、网络草稿待发布；标准编号、条款支持/现行性及项目适用性未验收 |
-| Q07 | 原14份Skill人工修订并加载；38个KU主题关联实际进入模块，37小节均有候选；历史模型/配置分开 | 提示遵循与专业推理待实测；无当前Provider/route，不猜选模型 |
-| F01 | 按真实错误落实作者/局审/Cross/Chief/Final职责，撤销材料要求的额外自检与重复综合 | 保留各阶段独立责任；无证据支持继续删阶段 |
-| F02 | 判断在当前作者任务内完成，修订方法保留未知原因和候选依据；不新增判断轮次 | 多阶段原型不推广；实际模型正确性待验收 |
-| F03 | 历史525请求、实验重算、当前请求及质量回放 | 缺逐finding数据无法追补；当前完整耗时待测 |
-| F04 | 本轮按用户要求停止新增合成测试，以真实对象与可加载修订材料交付；实现/人工编辑/模型结果分开 | 不以结构通过代替专业质量或宣称整项完成 |
+| S01 | advisory 留档、不自动返工，blocking 原流程保留 | 实际误报/返工收益仍未测；人工删样例配额不等于运行时改进 |
+| S02 | Cross 共同快照及15→10字段，Chief/Final与恢复贯通 | 模型质量、实际输出/token收益未测 |
+| S03 | 审查直接结构化提交指引 | 是提示层改进；实际重复输出减少未测 |
+| S04 | 当前事实/草稿独立重建，精确冗余写入先去重再压缩 | 真实摘要量/成本未测；新增判断记录也须参与等价比较 |
+| S05 | 稳定任务输入与动态草稿分块 | **动态task board仍拼进system，是尚待修复的生产结构缺口**；缓存费用另待测 |
+| S06 | 作者本来已紧凑提交；成功写入不再固定要求列举 | 本轮判断随同一次正文写入，不另加提交轮次；实际开销未测，不靠样例字数宣称提速 |
+| Q01 | 完整事实送达、未引用事实可审；本轮独立预期观测范围与作者判断记录相对照 | 输入范围不等于现实对象全集；自动显示未处理项仍不保证模型正确处理 |
+| Q02 | dimension、公式缓存/缺值/错误/零值修复 | 缓存新鲜度、其他格式/OCR及大表开销未验收 |
+| Q03 | 保留物理量/单位；撤销固定电压补算；本轮判断携带工况和规则适用依据 | 没有通用规则选择/量纲推理正确性保证；人工规则改写不是实现 |
+| Q04 | Cross共同快照；本轮各模块显式判断与范围进入同一输入 | **同源观测跨ID对齐、冲突裁决和共享修订仍未完整实现**；不能称统一结论已完成 |
+| Q05 | 本轮预期观测→判断→模块正文/行动锚点；遗漏可见，旧数据未知，修订不继承过时锚点 | **最终章行动归属/覆盖映射仍需接线**；锚点存在不证明语义覆盖 |
+| Q06 | 来源注册/定位；本轮规则版本、核验来源/日期及适用范围随判断传递 | 状态是作者声明；官方核验受403阻挡；引用蕴含/规则选择未实现自动证明 |
+| Q07 | Skill方法边界与实际配置已查明 | **通用专业知识召回仍依赖标题/编号词面，样例unit_topics人工映射不是机制修复**；选模待真实配置 |
+| F01 | 沿现有任务交接一次作者判断，Cross补关系，Chief汇总，Final核传递 | 不凭角色名称删阶段；阶段成本收益未测 |
+| F02 | 本轮在现有作者写入中保存判断依据，不新增判断Agent或整套三阶段原型 | 模型先判断的遵循与正确性未验收；结构允许复用，不保证判断为真 |
+| F03 | 历史525请求及当前请求构造/质量诊断已有依据 | 历史逐finding缺失不可追补；当前耗时/token待最终代表性运行 |
+| F04 | 纠正前几轮偏移：14 Skill、38 KU、316来源索引和人工改稿全部归入诊断/参考材料 | 本轮以生产代码链路和恢复作为实施证据；不新增样例特判，不以测试数量结项 |
 
 ### PR #6 / Q01、Q03–Q07、F01/F02 — 对象覆盖回放与判断原型边界
 

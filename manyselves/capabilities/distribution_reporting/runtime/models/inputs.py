@@ -40,6 +40,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     chapter_section_ids,
 )
 
+from ..assessment_context import module_assessment_views
 from ..contracts.submissions import FIELD_GUIDANCE
 
 
@@ -69,6 +70,10 @@ class ModuleContentView(StrictModel):
         description="Registered E-* evidence ids already bound to each visible submodule."
     )
     unresolved_questions: list[str] = Field(default_factory=list)
+    assessments: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Section-scoped author judgments and runtime observation coverage. Missing records/anchors are explicit; presence does not certify correctness. Review records against evidence, rules and prose.",
+    )
 
 
 class CrossDecisionPackView(StrictModel):
@@ -194,6 +199,7 @@ class ModuleRevisionDiff(StrictModel):
         default_factory=list,
         description="Module-local prose sections changed between the two revisions.",
     )
+    changed_assessment_submodules: list[str] = Field(default_factory=list, description="Judgment or expected-observation scope changed, even when section prose did not.")
     changed_statement_refs: list[str] = Field(
         default_factory=list,
         description="Opaque reviewed statements added, removed, or changed.",
@@ -250,6 +256,7 @@ def module_content_view(
         revision=subject.revision,
         submodule_narratives=narratives,
         evidence_ids_by_submodule=evidence_ids_by_submodule,
+        assessments=module_assessment_views(subject, selected),
         unresolved_questions=subject.unresolved_questions,
     )
 

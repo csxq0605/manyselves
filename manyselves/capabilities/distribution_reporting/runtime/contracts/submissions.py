@@ -205,13 +205,13 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
     "module_submission": [
         "kind is required and must equal module_submission.",
         "Before committing, write every fixed submodule with write_result_part and pass "
-        "its registered E-* ids through evidence_ids.",
+        "its registered E-* ids through evidence_ids and compact observation assessments through assessments. Record scope, basis/rule applicability, and exact narrative/action anchors; do not repeat complete prose.",
         "The final commit contains only the fields declared by this schema; runtime owns all internal bindings.",
     ],
     "module_revision_submission": [
         "kind is required and must equal module_revision_submission.",
         "revision must equal base_revision plus one.",
-        "Write each assigned changed submodule with write_result_part and evidence_ids.",
+        "Write each assigned changed submodule with write_result_part, evidence_ids and replacement assessments. Unchanged sections retain their judgments; changed prose must not inherit stale anchors.",
         "The final commit contains only the fields declared by this schema; runtime derives the scoped patch.",
     ],
     "module_review_finding_submission": [

@@ -430,6 +430,11 @@ def apply_module_revision(
     return ModuleSubmission(
         module_id=baseline.module_id,
         submodule_narratives=narratives,
+        assessments={
+            **{key: value for key, value in baseline.assessments.items()
+               if key not in patch.submodule_narratives},
+            **patch.assessments,
+        },
         claims=list(claims.values()),
         source_ids=patch.source_ids,
         unresolved_questions=patch.unresolved_questions,

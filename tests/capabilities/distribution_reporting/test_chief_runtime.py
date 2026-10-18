@@ -119,6 +119,7 @@ def test_chief_runtime_initial_preparation_preserves_lane_scope_and_inline_skill
     assert set(context.contract.source_context) == {
         *(f"module-{module_id}" for module_id in REPORT_MODULE_IDS),
         "approved_markers",
+        "module_assessments",
     }
     assert context.contract.source_context["approved_markers"] == ",".join(
         f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_MODULE_IDS

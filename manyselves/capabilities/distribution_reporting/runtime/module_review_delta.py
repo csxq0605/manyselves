@@ -63,6 +63,9 @@ def build_module_recheck_delta(
 
     raw = build_revision_diff(baseline, current)
     changed_narratives = set(raw["changed_submodule_narratives"])
+    changed_assessments = set(raw["changed_assessment_submodules"])
+    if not changed_assessments.issubset(scope):
+        raise ValueError("module recheck revision changed assessments outside reviewer scope")
     if not changed_narratives.issubset(scope):
         raise ValueError(
             "module recheck revision changed narratives outside reviewer finding "
@@ -119,6 +122,7 @@ def build_module_recheck_delta(
         from_revision=baseline.revision,
         to_revision=current.revision,
         changed_submodule_narratives=sorted(changed_narratives),
+        changed_assessment_submodules=sorted(changed_assessments),
         changed_statement_refs=changed_statement_refs,
         evidence_ids_added=raw["source_ids_added"],
         evidence_ids_removed=raw["source_ids_removed"],

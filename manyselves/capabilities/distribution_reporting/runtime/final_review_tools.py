@@ -47,6 +47,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .assessment_context import assessment_source_context
 from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
 from .report_validation import validate_final_report_structure
@@ -255,6 +256,7 @@ def _source_projection(
         }
         if state.get("special_topic_knowledge_ref"):
             source_refs.append(str(state["special_topic_knowledge_ref"]))
+    source_context["module_assessments"] = assessment_source_context(modules)
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))

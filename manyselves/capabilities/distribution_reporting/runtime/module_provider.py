@@ -369,6 +369,19 @@ def build_module_provider_tools(
     registry = ToolRegistry()
     for name in tool_names:
         registry.register(available[name])
+    if "write_result_part" in tool_names:
+        schema = registry._schema_cache["write_result_part"]
+        if evidence_binding_required:
+            from .models.agentic import ObservationAssessment
+
+            assessment_schema = ObservationAssessment.model_json_schema()
+            schema.setdefault("$defs", {}).update(assessment_schema.pop("$defs", {}))
+            schema["properties"]["assessments"] = {
+                "type": "array", "items": assessment_schema,
+                "description": "Compact judgments for the observations in this section. Include exact prose/action anchors; group only same-scope, same-reasoning observations. Omitted observations remain visible to reviewers.",
+            }
+        else:
+            schema["properties"].pop("assessments", None)
     # Truncation envelopes advertise this Runtime-owned continuation reader.
     # It only opens opaque tool-result refs under the existing scoped gateway;
     # it does not add a Capability tool or grant another public artifact path.
