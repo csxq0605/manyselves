@@ -22,13 +22,23 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 original-plan continuation; all 38 KU editorial boundaries reviewed, 14 knowledge files revised; 25 collection entries and 56 room statuses/7 placeholders checked; candidate topic links verified in actual loader; model validation deferred at user request`
+- Current slice: `PR #6 original-plan continuation; 38 KU revised and loaded, all 316 archived Excel facts have source dispositions; 47 detailed records and additional equipment/environment omissions reviewed; source statements separated from verified judgments; model validation deferred at user request`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 继续原17项清单，模型配置与代表性生成按用户“先做别的”暂缓，不再重复询问。已完成上传38个KU的内部规则/推断边界修订和15文件审阅，剩余Q06是官方编号/原文/现行性与项目适用性核验；Q01/Q05仍可扩展到其余设备、环境、汇总明细与成稿，不能把已核对记录当作全报告正确。当前材料包使用新输入快照，冻结Run不变；实际返工、token/缓存/墙钟与模型成稿质量尚未测量。
+- Next automatic action: 原17项保持实施/人工复核/真实效果分开。离线材料已交付38个KU修订、316条来源处置和三份定向编辑稿；不再用新增测试数量或重复解析作为进展。模型配置及代表性生成按用户“先做别的”暂缓，待有配置后仅验收无法离线回答的遵循、真实返工、缓存/token/墙钟；官方标准编号/原文/现行性/适用性仍待可访问的一手来源。来源处置索引不是全报告专业签发或逐句正确率，原图及参考建议也须保留适用边界。
+
+### 2026-10-18 — 设备/环境续核与全部来源处置
+
+- 前一组已推送 `6d35f36`，未合并。继续核对剩余设备、环境及S4-6详细记录，[设备/环境复核](../research/decisions/REPORTING_PR6_DEVICE_ENVIRONMENT_REVIEW.md)列出47条详细建议逐项处置及12组具体成稿问题。三条噪声/震动NG未进正文处置、三相温差异常只进图注、消防设施NG未单列行动；补充真实对象编辑稿。不同子区域的防鼠板、夹层门窗与杂物记录不能被主房间OK抵消。
+- **纠正本轮前序分析：** E-0287详细记录确有“管理体系与风险管控机制未建立”的原评语，不能因E-0261只写未见细致就说旧报告完全无来源。保留来源归属，不扩大证明无资质、无人监护等推断；管理复核与私有草稿已补正。接地“目视未见”与扁铁缺少、操作失效与保护功能、同一开关两份来源也分别处理。
+- 已实际查看上传S4-4 J1的DISPIMG判定图：三类部位使用温升、相对温差、热点温度等不同指标，不能统一15K；图片没有足够官方版本/完整前提，未将其认证为标准。原图已在上传文件，无需用户重新提供。
+- 旧2.2.1.2将SPD浪涌功能混入电压暂降/持续暂升的响应链，知识库2.2-02/2.3-03及跨KU方法已明确区分。原S4-6的风险、数值建议和结论也不自动成为本轮已验证判断；共用完整事实包补充归属/条件说明，沿既有作者及审查链消费，无新增调用或门禁。
+- 全部316条归档Excel事实均建立私有来源处置索引：25收资、56房间状态、125总配/低配记录、27热记录及83汇总/详细记录；其中有跨模块重复路由，不称316台设备。14条旧Skill不算现场事实。深读结论对应已列案例，索引存在不等于全篇语义已合格。
+- 在真实316条上调用当前事实包渲染，五模块31/97/16/126/46条的ID、对象、事实及坐标完整保留，新来源边界均进入输出；14份Skill/15知识文档再次加载、38单元主题匹配保持，质量参考5份4,983字符。三表原字节与316数量不变。Ruff/diff通过，无新增测试、Provider或报告运行。
+- 最新项目副本 `attachments/.../reviewed-project-20261018-complete`，交付包 `PR6-完整修订资料与核对稿-20261018.zip`补入设备环境编辑稿、316来源处置索引、原始红外参考图及事实包核验。此前包保留，原项目和冻结Run不变。官方标准和实际模型质量/耗时仍未验收；本记录随下一提交推送原PR #6。
 
 ### 2026-10-18 — 专业规则全范围修订与收资/房间行动闭环
 
@@ -95,11 +105,11 @@
 | S04 | 当前状态不参与历史摘要；精确去重先于压缩 | 不调整36K/0.6；真实摘要量待测 |
 | S05 | 稳定输入与草稿分块，原生/兼容序列化验证 | system变化仍会失效；实际缓存/费用待测 |
 | S06 | 成功写入无需固定列举；作者紧凑提交已核实；14份方法正文18459→9426字符 | 已纠正“作者重复输出Claims”的推论；保留恢复与并行4，拆2.4尚无收益证据 |
-| Q01 | 真实36对象及25条收资/56条房间状态/7个占位符定向复核；三表316条，明确合并行动漏项 | 人工稿不是新模型输出；实际生成覆盖待验收 |
+| Q01 | 316条来源处置索引；36对象、25收资、56房间状态/7占位符及47详细记录复核；补噪声、温差、消防等对象行动稿 | 人工稿不是新模型输出；实际生成覆盖待验收 |
 | Q02 | dimension及S2-1/S4-6公式缓存修复，缺缓存/错误/零值与图片绑定验证；上传316条数量保持 | 缓存新鲜度、Excel重算、大表内存、OCR及其他格式未验收 |
 | Q03 | 数值/单位/温升反例；修复S4-4固定电压重算，保留原表负荷率及计算条件；原型缺规则上下文修复 | 原表公式适用、缓存新鲜度、实际规则及正文语义；原型未推广 |
-| Q04 | 联合共同快照；旧11.3A跨章矛盾及原因升级已逐段定位，THDu比较有定向修订稿 | 新模型是否保持同条件一致待验证；不新增判断Agent |
-| Q05 | 36对象及收资/房间行动核对；修订A-01的5间/6间对象合并遗漏，保留NG与未知原因区别 | 新模型正文与行动待验收；无新增门禁 |
+| Q04 | 联合共同快照；11.3A/THDu、SPD与暂降混同、接地目视未见升级、不同部位OK/NG误抵消均有具体处置 | 新模型是否保持同条件一致待验证；不新增判断Agent |
+| Q05 | 三份实际对象修订稿；A-01对象合并、噪声/温差/消防遗漏及47详细记录处置；来源建议不自动成为已验证行动 | 新模型正文与行动待验收；无新增门禁 |
 | Q06 | 15份Knowledge全范围审阅、14份修订；38个KU均修正内部/条件边界并列候选标准，11份报告规则完成修订 | 官方站403、网络草稿待发布；标准编号、条款支持/现行性及项目适用性未验收 |
 | Q07 | 原14份Skill人工修订并加载；38个KU主题关联实际进入模块，37小节均有候选；历史模型/配置分开 | 提示遵循与专业推理待实测；无当前Provider/route，不猜选模型 |
 | F01 | 按真实错误落实作者/局审/Cross/Chief/Final职责，撤销材料要求的额外自检与重复综合 | 保留各阶段独立责任；无证据支持继续删阶段 |
