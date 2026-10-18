@@ -75,7 +75,11 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
-from .assessment_context import assessment_source_context, source_observation_groups
+from .assessment_context import (
+    assessment_source_context,
+    module_rule_source_refs,
+    source_observation_groups,
+)
 from .task_context import bind_task_context
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -206,6 +210,9 @@ def _source_projection(
     if evidence_ref:
         source_refs.append(str(evidence_ref))
     source_refs.extend(materialize_chief_module_sources(store, state))
+    source_refs.extend(ref for module in modules.values() for ref in module_rule_source_refs(
+        module if isinstance(module, ModuleSubmission) else ModuleSubmission.model_validate(module)
+    ))
     source_refs = list(dict.fromkeys(ref for ref in source_refs if ref))
     if not source_context and not source_refs:
         source_context = {"scope": f"chapter-{chapter_id}"}

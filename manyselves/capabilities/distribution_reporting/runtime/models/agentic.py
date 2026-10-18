@@ -344,6 +344,7 @@ class PartAssessment(StrictModel):
 
     expected_evidence_ids: list[str] | None = Field(default=None, description="Runtime-enumerated observations in the frozen section scope; null means the snapshot was unavailable.")
     records: list[ObservationAssessment] | None = Field(default=None, description="Explicit author assessments; null means not supplied (including older saved drafts).")
+    rule_source_refs: dict[str, str] = Field(default_factory=dict, description="Runtime-owned complete source-content refs for the selected rules and their status evidence; never model-authored excerpts.")
 
 
 class ModuleSubmission(StrictModel):

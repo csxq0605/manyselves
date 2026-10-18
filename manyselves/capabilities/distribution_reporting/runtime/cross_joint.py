@@ -65,7 +65,7 @@ def _progress(state: dict) -> dict:
 
 
 def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
-    from .assessment_context import source_observation_groups
+    from .assessment_context import module_rule_source_refs, source_observation_groups
 
     state = _state_from(value)
     progress = _progress(state)
@@ -101,12 +101,13 @@ def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
     )
     ref = f"Work/runs/{state['run_id']}/reviews/cross-joint-input-r{review_round}.json"
     runtime.store.write_json(ref, contract.model_dump(mode="json"))
+    rule_refs = sorted({ref for module in modules.values() for ref in module_rule_source_refs(module)})
     envelope = TaskEnvelope(
         task_id=f"cross-joint-r{review_round}",
         run_id=state["run_id"],
         agent_id="cross-relation-reviewer",
         objective="审查当前合并快照的跨模块关系；将实质缺陷分派给真正出错的模块，按共同当前版本复审。",
-        input_refs=[ref, *refs.values()],
+        input_refs=[ref, *refs.values(), *rule_refs],
         input_contract_kind="cross_review_input",
         input_contract_ref=ref,
         allowed_tools=["search_text", "open_artifact", "submit_result"],
@@ -115,7 +116,7 @@ def prepare_review(runtime, value: Any) -> DeclarativeCrossJointRuntimeContext:
             if review_round == 0
             else "cross_review_verdict_submission"
         ],
-        artifact_delivery_modes={ref: "inline", **{path: "reference" for path in refs.values()}},
+        artifact_delivery_modes={ref: "inline", **{path: "reference" for path in [*refs.values(), *rule_refs]}},
     )
     return DeclarativeCrossJointRuntimeContext(
         preparation=CrossJointPreparation(

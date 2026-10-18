@@ -56,6 +56,8 @@ from manyselves.capabilities.distribution_reporting.runtime.review_preflight imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .assessment_context import module_rule_source_refs
+
 
 def _context(value: Any) -> DeclarativeModuleRuntimeLaneContext:
     if isinstance(value, DeclarativeModuleRuntimeLaneContext):
@@ -255,6 +257,7 @@ def prepare_current_module_recheck(
     store.write_json(diff_ref, revision_diff.model_dump(mode="json"))
     store.write_json(input_ref, review_input.model_dump(mode="json"))
     reviewer_session_key = progress.reviewer_session_key or f"module-auditor-{context.module_id}"
+    rule_refs = sorted(set(module_rule_source_refs(current, scope)) | set(module_rule_source_refs(baseline, scope)))
     envelope = TaskEnvelope(
         task_id=(
             f"module-{context.module_id}-{lifecycle_id}-review-r{review_round}"
@@ -262,7 +265,7 @@ def prepare_current_module_recheck(
         run_id=run_id,
         agent_id="evidence-auditor",
         objective=f"只对模块 {context.module_id} 的 required_findings 返回逐项 verdict，并检查修改回归。",
-        input_refs=[input_ref],
+        input_refs=[input_ref, *rule_refs],
         constraints=[
             "coverage 记录实际检查范围，不是批准状态",
             "finding 首次提出后不可改写；复审不得复述旧 finding",
@@ -279,7 +282,7 @@ def prepare_current_module_recheck(
         prior_result_ref=(
             progress.finding_refs[-1] if progress.finding_refs else None
         ),
-        artifact_delivery_modes={input_ref: "inline"},
+        artifact_delivery_modes={input_ref: "inline", **{ref: "reference" for ref in rule_refs}},
         target_submodule_ids=sorted({finding.target_submodule_id for finding in pending}),
         input_contract_kind="module_review_input",
         input_contract_ref=input_ref,

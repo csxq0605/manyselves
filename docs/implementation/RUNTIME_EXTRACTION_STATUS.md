@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 original 17-item reconciliation; production observation assessments and coverage handoff through author → review → Cross → Chief/Final; sample revisions reclassified as diagnostic evidence`
+- Current slice: `PR #6 structural continuation: observation judgments, cross-route identity, final action links, live-state cache separation, corpus-independent reference retrieval and readable rule-source handoff implemented; semantic/model acceptance pending`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，Q04同源观测比较与Q05最终行动映射已接通，通用参考召回已实施，继续Q06规则来源的实际审查可读性及各入口恢复一致性核对。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
+- Next automatic action: 按原17项继续通用结构实施：判断交接与S05动态前缀已实施，Q04同源观测比较与Q05最终行动映射已接通，通用参考召回和Q06规则原文可读性已实施；继续核对跨run修订的旧判断/新事实边界及各入口恢复一致性，不用新增样例修订材料结项。真实Provider测量按用户要求暂缓，不能把仍缺生产实现的项目都归入“等模型验收”。
 
 ### 2026-10-18 — 设备/环境续核与全部来源处置
 
@@ -60,6 +60,14 @@
 - **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
 - 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
 - **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / Q03、Q06、S06 — 审查实际可读的规则原文
+
+- 判断记录增加运行时生成的`rule_source_refs`，从当前来源账本关联规则全文及状态依据，不接受作者自行指定工件路径；未取得原文的来源ID独立显示。正文/规则/状态本身仍是待审查内容，不因ID或可读性而自动认证。
+- 模块初审、复审、Cross触发的局部审查、作者回改、Cross和Chief的工件合同均携带相应引用。复审保留修改前后两侧来源，避免作者移除规则后旧finding失去核对依据。完整原文使用现有工件分页读取，不重复内联进全部输入。
+- 实际读取核查暴露另一个接线缺陷：ModuleProvider先按Task业务工具列表过滤，令已有显式来源能力的generic reader也被删除。现按显式工件能力保留open_artifact/search_text/open_tool_result，业务工具继续按Task限制，未声明工具仍沿用原ConfigurationError。没有扩展任意工作区读取权限；实际工具schema可能因必要读取器增加，成本需实测。
+- 既有修订、审查delta、来源绑定、Cross和ModuleProvider/工件边界检查通过，Ruff/diff通过，无新增测试文件。私有原始资料回放验证实际ModuleProvider工具组合有读取器、引用留在声明范围、分页取得完整原文；不验证该资料条款正确性。捕获脚本先后修正嵌套目录定位、服务构造参数，实际读取器缺失则通过上述生产修复解决。
+- 本轮聚焦提交：`eefb5e1`判断交接、`f7bdb7e`缓存前缀、`14e220b`跨章与最终行动、`88b69b6`通用召回；本条规则读取接线见所在提交。PR #6保持未合并。原17项仍以生产实现、历史缺陷诊断、真实模型/费用验收分别记录；不宣称整份报告已统一成功。
 
 ### PR #6 / Q06–Q07 — 通用候选召回，不依赖样例主题别名
 
@@ -140,7 +148,7 @@
 | Q03 | 保留物理量/单位；撤销固定电压补算；本轮判断携带工况和规则适用依据 | 没有通用规则选择/量纲推理正确性保证；人工规则改写不是实现 |
 | Q04 | Cross共同快照；本轮各模块显式判断与范围进入同一输入 | 本轮加入同一精确来源位置/对象/时点的跨ID对照，完全相同路由副本明确标记；不同坐标的对象身份与专业冲突仍由Cross审查，不能自动合并结论 |
 | Q05 | 本轮预期观测→判断→模块正文/行动锚点；遗漏可见，旧数据未知，修订不继承过时锚点 | 本轮已接通最终章链接与3.2行动遗漏投影；Final实际初审/复审入口读取它，锚点存在仍不证明语义覆盖 |
-| Q06 | 来源注册/定位；本轮规则版本、核验来源/日期及适用范围随判断传递 | 状态是作者声明；官方核验受403阻挡；引用蕴含/规则选择未实现自动证明 |
+| Q06 | 来源注册/定位；规则版本、核验来源/日期及适用范围随判断传递；完整规则及状态来源按需读取 | 状态是作者声明；官方核验受403阻挡；引用蕴含/规则选择未实现自动证明 |
 | Q07 | Skill方法边界与实际配置已查明 | 通用召回已增加无精确命中时的词片段回退、保留混合来源及完整来源目录，交互检索共用；候选相关性/适用性仍需审查，选模待真实配置 |
 | F01 | 沿现有任务交接一次作者判断，Cross补关系，Chief汇总，Final核传递 | 不凭角色名称删阶段；阶段成本收益未测 |
 | F02 | 本轮在现有作者写入中保存判断依据，不新增判断Agent或整套三阶段原型 | 模型先判断的遵循与正确性未验收；结构允许复用，不保证判断为真 |

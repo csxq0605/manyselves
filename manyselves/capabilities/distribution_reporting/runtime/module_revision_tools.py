@@ -51,6 +51,8 @@ from manyselves.capabilities.distribution_reporting.runtime.user_supplements imp
     user_supplement_constraints,
 )
 
+from .assessment_context import module_rule_source_refs
+
 
 class ModuleRevisionPreparationError(ValueError):
     """Expected preparation failure translated by the Core compatibility layer."""
@@ -209,13 +211,14 @@ async def prepare_module_revision(
             f"以完整模块 {subject.module_id} 的单一作者身份，一次完成所有明确分配的"
             "定向修订；只替换受影响小节，不重复提交未变正文。"
         ),
-        input_refs=[input_ref],
+        input_refs=[input_ref, *module_rule_source_refs(subject, targets)],
         constraints=constraints,
         allowed_outputs=["module_revision_submission"],
         revision=revision,
         prior_result_ref=revision_input.subject_ref,
         artifact_delivery_modes={
             input_ref: "inline",
+            **{ref: "reference" for ref in module_rule_source_refs(subject, targets)},
             revision_input.subject_ref: "reference",
         },
         target_submodule_ids=sorted(targets),
@@ -284,7 +287,7 @@ def prepare_current_module_revision(
             f"以完整模块 {context.module_id} 的单一作者身份，一次完成所有明确分配的"
             "定向修订；只替换受影响小节，不重复提交未变正文。"
         ),
-        input_refs=[input_ref],
+        input_refs=[input_ref, *module_rule_source_refs(subject, targets)],
         constraints=[
             f"唯一写作范围是模块 {context.module_id}",
             f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
@@ -296,7 +299,8 @@ def prepare_current_module_revision(
         allowed_outputs=["module_revision_submission"],
         revision=revision,
         prior_result_ref=subject_ref,
-        artifact_delivery_modes={input_ref: "inline", subject_ref: "reference"},
+        artifact_delivery_modes={input_ref: "inline", subject_ref: "reference",
+                                 **{ref: "reference" for ref in module_rule_source_refs(subject, targets)}},
         target_submodule_ids=sorted(targets),
         input_contract_kind="module_revision_input",
         input_contract_ref=input_ref,

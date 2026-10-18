@@ -105,7 +105,7 @@ from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool, ToolRegistry
 from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
-from .artifact_access import compile_agent_access, scoped_gateway
+from .artifact_access import ConfigurationError, compile_agent_access, scoped_gateway
 from .contracts.submissions import submission_schema
 from .module_provider_tools import (
     CalculateTool,
@@ -753,13 +753,26 @@ class ModuleProviderRuntime:
             session_id=session_id,
         )
         access_envelope = envelope.model_copy(
-            update={"allowed_tools": list(task_tools)}
+            update={"allowed_tools": []}
         )
         access = compile_agent_access(
             agent,
             access_envelope,
             gateway=gateway,
         )
+        unknown_tools = sorted(set(task_tools) - set(access.tool_names))
+        if unknown_tools:
+            raise ConfigurationError(
+                f"{agent.id} task requested undeclared tools {unknown_tools}"
+            )
+        # Preserve the Task's business-tool scope while retaining the generic
+        # readers compiled for explicitly attached reference capabilities.
+        # Filtering to task_tools first discarded those readers even when a
+        # rule source was declared readable, leaving the Auditor an unopened ID.
+        access = replace(access, tool_names=tuple(
+            name for name in access.tool_names
+            if name in task_tools or name in {"open_artifact", "search_text", "open_tool_result"}
+        ))
         result_index = RunToolResultIndex(self.workspace, envelope.run_id)
         return replace(
             base,

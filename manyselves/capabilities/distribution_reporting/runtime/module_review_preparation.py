@@ -69,6 +69,8 @@ from manyselves.capabilities.distribution_reporting.runtime.user_supplements imp
     user_supplement_constraints,
 )
 
+from .assessment_context import module_rule_source_refs
+
 
 def _structure_report(
     store: ReportingStore,
@@ -340,6 +342,7 @@ def prepare_module_local_regression_review(
         validation_report_ref=preflight_ref,
         validation_report=preflight.report,
     )
+    rule_refs = module_rule_source_refs(current, scope)
     input_ref = f"{review_root}/input-r0.json"
     store.write_json(input_ref, review_input.model_dump(mode="json"))
     envelope = TaskEnvelope(
@@ -349,7 +352,7 @@ def prepare_module_local_regression_review(
         objective=(
             f"由模块 {module_id} 的原审查者仅检查 Cross 回改范围、diff、Claim 与证据回归。"
         ),
-        input_refs=[input_ref],
+        input_refs=[input_ref, *rule_refs],
         constraints=[
             "coverage 记录实际检查范围，不是批准状态",
             "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
@@ -372,7 +375,7 @@ def prepare_module_local_regression_review(
         ],
         allowed_outputs=["module_review_finding_submission"],
         revision=0,
-        artifact_delivery_modes={input_ref: "inline"},
+        artifact_delivery_modes={input_ref: "inline", **{ref: "reference" for ref in rule_refs}},
         target_submodule_ids=sorted(scope),
         input_contract_kind="module_review_input",
         input_contract_ref=input_ref,
@@ -516,6 +519,7 @@ def prepare_current_module_review(
             validation_report_ref=preflight_ref,
             validation_report=preflight.report,
         )
+        rule_refs = module_rule_source_refs(module, scope)
         input_ref = f"{review_root}/input-r0.json"
         store.write_json(input_ref, review_input.model_dump(mode="json"))
         envelope = TaskEnvelope(
@@ -523,7 +527,7 @@ def prepare_current_module_review(
             run_id=run_id,
             agent_id="evidence-auditor",
             objective=f"审查模块 {module_id} 的当前正文、Claim 与证据边界。",
-            input_refs=[input_ref],
+            input_refs=[input_ref, *rule_refs],
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
                 "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
@@ -541,7 +545,7 @@ def prepare_current_module_review(
             ],
             allowed_outputs=["module_review_finding_submission"],
             revision=0,
-            artifact_delivery_modes={input_ref: "inline"},
+            artifact_delivery_modes={input_ref: "inline", **{ref: "reference" for ref in rule_refs}},
             target_submodule_ids=sorted(scope),
             input_contract_kind="module_review_input",
             input_contract_ref=input_ref,

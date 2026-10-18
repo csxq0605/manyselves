@@ -17,19 +17,30 @@ from .models.agentic import (
     PartAssessment,
 )
 from .research.project_evidence import ProjectEvidenceIndex
+from .source_ledger import SourceLedger
 
 
 def part_assessment(
     workspace: Path, run_id: str, module_id: str, part_id: str, binding: dict,
 ) -> PartAssessment:
     index = ProjectEvidenceIndex(workspace, run_id)
-    return PartAssessment(
+    part = PartAssessment(
         expected_evidence_ids=(
             [item.id for item in index.module_items(module_id, {part_id})]
             if index.path.is_file() else None
         ),
         records=binding.get("assessments"),
     )
+    ledger = SourceLedger(workspace, run_id)
+    source_ids = {
+        source_id for record in part.records or [] for rule in record.rules
+        for source_id in (rule.source_id, rule.status_source_id) if source_id
+    }
+    part.rule_source_refs = {
+        source_id: ref.as_posix() for source_id in sorted(source_ids)
+        if (ref := ledger.content_ref(source_id)) is not None
+    }
+    return part
 
 
 def assessment_view(part: PartAssessment, prose: str) -> dict:
@@ -39,6 +50,8 @@ def assessment_view(part: PartAssessment, prose: str) -> dict:
     narrative_missing: set[str] = set()
     action_missing: set[str] = set()
     unverified_rules: set[str] = set()
+    rule_ids = {sid for record in records for rule in record.rules
+                for sid in (rule.source_id, rule.status_source_id) if sid}
     for record in records:
         if not record.narrative_anchor.strip() or record.narrative_anchor not in prose:
             narrative_missing.update(record.evidence_ids)
@@ -59,7 +72,15 @@ def assessment_view(part: PartAssessment, prose: str) -> dict:
         "narrative_unmapped_evidence_ids": sorted(narrative_missing),
         "action_undocumented_evidence_ids": sorted(action_missing),
         "unverified_rule_evidence_ids": sorted(unverified_rules),
+        "unreadable_rule_source_ids": sorted(rule_ids - set(part.rule_source_refs)),
     }
+
+
+def module_rule_source_refs(subject: ModuleSubmission, scope: set[str] | None = None) -> list[str]:
+    return sorted({
+        ref for part_id, part in subject.assessments.items()
+        if scope is None or part_id in scope for ref in part.rule_source_refs.values()
+    })
 
 
 def module_assessment_views(subject: ModuleSubmission, scope: set[str] | None = None) -> dict:

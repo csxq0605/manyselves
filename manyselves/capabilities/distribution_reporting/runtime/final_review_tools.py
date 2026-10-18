@@ -50,6 +50,7 @@ from manyselves.capabilities.distribution_reporting.runtime.storage import Repor
 from .assessment_context import (
     assessment_source_context,
     final_observation_context,
+    module_rule_source_refs,
     source_observation_groups,
 )
 from .chief_sources import materialize_chief_module_sources
@@ -268,6 +269,9 @@ def _source_projection(
     if evidence_ref:
         source_refs.append(str(evidence_ref))
     source_refs.extend(materialize_chief_module_sources(store, state))
+    source_refs.extend(ref for module in modules.values() for ref in module_rule_source_refs(
+        module if isinstance(module, ModuleSubmission) else ModuleSubmission.model_validate(module)
+    ))
     return source_context, list(dict.fromkeys(ref for ref in source_refs if ref))
 
 
