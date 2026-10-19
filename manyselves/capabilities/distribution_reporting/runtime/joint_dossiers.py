@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .models.agentic import ModuleSubmission
 from .observation_ledger import build_observation_ledger
+from .photo_reading import load_photo_readings, reading_label
 from .research.project_evidence import ProjectEvidenceIndex
 
 EXCERPT_CHARS = 240
@@ -89,7 +90,8 @@ def build_joint_dossiers(
     Kept when the judgments from different modules differ, when two or more
     modules raise a concern or leave the object undetermined (their actions and
     explanations must fit together), or when one quantity is read with
-    different values from two sheets (the report must state each basis).
+    different values from two sheets (the report must state each basis), or
+    when a photo read in this run conflicts with the record it is bound to.
     """
 
     index = ProjectEvidenceIndex(workspace, run_id)
@@ -98,6 +100,7 @@ def build_joint_dossiers(
     items = {item.id: item for item in index.items()}
     ledger = build_observation_ledger(workspace, run_id)
     labels = ledger.shared_labels() if ledger is not None else {}
+    photo_readings = load_photo_readings(workspace, run_id)
     dossiers: dict[str, _Dossier] = {}
 
     def dossier_for(evidence_id: str) -> _Dossier | None:
@@ -127,6 +130,11 @@ def build_joint_dossiers(
             fact["sheet"] = sheet
             if item.photo_refs:
                 fact["photo_ids"] = list(item.photo_refs)
+                read = [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]
+                if read:
+                    fact["photo_readings"] = [reading_label(reading) for reading in read]
+                if any(reading.record_match == "conflicts" for reading in read):
+                    fact["photo_conflicts"] = True
             if evidence_id in labels:
                 fact["shared"] = labels[evidence_id]
             found.facts[evidence_id] = fact
@@ -174,6 +182,9 @@ def build_joint_dossiers(
         differing = _differing_quantities(found)
         if differing:
             reasons.append("same_quantity_differs")
+        photo_conflicts = [fact for fact in found.facts.values() if fact.get("photo_conflicts")]
+        if photo_conflicts:
+            reasons.append("photo_conflicts_record")
         if not reasons:
             continue
         submodules = {
@@ -184,10 +195,17 @@ def build_joint_dossiers(
                 (fact["module_id"], fact["submodule_id"]) for fact in found.facts.values()
                 if fact["module_id"] and fact["submodule_id"]
             }
+        submodules |= {
+            (fact["module_id"], fact["submodule_id"]) for fact in photo_conflicts
+            if fact["module_id"] and fact["submodule_id"]
+        }
+        conflict_modules = {fact["module_id"] for fact in photo_conflicts if fact["module_id"]}
         dossier = {
             "subject": found.subject,
             "reasons": reasons,
-            "module_ids": sorted(judged_modules | (fact_modules if differing else set())),
+            "module_ids": sorted(
+                judged_modules | (fact_modules if differing else set()) | conflict_modules
+            ),
             "submodules": [{"module_id": m, "submodule_id": s} for m, s in sorted(submodules)],
             "facts": sorted(found.facts.values(), key=lambda fact: fact["evidence_id"]),
             "judgments": found.judgments,

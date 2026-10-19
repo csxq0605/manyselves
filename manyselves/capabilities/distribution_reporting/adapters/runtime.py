@@ -44,6 +44,9 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     build_module_provider_composition,
 )
+from manyselves.capabilities.distribution_reporting.runtime.photo_reader_provider import (
+    PhotoReaderProviderRuntime,
+)
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
 )
@@ -165,6 +168,10 @@ class DistributionReportingRuntimeBinding:
             workflow_id="public-reporting",
             execution=self._execution,
         )
+        photo_reader = PhotoReaderProviderRuntime(
+            services,
+            execution=self._execution,
+        )
         tail = ReportingTailComposition(
             self.workspace,
             cross_runtime=cross_lifecycle,
@@ -182,6 +189,7 @@ class DistributionReportingRuntimeBinding:
             **aggregate.agent_invokers,
             **cross.agent_invokers,
             **full_final.agent_invokers,
+            **photo_reader.agent_invokers,
             "chief-editor": chief_router,
         }
         self._providers = (
@@ -194,6 +202,7 @@ class DistributionReportingRuntimeBinding:
             chief,
             full_final,
             full_final_chief,
+            photo_reader,
         )
 
         public = PublicReportingWorkflowRuntime(

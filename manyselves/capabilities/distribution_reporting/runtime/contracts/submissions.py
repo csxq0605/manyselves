@@ -202,6 +202,11 @@ FIELD_GUIDANCE: dict[str, str] = {
 
 
 KIND_SEMANTIC_RULES: dict[str, list[str]] = {
+    "photo_reading_submission": [
+        "kind is required and must equal photo_reading_submission.",
+        "Describe only what is visible; do not add standards, causes or compliance verdicts.",
+        "Use cannot_tell when the photo does not show the recorded object or value clearly.",
+    ],
     "module_submission": [
         "kind is required and must equal module_submission.",
         "Before committing, write every fixed submodule with write_result_part and pass "
@@ -310,6 +315,9 @@ KIND_SUMMARIES: dict[str, str] = {
     ),
     "workflow_decision_submission": (
         "Main exception handling for a genuine reviewer escalation, user dependency, or stop decision."
+    ),
+    "photo_reading_submission": (
+        "What one project photo visibly shows and whether it agrees with its bound table record."
     ),
     "edited_report_submission": (
         "Chief-editor report structure preserving approved module prose and producing fixed synthesis sections."
@@ -618,6 +626,13 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "verdicts": [],
         "new_findings": [],
         "residual_risks": [],
+    },
+    "photo_reading_submission": {
+        "kind": "photo_reading_submission",
+        "visible": "柜门内接线端子，铭牌可见“D1701”，A相端子有明显发黑痕迹。",
+        "record_match": "matches",
+        "reason": "铭牌与记录的柜号一致，可见发黑与记录的发热描述一致。",
+        "needs_review": False,
     },
     "workflow_decision_submission": {
         "kind": "workflow_decision_submission",

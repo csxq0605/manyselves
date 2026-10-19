@@ -86,6 +86,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
         "project-preparation-for-readiness",
         "run-evidence-readiness",
         "attach-readiness-preparation",
+        "run-photo-reading",
         "attach-readiness-to-context",
         "build-reporting-state",
         "run-module-cohort",
@@ -102,6 +103,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
     assert subworkflows == [
         "distribution-reporting-preparation",
         "distribution-evidence-readiness",
+        "distribution-photo-reading",
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]
@@ -117,6 +119,7 @@ def test_module_report_is_module_scoped_and_has_no_tail_stages() -> None:
     assert subworkflows == [
         "distribution-reporting-preparation",
         "distribution-evidence-readiness",
+        "distribution-photo-reading",
         "distribution-module-cohort",
     ]
     assert not any(

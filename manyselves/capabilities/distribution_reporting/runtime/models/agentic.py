@@ -1629,6 +1629,28 @@ CROSS_REVIEW_DIMENSIONS = (
 )
 
 
+class PhotoReadingSubmission(StrictModel):
+    """What one project photo visibly shows, checked against its bound record."""
+
+    kind: Literal["photo_reading_submission"] = "photo_reading_submission"
+    visible: str = Field(
+        min_length=1,
+        max_length=300,
+        description="Only what is visible in the photo: object, labels, readings, condition.",
+    )
+    record_match: Literal["matches", "conflicts", "cannot_tell"] = Field(
+        description="Whether the photo agrees with the bound table record(s).",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=200,
+        description="One line naming what in the photo supports record_match.",
+    )
+    needs_review: bool = Field(
+        description="True when a person should look at the photo (unclear, conflicting, unsafe-looking).",
+    )
+
+
 class WorkflowDecisionSubmission(StrictModel):
     """A lead decision for an explicit reviewer or author exception."""
 
@@ -1876,6 +1898,7 @@ Submission = Annotated[
     | FinalChapterLaneFindingSubmission
     | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
+    | PhotoReadingSubmission
     | ChiefRevisionSubmission
     | EditedReportSubmission
     | SkillEvolutionSubmission,
@@ -1901,6 +1924,7 @@ SubmissionInput = Annotated[
     | FinalChapterLaneFindingSubmission
     | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
+    | PhotoReadingSubmission
     | EditedReportSubmissionInput
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
@@ -1928,6 +1952,7 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "final_chapter_lane_finding_submission": FinalChapterLaneFindingSubmission,
     "final_chapter_lane_verdict_submission": FinalChapterLaneVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
+    "photo_reading_submission": PhotoReadingSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }

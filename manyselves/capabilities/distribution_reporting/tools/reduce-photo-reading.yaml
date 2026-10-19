@@ -1,0 +1,10 @@
+id: reduce-photo-reading
+version: 1.0.0
+description: Persist all photo readings of this run
+implementation: capability:distribution-reporting:reduce-photo-reading
+input_contract: reporting_tool_input
+output_contract: photo_reading_summary
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,5 @@
+id: photo_reading_input
+version: 1.0.0
+description: One project photo and the table records bound to it
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.photo_reading:PhotoReadingInput

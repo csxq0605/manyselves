@@ -419,6 +419,7 @@ class PublicReportingWorkflowRuntime:
     ) -> dict[str, Any]:
         reporting_store = ReportingStore(self.workspace)
         from .aggregate_existing import build_aggregate_existing_tool_implementations
+        from .photo_reading import build_photo_reading_tool_implementations
         from .report_revision import build_report_revision_tools
         from .revision_impact import bind_revision_impact_tools
 
@@ -437,6 +438,7 @@ class PublicReportingWorkflowRuntime:
                 store=reporting_store,
             ),
             **build_evidence_readiness_tool_implementations(),
+            **build_photo_reading_tool_implementations(self.workspace, reporting_store),
             **self._module_tool_implementations(),
             **build_module_lane_tool_implementations(store=reporting_store),
             **build_module_cohort_tool_implementations(),
