@@ -7,6 +7,10 @@ one owner per group: the copy the mapper emitted first (E-IDs are numbered in
 mapper order, and mappers list the primary route first).  Other copies are
 references: their authors describe them and point at the owner subsection, but
 do not submit a second judgment record.
+
+The owner comes from ``domain/observation-ownership.yaml`` (chosen by
+subsection meaning); route sets it does not list fall back to the mapper's
+first route (lowest E-ID).
 """
 
 from __future__ import annotations
@@ -14,12 +18,29 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
+
+import yaml
 
 from .models.agentic import ModuleSubmission
 from .research.project_evidence import ProjectEvidenceIndex
 
 LEDGER_VERSION = 1
+OWNERSHIP_RULES = Path(__file__).resolve().parents[1] / "domain/observation-ownership.yaml"
+
+
+@cache
+def ownership_rules() -> dict[frozenset[str], str]:
+    data = yaml.safe_load(OWNERSHIP_RULES.read_text(encoding="utf-8")) or {}
+    rules: dict[frozenset[str], str] = {}
+    for rule in data.get("rules", []):
+        routes = frozenset(str(item) for item in rule["routes"])
+        owner = str(rule["owner"])
+        if owner not in routes:
+            raise ValueError(f"ownership rule owner {owner} is not one of {sorted(routes)}")
+        rules[routes] = owner
+    return rules
 
 
 @dataclass(frozen=True)
@@ -94,7 +115,7 @@ class ObservationLedger:
     def to_json(self) -> dict:
         return {
             "version": LEDGER_VERSION,
-            "owner_rule": "first mapper route (lowest E-ID) judges; other routes reference it",
+            "owner_rule": "domain/observation-ownership.yaml; unlisted route sets: first mapper route (lowest E-ID)",
             "groups": [group.to_json() for group in self.groups],
         }
 
@@ -131,6 +152,11 @@ def build_observation_ledger(workspace: Path, run_id: str) -> ObservationLedger 
         routes = [
             ObservationRoute(item.id, item.module_id, item.submodule_id) for item in ordered
         ]
+        owner_submodule = ownership_rules().get(
+            frozenset(str(route.submodule_id) for route in routes)
+        )
+        if owner_submodule is not None:
+            routes.sort(key=lambda route: route.submodule_id != owner_submodule)
         groups.append(ObservationGroup(
             observation_id="",
             source=ordered[0].source.model_dump(mode="json"),

@@ -1,4 +1,4 @@
-"""A routed source observation is judged once, by its first mapper route."""
+"""A routed source observation is judged once, by the subsection the ownership rules name."""
 
 from __future__ import annotations
 
@@ -50,44 +50,55 @@ def _items() -> list[EvidenceItem]:
     ]
 
 
-def test_first_mapper_route_owns_each_shared_observation(tmp_path):
+def test_ownership_rules_pick_the_owner_over_mapper_order(tmp_path):
+    # Load rate belongs to 2.1.1 (负荷分配与过载风险) although the mapper lists 2.4.1.1 first.
     _write_facts(tmp_path, _items())
     ledger = build_observation_ledger(tmp_path, "facts")
     assert [group.observation_id for group in ledger.groups] == ["O-0001", "O-0002"]
-    assert ledger.groups[0].owner.evidence_id == "E-0001"
-    assert [route.evidence_id for route in ledger.groups[0].references] == ["E-0002"]
+    assert ledger.groups[0].owner.evidence_id == "E-0002"
+    assert [route.evidence_id for route in ledger.groups[0].references] == ["E-0001"]
     assert ledger.groups[0].exact_routed_copy
-    assert ledger.owner_for_reference("E-0002").submodule_id == "2.4.1.1"
-    assert ledger.owner_for_reference("E-0001") is None
+    assert ledger.owner_for_reference("E-0001").submodule_id == "2.1.1"
+    assert ledger.owner_for_reference("E-0002") is None
+
+
+def test_unlisted_route_sets_fall_back_to_the_first_mapper_route(tmp_path):
+    items = [
+        _load_row("E-0001", "2.3", "2.3.1", 5),
+        _load_row("E-0002", "2.4", "2.4.2.4", 5),
+    ]
+    _write_facts(tmp_path, items)
+    ledger = build_observation_ledger(tmp_path, "facts")
+    assert ledger.groups[0].owner.evidence_id == "E-0001"
 
 
 def test_reference_copies_are_marked_in_facts_and_left_out_of_expected_judgments(tmp_path):
     _write_facts(tmp_path, _items())
-    owner_packet = prepare_module_fact_context(tmp_path, "facts", "2.4").inline_context
-    reference_packet = prepare_module_fact_context(tmp_path, "facts", "2.1").inline_context
-    assert '"judged_by":"2.4.1.1/E-0001"' in reference_packet
-    assert '"judged_by":"2.4.1.1/E-0003"' in reference_packet
+    owner_packet = prepare_module_fact_context(tmp_path, "facts", "2.1").inline_context
+    reference_packet = prepare_module_fact_context(tmp_path, "facts", "2.4").inline_context
+    assert '"judged_by":"2.1.1/E-0002"' in reference_packet
+    assert '"judged_by":"2.1.1/E-0004"' in reference_packet
     assert "judged_by=负责小节" in reference_packet
     assert '"judged_by"' not in owner_packet
 
-    expected = part_assessment(tmp_path, "facts", "2.1", "2.1.1", {}).expected_evidence_ids
-    assert expected is not None and not {"E-0002", "E-0004"} & set(expected)
+    expected = part_assessment(tmp_path, "facts", "2.4", "2.4.1.1", {}).expected_evidence_ids
+    assert expected is not None and not {"E-0001", "E-0003"} & set(expected)
     owner_expected = part_assessment(
-        tmp_path, "facts", "2.4", "2.4.1.1", {},
+        tmp_path, "facts", "2.1", "2.1.1", {},
     ).expected_evidence_ids
-    assert {"E-0001", "E-0003"} <= set(owner_expected)
+    assert {"E-0002", "E-0004"} <= set(owner_expected)
 
 
 def test_second_judgment_on_a_reference_is_corrected_with_the_owner_named(tmp_path):
     _write_facts(tmp_path, _items())
     owners = build_observation_ledger(tmp_path, "facts").reference_owners()
-    record = {"evidence_ids": ["E-0002"], "disposition": "concern",
+    record = {"evidence_ids": ["E-0001"], "disposition": "concern",
               "narrative_anchor": "负荷"}
-    with pytest.raises(ValueError, match=r"E-0002.*2\.4\.1\.1.*E-0001"):
-        normalize_assessments([record], ["E-0002"], set(), owners)
-    owned = {**record, "evidence_ids": ["E-0001"]}
-    assert normalize_assessments([owned], ["E-0001"], set(), owners)[0]["evidence_ids"] == [
-        "E-0001"
+    with pytest.raises(ValueError, match=r"E-0001.*2\.1\.1.*E-0002"):
+        normalize_assessments([record], ["E-0001"], set(), owners)
+    owned = {**record, "evidence_ids": ["E-0002"]}
+    assert normalize_assessments([owned], ["E-0002"], set(), owners)[0]["evidence_ids"] == [
+        "E-0002"
     ]
 
 
@@ -102,11 +113,11 @@ def test_program_checks_report_unjudged_duplicate_and_conflicting_observations(t
     _write_facts(tmp_path, _items())
     ledger = build_observation_ledger(tmp_path, "facts")
     modules = {
-        "2.4": _module("2.4.1.1", [
-            {"evidence_ids": ["E-0001"], "disposition": "no_concern", "narrative_anchor": "负荷"},
-        ]),
         "2.1": _module("2.1.1", [
-            {"evidence_ids": ["E-0002"], "disposition": "concern", "narrative_anchor": "负荷"},
+            {"evidence_ids": ["E-0002"], "disposition": "no_concern", "narrative_anchor": "负荷"},
+        ]),
+        "2.4": _module("2.4.1.1", [
+            {"evidence_ids": ["E-0001"], "disposition": "concern", "narrative_anchor": "负荷"},
         ]),
     }
     report = check_ledger(ledger, modules)
