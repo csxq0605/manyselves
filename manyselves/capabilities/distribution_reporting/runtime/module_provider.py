@@ -378,7 +378,7 @@ def build_module_provider_tools(
             schema.setdefault("$defs", {}).update(assessment_schema.pop("$defs", {}))
             schema["properties"]["assessments"] = {
                 "type": "array", "items": assessment_schema,
-                "description": "Compact judgments for the observations in this section. Include exact prose/action anchors; group only same-scope, same-reasoning observations. Omitted observations remain visible to reviewers.",
+                "description": "Compact judgments for the observations in this section: E-* ids, disposition and exact prose/action anchors; add scope, basis or rules only for what the prose and E-* records do not already state. Group observations sharing disposition, reasoning and anchors. Omitted observations remain visible to reviewers.",
             }
         else:
             schema["properties"].pop("assessments", None)

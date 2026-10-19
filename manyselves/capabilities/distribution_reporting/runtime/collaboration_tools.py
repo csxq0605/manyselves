@@ -3562,7 +3562,7 @@ class WriteResultPartTool(_ResultPartTool):
             part_id: Stable identifier such as 2.4.1, overview, or conclusion.
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
-            assessments: Module-only observation judgments; provide scope, disposition, basis, rules and exact prose/action anchors. Missing records remain visible to reviewers.
+            assessments: Module-only observation judgments; provide E-* ids, disposition and exact prose/action anchors, plus scope, basis or rules only where prose and E-* records do not already state them. Missing records remain visible to reviewers.
         """
         try:
             normalized_evidence_ids = self._validate_part(

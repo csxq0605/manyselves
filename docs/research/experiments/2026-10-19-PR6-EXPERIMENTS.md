@@ -84,3 +84,40 @@
 - 首读即通过时只需 5 个串行阶段；常见的“每处返工一轮”是 12–14 个，耗时主要来自三处审查循环，不是写作本身。Cross 每轮在关键路径上加 4–6 个阶段（联合审 → owner 修订 → 局部审 →〔局部修订 → 局部复审〕→ 联合复审），是最长的单项。
 - 历史 Cross 按 owner 与模块审查流水重叠；当前联合 Cross 要等五个模块全部 Join，最慢模块决定起点。
 - 这些是结构计数，不是耗时预测；每个阶段的请求数和时长要靠最后一次真实运行用 `run_metrics.py` 测量。F01 的拓扑比较直接用 `reporting_critical_path.py` 对改后的 YAML 重跑。
+
+## S06 / Q05 作者判断记录（assessments）与 Chief 链接（observation_links）的净负担
+
+脚本：`uv run --with tokenizers python scripts/benchmarks/assessment_burden.py --tokenizer mimo.json`
+结果：[改前](2026-10-19-s06-assessment-burden-before.json) / [改后](2026-10-19-s06-assessment-burden-after.json)
+
+做法：用生产工具构造（`build_module_provider_tools`、`submission_schema`）量每次请求携带的 Schema；用归档五模块事实包的每条观测（2.1–2.5 共 316 条）合成作者判断记录，对象、来源坐标、事实文字均取自真实记录，推理只用短模板，因此是**下限**；下游副本走生产 `assessment_source_context`（Chief 与 Final 每次请求都携带）。“分组”按同一小节、同一原始事实文字合并记录。脚本按当前合同（`scope`/`basis` 是否必填）自动选择改前/改后记录形态。
+
+**负担在哪里**：Schema 不是主要负担——作者每次请求多 860 token、Chief 多约 340 token，且都在可缓存前缀里。主要负担是作者必须生成的输出和下游每次请求的副本：
+
+| 指标（mimo 分词） | 改前 | 改后 |
+| --- | ---: | ---: |
+| 作者判断输出，五模块合计（分组 / 逐条） | 29,069 / 40,290 | 15,553 / 21,232 |
+| 其中 2.4（分组 / 逐条） | 12,938 / 16,820 | 6,705 / 8,500 |
+| 单小节最大判断输出（2.2，逐条） | 8,200 | 4,325 |
+| Chief/Final 每次请求的 `module_assessments`（分组 / 逐条） | 31,145 / 41,159 | 16,697 / 20,815 |
+| Chief `observation_links` 输出，三章合计（分组） | 5,514 | 5,514（保留） |
+| 作者每次请求的工具 Schema 增量 | 860 | 922 |
+
+作者单次回复上限是 12,288 token，改前 2.4 的判断记录下限就与它同量级，且这是在正文之外；2.2 单小节的判断记录加正文更容易触发 Max Token 续写。
+
+**逐字段处置**（消费者见 `assessment_context.py`、Chief/Final source_context、`revision_impact.py`、`final_observation_context`）：
+
+| 字段 | 处置 | 依据 |
+| --- | --- | --- |
+| `evidence_ids` | 保留 | 分组身份；未判断集合、修订影响、Final 必需行动集合都由它计算 |
+| `disposition` | 保留 | Final 据此确定 concern/undetermined 的行动要求；输出极短 |
+| `scope` | 改为可选，只写 E-* 记录没有的条件 | 对象/部位/时点就在 E-* 记录里；审计、Cross（含 `source_observation_groups`）、Chief、Final 都已拿到原始证据。模型复写这些字段既重复又可能写错 |
+| `basis` | 改为可选，只写正文没说的理由 | 推理在 `narrative_anchor` 指向的正文里，审查者本来就必须读正文；只有缺观测、缺工况、规则未核验、不适用或数量比较等正文未写的才需要记录 |
+| `rules`、锚点、`no_action_reason` | 保留 | 规则选择和适用性不一定写在正文；锚点是“定位”信号的唯一来源，体积小 |
+| `expected_evidence_ids`、`rule_source_refs` | 不变（运行时生成） | 已由运行时枚举，不由模型输出 |
+| `observation_links` | 保留 | Chief 改写正文后只有 Chief 能指出位置；Final 的 `unmapped_action_evidence_ids` 依赖它；无运行时替代 |
+| 下游视图 | 省略空的可选字段 | 空字符串和空数组不携带信息；未判断、未落入正文、无行动说明的定位列表照常由运行时计算 |
+
+边界：没有新增门禁或判断阈值；`scope`/`basis` 缺省不是缺陷，也不会因此跳过语义审查。审计提示改为按 E-ID 读原始证据核对对象/位置/时点，并对照锚点处正文的推理。定位能力（锚点、未判断集合）和专业覆盖（审查者读正文+证据）仍分别验收。
+
+未覆盖：模型在新合同下实际写多少判断、推理是否因此更多写进正文，需要真实运行用 `run_metrics.py` 看作者输出 token 和续写次数；合成记录的推理是短模板，真实推理更长时，`basis` 的节省会更大。

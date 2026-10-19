@@ -65,6 +65,10 @@ def assessment_view(part: PartAssessment, prose: str) -> dict:
             unverified_rules.update(record.evidence_ids)
     return {
         **part.model_dump(mode="json"),
+        # Omitted optional text stays omitted; the E-* records carry object/location/time.
+        "records": None if part.records is None else [
+            record.model_dump(mode="json", exclude_defaults=True) for record in records
+        ],
         "unassessed_evidence_ids": (
             sorted(set(part.expected_evidence_ids) - assessed)
             if part.expected_evidence_ids is not None else None

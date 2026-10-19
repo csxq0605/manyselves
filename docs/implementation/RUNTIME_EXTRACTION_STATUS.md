@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 F03 measurement tools: per-stage run metrics with union time and request-level waiting chain; structural critical path of the production workflow YAML`
+- Current slice: `PR #6 S06/Q05: assessments scope/basis optional (E-* records and anchored prose carry them); views omit empty optional fields; observation_links kept`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：S06/Q05测量assessments/observation_links的Schema与必填输出负担后决定保留/简化/Runtime生成；F01/F02离线模拟三种写作组织的LLM阶段数、串行深度和输入/输出，再在YAML实施选定拓扑（不因结构预检通过而跳过语义审查，需新门禁先问用户）。模型测量及官方状态核验暂缓。
+- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：F01/F02离线模拟三种写作组织的LLM阶段数、串行深度和输入/输出，再在YAML实施选定拓扑（不因结构预检通过而跳过语义审查，需新门禁先问用户）。模型测量及官方状态核验暂缓。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 
@@ -41,18 +41,27 @@
 | S03 | 审查直接结构化提交指引已接入 | 以真实Schema/终止协议定位重复输出；未见差异时不增改造 | 模型遵循和重复可见输出减少未测 |
 | S04 | 当前事实/草稿重建，历史精确去重后压缩；按字符类别估算token，工具Schema计入裁剪预算与Provider准入；压缩阈值按真实token等价换算72000 | 已关闭；真实usage出现明显偏差时再校准系数 | 三个公开分词器离线校准（中文内容0.92–1.12）；Provider实测usage未对照 |
 | S05 | 稳定前缀→只追加历史→可变状态末尾；滚动缓存断点（≤4），Anthropic tool_use/tool_result块携带断点 | 已关闭；剩余不可复用主要是每轮重发的草稿全文，归S06/F01 | 13请求离线会话可复用份额：兼容60.6%→79.8%、Anthropic 52.5%→71.8%；真实计费未测 |
-| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复 | 真实Task工具/引用差异、判断记录净负担尚待收束；拆章/并发需明确取舍 | 简化输入下组合分歧不是所有角色生产缺工具；实际往返减少未测 |
+| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复；判断记录`scope`/`basis`改为只补E-*记录和正文未写的内容 | 拆章/并发取舍并入F01 | 合成下限：作者判断输出29.1k→15.6k token（2.4：12.9k→6.7k）；模型实际输出与续写次数未测 |
 | Q01 | 完整已解析事实/未引用事实可审；预期集合与显式记录对照 | 沿对象到请求/正文定位首次遗漏，结合Q03/Q05决定最小交接 | 已送达不等于使用，来源命中不等于判断/行动覆盖 |
 | Q02 | dimension、合并环境范围、公式缓存/缺值及错误读取缺陷已修 | 保持已修项关闭；新格式问题须有复现再纳入 | 缓存新鲜度、其他格式/OCR和大表内存仍有限制，不等于须全面重写 |
 | Q03 | 保留量/单位；撤销固定电压补算；判断条件随记录传递 | 既有事实/计算/parts与assessments的最小必要分工尚未决定 | 规则选择、条件适用及专业推理正确性未验收 |
 | Q04 | Cross共同快照；同源坐标及路由副本对照已进入输入 | 同对象同条件矛盾与合理差异的处置仍须核查；按证据追版本问题 | 同源坐标不证明设备身份，也不保证专业一致 |
-| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理 | assessments/observation_links的保留、简化或替代及成本决定未完成 | 可选记录和锚点只作诊断，语义覆盖未验收 |
+| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理；逐字段保留/简化决定已完成（observation_links保留） | 已关闭；真实运行看定位列表是否仍有用 | Chief/Final每次请求的module_assessments 31.1k→16.7k token；可选记录和锚点只作诊断，语义覆盖未验收 |
 | Q06 | 来源归档/定位、规则状态依据传递、Module读取及修订影响已实现 | 核查实际审查职责所需来源能否到达，不自动给所有角色加读取器 | 官方状态核验受先前403阻挡；作者声明与ID存在不是现行/适用证明 |
 | Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理 | 继续核指令冲突、候选遗漏与交付；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
 | F01 | 现有阶段职责与依赖已有记录，主要写审/Cross/Chief/Final流程保留 | 三种写作组织的明确比较与阶段保留/合并/取消/条件触发决定未完成 | 不以角色名相近删阶段；收益尚未测量 |
 | F02 | 判断优先实验有已知边界；生产已有随正文写入的可选判断记录 | 与直接写/写后审比较最小交接，不预设判断优先胜出 | 新字段不证明模型先判断，候选效果仍未验收 |
 | F03 | 历史525请求、分阶段及当前请求构造已有取证；`run_metrics.py`按阶段输出请求/token/缓存/压缩/活跃并集与请求级等待链，`reporting_critical_path.py`按生产YAML给出结构关键路径 | 最后一次真实运行用run_metrics测量；F01用critical_path对比拓扑 | 当前常见场景串行LLM深度12–14（首读通过为5），三处审查循环占主要；每阶段真实耗时待实测 |
 | F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+
+### 2026-10-19 — S06/Q05 判断记录与Chief链接的净负担
+
+- **实验：** `scripts/benchmarks/assessment_burden.py`用生产工具构造量Schema，用归档五模块316条真实观测合成判断记录（推理为短模板，是下限），下游走生产`assessment_source_context`。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#s06--q05-作者判断记录assessments与-chief-链接observation_links的净负担)。
+- **发现：** Schema不是主要负担（作者+860、Chief+约340 token，可缓存）；主要是作者输出（分组下限29.1k token，2.4为12.9k，已接近单次回复上限12,288）和Chief/Final每次请求的31.1k token副本。其中`scope`复写E-*记录已有的对象/位置/时点，`basis`复写锚点处正文的推理。
+- **改动：** `ObservationAssessment.scope`/`basis`改为可选，只写E-*记录与正文未写明的条件和理由；审查视图省略空的可选字段；作者工具说明、提交合同、evidence-auditor与cross-relation-reviewer提示改为按E-ID读原始证据。`evidence_ids`、`disposition`、`rules`、锚点、`no_action_reason`、`observation_links`保留。
+- **结果：** 作者判断输出29.1k→15.6k（逐条40.3k→21.2k），2.4为12.9k→6.7k；下游副本31.1k→16.7k；作者Schema+62 token。
+- **边界：** 无新增门禁；缺省`scope`/`basis`不是缺陷，语义审查不跳过。模型实际输出、推理是否更多进入正文待真实运行。
+- **验证：** 涉及写入工具、assessments、提交Schema、module provider、审查输入、Chief/Final的38个测试文件：407通过；2项失败（`test_cross_reduction`旧消息正则、`test_runtime_binding`旧阶段名）在未改动的`eebca47`上同样失败，与本切片无关。Ruff通过。Provider调用0。
 
 ### 2026-10-19 — F03 运行指标与结构关键路径
 

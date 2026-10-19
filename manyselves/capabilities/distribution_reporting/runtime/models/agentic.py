@@ -329,10 +329,10 @@ class AssessmentRuleBasis(StrictModel):
 class ObservationAssessment(StrictModel):
     """Compact reasoning handoff authored alongside one section's prose."""
 
-    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations considered together; group only when scope, reasoning and disposition are the same.")
-    scope: str = Field(min_length=1, description="Object/part, observation time and conditions; never merge objects merely because their names match.")
-    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment within this scope; source OK/NG alone is not a verified judgment.")
-    basis: str = Field(min_length=1, description="Concise reasoning including quantity/unit and comparison when used; distinguish missing observation, missing condition, unverified rule and inapplicability.")
+    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations judged together; group only when disposition, reasoning and anchors are the same. Each E-* id keeps its own object, location and time.")
+    scope: str = Field(default="", description="Only conditions not already in the cited E-* records (operating state, time window, limits); object, location and time are read from those records. Never merge objects merely because their names match.")
+    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment for these observations; source OK/NG alone is not a verified judgment.")
+    basis: str = Field(default="", description="Only reasoning the prose at narrative_anchor does not state: missing observation, missing condition, unverified rule, inapplicability, or a quantity/unit comparison. Do not restate the E-* fact or the prose.")
     rules: list[AssessmentRuleBasis] = Field(default_factory=list, description="Rules actually considered, with their applicability/status; [] means no rule was selected, not that none exists.")
     narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose; empty means it is not expressed there.")
     action_anchor: str = Field(default="", description="Short exact substring locating the action or verification step in the same prose; empty means no action is expressed there.")
