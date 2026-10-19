@@ -28,6 +28,8 @@ parameters:
 state:
   reporting-state: {}
   owner-module-id: "{owner_module_id}"
+  cross-owner-initial-batches: []
+  cross-owner-initial-batch: {}
 actions:
 - id: prepare-current-cross-owner-initial
   kind: invoke_tool
@@ -54,6 +56,36 @@ actions:
   conversation_key: "{conversation_key}"
   mode: run
   output_variable: cross-owner-conversation
+- id: list-cross-owner-initial-batches
+  kind: invoke_tool
+  tool: list-cross-owner-initial-batches
+  input_variable: owner-context
+  output_variable: cross-owner-initial-batches
+- id: each-cross-owner-initial-batch
+  kind: for_each
+  items_variable: cross-owner-initial-batches
+  item_variable: cross-owner-initial-batch
+  body: select-cross-owner-initial-batch
+  after: merge-cross-owner-initial-batches
+- id: select-cross-owner-initial-batch
+  kind: invoke_tool
+  tool: select-cross-owner-initial-batch
+  input_variables:
+    context: owner-context
+    batch: cross-owner-initial-batch
+  output_variable: owner-context
+- id: cross-owner-initial-batch-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-initial-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-initial-batch
+- id: choose-cross-owner-initial-batch-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-initial-batch
+    operator: truthy
+  then: invoke-current-cross-owner-initial
+  otherwise: next-cross-owner-initial-batch
 - id: invoke-current-cross-owner-initial
   kind: invoke_agent
   agent: cross-module-reviewer
@@ -68,9 +100,14 @@ actions:
     context: owner-context
     result: cross-owner-initial-agent-result
   output_variable: owner-context
-- id: continue-after-cross-owner-initial
+- id: next-cross-owner-initial-batch
   kind: goto
-  target: cross-owner-initial-has-findings
+  target: each-cross-owner-initial-batch
+- id: merge-cross-owner-initial-batches
+  kind: invoke_tool
+  tool: merge-cross-owner-initial-batches
+  input_variable: owner-context
+  output_variable: owner-context
 - id: cross-owner-initial-has-findings
   kind: invoke_tool
   tool: cross-owner-initial-has-findings

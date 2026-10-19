@@ -1,0 +1,13 @@
+id: cross_owner_initial_batch_list
+version: 1.0.0
+description: Ordered dossier batch positions of one Cross owner initial review
+adapter: json_schema
+schema:
+  type: array
+  items:
+    type: object
+    required: [batch_index]
+    properties:
+      batch_index:
+        type: integer
+        minimum: 0

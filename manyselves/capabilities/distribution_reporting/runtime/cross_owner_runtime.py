@@ -140,6 +140,7 @@ from manyselves.capabilities.distribution_reporting.runtime.storage import Repor
 from manyselves.capabilities.distribution_reporting.runtime.user_supplements import (
     request_user_supplements,
 )
+from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -153,6 +154,7 @@ from manyselves.runtime.agent_execution import (
     AgentTurnRequest,
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
+from manyselves.runtime.context_budget import estimate_text_tokens, retained_input_budget_for
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
 from .task_context import bind_task_context
@@ -276,6 +278,130 @@ def _owner_dossiers(state: Mapping[str, Any], workspace, owner_module_id: str) -
     ]
 
 
+def _input_tokens(contract: CrossOwnerInput) -> int:
+    """Estimated tokens of the inline owner input as the reviewer receives it."""
+
+    return estimate_text_tokens(
+        json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    )
+
+
+def _dossier_batches(
+    dossiers: list[dict],
+    measure: Callable[[list[dict]], int],
+    budget: int,
+) -> list[list[dict]]:
+    """Consecutive dossier groups whose owner input each fits ``budget``.
+
+    Dossiers are independent objects, so splitting them never separates the
+    facts and judgments of one object.  A single dossier above the budget is
+    still sent alone; the Agent runtime then stops with its context-budget
+    reason instead of sending a request the Provider would reject.
+    """
+
+    if len(dossiers) <= 1 or measure(dossiers) <= budget:
+        return [dossiers]
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    for dossier in dossiers:
+        candidate = [*current, dossier]
+        if current and measure(candidate) > budget:
+            batches.append(current)
+            current = [dossier]
+        else:
+            current = candidate
+    batches.append(current)
+    return batches
+
+
+def _merge_owner_inputs(parts: list[CrossOwnerInput]) -> CrossOwnerInput:
+    """One owner input covering several dossier batches of the same owner."""
+
+    if len(parts) == 1:
+        return parts[0]
+    first = parts[0]
+    narratives: dict[str, str] = {}
+    assessments: dict[str, dict] = {}
+    evidence_by_submodule: dict[str, list[str]] = {}
+    dossiers: list[dict] = []
+    related: dict[str, Any] = {}
+    for part in parts:
+        narratives.update(part.owner_subject.submodule_narratives)
+        assessments.update(part.owner_subject.assessments)
+        for key, values in part.owner_subject.evidence_ids_by_submodule.items():
+            merged = evidence_by_submodule.setdefault(key, [])
+            merged.extend(value for value in values if value not in merged)
+        dossiers.extend(part.joint_dossiers)
+        for module_id, view in part.related_module_views.items():
+            current = related.get(module_id)
+            if current is None:
+                related[module_id] = view
+                continue
+            claims = {claim.id: claim for claim in current.claims}
+            claims.update({claim.id: claim for claim in view.claims})
+            by_submodule = {key: list(values) for key, values in current.evidence_ids_by_submodule.items()}
+            for key, values in view.evidence_ids_by_submodule.items():
+                merged = by_submodule.setdefault(key, [])
+                merged.extend(value for value in values if value not in merged)
+            related[module_id] = current.model_copy(update={
+                "claims": list(claims.values()),
+                "evidence_ids_by_submodule": by_submodule,
+            })
+    order = list(first.owner_subject.submodule_narratives)
+    for part in parts[1:]:
+        order.extend(key for key in part.owner_subject.submodule_narratives if key not in order)
+    owner_subject = first.owner_subject.model_copy(update={
+        "submodule_narratives": {key: narratives[key] for key in order},
+        "evidence_ids_by_submodule": evidence_by_submodule,
+        "assessments": assessments,
+    })
+    return first.model_copy(update={
+        "owner_subject": owner_subject,
+        "owner_scope_submodule_ids": order,
+        "joint_dossiers": dossiers,
+        "related_module_views": related,
+    })
+
+
+def _merge_batch_submissions(
+    owner_module_id: str,
+    results: list[CrossOwnerFindingSubmission],
+) -> tuple[CrossOwnerFindingSubmission, dict[str, int]]:
+    """Combine batch reviews; ids repeated across batches get a batch suffix."""
+
+    dimensions: list[str] = []
+    findings = []
+    synthesis = []
+    finding_batches: dict[str, int] = {}
+    seen_synthesis: set[str] = set()
+    for index, result in enumerate(results):
+        dimensions.extend(
+            item for item in result.coverage.checked_dimensions if item not in dimensions
+        )
+        for finding in result.findings:
+            finding_id = finding.id
+            if finding_id in finding_batches:
+                finding_id = f"{finding.id}-b{index + 1}"
+                finding = finding.model_copy(update={"id": finding_id})
+            finding_batches[finding_id] = index
+            findings.append(finding)
+        for item in result.synthesis_inputs:
+            if item.id in seen_synthesis:
+                item = item.model_copy(update={"id": f"{item.id}-b{index + 1}"})
+            seen_synthesis.add(item.id)
+            synthesis.append(item)
+    merged = CrossOwnerFindingSubmission(
+        owner_module_id=owner_module_id,
+        coverage=CrossReviewCoverageEntry(
+            module_id=owner_module_id,
+            checked_dimensions=dimensions,
+        ),
+        findings=findings,
+        synthesis_inputs=synthesis,
+    )
+    return merged, finding_batches
+
+
 def _build_owner_input(
     *,
     state: Mapping[str, Any],
@@ -349,14 +475,17 @@ def _build_initial_envelope(
     owner_module_id: str,
     review_round: int,
     workflow_id: str,
+    input_ref: str | None = None,
+    batch_index: int | None = None,
 ) -> TaskEnvelope:
     specialization = cross_lane_specialization(owner_module_id)
-    input_ref = (
+    input_ref = input_ref or (
         f"Work/runs/{state['run_id']}/reviews/"
         f"cross-owner-input-r{review_round}-{owner_module_id}.json"
     )
+    batch_suffix = "" if batch_index is None else f"-b{batch_index + 1}"
     return TaskEnvelope(
-        task_id=f"cross-owner-{owner_module_id}-r{review_round}-initial",
+        task_id=f"cross-owner-{owner_module_id}-r{review_round}-initial{batch_suffix}",
         run_id=str(state["run_id"]),
         agent_id="cross-module-reviewer",
         objective=(
@@ -463,6 +592,10 @@ class CrossOwnerAgentInvoker:
             )
         workflow_id = preparation.workflow_id or self.workflow_id
         run_id = preparation.run_id
+        batch_index = getattr(preparation, "batch_index", None)
+        if batch_index is not None:
+            # One loop action reviews several batches; each turn keeps its own id.
+            task_id = f"{task_id}:b{batch_index + 1}"
         runtime_id = f"{workflow_id}:{agent.id}:{conversation.key.value}"
         session_id = conversation.external_session_id or (
             f"{workflow_id}:{conversation.key.value}"
@@ -742,10 +875,17 @@ class CrossOwnerRuntime:
         agent_session_factory: SessionFactory | None = None,
         workflow_id: str = "public-reporting",
         store: ReportingStore | None = None,
+        input_budget: Callable[[], int] | int | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.store = store or ReportingStore(self.workspace)
         self.workflow_id = workflow_id
+        # Estimated tokens one owner turn may carry as its retained input.
+        self.input_budget = (
+            input_budget
+            if input_budget is not None
+            else retained_input_budget_for(AgentDefaults())
+        )
         self.agent_execution = agent_execution
         self.agent_session_factory = agent_session_factory
         if agent_execution is not None and callable(agent_session_factory):
@@ -762,6 +902,10 @@ class CrossOwnerRuntime:
         else:
             self.agent_invokers = {}
 
+    def _input_budget(self) -> int:
+        budget = self.input_budget() if callable(self.input_budget) else self.input_budget
+        return int(budget)
+
     def prepare(self, value: Any) -> dict[str, Any]:
         state = _state_from(value)
         modules = _module_submissions(state)
@@ -769,9 +913,11 @@ class CrossOwnerRuntime:
         review_round = int(state.get("cross_review_round", 0))
         refs: dict[str, str] = {}
         inputs: dict[str, CrossOwnerInput] = {}
+        batch_refs: dict[str, list[dict[str, Any]]] = {}
         skipped: list[str] = []
-        for owner_module_id in REPORT_MODULE_IDS:
-            dossiers = _owner_dossiers(state, self.workspace, owner_module_id)
+        budget = self._input_budget()
+
+        def owner_contract(owner_module_id: str, dossiers: list[dict] | None):
             contract, ref = _build_owner_input(
                 state=state,
                 modules=modules,
@@ -780,19 +926,42 @@ class CrossOwnerRuntime:
                 review_round=review_round,
                 dossiers=dossiers,
             )
-            if dossiers is not None and not dossiers:
-                skipped.append(owner_module_id)
             contract = contract.model_copy(update={"report_instruction": report_instruction_from_state(state)})
             if state.get("revision_input_changes"):
                 contract = CrossOwnerInput.model_validate({
                     **contract.model_dump(mode="json"),
                     "input_changes": state["revision_input_changes"],
                 })
+            return contract, ref
+
+        for owner_module_id in REPORT_MODULE_IDS:
+            dossiers = _owner_dossiers(state, self.workspace, owner_module_id)
+            contract, ref = owner_contract(owner_module_id, dossiers)
+            if dossiers is not None and not dossiers:
+                skipped.append(owner_module_id)
             self.store.write_json(ref, contract.model_dump(mode="json"))
             refs[owner_module_id] = ref
             inputs[owner_module_id] = contract
+            batches = _dossier_batches(
+                dossiers or [],
+                lambda part, owner=owner_module_id: _input_tokens(owner_contract(owner, part)[0]),
+                budget,
+            )
+            if len(batches) > 1:
+                owner_batches = []
+                for index, part in enumerate(batches):
+                    batch_ref = ref.removesuffix(".json") + f"-b{index + 1}.json"
+                    batch_contract, _ = owner_contract(owner_module_id, part)
+                    self.store.write_json(batch_ref, batch_contract.model_dump(mode="json"))
+                    owner_batches.append({
+                        "ref": batch_ref,
+                        "dossier_ids": [dossier["dossier_id"] for dossier in part],
+                    })
+                batch_refs[owner_module_id] = owner_batches
         state["cross_owner_input_refs"] = refs
         state["cross_owner_inputs"] = inputs
+        state["cross_owner_input_batches"] = batch_refs
+        state["cross_owner_input_budget_tokens"] = budget
         state["cross_owner_without_dossiers"] = skipped
         state["cross_review_round"] = review_round
         state["cross_owner_prepared"] = True
@@ -891,11 +1060,124 @@ class CrossOwnerRuntime:
             prior_module_review_completion_ref=prior_completion_ref,
             envelope=envelope,
         )
-        return DeclarativeCrossOwnerRuntimeContext(
+        batch_specs = (state.get("cross_owner_input_batches") or {}).get(owner_module_id) or []
+        if len(batch_specs) <= 1:
+            return DeclarativeCrossOwnerRuntimeContext(
+                owner_module_id=owner_module_id,
+                status="initial_ready",
+                preparation=preparation,
+            )
+        batches: list[CrossOwnerInitialReviewPreparation] = []
+        results: list[CrossOwnerFindingSubmission | None] = []
+        for index, spec in enumerate(batch_specs):
+            batch_ref = str(spec["ref"])
+            batch_contract = CrossOwnerInput.model_validate_json(
+                (self.workspace / batch_ref).read_text(encoding="utf-8")
+            )
+            batch_result_ref = result_ref.removesuffix(".json") + f"-b{index + 1}.json"
+            batch_result_path = self.workspace / batch_result_ref
+            persisted = (
+                CrossOwnerFindingSubmission.model_validate_json(
+                    batch_result_path.read_text(encoding="utf-8")
+                )
+                if batch_result_path.is_file()
+                else None
+            )
+            results.append(persisted)
+            batches.append(preparation.model_copy(update={
+                "mode": "continue_existing" if persisted is not None else "invoke_agent",
+                "owner_input_ref": batch_ref,
+                "owner_input": batch_contract,
+                "envelope": _build_initial_envelope(
+                    state=state,
+                    contract=batch_contract,
+                    owner_module_id=owner_module_id,
+                    review_round=review_round,
+                    workflow_id=workflow_id,
+                    input_ref=batch_ref,
+                    batch_index=index,
+                ),
+                "existing_result_ref": batch_result_ref if persisted is not None else None,
+                "existing_result": persisted,
+                "batch_index": index,
+                "batch_dossier_ids": list(spec.get("dossier_ids") or []),
+            }))
+        context = DeclarativeCrossOwnerRuntimeContext(
             owner_module_id=owner_module_id,
             status="initial_ready",
-            preparation=preparation,
+            preparation=next(
+                (batch for batch in batches if batch.mode == "invoke_agent"), batches[0],
+            ),
+            initial_full_preparation=preparation,
+            initial_batches=batches,
+            initial_batch_results=results,
         )
+        if all(result is not None for result in results):
+            return self.merge_initial_batches(context)
+        return context
+
+    @staticmethod
+    def initial_batch_items(value: Any) -> list[dict[str, int]]:
+        """Batch positions the initial review loop visits, in order."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        count = len(context.initial_batches) or 1
+        return [{"batch_index": index} for index in range(count)]
+
+    def select_initial_batch(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Point the initial turn at one dossier batch (or the single input)."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError("Cross owner batch selection requires context and batch")
+        context = _model(value.get("context"), DeclarativeCrossOwnerRuntimeContext)
+        if not context.initial_batches:
+            return context
+        batch = value.get("batch") or {}
+        index = int(batch.get("batch_index", 0) if isinstance(batch, Mapping) else batch)
+        return context.model_copy(update={"preparation": context.initial_batches[index]})
+
+    def merge_initial_batches(self, value: Any) -> DeclarativeCrossOwnerRuntimeContext:
+        """Record the owner's initial review once every batch has a result."""
+
+        context = _model(value, DeclarativeCrossOwnerRuntimeContext)
+        if not context.initial_batches or context.status in {"initial_accepted", "initial_resumed"}:
+            return context
+        full = context.initial_full_preparation
+        if full is None:
+            raise ValueError("Cross owner batches have no full-scope preparation")
+        missing = [
+            index + 1 for index, result in enumerate(context.initial_batch_results)
+            if result is None
+        ]
+        if missing:
+            raise ValueError(f"Cross owner initial batches without a result: {missing}")
+        merged, finding_batches = _merge_batch_submissions(
+            context.owner_module_id,
+            [cast(CrossOwnerFindingSubmission, result) for result in context.initial_batch_results],
+        )
+        result_ref = (
+            f"Work/runs/{full.run_id}/reviews/"
+            f"cross-owner-findings-r{full.review_round}-{context.owner_module_id}.json"
+        )
+        self.store.write_json(result_ref, merged.model_dump(mode="json"))
+        acceptance = CrossOwnerInitialReviewAcceptance(
+            run_id=full.run_id,
+            workflow_id=full.workflow_id,
+            owner_module_id=full.owner_module_id,
+            reviewer_session_key=full.reviewer_session_key,
+            owner_input_ref=full.owner_input_ref,
+            user_supplements=full.user_supplements,
+            prior_module_review_completion_ref=full.prior_module_review_completion_ref,
+            result_ref=result_ref,
+            result=merged,
+        )
+        return context.model_copy(update={
+            "status": "initial_accepted",
+            "preparation": full,
+            "acceptance": acceptance,
+            "initial_finding_batches": finding_batches,
+            "error": None,
+        })
 
     @staticmethod
     def initial_requires_agent(value: Any) -> bool:
@@ -913,6 +1195,8 @@ class CrossOwnerRuntime:
         preparation = context.preparation
         if preparation is None:
             raise ValueError("Cross owner initial acceptance has no preparation")
+        if context.initial_batches and preparation.batch_index is not None:
+            return self._accept_initial_batch(context, preparation, value.get("result"))
         if preparation.mode == "continue_existing":
             if value.get("result") is not None:
                 raise ValueError("persisted Cross owner result cannot be accepted twice")
@@ -958,6 +1242,42 @@ class CrossOwnerRuntime:
                 "error": None,
             }
         )
+
+    def _accept_initial_batch(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+        preparation: CrossOwnerInitialReviewPreparation,
+        value: Any,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        result = _model(value, DeclarativeCrossOwnerInitialAgentResult)
+        if result.status != "completed" or result.submission is None:
+            return context.model_copy(update={
+                "status": "failed",
+                "error": result.error or "Cross owner initial Agent failed",
+            })
+        submission = result.submission
+        if submission.owner_module_id != context.owner_module_id:
+            raise ValueError("Cross owner initial result belongs to another owner")
+        index = cast(int, preparation.batch_index)
+        batch_ref = (
+            f"Work/runs/{preparation.run_id}/reviews/"
+            f"cross-owner-findings-r{preparation.review_round}-{context.owner_module_id}"
+            f"-b{index + 1}.json"
+        )
+        self.store.write_json(batch_ref, submission.model_dump(mode="json"))
+        batches = list(context.initial_batches)
+        batches[index] = preparation.model_copy(update={
+            "mode": "continue_existing",
+            "existing_result_ref": batch_ref,
+            "existing_result": submission,
+        })
+        results = list(context.initial_batch_results)
+        results[index] = submission
+        return context.model_copy(update={
+            "preparation": batches[index],
+            "initial_batches": batches,
+            "initial_batch_results": results,
+        })
 
     @staticmethod
     def initial_has_findings(value: Any) -> bool:
@@ -1789,6 +2109,19 @@ class CrossOwnerRuntime:
             subject_ref.ref if hasattr(subject_ref, "ref") else str(subject_ref)
         )
         initial_input = initial_preparation.owner_input
+        if context.initial_batches:
+            # Recheck only the dossier batches whose findings are being checked.
+            needed = {
+                context.initial_finding_batches.get(str(getattr(finding, "id", "")))
+                for finding in required_findings
+            }
+            indices = (
+                range(len(context.initial_batches)) if None in needed or not needed
+                else sorted(cast(set[int], needed))
+            )
+            initial_input = _merge_owner_inputs(
+                [context.initial_batches[index].owner_input for index in indices]
+            ).model_copy(update={"input_changes": initial_input.input_changes})
         recheck_scope = (
             set(initial_input.owner_scope_submodule_ids) if initial_input.joint_dossiers else None
         )

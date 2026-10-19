@@ -94,6 +94,11 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     ]
     preparation: CrossOwnerInitialReviewPreparation | None = None
     acceptance: CrossOwnerInitialReviewAcceptance | None = None
+    # Initial review split by dossier batches; empty when one turn suffices.
+    initial_full_preparation: CrossOwnerInitialReviewPreparation | None = None
+    initial_batches: list[CrossOwnerInitialReviewPreparation] = Field(default_factory=list)
+    initial_batch_results: list[CrossOwnerFindingSubmission | None] = Field(default_factory=list)
+    initial_finding_batches: dict[str, int] = Field(default_factory=dict)
     revision_preparation: CrossOwnerRevisionPreparation | None = None
     revision_acceptance: CrossOwnerRevisionAcceptance | None = None
     local_review_preparation: CrossOwnerLocalReviewPreparation | None = None

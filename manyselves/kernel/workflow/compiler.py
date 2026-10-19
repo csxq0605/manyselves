@@ -878,8 +878,13 @@ class WorkflowCompiler:
                         "the back edge forms a natural loop"
                     )
                 natural_loop = _natural_loop(target, owner, predecessors)
+                # A for_each iterates a list frozen when it starts, so its
+                # ``after`` exit is reached after finitely many passes.
                 if not any(
-                    isinstance(action_by_id[action_id], (IfAction, ConditionGroupAction))
+                    isinstance(
+                        action_by_id[action_id],
+                        (IfAction, ConditionGroupAction, ForEachAction),
+                    )
                     and any(
                         exit_target not in natural_loop
                         for exit_target in explicit_targets[action_id]
@@ -888,7 +893,7 @@ class WorkflowCompiler:
                 ):
                     raise CompilerError(
                         "workflow with a back edge requires max_iterations unless "
-                        "its natural loop has an explicit If/ConditionGroup exit"
+                        "its natural loop has an explicit If/ConditionGroup/ForEach exit"
                     )
         reachable = {actions[0].id}
         pending = [actions[0].id]

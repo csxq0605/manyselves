@@ -275,6 +275,10 @@ class CrossOwnerInitialReviewPreparation(StrictModel):
     envelope: TaskEnvelope | None = None
     existing_result_ref: str | None = None
     existing_result: CrossOwnerFindingSubmission | None = None
+    # Set when the owner's dossiers are reviewed in several turns that each fit
+    # the request budget; ``owner_input`` is then this batch's scoped input.
+    batch_index: int | None = None
+    batch_dossier_ids: list[str] = Field(default_factory=list)
 
 
 class CrossOwnerInitialReviewAcceptance(StrictModel):

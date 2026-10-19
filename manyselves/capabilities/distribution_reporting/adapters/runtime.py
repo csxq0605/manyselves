@@ -65,6 +65,7 @@ from manyselves.capabilities.distribution_reporting.runtime.template_provider im
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.context_budget import retained_input_budget_for
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,
     DetachedRuntime,
@@ -146,7 +147,12 @@ class DistributionReportingRuntimeBinding:
             services,
             execution=self._execution,
         )
-        cross_lifecycle = CrossOwnerRuntime(self.workspace)
+        cross_lifecycle = CrossOwnerRuntime(
+            self.workspace,
+            input_budget=lambda: retained_input_budget_for(
+                services.agent_defaults, services.active_provider,
+            ),
+        )
         cross = build_cross_provider_composition(
             services,
             cross_runtime=cross_lifecycle,

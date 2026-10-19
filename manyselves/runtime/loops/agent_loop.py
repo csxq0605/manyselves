@@ -2806,17 +2806,9 @@ class AgentLoop:
     def _context_window_for_request(self) -> int:
         """Read an optional Provider/config context window without changing caps."""
 
-        for owner in (self.config, self.llm_provider):
-            for name in ("context_window", "max_context_tokens", "context_length"):
-                value = getattr(owner, name, None)
-                if value is not None:
-                    try:
-                        parsed = int(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if parsed > 0:
-                        return parsed
-        return 128_000
+        from manyselves.runtime.context_budget import provider_context_window
+
+        return provider_context_window(self.config, self.llm_provider)
 
     def _apply_rebased_usage_metadata(self, rebased: Any) -> None:
         """Copy hash-only rebase metrics into the next ledger row."""
