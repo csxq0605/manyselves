@@ -1814,7 +1814,7 @@ async def test_unlabelled_task_cancel_keeps_the_run_resumable(tmp_path: Path) ->
 async def test_run_cancel_repeats_until_lane_code_that_swallows_it_yields(
     tmp_path: Path,
 ) -> None:
-    """Reporting lanes catch BaseException; one cancel must not be absorbed."""
+    """Code that catches BaseException must not absorb a single cancel."""
 
     from manyselves.runtime import run_lifecycle
     from manyselves.runtime.run_lifecycle import (

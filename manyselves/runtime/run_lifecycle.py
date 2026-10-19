@@ -136,8 +136,8 @@ class DetachedRunTaskOwner:
 
     @staticmethod
     async def _settle_cancel(task: asyncio.Task[Any]) -> None:
-        # Some lane code converts BaseException into a failed lane result and
-        # keeps going; repeat the labelled cancel until the Host itself stops.
+        # Code that turns BaseException into a result would absorb one
+        # cancel; repeat the labelled cancel until the Host itself stops.
         while not task.done():
             await asyncio.wait({task}, timeout=_CANCEL_REPEAT_SECONDS)
             if not task.done():
