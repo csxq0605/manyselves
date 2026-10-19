@@ -278,8 +278,8 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     tail_plan = root_plan.subworkflow_plans["distribution-reporting-tail"]
     tools = runtime._tools(definitions, contracts, root_plan)
     assert tail_plan.workflow_id == "distribution-reporting-tail"
-    cross_plan = root_plan.subworkflow_plans["distribution-cross-owner-cohort"]
-    assert "distribution-cross-owner-2.1-pipeline" in cross_plan.workflow_ids
+    cross_plan = root_plan.subworkflow_plans["distribution-cross-joint-review"]
+    assert "distribution-cross-joint-repairs" in cross_plan.workflow_ids
     assert "prepare-render-delivery" in tools
     assert "complete-delivery" in tools
     assert "prepare-cross-owner-cohort" not in tools
@@ -292,7 +292,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     )
     host = WorkflowRuntimeHost(runtime.executors, store, events)
 
-    with pytest.raises(RuntimeError, match="missing tool adapter: prepare-cross-owner-cohort"):
+    with pytest.raises(RuntimeError, match="missing tool adapter: prepare-joint-cross-review"):
         await host.execute(
             tail_plan,
             state,
@@ -308,7 +308,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     persisted = store.load(run_id)
     assert persisted.status is WorkflowStatus.FAILED
     assert persisted.actions["run-cross"].status.value == "failed"
-    assert "missing tool adapter: prepare-cross-owner-cohort" in (
+    assert "missing tool adapter: prepare-joint-cross-review" in (
         persisted.actions["run-cross"].error or ""
     )
 
@@ -743,7 +743,7 @@ async def test_cross_owner_agent_invoker_recovers_in_same_session(
 async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_boundary(
     tmp_path: Path,
 ) -> None:
-    """The real compiled tail reaches Chief after all five Cross owner lanes."""
+    """The real compiled tail reaches Chief after one joint Cross review."""
 
     from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
         CrossOwnerRuntime,
@@ -768,39 +768,21 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
     )
 
     run_id = "cross-tail-host-run"
-    result_refs = {
-        module_id: f"Work/runs/{run_id}/results/{module_id}.json"
-        for module_id in REPORT_TAXONOMY
-    }
-    for module_id, result_ref in result_refs.items():
-        result_path = tmp_path / result_ref
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(
-            AgentResult(
-                task_id=f"cross-owner-{module_id}-r0-initial",
-                run_id=run_id,
-                agent_id="cross-module-reviewer",
-                session_id=f"public-reporting:cross-owner-{module_id}",
-                status=AgentRunStatus.COMPLETED,
-                payload=CrossOwnerFindingSubmission(
-                    owner_module_id=module_id,
-                    coverage=CrossReviewCoverageEntry(
-                        module_id=module_id,
-                        checked_dimensions=[
-                            "terminology",
-                            "facts",
-                            "risk_levels",
-                            "dependencies",
-                            "propagation",
-                            "joint_verification",
-                        ],
-                    ),
-                    findings=[],
-                    synthesis_inputs=[],
-                ),
-            ).model_dump_json(),
-            encoding="utf-8",
-        )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        CROSS_REVIEW_DIMENSIONS,
+        CrossReviewFindingSubmission,
+    )
+    result_ref = f"Work/runs/{run_id}/results/joint.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(AgentResult(
+        task_id="cross-joint-r0", run_id=run_id, agent_id="cross-relation-reviewer",
+        session_id="public-reporting:cross-joint", status=AgentRunStatus.COMPLETED,
+        payload=CrossReviewFindingSubmission(
+            coverage=[CrossReviewCoverageEntry(module_id=owner, checked_dimensions=list(CROSS_REVIEW_DIMENSIONS))
+                      for owner in REPORT_TAXONOMY], findings=[], synthesis_inputs=[],
+        ),
+    ).model_dump_json(), encoding="utf-8")
 
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
@@ -825,14 +807,13 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
             async def respond(message: UserMessage) -> None:
                 if message.agent_type != self.runtime_id:
                     return
-                owner_module_id = self.runtime_id.rsplit("cross-owner-", 1)[-1]
                 await bus.publish(
                         AgentResultMessage(
-                            sender="cross-module-reviewer",
+                            sender="cross-relation-reviewer",
                             workflow_id=message.workflow_id,
-                            task_id=f"cross-owner-{owner_module_id}-r0-initial",
+                            task_id="cross-joint-r0",
                             run_id=message.run_id,
-                            result_path=result_refs[owner_module_id],
+                            result_path=result_ref,
                             task_attempt_id="",
                         session_id=message.session_id,
                     )
@@ -918,6 +899,6 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
         bus.shutdown()
         await bus_task
 
-    assert len(loops) == len(REPORT_TAXONOMY)
+    assert len(loops) == 1
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json").is_file()
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-decision-pack.json").is_file()

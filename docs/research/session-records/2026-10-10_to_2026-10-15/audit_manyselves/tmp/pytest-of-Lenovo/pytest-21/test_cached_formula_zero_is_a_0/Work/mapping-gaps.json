@@ -1,0 +1,16 @@
+{
+  "gaps": [
+    {
+      "file_id": "fixture",
+      "kind": "manual_required",
+      "path": "E:/PKU/program/2026/Aug/work/audit_manyselves/tmp/pytest-of-Lenovo/pytest-21/test_cached_formula_zero_is_a_0/cached.xlsx",
+      "sheet": "Sheet",
+      "cell": "B3",
+      "row": 3,
+      "reason": "formula_result_error",
+      "formula": "=1/0",
+      "cached_value": "#DIV/0!",
+      "message": "资料提取不完整：E:/PKU/program/2026/Aug/work/audit_manyselves/tmp/pytest-of-Lenovo/pytest-21/test_cached_formula_zero_is_a_0/cached.xlsx Sheet B3 ；formula_result_error"
+    }
+  ]
+}

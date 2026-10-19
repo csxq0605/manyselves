@@ -1,0 +1,236 @@
+{
+  "model_calls": 0,
+  "production_code_modified": true,
+  "synthetic_intake": [
+    {
+      "case": "table.docx",
+      "status": "parsed",
+      "artifact_kinds": [
+        "document_paragraph",
+        "document_paragraph",
+        "document_paragraph"
+      ],
+      "facts": [
+        "PARAGRAPH_PRESENT",
+        "Reading",
+        "TABLE_ONLY_READING_17"
+      ],
+      "mapping_gaps": [],
+      "worker_has_error": false
+    },
+    {
+      "case": "formula.xlsx",
+      "status": "parsed",
+      "artifact_kinds": [
+        "workbook_row",
+        "manual_required",
+        "workbook_row"
+      ],
+      "facts": [
+        "A1=Device; B1=Measured",
+        "A2=FICTIONAL"
+      ],
+      "mapping_gaps": [
+        {
+          "file_id": "fixture",
+          "kind": "manual_required",
+          "path": "Inputs/formula.xlsx",
+          "sheet": "Sheet",
+          "cell": "B2",
+          "row": 2,
+          "reason": "formula_result_unavailable",
+          "formula": "=10+7",
+          "cached_value": null,
+          "message": "资料提取不完整：Inputs/formula.xlsx Sheet B2 ；formula_result_unavailable"
+        }
+      ],
+      "worker_has_error": false
+    },
+    {
+      "case": "observation.png",
+      "status": "parsed",
+      "artifact_kinds": [
+        "image_metadata"
+      ],
+      "facts": [
+        "图片元数据：500x100，格式=PNG，模式=RGB"
+      ],
+      "mapping_gaps": [],
+      "worker_has_error": false
+    },
+    {
+      "case": "scan.pdf",
+      "status": "parsed",
+      "artifact_kinds": [
+        "manual_required"
+      ],
+      "facts": [],
+      "mapping_gaps": [
+        {
+          "file_id": "fixture",
+          "kind": "manual_required",
+          "path": "Inputs/scan.pdf",
+          "reason": "pdf_parser_unavailable",
+          "message": "资料提取不完整：Inputs/scan.pdf   ；pdf_parser_unavailable"
+        }
+      ],
+      "worker_has_error": false
+    },
+    {
+      "case": "corrupt.docx",
+      "status": "failed",
+      "artifact_kinds": [],
+      "facts": [],
+      "mapping_gaps": [
+        {
+          "file_id": "fixture",
+          "code": "file_parse_failed",
+          "path": "Inputs/corrupt.docx",
+          "message": "文件解析失败：Inputs/corrupt.docx；document extraction unavailable: File is not a zip file"
+        }
+      ],
+      "worker_has_error": true
+    }
+  ],
+  "alternate_document_parser": {
+    "table_fact_recovered": true,
+    "block_count": 3
+  },
+  "actual_skill_structural_validation_passed": true,
+  "synthetic_cross_room_thermal": [
+    {
+      "id": "ev-d82d681f14fd8db944e0",
+      "subject": "ROOM-B/CAB-B",
+      "fact": "检测部位=POINT-B；测点温度=55℃；检测时负荷率=50.00%",
+      "source": {
+        "file_id": "thermal",
+        "path": "E:/PKU/program/2026/Aug/work/audit_manyselves/intake-probe-e83979d2/Inputs/S4-4-synthetic.xlsx",
+        "sheet": "红外热成像检测记录表",
+        "cell": "A4:K4",
+        "page": null,
+        "row": 4,
+        "column": "G",
+        "image_id": null
+      },
+      "value": 55.0,
+      "unit": "℃",
+      "measurements": [
+        {
+          "quantity": "measured_temperature",
+          "value": 55.0,
+          "unit": "℃",
+          "source_cell": "G4",
+          "derived_from": [],
+          "missing_reason": null
+        },
+        {
+          "quantity": "ambient_temperature",
+          "value": null,
+          "unit": "℃",
+          "source_cell": "B4",
+          "derived_from": [],
+          "missing_reason": "missing_ambient_temperature"
+        },
+        {
+          "quantity": "temperature_rise",
+          "value": null,
+          "unit": "K",
+          "source_cell": null,
+          "derived_from": [
+            "measured_temperature",
+            "ambient_temperature"
+          ],
+          "missing_reason": "missing_ambient_temperature"
+        }
+      ],
+      "observed_at": null,
+      "confidence": 1.0,
+      "needs_confirmation": true,
+      "module_id": "2.4",
+      "submodule_id": "2.4.4",
+      "photo_refs": []
+    },
+    {
+      "id": "ev-0c69e6876e121fa102c6",
+      "subject": "ROOM-B/CAB-B",
+      "fact": "检测部位=POINT-B；测点温度=55℃；检测时负荷率=50.00%",
+      "source": {
+        "file_id": "thermal",
+        "path": "E:/PKU/program/2026/Aug/work/audit_manyselves/intake-probe-e83979d2/Inputs/S4-4-synthetic.xlsx",
+        "sheet": "红外热成像检测记录表",
+        "cell": "A4:K4",
+        "page": null,
+        "row": 4,
+        "column": "G",
+        "image_id": null
+      },
+      "value": 55.0,
+      "unit": "℃",
+      "measurements": [
+        {
+          "quantity": "measured_temperature",
+          "value": 55.0,
+          "unit": "℃",
+          "source_cell": "G4",
+          "derived_from": [],
+          "missing_reason": null
+        },
+        {
+          "quantity": "ambient_temperature",
+          "value": null,
+          "unit": "℃",
+          "source_cell": "B4",
+          "derived_from": [],
+          "missing_reason": "missing_ambient_temperature"
+        },
+        {
+          "quantity": "temperature_rise",
+          "value": null,
+          "unit": "K",
+          "source_cell": null,
+          "derived_from": [
+            "measured_temperature",
+            "ambient_temperature"
+          ],
+          "missing_reason": "missing_ambient_temperature"
+        }
+      ],
+      "observed_at": null,
+      "confidence": 1.0,
+      "needs_confirmation": true,
+      "module_id": "2.2",
+      "submodule_id": "2.2.2.1",
+      "photo_refs": []
+    }
+  ],
+  "actual_s4_4_local_replay": {
+    "total_mapped": 208,
+    "unique_source_subject_fact": 172,
+    "multi_route_extra_records": 36,
+    "residual_raw_rows": 14,
+    "residual_mapped_rows": 14,
+    "residual_values_match": true
+  },
+  "template_role_skill_chars": {
+    "auditor-2.1": 1123,
+    "auditor-2.2": 1071,
+    "auditor-2.3": 1064,
+    "auditor-2.4": 995,
+    "auditor-2.5": 1162,
+    "author-2.1": 1505,
+    "author-2.2": 1467,
+    "author-2.3": 1383,
+    "author-2.4": 1488,
+    "author-2.5": 1666,
+    "chief-editor-chapter-1": 1419,
+    "chief-editor-chapter-3": 1305,
+    "chief-editor-chapter-4": 1497,
+    "final-auditor": 1314
+  },
+  "skill_total_chars": 18459,
+  "filename_routing": {
+    "S4-4-synthetic.xlsx": "s4-4",
+    "renamed.xlsx": null,
+    "S4-4-notes.docx": null
+  }
+}

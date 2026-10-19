@@ -1,0 +1,24 @@
+[
+  {
+    "id": "R-001",
+    "kind": "local_reference",
+    "title": "规程0",
+    "locator": "Knowledge/rule-0.md",
+    "publisher": null,
+    "published_at": null,
+    "accessed_at": null,
+    "scope_note": "knowledge_namespace=project",
+    "content_sha256": "ed4d3015aa43015e30aa7d61d0e67b051b92339714324e3746489dc05515973f"
+  },
+  {
+    "id": "R-002",
+    "kind": "local_reference",
+    "title": "规程1",
+    "locator": "Knowledge/rule-1.md",
+    "publisher": null,
+    "published_at": null,
+    "accessed_at": null,
+    "scope_note": "knowledge_namespace=project",
+    "content_sha256": "1cfedec9aeaf0a6375cb29ac95d56f07fce2f7aeaf53c980cc1aa6175b41e03b"
+  }
+]

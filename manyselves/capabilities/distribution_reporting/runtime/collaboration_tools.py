@@ -100,6 +100,7 @@ from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool
 
+from .assessment_context import normalize_assessments, part_assessment
 from .message_router import artifact_path_refs, source_record_ids
 
 _PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
@@ -458,6 +459,7 @@ class SubmitResultTool(_ResultTool):
         confidence, unresolved = self._runtime_claim_boundary(evidence_ids)
         return {
             "id": claim_id,
+            "origin": "runtime_part_binding",
             "module_id": module_id,
             "submodule_id": part_id,
             "text": prose.strip(),
@@ -503,8 +505,12 @@ class SubmitResultTool(_ResultTool):
         )
         narratives: dict[str, str] = {}
         claims: list[dict[str, object]] = []
+        assessments = {}
         for part_id in required_part_ids:
-            prose, evidence_ids, _ = self._bound_module_part(part_id)
+            prose, evidence_ids, binding = self._bound_module_part(part_id)
+            assessments[part_id] = part_assessment(
+                self.store.workspace, self.run_id, commit.module_id, part_id, binding,
+            )
             claim = self._runtime_claim_for_part(
                 module_id=commit.module_id,
                 part_id=part_id,
@@ -521,6 +527,7 @@ class SubmitResultTool(_ResultTool):
                 "kind": "module_submission",
                 "module_id": commit.module_id,
                 "submodule_narratives": narratives,
+                "assessments": assessments,
                 "claims": claims,
                 "source_ids": sorted(
                     {source_id for claim in claims for source_id in claim["source_ids"]}
@@ -607,10 +614,14 @@ class SubmitResultTool(_ResultTool):
         )
         narratives: dict[str, str] = {}
         claims_upsert: list[dict[str, object]] = []
+        assessments = {}
         for part_id in contract.target_submodule_ids:
             if part_id not in materialized_target_ids:
                 continue
-            prose, evidence_ids, _ = self._bound_module_part(part_id)
+            prose, evidence_ids, binding = self._bound_module_part(part_id)
+            assessments[part_id] = part_assessment(
+                self.store.workspace, self.run_id, commit.module_id, part_id, binding,
+            )
             claim = self._runtime_claim_for_part(
                 module_id=commit.module_id,
                 part_id=part_id,
@@ -646,6 +657,7 @@ class SubmitResultTool(_ResultTool):
                 "base_revision": commit.base_revision,
                 "revision": commit.revision,
                 "submodule_narratives": narratives,
+                "assessments": assessments,
                 "claims_upsert": claims_upsert,
                 "claim_ids_remove": removed_claim_ids,
                 "source_ids": sorted(resulting_source_ids),
@@ -846,6 +858,15 @@ class SubmitResultTool(_ResultTool):
                         for section_id in contract.section_ids
                     })
                 ),
+            )
+        linked_ids = {eid for link in commit.observation_links for eid in link.evidence_ids}
+        known_ids = {record.id for record in SourceLedger(self.store.workspace, self.run_id).records}
+        if any(not eid.startswith("E-") for eid in linked_ids) or linked_ids - known_ids:
+            raise SubmissionValidationError(
+                "observation_links must reference registered current-run E-* sources",
+                field="observation_links.evidence_ids",
+                expected="registered E-* ids from module assessments",
+                received=sorted(linked_ids - known_ids),
             )
         canonical_refs: dict[str, str] = {}
         for part_id in expected_part_ids:
@@ -2245,12 +2266,12 @@ class SubmitResultTool(_ResultTool):
             out_of_lane = [
                 finding
                 for finding in findings
-                if finding.owner_module_id != contract.owner_module_id
+                if contract.owner_module_id is not None and (finding.owner_module_id != contract.owner_module_id
                 or any(
                     resolve_submodule(target_id).module_id
                     != contract.owner_module_id
                     for target_id in finding.target_submodule_ids
-                )
+                ))
             ]
             if out_of_lane:
                 raise SubmissionValidationError(
@@ -2265,7 +2286,7 @@ class SubmitResultTool(_ResultTool):
             wrong_synthesis_owner = [
                 synthesis
                 for synthesis in payload.synthesis_inputs
-                if min(synthesis.related_module_ids) != contract.owner_module_id
+                if contract.owner_module_id is not None and min(synthesis.related_module_ids) != contract.owner_module_id
             ]
             if wrong_synthesis_owner:
                 raise SubmissionValidationError(
@@ -2959,12 +2980,13 @@ class SubmitResultTool(_ResultTool):
                 for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
             ]
             existing_ids = [finding.id for finding in contract.required_findings]
+            identity = contract.owner_module_id or f"joint-r{contract.review_round}"
             synthesis_values = normalized.get("synthesis_inputs")
             if isinstance(synthesis_values, list):
                 normalized["synthesis_inputs"] = [
                     {
                         **dict(item),
-                        "id": f"CSI-{contract.owner_module_id}-{index:03d}",
+                        "id": f"CSI-{identity}-{index:03d}",
                     }
                     if isinstance(item, dict)
                     else item
@@ -2973,12 +2995,12 @@ class SubmitResultTool(_ResultTool):
             if kind == "cross_review_finding_submission":
                 normalized["findings"] = self._runtime_finding_ids(
                     normalized.get("findings", []),
-                    prefix=f"XMR-{contract.owner_module_id}-",
+                    prefix=f"XMR-{identity}-",
                     existing_ids=[],
                 )
             elif kind == "cross_review_verdict_submission":
                 verdicts = normalized.get("verdicts")
-                if isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
+                if contract.owner_module_id is not None and isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
                     normalized["verdicts"] = [
                         {**dict(verdict), "finding_id": finding_id}
                         if isinstance(verdict, dict)
@@ -2987,7 +3009,7 @@ class SubmitResultTool(_ResultTool):
                     ]
                 normalized["new_findings"] = self._runtime_finding_ids(
                     normalized.get("new_findings", []),
-                    prefix="XMR-",
+                    prefix=f"XMR-{identity}-" if contract.owner_module_id is None else "XMR-",
                     existing_ids=existing_ids,
                 )
         elif isinstance(contract, CrossOwnerInput):
@@ -3532,6 +3554,7 @@ class WriteResultPartTool(_ResultPartTool):
         part_id: str,
         content: str,
         evidence_ids: list[str] | None = None,
+        assessments: list[dict] | None = None,
     ) -> dict:
         """Write one resumable prose part.
 
@@ -3539,6 +3562,7 @@ class WriteResultPartTool(_ResultPartTool):
             part_id: Stable identifier such as 2.4.1, overview, or conclusion.
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
+            assessments: Module-only observation judgments; provide scope, disposition, basis, rules and exact prose/action anchors. Missing records remain visible to reviewers.
         """
         try:
             normalized_evidence_ids = self._validate_part(
@@ -3546,6 +3570,7 @@ class WriteResultPartTool(_ResultPartTool):
                 content,
                 evidence_ids,
             )
+            assessments = self._validate_assessments(assessments, normalized_evidence_ids)
         except ValueError as exc:
             affected_part_ids = (
                 [part_id]
@@ -3555,7 +3580,9 @@ class WriteResultPartTool(_ResultPartTool):
             )
             problem = str(exc)
             field = (
-                "part_id"
+                "assessments"
+                if "assessments" in problem
+                else "part_id"
                 if "part_id" in problem
                 else "evidence_ids"
                 if "evidence_ids" in problem
@@ -3583,7 +3610,20 @@ class WriteResultPartTool(_ResultPartTool):
                     "module-only evidence_ids field when required."
                 ),
             }
-        return self._persist_part(part_id, content, normalized_evidence_ids)
+        return self._persist_part(part_id, content, normalized_evidence_ids, assessments)
+
+    def _validate_assessments(self, assessments, evidence_ids):
+        if assessments is None:
+            return None
+        if assessments is not None and not self.evidence_binding_required:
+            raise ValueError("assessments are only valid for module result parts")
+        try:
+            return normalize_assessments(
+                assessments, evidence_ids,
+                {source.id for source in SourceLedger(self.store.workspace, self.run_id).records},
+            )
+        except ValueError as exc:
+            raise ValueError(f"assessments: {exc}") from exc
 
     def _validate_part(
         self,
@@ -3675,12 +3715,27 @@ class WriteResultPartTool(_ResultPartTool):
         part_id: str,
         content: str,
         evidence_ids: list[str] | None,
+        assessments: list[dict] | None = None,
     ) -> dict:
         """Persist one already validated part using atomic file replacement."""
 
         relative = self.relative_root / f"{part_id}.md"
         target = self.store.workspace / relative
         previous = target.read_text(encoding="utf-8") if target.is_file() else None
+        binding_path = self.store.workspace / self.relative_root / "_evidence" / f"{part_id}.json"
+        try:
+            previous_binding = (
+                json.loads(binding_path.read_text(encoding="utf-8"))
+                if self.evidence_binding_required and binding_path.is_file() else {}
+            )
+        except (OSError, ValueError):
+            previous_binding = {}
+        if not isinstance(previous_binding, dict):
+            previous_binding = {}
+        binding_unchanged = not self.evidence_binding_required or (
+            previous_binding.get("evidence_ids") == evidence_ids
+            and previous_binding.get("assessments") == assessments
+        )
         self.store.write_text(relative.as_posix(), content)
         if self.evidence_binding_required:
             self.store.write_json(
@@ -3692,24 +3747,31 @@ class WriteResultPartTool(_ResultPartTool):
                     "revision": self.revision,
                     "part_id": part_id,
                     "evidence_ids": evidence_ids,
+                    "assessments": assessments,
                 },
             )
         return {
             "status": "unchanged"
-            if previous == content
+            if previous == content and binding_unchanged
             else ("updated" if previous else "created"),
             "persisted": True,
             "part_id": part_id,
             "characters": len(content),
             "artifact_ref": relative.as_posix(),
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use this receipt and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "A successful write does not require a list_result_parts round trip. "
+                "Use that tool when saved state or remaining requirements are unclear."
+            ),
             "rewrite_policy": (
                 "Do not rewrite this persisted part unless list_result_parts includes "
                 "its part_id in rewrite_part_ids or submit_result correction feedback "
                 "explicitly includes it in rewrite_part_ids."
             ),
             **(
-                {"evidence_ids": evidence_ids}
+                {"evidence_ids": evidence_ids, "assessments": assessments}
                 if self.evidence_binding_required
                 else {}
             ),
@@ -3744,8 +3806,8 @@ class WriteResultPartsTool(WriteResultPartTool):
                 f"parts must contain 1-{self.max_batch_size} result part objects"
             )
 
-        allowed_fields = {"part_id", "content", "evidence_ids"}
-        validated: list[tuple[str, str, list[str] | None]] = []
+        allowed_fields = {"part_id", "content", "evidence_ids", "assessments"}
+        validated: list[tuple[str, str, list[str] | None, list[dict] | None]] = []
         seen_part_ids: set[str] = set()
         for index, part in enumerate(parts):
             if not isinstance(part, dict):
@@ -3767,12 +3829,13 @@ class WriteResultPartsTool(WriteResultPartTool):
                 content,
                 evidence_ids,
             )
+            assessments = self._validate_assessments(part.get("assessments"), normalized_evidence_ids)
             seen_part_ids.add(part_id)
-            validated.append((part_id, content, normalized_evidence_ids))
+            validated.append((part_id, content, normalized_evidence_ids, assessments))
 
         results = [
-            self._persist_part(part_id, content, evidence_ids)
-            for part_id, content, evidence_ids in validated
+            self._persist_part(part_id, content, evidence_ids, assessments)
+            for part_id, content, evidence_ids, assessments in validated
         ]
         return {
             "status": "completed",
@@ -3780,7 +3843,13 @@ class WriteResultPartsTool(WriteResultPartTool):
             "count": len(results),
             "saved_part_ids": [result["part_id"] for result in results],
             "parts": results,
-            "next_action": "list_result_parts",
+            "next_action": "continue_task",
+            "instruction": (
+                "Use these receipts and the current task state to continue remaining "
+                "required parts, or submit_result when the contract is complete. "
+                "Use list_result_parts only when saved state or remaining requirements "
+                "are unclear; a successful batch does not require listing again."
+            ),
             "rewrite_policy": (
                 "Do not rewrite persisted parts unless list_result_parts or submit_result "
                 "correction feedback explicitly includes them in rewrite_part_ids."
@@ -3824,6 +3893,7 @@ class ListResultPartsTool(_ResultPartTool):
                 if self.evidence_binding_required:
                     binding_path = root / "_evidence" / f"{path.stem}.json"
                     evidence_ids = None
+                    assessments = None
                     if binding_path.is_file():
                         try:
                             binding = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -3831,6 +3901,7 @@ class ListResultPartsTool(_ResultPartTool):
                             binding = None
                         if isinstance(binding, dict):
                             evidence_ids = binding.get("evidence_ids")
+                            assessments = binding.get("assessments")
                     structural_errors.extend(
                         extra_numbered_submodule_headings(path.stem, content)
                     )
@@ -3841,6 +3912,7 @@ class ListResultPartsTool(_ResultPartTool):
                     part.update(
                         {
                             "evidence_ids": evidence_ids,
+                            "assessments": assessments,
                             "ready": (
                                 isinstance(evidence_ids, list)
                                 and not structural_errors

@@ -1,0 +1,1 @@
+{"id":"E-0205","subject":"老配电房（低压）","fact":"整机备件=NG","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"配电房合规性","cell":"N10:O10","page":null,"row":10,"column":"N","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.5","submodule_id":"2.5.6","photo_refs":[]}

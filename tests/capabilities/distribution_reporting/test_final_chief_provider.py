@@ -152,6 +152,7 @@ async def test_chief_revision_feedback_repairs_ids_without_rewriting_saved_prose
         ReportingStore(tmp_path), expected_part_ids=["findings_overview"],
     )
     written = await writer(part_id="findings_overview", content="已修订的完整小节正文，其他正文保持不变。")
+    assert written["next_action"] == "continue_task"
     prose_path = tmp_path / written["artifact_ref"]
     original_prose = prose_path.read_bytes()
     tool = SubmitResultTool(
@@ -343,6 +344,11 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
             self.received: list[UserMessage] = []
             self._callback = None
 
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
+
         def restore_conversation(
             self,
             messages,
@@ -470,6 +476,8 @@ async def test_final_chief_provider_uses_real_revision_tools_and_reuses_one_sess
         "list_result_parts",
         "submit_result",
     }
+    assert loops[0].context_rebuilder is not None
+    assert loops[0].received[0].content.startswith(loops[0].context_rebuilder.boundary)
     assert [message.session_id for message in loops[0].received] == [
         conversation.external_session_id,
     ]

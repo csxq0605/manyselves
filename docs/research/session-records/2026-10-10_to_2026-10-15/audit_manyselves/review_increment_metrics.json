@@ -1,0 +1,28 @@
+{
+  "before": {
+    "cases": 6,
+    "correct": 6,
+    "requests": 7,
+    "first_input_tokens": 32458,
+    "api_seconds": 33.11339899998711,
+    "usage": {
+      "input_tokens": 41101,
+      "output_tokens": 6330,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0
+    }
+  },
+  "after": {
+    "cases": 6,
+    "correct": 6,
+    "requests": 6,
+    "first_input_tokens": 38932,
+    "api_seconds": 23.046335099992575,
+    "usage": {
+      "input_tokens": 38932,
+      "output_tokens": 4148,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0
+    }
+  }
+}

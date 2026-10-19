@@ -1,0 +1,30 @@
+{
+  "kind": "chief_chapter_lane_input",
+  "phase": "initial",
+  "run_id": "chief-runtime-reduce",
+  "subject_ref": "Work/runs/chief-runtime-reduce/reviews/cross-completion.json",
+  "chapter_id": "3",
+  "section_ids": [
+    "3.1.1",
+    "3.1.2",
+    "3.1.3",
+    "3.2"
+  ],
+  "section_bodies": {},
+  "source_context": {
+    "cross_synthesis": "[]",
+    "module_boundaries": "2.1:2.1.1,2.1.2,2.1.3,2.1.4,2.1.5,2.2:2.2.1.1,2.2.1.2,2.2.1.3,2.2.2.1,2.2.2.2,2.2.2.3,2.3:2.3.1,2.3.2,2.3.3,2.4:2.4.1.1,2.4.1.2,2.4.1.3,2.4.1.4,2.4.2.1,2.4.2.2,2.4.2.3,2.4.2.4,2.4.2.5,2.4.2.6,2.4.3.1,2.4.3.2,2.4.3.3,2.4.4,2.5:2.5.1,2.5.2,2.5.3.1,2.5.3.2,2.5.3.3,2.5.4,2.5.5,2.5.6,2.5.7"
+  },
+  "source_refs": [
+    "Work/runs/chief-runtime-reduce/reviews/cross-completion.json",
+    "Work/runs/chief-runtime-reduce/evidence.jsonl",
+    "Work/runs/chief-runtime-reduce/context/chief-source-modules/2.1.md",
+    "Work/runs/chief-runtime-reduce/context/chief-source-modules/2.2.md",
+    "Work/runs/chief-runtime-reduce/context/chief-source-modules/2.3.md",
+    "Work/runs/chief-runtime-reduce/context/chief-source-modules/2.4.md",
+    "Work/runs/chief-runtime-reduce/context/chief-source-modules/2.5.md"
+  ],
+  "assigned_findings": [],
+  "special_topic_plan": null,
+  "revision": 0
+}

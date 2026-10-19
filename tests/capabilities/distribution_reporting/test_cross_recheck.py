@@ -171,6 +171,10 @@ async def test_prepare_cross_recheck_builds_typed_envelope_and_reuses_session() 
     assert preparation.envelope.allowed_outputs == ["cross_owner_verdict_submission"]
     assert preparation.envelope.input_contract_ref == preparation.owner_input_ref
     assert preparation.envelope.target_submodule_ids == frozen_input.owner_scope_submodule_ids
+    for ref in frozen_input.related_module_refs.values():
+        assert ref in preparation.envelope.input_refs
+        assert preparation.envelope.artifact_delivery_modes[ref] == "reference"
+    assert {"search_text", "open_artifact"}.issubset(preparation.envelope.allowed_tools)
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,26 @@
+{
+  "kind": "cross_owner_verdict_submission",
+  "owner_module_id": "2.1",
+  "coverage": {
+    "module_id": "2.1",
+    "checked_dimensions": [
+      "terminology",
+      "facts",
+      "risk_levels",
+      "dependencies",
+      "propagation",
+      "joint_verification"
+    ]
+  },
+  "verdicts": [
+    {
+      "finding_id": "X-2.1-r0-1",
+      "verdict": "resolved",
+      "reason": "修订后的关系机制和联合验证已经满足原 finding 的检查要求。",
+      "evidence_refs": [
+        "Work/runs/cross-owner-workflow-host/modules/2.1-r1.json"
+      ]
+    }
+  ],
+  "new_findings": []
+}

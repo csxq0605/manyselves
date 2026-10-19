@@ -1,0 +1,1 @@
+{"id":"E-0116","subject":"文体中心配电房/2#","fact":"变压器噪声震动=NG","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"总配评估详情表","cell":"T7:T7","page":null,"row":7,"column":"T","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.2","submodule_id":"2.2.2.3","photo_refs":[]}

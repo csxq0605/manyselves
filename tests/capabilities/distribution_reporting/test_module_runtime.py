@@ -384,6 +384,23 @@ def test_template_skill_package_can_be_supplied_directly_in_inputs(
     )
 
 
+def test_template_skill_package_uses_real_run_snapshot_after_live_inputs_change(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+        RunInputSnapshotStore,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
+        load_template_skill,
+    )
+
+    _write_author_skill_fixture(tmp_path)
+    original = (tmp_path / "Inputs/report-template-role-skills/author-2.4/SKILL.md").read_text(encoding="utf-8")
+    RunInputSnapshotStore(tmp_path).freeze("frozen-skills")
+    (tmp_path / "Inputs/report-template-role-skills/author-2.4/SKILL.md").write_text("NEW METHOD", encoding="utf-8")
+    state = {"run_id": "frozen-skills"}
+    assert load_template_skill(tmp_path, state)
+    assert state["template_skill_text"]["author-2.4"] == original
+
+
 def _author_state(workspace: Path, run_id: str, *, resume: bool = False) -> dict[str, Any]:
     store = ReportingStore(workspace)
     refs = {
@@ -1186,6 +1203,11 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
     )
 
     class EnvelopeLoop:
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder):
+            self.context_rebuilder = rebuilder
+
         def __init__(self, **kwargs: Any) -> None:
             self.runtime_id = str(kwargs["agent_type"])
             self.envelope = kwargs.pop("_test_envelope")
@@ -1340,6 +1362,8 @@ async def test_module_bridges_use_prepared_envelope_identity_and_agent_result_pa
             assert outcome.result["status"] == "completed"
             assert outcome.result["submission"]["kind"] == payload.kind
             loop = loops[-1]
+            assert loop.context_rebuilder is not None
+            assert loop.received[0].content.startswith(loop.context_rebuilder.boundary)
             assert loop.received[0].task_id == f"host-action-{label}"
             assert loop.published[0].sender == envelope.agent_id
             assert loop.published[0].task_id == envelope.task_id
@@ -2335,6 +2359,9 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     }.get(marker, marker)
 
     class ScriptedAuthorLoop:
+        def begin_typed_task(self, context):
+            self.task_context = context
+
         def __init__(self, runtime_id: str) -> None:
             self.runtime_id = runtime_id
             self.received: list[UserMessage] = []
@@ -2470,6 +2497,8 @@ async def test_module_author_bridge_recovers_markers_in_same_session(
     assert outcome.result["status"] == "completed"
     assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
     assert len(loops) == 1
+    assert loops[0].task_context["input_refs"] == envelope.input_refs
+    assert loops[0].task_context["objective"] == envelope.objective
     assert [message.turn_kind for message in loops[0].received] == [
         "task_initial",
         continuation_kind,

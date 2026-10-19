@@ -187,9 +187,17 @@ def load_current_review_completion(
 
     finding_ids = set(findings_by_id)
     resolved_ids = set(completion.resolved_finding_ids)
-    if resolved_ids != finding_ids:
+    deferred_ids = set(completion.deferred_advisory_ids)
+    eligible_advice = {
+        key for key, finding in findings_by_id.items()
+        if lifecycle in {"module", "cross"} and completion.review_protocol_version >= 3
+        and finding.get("impact") == "advisory"
+    }
+    if not deferred_ids.issubset(eligible_advice) or deferred_ids & resolved_ids:
+        raise ValueError("review completion may only defer unresolved optional module/Cross advice")
+    if resolved_ids | deferred_ids != finding_ids:
         raise ValueError("review completion resolved ids do not equal all immutable findings")
-    if not finding_ids.issubset(verdict_ids):
+    if not resolved_ids.issubset(verdict_ids):
         raise ValueError("review completion lacks reviewer verdicts for findings")
     return completion, artifacts
 

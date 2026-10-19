@@ -1,0 +1,31 @@
+{
+  "gaps": [
+    {
+      "file_id": "fixture",
+      "code": "missing_sheet",
+      "message": "缺少低配评估详情",
+      "sheet": "低配评估详情",
+      "cell": null,
+      "module_id": "2.4",
+      "submodule_id": "2.4.1.1"
+    },
+    {
+      "file_id": "fixture",
+      "code": "missing_sheet",
+      "message": "缺少总配评估详情表",
+      "sheet": "总配评估详情表",
+      "cell": null,
+      "module_id": "2.4",
+      "submodule_id": "2.4.1.1"
+    },
+    {
+      "file_id": "fixture",
+      "code": "missing_thermal_reference",
+      "message": "红外实测温度缺少环境参考温度：第 4 行",
+      "sheet": "红外热成像检测记录表",
+      "cell": "G4",
+      "module_id": "2.2",
+      "submodule_id": "2.2.2.1"
+    }
+  ]
+}

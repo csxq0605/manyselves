@@ -40,6 +40,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     chapter_section_ids,
 )
 
+from ..assessment_context import module_assessment_views
 from ..contracts.submissions import FIELD_GUIDANCE
 
 
@@ -69,6 +70,10 @@ class ModuleContentView(StrictModel):
         description="Registered E-* evidence ids already bound to each visible submodule."
     )
     unresolved_questions: list[str] = Field(default_factory=list)
+    assessments: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Section-scoped author judgments and runtime observation coverage. Missing records/anchors are explicit; presence does not certify correctness. Review records against evidence, rules and prose.",
+    )
 
 
 class CrossDecisionPackView(StrictModel):
@@ -86,6 +91,7 @@ class CrossDecisionPackView(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    deferred_advisories: list[CrossReviewFinding] = Field(default_factory=list)
     artifact_refs: list[str] = Field(
         default_factory=list,
         description="Current-run Cross completion refs retained for business identity.",
@@ -113,6 +119,14 @@ class ReviewEvidenceExcerpt(StrictModel):
     evidence_id: str = Field(
         pattern=r"^E-",
         description="Registered current-run project evidence id.",
+    )
+    bound_submodule_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Current reviewed submodules explicitly binding this exact E ID. [] means no "
+            "current binding; null means not computed for this persisted input. A binding "
+            "does not prove the observation was judged or has a corresponding action."
+        ),
     )
     title: str = Field(min_length=1, description="Source title from the current-run ledger.")
     locator: str = Field(
@@ -153,10 +167,14 @@ class ReviewClaimStatement(StrictModel):
         default_factory=list,
         description="Registered sources currently supporting the statement.",
     )
-    confidence: float = Field(
+    origin: Literal["unspecified", "runtime_part_binding"] = Field(
+        default="unspecified",
+        description="A runtime_part_binding carries complete section prose and sources, not independently classified facts/judgments/actions.",
+    )
+    confidence: float | None = Field(
         ge=0.0,
         le=1.0,
-        description="Current author confidence in the statement.",
+        description="Stored statement confidence; null for runtime bindings whose source parsing confidence is not a judgment probability.",
     )
     unresolved: bool = Field(
         description="Whether the statement still carries an explicit unresolved boundary.",
@@ -181,6 +199,7 @@ class ModuleRevisionDiff(StrictModel):
         default_factory=list,
         description="Module-local prose sections changed between the two revisions.",
     )
+    changed_assessment_submodules: list[str] = Field(default_factory=list, description="Judgment or expected-observation scope changed, even when section prose did not.")
     changed_statement_refs: list[str] = Field(
         default_factory=list,
         description="Opaque reviewed statements added, removed, or changed.",
@@ -237,6 +256,7 @@ def module_content_view(
         revision=subject.revision,
         submodule_narratives=narratives,
         evidence_ids_by_submodule=evidence_ids_by_submodule,
+        assessments=module_assessment_views(subject, selected),
         unresolved_questions=subject.unresolved_questions,
     )
 
@@ -409,6 +429,7 @@ class FinalChapterLaneInput(StrictModel):
     )
     section_ids: list[str] = Field(min_length=1)
     section_bodies: dict[str, str] = Field(min_length=1)
+    source_context: dict[str, str] = Field(default_factory=dict, description="Upstream observation judgments and current final-section placement diagnostics; does not include other final chapters' prose.")
     unchanged_section_sha256: dict[str, str] = Field(
         default_factory=dict,
         description="Recheck-only hashes for unchanged sections retained in identity history.",
@@ -641,7 +662,7 @@ class ModuleReviewInput(StrictModel):
         default_factory=list,
         description=(
             "Recheck-only prior semantics for Claims added, removed, or changed since "
-            "the last paid review. Unchanged statements are retained only by hash."
+            "the last paid review. Current statements also include unchanged finding-scope text."
         ),
     )
     unchanged_submodule_sha256: dict[str, str] = Field(
@@ -661,20 +682,20 @@ class ModuleReviewInput(StrictModel):
         default=None,
         description=(
             "Provenance path for the current-run module Knowledge artifact from which the "
-            "inline bounded slice was made. Initial review carries the body; later tasks "
-            "retain only this provenance because the auditor identity is persistent."
+            "inline bounded slice was made. Each task carries its own scoped body; "
+            "persistent reviewer identity does not imply visible earlier context."
         ),
     )
     knowledge_context: str = Field(
         default="",
         description=(
-            "Initial-review selected taxonomy sections from the immutable Knowledge snapshot; "
-            "later persistent-identity tasks leave this empty unless Knowledge changed."
+            "Selected taxonomy sections from the immutable Knowledge snapshot for this "
+            "task's scope, including recheck and local regression."
         ),
     )
     evidence: list[ReviewEvidenceExcerpt] = Field(
         description=(
-            "Complete bounded packet for every E-* id bound to the reviewed subject. "
+            "Bounded packet covering cited E-* ids and uncited project facts in review scope. "
             "The reviewer must use this packet rather than reopen or research sources."
         )
     )
@@ -815,7 +836,7 @@ class ModuleReviewInput(StrictModel):
         )
         if (
             len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
-            or set(supplied_evidence_ids) != required_evidence_ids
+            or not required_evidence_ids.issubset(supplied_evidence_ids)
         ):
             raise ValueError("module review evidence packet does not match its active semantics")
         if self.phase != "recheck" and current_claim_evidence_ids != subject_evidence_ids:
@@ -932,8 +953,8 @@ class ModuleReviewInput(StrictModel):
             changed_narratives = set(
                 self.revision_diff.changed_submodule_narratives
             )
-            if set(self.subject.submodule_narratives) != changed_narratives:
-                raise ValueError("module recheck subject must contain only changed narratives")
+            if not changed_narratives.issubset(self.subject.submodule_narratives):
+                raise ValueError("module recheck subject must contain every changed narrative")
             unchanged_submodules = scope - changed_narratives
             if set(self.unchanged_submodule_sha256) != unchanged_submodules:
                 raise ValueError("module recheck must hash every unchanged required narrative")
@@ -946,7 +967,10 @@ class ModuleReviewInput(StrictModel):
             visible_changed_statements = set(current_statement_refs) | set(
                 prior_statement_refs
             )
-            if visible_changed_statements != changed_statements:
+            if not (
+                changed_statements <= visible_changed_statements
+                <= changed_statements | set(self.unchanged_statement_sha256)
+            ):
                 raise ValueError(
                     "module recheck must expose current and prior semantics for every "
                     "changed statement"
@@ -969,13 +993,13 @@ class ModuleReviewInput(StrictModel):
                     }
                 )
                 for submodule_id in (
-                    changed_narratives
+                    set(self.subject.submodule_narratives)
                     | {statement.submodule_id for statement in self.claim_statements}
                 )
             }
             if self.subject.evidence_ids_by_submodule != expected_subject_evidence:
                 raise ValueError(
-                    "module recheck subject evidence must describe only current changed semantics"
+                    "module recheck subject evidence must describe current visible semantics"
                 )
         return self
 
@@ -986,9 +1010,14 @@ class ModuleReviewInput(StrictModel):
 
 class CrossReviewInput(StrictModel):
     kind: Literal["cross_review_input"] = "cross_review_input"
-    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+    source_observation_groups: list[dict] | None = Field(
+        default=None,
+        description="Shared precise source-location candidates across routes; exact_routed_copy means normalized input equality, not shared judgment. Null means snapshot unavailable. Compare scope/conditions before alleging a conflict; never count routes as devices.",
+    )
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = Field(
+        default=None,
         description=(
-            "Responsibility module for this specialized Cross lane. Every finding and "
+            "Null means a joint review of the current five-module snapshot. Otherwise the responsibility module for this specialized Cross lane. Every finding and "
             "writeback target created by the lane must belong to this module."
         )
     )
@@ -1003,6 +1032,12 @@ class CrossReviewInput(StrictModel):
         description="initial creates Cross findings; recheck closes required Cross findings."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    review_round: int = Field(default=0, ge=0)
+    report_instruction: str = ""
+    input_changes: RevisionInputChanges | None = Field(
+        default=None,
+        description="Current parsed input changes and superseded evidence IDs; prior drafts are not current facts.",
+    )
     module_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         description="Workflow-owned refs for the exact five reviewed module subjects."
     )
@@ -1011,8 +1046,8 @@ class CrossReviewInput(StrictModel):
     )
     modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description=(
-            "Initial: complete five-module subjects. Recheck: only modules changed by "
-            "the current Cross revision wave."
+            "Joint review: complete five-module subjects in every round. Specialized "
+            "owner recheck: modules changed by the current Cross revision wave."
         )
     )
     changed_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
@@ -1032,6 +1067,14 @@ class CrossReviewInput(StrictModel):
         default_factory=dict,
         description=(
             "Independent module-local regression completion refs. They do not close Cross findings."
+        ),
+    )
+    module_review_completion_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
+        default_factory=dict,
+        description=(
+            "Current module audit records, available by reference. Their deferred_advisory_ids "
+            "identify optional suggestions in finding_refs, not resolved defects or required "
+            "Cross findings. Do not automatically turn them into mandatory revisions."
         ),
     )
     prior_synthesis_inputs: list[CrossSynthesisInput] = Field(
@@ -1062,14 +1105,15 @@ class CrossReviewInput(StrictModel):
             raise ValueError("initial cross review requires all five complete modules")
         if self.phase == "recheck":
             if any(
-                finding.owner_module_id != self.owner_module_id
+                self.owner_module_id is not None and finding.owner_module_id != self.owner_module_id
                 for finding in self.required_findings
             ):
                 raise ValueError(
                     "cross lane required findings must belong to owner_module_id"
                 )
-            if not changed or set(self.modules) != changed:
-                raise ValueError("cross recheck full subjects must equal changed_module_ids")
+            visible = expected if self.owner_module_id is None else changed
+            if not changed or set(self.modules) != visible:
+                raise ValueError("cross recheck requires current subjects for its joint or owner scope")
             required = {finding.id for finding in self.required_findings}
             responses = {
                 response.finding_id
@@ -1146,8 +1190,8 @@ class CrossOwnerInput(StrictModel):
         default=None,
         description="Current parsed input changes. Check linked prose against these facts; superseded E IDs describe the old baseline only.",
     )
-    phase: Literal["initial", "recheck"] = Field(
-        description="Whether this is the owner's initial review or its bound recheck."
+    phase: Literal["initial", "recheck", "repair"] = Field(
+        description="Initial owner review, bound recheck, or author repair projected from a joint decision."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     review_round: int = Field(
@@ -1246,7 +1290,7 @@ class CrossOwnerInput(StrictModel):
                 raise ValueError("initial Cross owner input cannot contain recheck state")
             if self.local_regression_review_ref:
                 raise ValueError("initial Cross owner input cannot contain regression refs")
-        else:
+        elif self.phase == "recheck":
             if self.review_round <= 0:
                 raise ValueError("Cross owner recheck requires a positive review round")
             required = {finding.id for finding in self.required_findings}
@@ -1985,9 +2029,13 @@ class ReviewCompletionRecord(StrictModel):
     finding_refs: list[str] = Field(
         description="Initial and regression finding artifacts considered by completion."
     )
-    verdict_refs: list[str] = Field(description="Reviewer verdict artifacts closing every finding.")
+    verdict_refs: list[str] = Field(description="Reviewer verdict artifacts closing corrective findings.")
     resolved_finding_ids: list[str] = Field(
-        description="Every finding id closed by reviewer verdict or empty initial findings."
+        description="Finding ids actually closed by reviewer verdict, excluding deferred advice."
+    )
+    deferred_advisory_ids: list[str] = Field(
+        default_factory=list,
+        description="Module/Cross v3 optional advice retained without revision or a resolved verdict.",
     )
 
     @model_validator(mode="before")

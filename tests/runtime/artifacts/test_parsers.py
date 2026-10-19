@@ -30,3 +30,16 @@ def test_image_metadata_does_not_claim_visual_verification(tmp_path: Path) -> No
     parsed = parse_artifact(image)
     assert parsed.kind == "image_metadata"
     assert parsed.visual_verified is False
+
+
+def test_document_blocks_keep_tables_between_their_governing_paragraphs(tmp_path):
+    doc = Document()
+    doc.add_paragraph("条件甲，仅适用于下表")
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = "甲阈值"
+    doc.add_paragraph("条件乙，仅适用于下表")
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = "乙阈值"
+    path = tmp_path / "ordered.docx"
+    doc.save(path)
+    blocks = parse_artifact(path).blocks
+    assert [b.text for b in blocks] == ["条件甲，仅适用于下表", "甲阈值", "条件乙，仅适用于下表", "乙阈值"]
+    assert [b.locator for b in blocks] == ["paragraph:1", "table:1:row:1", "paragraph:2", "table:2:row:1"]

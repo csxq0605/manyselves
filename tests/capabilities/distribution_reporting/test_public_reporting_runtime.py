@@ -884,7 +884,7 @@ async def test_module_report_host_reaches_next_tool_after_selected_module_agent(
         "不得拆成独立小节级审查任务或会话",
         "finding 首次提出后不可改写；复审不得复述旧 finding",
         "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-        "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+        "blocking 必须修订并复审；advisory 为可选建议，留档但不自动返工或标记 resolved",
         "首轮必须覆盖 input 中全部 required_submodule_ids",
     }.issubset(review.envelope.constraints)
     assert "auditor-skill: preserve the review envelope" in (
@@ -1155,7 +1155,7 @@ async def test_module_report_finding_revision_recheck_completes_without_replay(
 def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     tmp_path: Path,
 ) -> None:
-    """An unresolved prior or genuinely new finding cannot complete the lane."""
+    """An open blocker keeps the lane pending while new advice is only retained."""
 
     run_id = "run-module-recheck-open"
     module = _module_submission().model_copy(
@@ -1280,7 +1280,6 @@ def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     assert accepted.review.acceptance.next_action == "continue_existing"
     assert {item.id for item in accepted.review.acceptance.findings} == {
         finding.id,
-        new_finding.id,
     }
     assert module_review_needs_recheck(accepted) is False
     assert module_review_needs_revision(accepted) is True
@@ -1294,13 +1293,16 @@ def test_module_recheck_open_and_new_finding_routes_to_next_revision(
     assert progress["next_action"] == "revise"
     assert {item["id"] for item in progress["pending"]} == {
         finding.id,
-        new_finding.id,
     }
+    retained = json.loads((tmp_path / progress["finding_refs"][-1]).read_text())
+    assert retained["findings"] == [new_finding.model_dump(mode="json")]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [2, 3])
 async def test_module_recheck_preflight_returns_typed_author_correction(
     tmp_path: Path,
+    protocol: int,
 ) -> None:
     run_id = "run-module-recheck-preflight"
     target = "2.4.1.1"
@@ -1356,7 +1358,7 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
             scope=[target],
             reviewer_session_key="module-auditor-2.4",
             last_reviewed_subject_ref=baseline_ref,
-            review_protocol_version=2,
+            review_protocol_version=protocol,
         ).model_dump(mode="json"),
     )
     initial_preparation = ModuleInitialReviewPreparation(
@@ -1449,10 +1451,14 @@ async def test_module_recheck_preflight_returns_typed_author_correction(
     assert restored_progress["next_action"] == "review"
     assert restored_progress["phase"] == "recheck"
     assert restored_progress["review_round"] == 1
+    assert restored_progress["review_protocol_version"] == protocol
+    assert restored_progress["finding_refs"] == [f"{review_root}/findings-r0.json"]
 
 
+@pytest.mark.parametrize("changed", [True, False])
 def test_module_recheck_projects_prior_current_and_finding_evidence(
     tmp_path: Path,
+    changed: bool,
 ) -> None:
     """A paid recheck receives every E-* ref active in its compact delta."""
 
@@ -1592,14 +1598,50 @@ def test_module_recheck_projects_prior_current_and_finding_evidence(
         ),
     )
 
+    if not changed:
+        context.module = baseline.model_copy(update={
+            "revision": 1, "revision_responses": revised.revision_responses,
+        })
+        store.write_json(
+            f"Work/runs/{run_id}/modules/2.4-r1.json",
+            context.module.model_dump(mode="json"),
+        )
+    knowledge_ref = f"Work/runs/{run_id}/context/module-2.4-knowledge.md"
+    knowledge_path = tmp_path / knowledge_ref
+    knowledge_path.parent.mkdir(parents=True, exist_ok=True)
+    knowledge_path.write_text(
+        f"# 依据\n## {target} 适用\n范围内规则原文。\n## 2.4.3.1 其他\n范围外规则。",
+        encoding="utf-8",
+    )
+    context.reporting_state["module_knowledge_refs"] = {"2.4": knowledge_ref}
+    context.reporting_state["template_skill_text"] = {"auditor-2.4": "保留审查方法。"}
+    from tests.capabilities.distribution_reporting.test_project_fact_packet import _facts
+
+    uncited = _facts(1)[0].model_copy(update={"id": "E-0099", "submodule_id": target})
+    store.write_jsonl(
+        f"Work/runs/{run_id}/preparation/evidence.jsonl", [uncited.model_dump(mode="json")],
+    )
     prepared = prepare_current_module_recheck(context, store=store)
 
     assert prepared.recheck is not None
     assert prepared.recheck.prepared.review_input is not None
+    packet = prepared.recheck.prepared.review_input
+    assert set(packet.subject.submodule_narratives) == {target}
+    assert packet.claim_statements[0].text == context.module.claims[0].text
+    assert "范围内规则原文" in packet.knowledge_context
+    assert "范围外规则" not in packet.knowledge_context
+    assert "保留审查方法" in prepared.recheck.prepared.envelope.inline_context
     assert {
         item.evidence_id
         for item in prepared.recheck.prepared.review_input.evidence
-    } == {prior_evidence, current_evidence, finding_evidence}
+    } == ({prior_evidence, current_evidence, finding_evidence, "E-0099"} if changed
+          else {prior_evidence, finding_evidence, "E-0099"})
+    with pytest.raises(ValueError, match="evidence packet"):
+        type(packet).model_validate({
+            **packet.model_dump(mode="json"),
+            "evidence": [item.model_dump(mode="json") for item in packet.evidence
+                         if item.evidence_id != finding_evidence],
+        })
 
 
 @pytest.mark.asyncio
@@ -1820,7 +1862,7 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     assert accepted.review.acceptance is not None
     assert accepted.review.acceptance.next_action == "revise"
     assert accepted.review.acceptance.findings[0].id == "M-2.4-initial-r0-1"
-    assert accepted.review.acceptance.findings[1].impact == "advisory"
+    assert accepted.review.acceptance.findings == [finding]
     assert module_review_needs_recheck(accepted) is False
     assert module_review_needs_revision(accepted) is True
     assert (
@@ -1835,7 +1877,9 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     )
     assert progress["next_action"] == "revise"
     assert progress["pending"][0]["id"] == "M-2.4-initial-r0-1"
-    assert progress["pending"][1]["id"] == "M-2.4-initial-r0-2"
+    assert len(progress["pending"]) == 1
+    retained = json.loads((tmp_path / progress["finding_refs"][0]).read_text())
+    assert retained["findings"] == [item.model_dump(mode="json") for item in (finding, advisory)]
     accepted_again = accept_current_module_review(
         {"context": context, "result": result},
         store=ReportingStore(tmp_path),
@@ -1892,6 +1936,6 @@ def test_full_report_stops_at_existing_tail_specialization_boundary(
 
     with pytest.raises(
         ValueError,
-        match="distribution-cross-owner-2.1-pipeline",
+        match="distribution-cross-owner-2.1-repair-lane",
     ):
         runtime.compile_plan(request)

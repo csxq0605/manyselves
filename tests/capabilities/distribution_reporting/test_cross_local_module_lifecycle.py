@@ -141,6 +141,20 @@ async def test_saved_cross_local_review_task_projects_prepared_module_lane(
     assert projected == prepared.local_module_context
 
 
+@pytest.mark.asyncio
+async def test_local_regression_rehydrates_only_scoped_knowledge(tmp_path: Path) -> None:
+    run_id = "cross-local-knowledge"
+    runtime, context, _ = _revision_context(tmp_path, run_id=run_id)
+    path = tmp_path / f"Work/runs/{run_id}/context/module-2.1-knowledge.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# 知识\n## 2.1.1 依据\n适用规则原文。\n## 2.1.2 其他\n无关依据。", encoding="utf-8")
+
+    prepared = await runtime.prepare_local_review(context)
+    packet = prepared.local_module_context.review.prepared.review_input
+    assert "适用规则原文" in packet.knowledge_context
+    assert "无关依据" not in packet.knowledge_context
+
+
 def test_cross_pipeline_requires_local_module_subworkflow_before_recheck() -> None:
     """The file-defined Cross pipeline currently jumps directly to Cross recheck."""
 

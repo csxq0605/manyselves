@@ -21,9 +21,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 
 FIELD_GUIDANCE: dict[str, str] = {
     "action": "Stage-specific action selected from the declared enum; use exactly one allowed value.",
-    "action_dependencies": "Ordered or conditional implementation dependencies supported by reviewed evidence.",
-    "joint_actions": "Cross-owner actions that must be implemented as one coordinated package.",
-    "acceptance_criteria": "Observable joint acceptance criteria for the complete relationship.",
     "agent_id": "Canonical responsibility Agent id assigned by the workflow.",
     "allowed_outputs": "Submission kinds this task is permitted to return.",
     "allowed_tools": "Tool names available to the assigned Agent for this task.",
@@ -35,10 +32,8 @@ FIELD_GUIDANCE: dict[str, str] = {
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
-    "causal_chain": "Evidence-bounded causal, dependency, or propagation chain connecting reviewed modules.",
+    "causal_chain": "One supported relationship with its preconditions and ordered links; do not repeat it in report-length prose.",
     "cluster_type": "Evidence-based label for the supported cross-module relationship.",
-    "root_causes": "Evidence-bounded common causes or preconditions shared across modules.",
-    "propagation_steps": "Ordered mechanism or dependency steps across the related modules.",
     "module_statement_refs": "Existing module or submodule refs proving every local link is already written back.",
     "confidence_and_boundary": "Confidence, missing evidence, and inference limits for the relationship.",
     "target_report_section_ids": "Final synthesis sections that must account for a supported Cross input.",
@@ -62,7 +57,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "coverage_ref": "Current-run immutable coverage artifact consumed by this exact authoring task.",
     "data_gap_analysis": "Final report section 3.1.3 body explaining evidence gaps, impact, and collection priority.",
     "decision": "Main exception decision for escalated findings only.",
-    "decision_implication": "Why a supported cross-module relationship changes priority, sequencing, or residual risk.",
+    "decision_implication": "Concise decision consequence, including necessary action dependencies or coordination supported by the modules; Chief expands the final explanation.",
     "description": "Human-readable contract or Skill description matching the submitted content.",
     "discovery_summary": "Complete evidence-bounded discovery summary for the assigned scope.",
     "dispositions": "One answered or explicitly unresolved disposition for every exact inbox request.",
@@ -76,7 +71,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "footnote_required": "Whether final rendering must create a source footnote for this Claim.",
     "headers": "Ordered visible table column headings.",
     "id": "Stable identifier unique within the artifact type and current workflow.",
-    "impact": "Whether the finding blocks completion or is advisory but still requires disposition.",
+    "impact": "Cross: blocking requires correction; advisory is retained optional advice without automatic revision. Other review lifecycles require disposition for both.",
     "improvement_action_plan": "Final report section 3.2 body with owners, dependencies, acceptance, and residual risk.",
     "inline_context": "Bounded inline context; authoritative inputs must instead be role-labelled in the input contract.",
     "input_refs": "Current-run artifacts explicitly assigned as inputs; their roles come from the input contract.",
@@ -89,7 +84,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "cross_context": "Aggregate-existing mode must keep this field null; it must never fabricate Cross decisions.",
     "cross_decision": "Terminal typed CrossDecisionPack view with all five module ids and approved synthesis inputs.",
     "version": "Monotonic schema version for the persisted CrossDecisionPack contract.",
-    "cross_review_completion_ref": "Current-run immutable completion record proving Cross review closed all module findings.",
+    "cross_review_completion_ref": "Current-run Cross completion recording closed defects and separately deferred optional advice.",
     "cross_decision_pack_ref": "Current-run immutable CrossDecisionPack artifact reference consumed by Chief/Final.",
     "artifact_refs": "Exact current-run Cross completion refs retained for typed business identity.",
     "module_ids": "Exactly the five fixed report modules 2.1, 2.2, 2.3, 2.4, and 2.5.",
@@ -201,7 +196,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "unresolved_questions": "Concrete module evidence questions that remain unresolved and visible.",
     "verdict": "Original reviewer decision for one immutable finding: resolved, open, or escalate.",
     "verdicts": "Exactly one reviewer verdict for every required prior finding id.",
-    "verification_method": "Joint acceptance or monitoring method for a supported Cross synthesis input.",
+    "verification_method": "Joint verification method and observable acceptance conditions in one statement, preserving applicable conditions without inventing thresholds.",
     "finding_ids": "Escalated immutable finding ids covered by one Main exception decision.",
 }
 
@@ -210,13 +205,13 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
     "module_submission": [
         "kind is required and must equal module_submission.",
         "Before committing, write every fixed submodule with write_result_part and pass "
-        "its registered E-* ids through evidence_ids.",
+        "its registered E-* ids through evidence_ids and compact observation assessments through assessments. Record scope, basis/rule applicability, and exact narrative/action anchors; do not repeat complete prose.",
         "The final commit contains only the fields declared by this schema; runtime owns all internal bindings.",
     ],
     "module_revision_submission": [
         "kind is required and must equal module_revision_submission.",
         "revision must equal base_revision plus one.",
-        "Write each assigned changed submodule with write_result_part and evidence_ids.",
+        "Write each assigned changed submodule with write_result_part, evidence_ids and replacement assessments. Unchanged sections retain their judgments; changed prose must not inherit stale anchors.",
         "The final commit contains only the fields declared by this schema; runtime derives the scoped patch.",
     ],
     "module_review_finding_submission": [
@@ -253,10 +248,12 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Runtime materializes the assigned result parts and deterministically inherits every unassigned field.",
     ],
     "chief_chapter_lane_submission": [
-        "Return only this lane's section_ids and part_refs; the reducer assembles Chapters 1, 3, and optional 4 and inherits Chapter 2 and metadata.",
+        "Return this lane's section_ids, part_refs and compact observation_links; the reducer assembles Chapters 1, 3, and optional 4 and inherits Chapter 2 and metadata.",
+        "Use observation_links to locate module observations in final prose. Chapter 3 links each concern/undetermined observation to the action, verification or justified deferral passage in 3.2. Group shared passages without losing any object's E-* ids. Anchors are short exact substrings, not duplicate paragraphs.",
         "Never include a full report, other chapter bodies, tables, photos, or Cross state.",
     ],
     "chief_chapter_lane_revision_submission": [
+        "Supply replacement observation_links only for changed sections. Unchanged sections retain their links; changed sections never inherit stale anchors.",
         "Return only changed section_ids and matching part_refs for this chapter lane; "
         "do not copy unchanged sections from the input contract's complete lane scope.",
         "section_ids and revision_responses[].changed_target_ids use numeric section "

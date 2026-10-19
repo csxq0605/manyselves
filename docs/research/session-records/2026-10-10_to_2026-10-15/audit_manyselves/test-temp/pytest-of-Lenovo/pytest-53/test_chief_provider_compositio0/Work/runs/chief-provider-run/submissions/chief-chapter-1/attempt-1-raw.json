@@ -1,0 +1,21 @@
+{
+  "agent_id": "chief-editor",
+  "task_id": "chief-chapter-1",
+  "revision": 0,
+  "raw_payload": {
+    "kind": "chief_chapter_lane_submission",
+    "run_id": "chief-provider-run",
+    "chapter_id": "1",
+    "section_ids": [
+      "1.1",
+      "1.2",
+      "1.3"
+    ],
+    "part_refs": {
+      "assessment_background": "Work/runs/chief-provider-run/drafts/chief-chapter-1/r0/assessment_background.md",
+      "findings_overview": "Work/runs/chief-provider-run/drafts/chief-chapter-1/r0/findings_overview.md",
+      "regional_executive_summary": "Work/runs/chief-provider-run/drafts/chief-chapter-1/r0/regional_executive_summary.md"
+    },
+    "revision": 0
+  }
+}

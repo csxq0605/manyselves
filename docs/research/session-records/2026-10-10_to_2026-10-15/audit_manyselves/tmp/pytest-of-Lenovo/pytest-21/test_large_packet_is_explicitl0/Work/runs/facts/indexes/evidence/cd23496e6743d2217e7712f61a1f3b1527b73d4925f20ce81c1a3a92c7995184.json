@@ -1,0 +1,79 @@
+{
+  "item_count": 14,
+  "items": [
+    {
+      "content_sha256": "4be1c58d5ef9bbbcc744023d34d2747495162d4e4d82f60302b215ccc3b0f8c6",
+      "id": "E-0001",
+      "line": 1
+    },
+    {
+      "content_sha256": "c092fddcea02cd6bb7599de38f3c8ed8c9a3882a427a4239a8d73226f433a866",
+      "id": "E-0002",
+      "line": 2
+    },
+    {
+      "content_sha256": "8e73371244f922fc01d9933a8d27ec6af8ff66ca589f19b1e8bb70c2a261122d",
+      "id": "E-0003",
+      "line": 3
+    },
+    {
+      "content_sha256": "5ca566bb89f309730a39323f494c691671160916bb33240b901acc1ee412fb9b",
+      "id": "E-0004",
+      "line": 4
+    },
+    {
+      "content_sha256": "481f3c6fc94b801db46e6cc9402b74996b945d0288e9c41313d4cee3962bacc3",
+      "id": "E-0005",
+      "line": 5
+    },
+    {
+      "content_sha256": "64295a95a86ceba46fe89f9498368fff80102723beeca521fed33734c6a3859f",
+      "id": "E-0006",
+      "line": 6
+    },
+    {
+      "content_sha256": "b2595ce1963c1109c39e305844bb0b7d4d857173426b16e4f562696c820ec2b5",
+      "id": "E-0007",
+      "line": 7
+    },
+    {
+      "content_sha256": "9efeb12792d9ff92e7f5635ff757d9827f1fc9d7e52ad9b0383e295615b1188b",
+      "id": "E-0008",
+      "line": 8
+    },
+    {
+      "content_sha256": "565c170c5b7046ac0a1f3fd543cfe1c0a3e286d3d571a20c476d8df15a0e85df",
+      "id": "E-0009",
+      "line": 9
+    },
+    {
+      "content_sha256": "646796a98ae6ddb5b5c18fb876633a8f8dc645ac36b30021a71cf4ea60760f21",
+      "id": "E-0010",
+      "line": 10
+    },
+    {
+      "content_sha256": "55cf8d742fa63a8b9d3d5053bd74f28b1f82f8ffd65299f5529f1f1bc4526b05",
+      "id": "E-0011",
+      "line": 11
+    },
+    {
+      "content_sha256": "d8c8c1ac67cbbc2a4c90917475ed165904e4e1c4f95cd26af9fcdecec638c835",
+      "id": "E-0012",
+      "line": 12
+    },
+    {
+      "content_sha256": "3b275fdef30030007982bb378630b5d93dd22ffca4fd2082fe976e4bb4edc8f1",
+      "id": "E-0013",
+      "line": 13
+    },
+    {
+      "content_sha256": "6d81417a858c18b19163c1ce628dbde8b3bfc2cb49775ade8af4fdc0dbd8b0ab",
+      "id": "E-0014",
+      "line": 14
+    }
+  ],
+  "snapshot_version": 1,
+  "source_bytes": 185173,
+  "source_ref": "Work/runs/facts/preparation/evidence.jsonl",
+  "source_sha256": "cd23496e6743d2217e7712f61a1f3b1527b73d4925f20ce81c1a3a92c7995184"
+}

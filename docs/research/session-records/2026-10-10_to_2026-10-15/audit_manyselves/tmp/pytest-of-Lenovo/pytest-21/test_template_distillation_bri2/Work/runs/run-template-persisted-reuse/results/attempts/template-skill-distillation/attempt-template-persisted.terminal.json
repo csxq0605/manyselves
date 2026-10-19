@@ -1,0 +1,26 @@
+{
+  "kind": "task_terminal",
+  "correlation": {
+    "workflow_id": "distill-template-skill",
+    "run_id": "run-template-persisted-reuse",
+    "task_id": "template-skill-distillation",
+    "task_attempt_id": "attempt-template-persisted",
+    "agent_id": "template-distiller",
+    "identity_key": "template-distiller",
+    "session_id": "session-template-persisted",
+    "task_envelope_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "input_contract_ref": null,
+    "input_contract_sha256": null,
+    "subject_ref": null,
+    "subject_sha256": null,
+    "lease_owner_id": "Csxq-Laptop:25088:654c16fb4a684a949bd153b51e1ba9e8",
+    "lease_epoch": 1
+  },
+  "status": "completed",
+  "result_ref": "Work/runs/run-template-persisted-reuse/results/attempts/template-skill-distillation/attempt-template-persisted.json",
+  "result_sha256": "3603bc09d99d958ed66029a3376e9e96a28e273f8c6886252057c16ae28d1919",
+  "payload_sha256": "d72e377099b2b05ea297add6c41b30f5e8c1060c646eda55c6038e321532d55e",
+  "promoted_to_canonical": true,
+  "persisted_at_ns": 1792024842174170200
+}

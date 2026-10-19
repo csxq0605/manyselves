@@ -1,5 +1,7 @@
 """Map S4-4 diagnostic workbook observations into module 2.4 evidence."""
 
+import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,9 @@ from openpyxl.utils import get_column_letter
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     MappingGap,
     MappingResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    EvidenceMeasurement,
 )
 
 from .common import dispimg_refs, make_evidence
@@ -36,6 +41,47 @@ def _numeric_value(sheet: Any, value_sheet: Any, row: int, column: int) -> Any:
     return cached_value if isinstance(cached_value, (int, float)) else value
 
 
+def _source_load_rate(sheet: Any, value_sheet: Any, row: int, gaps: list[MappingGap]) -> tuple[str, float | None]:
+    """Read E as reported, without substituting an assumed voltage or phase basis."""
+    source = sheet.cell(row, 5)
+    cached = value_sheet.cell(row, 5) if source.data_type == "f" else source
+    value = None if cached.data_type == "e" else cached.value
+    if value in (None, ""):
+        # Formula failures are already reported by map_s4_4's cache scan.
+        if source.data_type != "f":
+            gaps.append(MappingGap(
+                code="missing_load_rate_result",
+                message="原表缺少负荷率结果；额定电压、测量侧别和计算口径须核实后才能计算",
+                sheet=sheet.title, cell=source.coordinate,
+            ))
+        return "；原表负荷率结果不可用，需核实额定电压、测量侧别和计算口径后计算", None
+
+    percent = None
+    # Quoted/escaped percent signs are literal display text, not Excel's scale operator.
+    number_format = re.sub(r'"[^\"]*"|\\.', "", source.number_format)
+    numeric_sections = number_format.split(";")[:3]
+    percent_format = all(section.count("%") == 1 for section in numeric_sections)
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and percent_format:
+            percent = Decimal(str(value)) * 100
+        elif isinstance(value, str) and value.strip().endswith("%"):
+            percent = Decimal(value.strip()[:-1].strip())
+    except InvalidOperation:
+        pass
+    if percent is not None and percent.is_finite():
+        fact = f"；原表负荷率={percent:.2f}%"
+        if source.data_type == "f":
+            fact += f"；原表公式={source.value}"
+        return fact + "；需核对额定电压、测量侧别及计算口径，不单凭此值判断过载", float(percent)
+
+    gaps.append(MappingGap(
+        code="ambiguous_load_rate_scale",
+        message=f"原表负荷率未能确定百分比口径（单元格格式={source.number_format}），不自动换算",
+        sheet=sheet.title, cell=source.coordinate,
+    ))
+    return f"；原表负荷率数值={_text(value)}；比例口径待核实", None
+
+
 def _map_low_voltage(
     path: Path,
     file_id: str,
@@ -58,11 +104,13 @@ def _map_low_voltage(
             unit = "A"
             fact = f"运行电流={current:g}A"
             if isinstance(capacity, (int, float)) and capacity:
-                value = current * 0.4 * 1.732 / capacity * 100
-                unit = "%"
-                fact += f"；变压器容量={capacity:g}kVA；计算负荷率={value:.2f}%"
+                fact += f"；变压器容量={capacity:g}kVA"
+                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                fact += reported_fact
+                if load_rate is not None:
+                    value, unit = load_rate, "%"
                 routes = (("2.4", "2.4.1.1"), ("2.1", "2.1.1"))
-                needs_confirmation = False
+                needs_confirmation = True
             else:
                 current_only_rows.append(row)
                 fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
@@ -252,9 +300,11 @@ def _map_total_distribution(
             unit = "A"
             fact = f"运行电流={current:g}A"
             if isinstance(capacity, (int, float)) and capacity:
-                value = current * 0.4 * 1.732 / capacity * 100
-                unit = "%"
-                fact += f"；变压器容量={capacity:g}kVA；计算负荷率={value:.2f}%"
+                fact += f"；变压器容量={capacity:g}kVA"
+                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                fact += reported_fact
+                if load_rate is not None:
+                    value, unit = load_rate, "%"
             for module_id, submodule_id in (
                 ("2.4", "2.4.1.1"),
                 ("2.1", "2.1.1"),
@@ -273,6 +323,7 @@ def _map_total_distribution(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        needs_confirmation=True,
                     )
                 )
         elif isinstance(capacity, (int, float)) and capacity:
@@ -508,36 +559,51 @@ def _map_thermal(
 ) -> tuple[list, list[MappingGap]]:
     evidence = []
     gaps: list[MappingGap] = []
-    current_room = ""
-    current_cabinet = ""
-    current_environment: float | None = None
-    current_humidity: float | None = None
-    room_row: int | None = None
-    cabinet_row: int | None = None
-    environment_row: int | None = None
-    humidity_row: int | None = None
+    # Only vertical merges in the same semantic column share context. A
+    # horizontal merge across different fields is not a temperature/room value.
+    context_merges = {
+        column: sorted(
+            (area.min_row, area.max_row)
+            for area in sheet.merged_cells.ranges
+            if area.min_col == area.max_col == column
+        )
+        for column in range(1, 6)
+    }
+
+    def anchor_row(row: int, column: int) -> int:
+        return next((start for start, end in context_merges[column] if start <= row <= end), row)
+
     missing_position_rows: list[int] = []
     for row in range(3, sheet.max_row + 1):
-        room = _text(sheet.cell(row, 1).value)
-        if room:
-            current_room = room
-            room_row = row
-        cabinet = _text(sheet.cell(row, 4).value)
-        if cabinet:
-            current_cabinet = cabinet
-            cabinet_row = row
-        environment = _numeric_value(sheet, value_sheet, row, 2)
-        if isinstance(environment, (int, float)):
-            current_environment = float(environment)
-            environment_row = row
-        humidity = _numeric_value(sheet, value_sheet, row, 3)
-        if isinstance(humidity, (int, float)):
-            current_humidity = float(humidity)
-            humidity_row = row
+        room_row, environment_row, humidity_row, cabinet_row, load_row = (
+            anchor_row(row, column) for column in range(1, 6)
+        )
+        current_room = _text(sheet.cell(room_row, 1).value)
+        current_cabinet = _text(sheet.cell(cabinet_row, 4).value)
+        environment = _numeric_value(sheet, value_sheet, environment_row, 2)
+        current_environment = float(environment) if isinstance(environment, (int, float)) else None
+        humidity = _numeric_value(sheet, value_sheet, humidity_row, 3)
+        current_humidity = float(humidity) if isinstance(humidity, (int, float)) else None
         position = _text(sheet.cell(row, 6).value)
         measured = _numeric_value(sheet, value_sheet, row, 7)
         if not isinstance(measured, (int, float)):
             continue
+        rise = (
+            float(Decimal(str(measured)) - Decimal(str(current_environment)))
+            if current_environment is not None else None
+        )
+        measurements = [
+            EvidenceMeasurement(quantity="measured_temperature", value=float(measured), unit="℃", source_cell=f"G{row}"),
+            EvidenceMeasurement(
+                quantity="ambient_temperature", value=current_environment, unit="℃", source_cell=f"B{environment_row}",
+                missing_reason="missing_ambient_temperature" if current_environment is None else None,
+            ),
+            EvidenceMeasurement(
+                quantity="temperature_rise", value=rise, unit="K",
+                derived_from=["measured_temperature", "ambient_temperature"],
+                missing_reason="missing_ambient_temperature" if current_environment is None else None,
+            ),
+        ]
         fact_parts = []
         if position:
             fact_parts.append(f"检测部位={position}")
@@ -545,18 +611,18 @@ def _map_thermal(
             missing_position_rows.append(row)
             fact_parts.append("检测部位=未填写")
         fact_parts.append(f"测点温度={measured:g}℃")
-        load_rate = _numeric_value(sheet, value_sheet, row, 5)
+        load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
         if current_environment is not None:
             fact_parts.append(f"环境温度={current_environment:g}℃")
-            fact_parts.append(f"相对环境温升={measured - current_environment:.1f}K")
+            fact_parts.append(f"相对环境温升={rise:.1f}K")
         if current_humidity is not None:
             fact_parts.append(f"环境湿度={current_humidity:g}%RH")
         fact = "；".join(fact_parts)
         context_rows = [
             context_row
-            for context_row in (room_row, cabinet_row, environment_row, humidity_row, row)
+            for context_row in (room_row, cabinet_row, environment_row, humidity_row, load_row, row)
             if context_row is not None
         ]
         source_start_row = min(context_rows)
@@ -580,7 +646,11 @@ def _map_thermal(
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=float(measured),
                     unit="℃",
-                    needs_confirmation=not position,
+                    measurements=measurements,
+                    needs_confirmation=(
+                        not position or not current_room or not current_cabinet
+                        or current_environment is None
+                    ),
                 )
             )
         if not current_room or not current_cabinet:
@@ -667,10 +737,27 @@ def _missing_sheet_gap(sheet: str, submodule_id: str) -> MappingGap:
 def map_s4_4(path: Path, *, file_id: str) -> MappingResult:
     path = Path(path)
     workbook = load_workbook(path, read_only=False, data_only=False)
-    value_workbook = load_workbook(path, read_only=True, data_only=True)
+    # Both views must derive their bounds from actual cells, not optional XLSX
+    # dimension metadata. Normal mode also supports repeated coordinate reads
+    # below without rescanning a streaming worksheet for each measurement.
+    value_workbook = load_workbook(path, read_only=False, data_only=True)
     try:
         evidence = []
         gaps: list[MappingGap] = []
+        # Do not equate an uncalculated formula with an empty measurement. Reuse
+        # the already-open workbooks and inspect cached cells once per sheet.
+        for sheet in workbook.worksheets:
+            for row, cached in zip(sheet.iter_rows(), value_workbook[sheet.title].iter_rows(), strict=True):
+                for cell, cached_cell in zip(row, cached, strict=True):
+                    if cell.data_type != "f" or dispimg_refs(cell.value):
+                        continue
+                    if cached_cell.value is None or cached_cell.data_type == "e":
+                        code = "formula_result_error" if cached_cell.data_type == "e" else "formula_result_unavailable"
+                        gaps.append(MappingGap(
+                            code=code,
+                            message=f"公式缺少可用缓存结果：{sheet.title}!{cell.coordinate}；{cell.value}",
+                            sheet=sheet.title, cell=cell.coordinate,
+                        ))
         if "低配评估详情" in workbook.sheetnames:
             low_evidence, low_gaps = _map_low_voltage(
                 path,

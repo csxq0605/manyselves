@@ -1,0 +1,41 @@
+{
+  "kind": "cross_owner_finding_submission",
+  "owner_module_id": "2.1",
+  "coverage": {
+    "module_id": "2.1",
+    "checked_dimensions": [
+      "terminology",
+      "facts",
+      "risk_levels",
+      "dependencies",
+      "propagation",
+      "joint_verification"
+    ]
+  },
+  "findings": [
+    {
+      "id": "XMR-2.1-001",
+      "owner_module_id": "2.1",
+      "target_submodule_ids": [
+        "2.1.1"
+      ],
+      "related_module_ids": [
+        "2.2"
+      ],
+      "category": "facts",
+      "impact": "advisory",
+      "observation": "2.1.1 写为对象 T 于 2026-01-01 工况 A 读数 16.58 mA 且结论异常；2.2.1.1 写为对象 T 于同日工况 B 读数 16.58 mA 且结论正常。两者读数相同但工况不同，依据虚构规则分别为工况 A 阈值 10 mA、工况 B 阈值 20 mA，两侧结论各自与其阈值一致，不构成同一次观测的事实冲突；但 2.1.1 未写明工况 B 的对照判断，架构层结论无法说明是否吸收了 2.2 的工况结论。",
+      "evidence_refs": [
+        "Work/runs/synthetic-cross/modules/2.1-r0.json",
+        "Work/runs/synthetic-cross/modules/2.2-r0.json"
+      ],
+      "required_change": "在 2.1.1 中明确 16.58 mA 读数对应的工况标签，并说明 2.2 工况 B 下判定为正常的关系，区分两个工况下的不同结论，不改变工况 A 的异常判定。",
+      "reviewer_checks": [
+        "2.1.1 同时写出工况 A 与工况 B 的读数、阈值和结论",
+        "2.1.1 不将 2.2 工况 B 的正常结论改写为异常或反之",
+        "2.1.1 保留对象 T、单位 mA、日期 2026-01-01 与 2.2 一致"
+      ]
+    }
+  ],
+  "synthesis_inputs": []
+}

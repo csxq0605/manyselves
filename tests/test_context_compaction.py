@@ -1,6 +1,6 @@
 """Tests for context auto-compaction — _estimate_tokens and _trim_messages_to_budget."""
 
-import pytest
+import json
 
 from manyselves.runtime.loops import agent_loop as agent_loop_module
 from manyselves.runtime.loops.agent_loop import _estimate_tokens, _trim_messages_to_budget
@@ -117,3 +117,39 @@ def test_working_memory_compaction_keeps_a_handoff_and_recent_context():
     assert "E-0001" in compacted[1].content
     assert "Work/evidence.jsonl" in compacted[1].content
     assert recent in compacted
+
+
+def test_repeated_compaction_preserves_structured_refs_and_paging_progress():
+    ref = "Work/runs/example/context/module-2.4-facts.md"
+    previous = agent_loop_module._render_handoff_summary({
+        "critical_refs": [ref], "active_task": {"task_id": "author"},
+        "tool_state": [{"ref": ref, "next_offset": 4000, "total": 8000}],
+        "progress": ["first page read"], "constraints": ["do not invent missing facts"],
+        "remaining_work": ["read the next page"],
+    })
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content=previous),
+        LLMMessage(role="user", content="other work " * 3000),
+        LLMMessage(role="user", content="continue"),
+    ]
+    compacted = agent_loop_module._compact_messages_for_working_memory(messages, target_tokens=1200)
+    payload = json.loads(compacted[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert ref in payload["critical_refs"]
+    assert payload["active_task"]["task_id"] == "author"
+    assert payload["tool_state"][0]["next_offset"] == 4000
+
+
+def test_handoff_reads_refs_in_nested_arrays_and_retains_exact_page_coordinates():
+    ref = "Work/runs/example/context/module-2.4-facts.md"
+    messages = [
+        LLMMessage(role="user", content=json.dumps({"tasks": [{"input_refs": [ref]}]})),
+        LLMMessage(role="tool", tool_call_id="read-1", is_tool_result=True, content=json.dumps({
+            "ref": ref, "offset": 4000, "next_offset": 8000, "total": 10000,
+            "returned": 4000, "content": "observations",
+        })),
+    ]
+    summary = agent_loop_module._build_handoff_summary(messages)
+    assert ref in summary["critical_refs"]
+    assert ref in agent_loop_module._build_handoff_summary(messages[:1])["critical_refs"]
+    assert any(item.get("next_offset") == 8000 for item in summary["tool_state"])

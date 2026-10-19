@@ -1,0 +1,1 @@
+{"id":"E-0240","subject":"评估总表 2.2.1.2","fact":"既有评估结论=OK；既有行动建议=智能平台监测","source":{"file_id":"file-013a9efb52231caa","path":"Inputs/S4-6评估总表.xlsx","sheet":"评估信息汇总表","cell":"F13:G13","page":null,"row":13,"column":"F","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":0.65,"needs_confirmation":true,"module_id":"2.2","submodule_id":"2.2.1.2","photo_refs":[]}

@@ -47,10 +47,16 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
+from .assessment_context import (
+    assessment_source_context,
+    final_observation_context,
+    module_rule_source_refs,
+    source_observation_groups,
+)
 from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
 from .report_validation import validate_final_report_structure
-from .template_skill_paths import template_skill_ref
+from .template_skill_context import read_template_skill, render_template_skill
 
 _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
@@ -70,19 +76,7 @@ def _template_skill_context(
 ) -> str:
     """Embed one materialized template Skill in the Agent task envelope."""
 
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        path = workspace / template_skill_ref(skill_id)
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, read_template_skill(workspace, state, skill_id))
 
 
 def _chief_template_skill_context(
@@ -211,6 +205,8 @@ def _source_projection(
     source_refs = [
         str(state["cross_review_completion_ref"])
     ] if state.get("cross_review_completion_ref") else []
+    if state.get("cross_decision_pack_ref"):
+        source_refs.append(str(state["cross_decision_pack_ref"]))
     modules = state.get("module_submissions", {})
     if chapter_id == "1":
         source_context = {
@@ -228,7 +224,7 @@ def _source_projection(
                 },
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:2400]
+            )
             for module_id, module in sorted(
                 modules.items(), key=lambda item: float(item[0])
             )
@@ -247,7 +243,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:6000],
+            ),
             "module_boundaries": ",".join(
                 f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
                 for module_id, module in sorted(
@@ -261,14 +257,21 @@ def _source_projection(
                 plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:12_000]
+            )
         }
         if state.get("special_topic_knowledge_ref"):
             source_refs.append(str(state["special_topic_knowledge_ref"]))
+    source_context["module_assessments"] = assessment_source_context(modules)
+    source_context["source_observation_groups"] = json.dumps(
+        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
     source_refs.extend(materialize_chief_module_sources(store, state))
+    source_refs.extend(ref for module in modules.values() for ref in module_rule_source_refs(
+        module if isinstance(module, ModuleSubmission) else ModuleSubmission.model_validate(module)
+    ))
     return source_context, list(dict.fromkeys(ref for ref in source_refs if ref))
 
 
@@ -386,6 +389,9 @@ class FinalReviewTools:
             edited.special_topic_plan,
             store=self.store,
         )
+        source_context.update(final_observation_context(
+            state.get("module_submissions", {}), edited, _section_bodies(edited, chapter_id),
+        ))
         revision = review.revision_number
         run_id = str(state["run_id"])
         contract = ChiefChapterLaneInput(
@@ -655,6 +661,13 @@ class FinalReviewTools:
         plan = state.get("special_topic_plan") or review.current.special_topic_plan
         current = review.current.model_copy(
             update={
+                "observation_links": [
+                    link for link in review.current.observation_links
+                    if link.section_id not in updates
+                ] + [
+                    link for chapter_id in active
+                    for link in outcomes[chapter_id].submission.observation_links
+                ],
                 **{
                     field_for_section[section_id]: body
                     for section_id, body in updates.items()

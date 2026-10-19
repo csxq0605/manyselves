@@ -1,0 +1,755 @@
+{
+  "started_utc": "2026-10-11T16:24:56.489864+00:00",
+  "model": "claude-haiku-5-5",
+  "scope": "synthetic_only",
+  "design": "one trial, rotating serial order, fixed tool trajectory; real model answers retained",
+  "limitations": [
+    "English synthetic data, not production reports",
+    "one trial; no statistical latency conclusion",
+    "cross-lane provider cache reuse may affect results",
+    "thresholds use runtime heuristic tokens, not provider tokens"
+  ],
+  "fixture_characters": 216720,
+  "lanes": {
+    "12k": {
+      "threshold_estimated_tokens": 12000,
+      "requests": [
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 2.76,
+          "usage": {
+            "input_tokens": 8242,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 188,
+            "total_tokens": 8430
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"18.4\",\n  \"b29_source\": \"REV-OLD\"\n}\n```\n\nNotes on the values:\n- **A17:** The batch 1 update for EX-A17 shows confirmation \"missing\" and conclusion \"unresolved,\" so no pass is established.\n- **B29:** The only B29 record is REV-OLD, reading \"18.4\" in test_unit. No later explicit correction supersedes it in the supplied batch, so this is the latest available value."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.707,
+          "usage": {
+            "input_tokens": 8909,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 196,
+            "total_tokens": 9105
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"18.4\",\n  \"b29_source\": \"REV-OLD\"\n}\n```\n\nBatch 2 contained only LAB-02-001 through LAB-02-100 observations and no updates, so neither the A17 status nor the B29 value changed. Batch 1 is the most recent batch that included either record. A17 remains unresolved because its EX-A17 update lacks confirmation, and B29 is reported from REV-OLD because no later explicit correction appears in the batches read so far."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.568,
+          "usage": {
+            "input_tokens": 1285,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 160,
+            "total_tokens": 1445
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"18.4\",\n  \"b29_source\": \"REV-OLD\"\n}\n```"
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.424,
+          "usage": {
+            "input_tokens": 9446,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 174,
+            "total_tokens": 9620
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```\n\nBatch 4 contains an explicit correction, REV-NEW, which supersedes REV-OLD and states that the earlier 18.4 is invalid, so the latest B29 value is 27.6. Batch 4 has no A17 update, so A17 remains unresolved from EX-A17 because its confirmation is still missing."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 0.864,
+          "usage": {
+            "input_tokens": 1893,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 68,
+            "total_tokens": 1961
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```"
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.546,
+          "usage": {
+            "input_tokens": 9985,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 191,
+            "total_tokens": 10176
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```\n\nBatch 6 contained 100 observations (LAB-06-001 through LAB-06-100) and no updates, so the A17 and B29 evidence is unchanged. REV-NEW remains the latest explicit correction for B29, superseding REV-OLD's 18.4. A17 remains unresolved because EX-A17 lacks confirmation and no later batch supplies one."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 0.842,
+          "usage": {
+            "input_tokens": 2511,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 68,
+            "total_tokens": 2579
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```"
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.362,
+          "usage": {
+            "input_tokens": 10607,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 191,
+            "total_tokens": 10798
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```\n\nBatch 8 contained 100 observations (LAB-08-001 through LAB-08-100) and no updates, so the A17 and B29 evidence is unchanged. REV-NEW remains the latest explicit correction for B29, superseding REV-OLD's 18.4. A17 remains unresolved because EX-A17 lacks confirmation and no later batch supplies one."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.517,
+          "usage": {
+            "input_tokens": 3247,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 212,
+            "total_tokens": 3459
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```\n\nBatch 9 contained 100 observations (LAB-09-001 through LAB-09-100) and no updates, so the A17 and B29 evidence is unchanged. REV-NEW remains the latest explicit correction for B29, superseding REV-OLD's 18.4. A17 remains unresolved because EX-A17 lacks confirmation and no later batch supplies one. Batch 10 or later has not been checked, so these values may still change."
+        },
+        {
+          "phase": "ordinary",
+          "elapsed_seconds": 1.436,
+          "usage": {
+            "input_tokens": 11491,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 193,
+            "total_tokens": 11684
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"a17_status\": \"unresolved\",\n  \"a17_source\": \"EX-A17\",\n  \"b29_value\": \"27.6\",\n  \"b29_source\": \"REV-NEW\"\n}\n```\n\nBatch 10 contained 100 observations (LAB-10-001 through LAB-10-100) and no updates, so the A17 and B29 evidence is unchanged. REV-NEW remains the latest explicit correction for B29, superseding REV-OLD's 18.4. A17 remains unresolved because EX-A17 lacks confirmation and no batch read so far supplies one."
+        },
+        {
+          "phase": "late_detail_probe",
+          "elapsed_seconds": 2.019,
+          "usage": {
+            "input_tokens": 11752,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 203,
+            "total_tokens": 11955
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "I can't return those readings from the current context. The batch 1 through 10 results I have include LAB-01 observations only in summary form, and the records for LAB-03-041 and LAB-06-088 are not present in what I can see. The only specific LAB-06 readings I have are LAB-06-001, LAB-06-004, LAB-06-070, and LAB-06-100, so LAB-06-088 is not among them. Following your instruction not to estimate, I'm returning null for all three.\n\n```json\n{\n  \"LAB-01-073\": null,\n  \"LAB-03-041\": null,\n  \"LAB-06-088\": null\n}\n```"
+        },
+        {
+          "phase": "explicit_reread_probe",
+          "elapsed_seconds": 1.852,
+          "usage": {
+            "input_tokens": 12365,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 128,
+            "total_tokens": 12493
+          },
+          "stop_reason": "end_turn",
+          "raw_response": "```json\n{\n  \"LAB-01-073\": \"48.70\",\n  \"LAB-03-041\": \"51.56\",\n  \"LAB-06-088\": \"47.55\"\n}\n```\n\nMy previous answer was wrong to return null for these. I had not actually looked them up, and I should have made that call before answering. The lookup returned all three records, and each one is an observation-only synthetic bench reading in test_unit."
+        }
+      ],
+      "rounds": [
+        {
+          "step": 1,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "errors": [],
+          "estimated_input_tokens": 6755
+        },
+        {
+          "step": 2,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "errors": [],
+          "estimated_input_tokens": 7314
+        },
+        {
+          "step": 3,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "18.4",
+            "b29_source": "REV-OLD"
+          },
+          "errors": [],
+          "estimated_input_tokens": 1053
+        },
+        {
+          "step": 4,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 7697
+        },
+        {
+          "step": 5,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 1476
+        },
+        {
+          "step": 6,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 8075
+        },
+        {
+          "step": 7,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 1880
+        },
+        {
+          "step": 8,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 8479
+        },
+        {
+          "step": 9,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 2379
+        },
+        {
+          "step": 10,
+          "expected": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "actual": {
+            "a17_status": "unresolved",
+            "a17_source": "EX-A17",
+            "b29_value": "27.6",
+            "b29_source": "REV-NEW"
+          },
+          "errors": [],
+          "estimated_input_tokens": 9090
+        }
+      ],
+      "summaries": [
+        {
+          "step": 2,
+          "elapsed_seconds": 3.677,
+          "before_estimated_tokens": 13451,
+          "after_estimated_tokens": 7314,
+          "summary": {
+            "version": 1,
+            "active_task": {
+              "task_id": "synthetic-audit",
+              "objective": "Audit fictional laboratory observations with exact source citations"
+            },
+            "progress": [
+              "Read synthetic records batch 1 via read_synthetic_records (batch=1); result returned 100 LAB-01 observations (LAB-01-001 through LAB-01-100), each with instrument fictional-01-NNN, reading, unit test_unit, status observation_only.",
+              "Batch 1 also contained update entries: EX-A17 (sample A17, confirmation missing, conclusion unresolved) and REV-OLD (sample B29, reading 18.4, unit test_unit).",
+              "Prior assistant turn reported a17_status unresolved (source EX-A17) and b29_value 18.4 (source REV-OLD) in a JSON block."
+            ],
+            "decisions": [
+              "A17 is recorded as unresolved, not as a pass, because confirmation is missing in the EX-A17 update.",
+              "B29 value 18.4 is taken from REV-OLD as the latest available value, since no later explicit correction for B29 appears in the supplied batch."
+            ],
+            "constraints": [
+              "All data are synthetic.",
+              "A17 missing confirmation is unresolved, never a pass.",
+              "Retain corrections and recover exact observations when needed.",
+              "All LAB-01 observations are observation_only; no compliance limit or real installation is represented.",
+              "Do not present missing evidence as a confirmed finding."
+            ],
+            "remaining_work": [
+              "No tool call is pending in the transcript; the batch 1 read has completed.",
+              "Confirm whether further batches exist beyond batch 1 before treating B29 or A17 status as final.",
+              "Obtain confirmation evidence for A17 (EX-A17) if an audit conclusion is required; until then it remains unresolved.",
+              "Verify that REV-OLD is indeed superseded by no later B29 correction in any unread batch."
+            ],
+            "critical_refs": [],
+            "tool_state": [
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              }
+            ],
+            "sequence": 1,
+            "source": "model"
+          },
+          "usage": {
+            "input_tokens": 11768,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 753,
+            "total_tokens": 12521
+          }
+        },
+        {
+          "step": 3,
+          "elapsed_seconds": 3.285,
+          "before_estimated_tokens": 14024,
+          "after_estimated_tokens": 1053,
+          "summary": {
+            "version": 1,
+            "active_task": {
+              "task_id": "synthetic-audit",
+              "objective": "Audit fictional laboratory observations with exact source citations"
+            },
+            "progress": [
+              "Batch 1 read earlier (per prior handoff): 100 LAB-01 observations (LAB-01-001 to LAB-01-100), all observation_only, unit test_unit; updates included EX-A17 (sample A17, confirmation missing, conclusion unresolved) and REV-OLD (sample B29, reading 18.4).",
+              "Batch 2 read: 100 observations LAB-02-001 to LAB-02-100 (instruments fictional-02-001 to fictional-02-100), unit test_unit, status observation_only, no updates.",
+              "Batch 3 read: 100 observations LAB-03-001 to LAB-03-100 (instruments fictional-03-001 to fictional-03-100), unit test_unit, status observation_only, no updates.",
+              "Previously reported in the prior assistant turn: a17_status unresolved (source EX-A17); b29_value 18.4 (source REV-OLD)."
+            ],
+            "decisions": [
+              "A17 is recorded as unresolved, not as a pass, because confirmation is missing in EX-A17.",
+              "B29 value 18.4 from REV-OLD is taken as the latest available value, since no later explicit B29 correction appears in batches 1-3 read so far."
+            ],
+            "constraints": [
+              "All data are synthetic.",
+              "All observations are observation_only; no compliance limit or real installation is represented.",
+              "A17 missing confirmation is unresolved, never a pass.",
+              "Do not present missing evidence as a confirmed finding.",
+              "Retain corrections and recover exact observations when needed."
+            ],
+            "remaining_work": [
+              "No tool call is pending; batches 1, 2, and 3 have completed.",
+              "Check whether batch 4 or later exist before treating B29 or A17 status as final (not yet checked).",
+              "Obtain confirmation evidence for A17 (EX-A17) if a conclusion is required; until then it remains unresolved.",
+              "Verify REV-OLD is not superseded by a later B29 correction in unread batches."
+            ],
+            "critical_refs": [],
+            "tool_state": [
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              }
+            ],
+            "sequence": 2,
+            "source": "model"
+          },
+          "usage": {
+            "input_tokens": 23279,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 746,
+            "total_tokens": 24025
+          }
+        },
+        {
+          "step": 5,
+          "elapsed_seconds": 4.445,
+          "before_estimated_tokens": 14374,
+          "after_estimated_tokens": 1476,
+          "summary": {
+            "version": 1,
+            "active_task": {
+              "task_id": "synthetic-audit",
+              "objective": "Audit fictional laboratory observations with exact source citations"
+            },
+            "progress": [
+              "Batch 1 (earlier, per prior handoff): 100 LAB-01 observations (LAB-01-001 to LAB-01-100), all observation_only, unit test_unit. Updates included EX-A17 (sample A17, confirmation missing, conclusion unresolved) and REV-OLD (sample B29, reading 18.4).",
+              "Batch 2: 100 observations LAB-02-001 to LAB-02-100 (instruments fictional-02-001 to fictional-02-100), unit test_unit, status observation_only, no updates.",
+              "Batch 3: 100 observations LAB-03-001 to LAB-03-100 (instruments fictional-03-001 to fictional-03-100), unit test_unit, status observation_only, no updates.",
+              "Batch 4: update REV-NEW (sample B29, reading 27.6, unit test_unit, supersedes REV-OLD, instruction: explicit correction, old 18.4 is invalid). Plus 100 observations LAB-04-001 to LAB-04-100 (instruments fictional-04-001 to fictional-04-100), unit test_unit, status observation_only.",
+              "Batch 5: no updates. 100 observations LAB-05-001 to LAB-05-100 (instruments fictional-05-001 to fictional-05-100), unit test_unit, status observation_only.",
+              "Previously reported in prior assistant turn: a17_status unresolved (source EX-A17); b29_value 18.4 (source REV-OLD). This is now superseded by REV-NEW."
+            ],
+            "decisions": [
+              "B29 correction: the value 18.4 from REV-OLD is invalid and superseded by REV-NEW reading 27.6. The earlier prior-turn report of 18.4 should be treated as corrected.",
+              "A17 is recorded as unresolved, not as a pass, because confirmation is missing in EX-A17. No later A17 confirmation appears in batches 4 or 5."
+            ],
+            "constraints": [
+              "All data are synthetic.",
+              "All observations are observation_only; no compliance limit or real installation is represented.",
+              "A17 missing confirmation is unresolved, never a pass.",
+              "Do not present missing evidence as a confirmed finding.",
+              "Retain corrections and recover exact observations when needed."
+            ],
+            "remaining_work": [
+              "No tool call is pending; batches 1 through 5 have been read.",
+              "Check whether batch 6 or later exist before treating B29 (27.6 via REV-NEW) or A17 status as final; not yet checked.",
+              "Obtain confirmation evidence for A17 (EX-A17) if a conclusion is required; until then it remains unresolved.",
+              "Verify no later update in unread batches supersedes REV-NEW."
+            ],
+            "critical_refs": [],
+            "tool_state": [
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              }
+            ],
+            "sequence": 3,
+            "source": "model"
+          },
+          "usage": {
+            "input_tokens": 23522,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1082,
+            "total_tokens": 24604
+          }
+        },
+        {
+          "step": 7,
+          "elapsed_seconds": 4.578,
+          "before_estimated_tokens": 14764,
+          "after_estimated_tokens": 1880,
+          "summary": {
+            "version": 1,
+            "active_task": {
+              "task_id": "synthetic-audit",
+              "objective": "Audit fictional laboratory observations with exact source citations"
+            },
+            "progress": [
+              "Batch 1 (earlier): 100 LAB-01 observations (LAB-01-001 to LAB-01-100), all observation_only, unit test_unit. Updates included EX-A17 (sample A17, confirmation missing, conclusion unresolved) and REV-OLD (sample B29, reading 18.4).",
+              "Batch 2: 100 observations LAB-02-001 to LAB-02-100 (instruments fictional-02-001 to fictional-02-100), unit test_unit, observation_only, no updates.",
+              "Batch 3: 100 observations LAB-03-001 to LAB-03-100 (instruments fictional-03-001 to fictional-03-100), unit test_unit, observation_only, no updates.",
+              "Batch 4: update REV-NEW (sample B29, reading 27.6, unit test_unit, supersedes REV-OLD; explicit correction that old 18.4 is invalid). Plus 100 observations LAB-04-001 to LAB-04-100 (instruments fictional-04-001 to fictional-04-100), observation_only.",
+              "Batch 5: no updates. 100 observations LAB-05-001 to LAB-05-100 (instruments fictional-05-001 to fictional-05-100), observation_only.",
+              "Batch 6: no updates. 100 observations LAB-06-001 to LAB-06-100 (instruments fictional-06-001 to fictional-06-100), unit test_unit, observation_only. Readings include LAB-06-001 = 95.15 through LAB-06-100 = 71.75 (e.g., LAB-06-004 = 18.45, LAB-06-070 = 11.53).",
+              "Batch 7: no updates. 100 observations LAB-07-001 to LAB-07-100 (instruments fictional-07-001 to fictional-07-100), unit test_unit, observation_only. Readings include LAB-07-001 = 64.97 through LAB-07-100 = 17.21 (e.g., LAB-07-010 = 16.99, LAB-07-095 = 11.01).",
+              "Prior assistant turn reported a17_status unresolved (source EX-A17) and b29_value 18.4 (source REV-OLD); 18.4 is superseded by REV-NEW reading 27.6."
+            ],
+            "decisions": [
+              "B29 correction: REV-OLD value 18.4 is invalid and superseded by REV-NEW reading 27.6; treat the earlier 18.4 report as corrected.",
+              "A17 is recorded as unresolved, not a pass, because confirmation is missing in EX-A17. No later A17 confirmation appears in batches 2 through 7."
+            ],
+            "constraints": [
+              "All data are synthetic.",
+              "All observations are observation_only; no compliance limit or real installation is represented.",
+              "A17 missing confirmation is unresolved, never a pass.",
+              "Do not present missing evidence as a confirmed finding.",
+              "Retain corrections and recover exact observations when needed."
+            ],
+            "remaining_work": [
+              "No tool call is pending; batches 1 through 7 have been read.",
+              "Batch 8 or later has not been checked; B29 (27.6 via REV-NEW) and A17 status are not final until later batches are checked for further updates.",
+              "Obtain confirmation evidence for A17 (EX-A17) if a conclusion is required; until then it remains unresolved.",
+              "Confirm no later update in unread batches supersedes REV-NEW."
+            ],
+            "critical_refs": [],
+            "tool_state": [
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              }
+            ],
+            "sequence": 4,
+            "source": "model"
+          },
+          "usage": {
+            "input_tokens": 23730,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1198,
+            "total_tokens": 24928
+          }
+        },
+        {
+          "step": 9,
+          "elapsed_seconds": 7.999,
+          "before_estimated_tokens": 15168,
+          "after_estimated_tokens": 2379,
+          "summary": {
+            "version": 1,
+            "active_task": {
+              "task_id": "synthetic-audit",
+              "objective": "Audit fictional laboratory observations with exact source citations"
+            },
+            "progress": [
+              "Batch 1 (earlier): 100 LAB-01 observations (LAB-01-001 to LAB-01-100), all observation_only, unit test_unit. Updates included EX-A17 (sample A17, confirmation missing, conclusion unresolved) and REV-OLD (sample B29, reading 18.4).",
+              "Batch 2: 100 observations LAB-02-001 to LAB-02-100 (instruments fictional-02-001 to fictional-02-100), unit test_unit, observation_only, no updates.",
+              "Batch 3: 100 observations LAB-03-001 to LAB-03-100 (instruments fictional-03-001 to fictional-03-100), unit test_unit, observation_only, no updates.",
+              "Batch 4: update REV-NEW (sample B29, reading 27.6, unit test_unit, supersedes REV-OLD, explicitly states old 18.4 is invalid). Plus 100 observations LAB-04-001 to LAB-04-100 (instruments fictional-04-001 to fictional-04-100), observation_only.",
+              "Batch 5: no updates. 100 observations LAB-05-001 to LAB-05-100 (instruments fictional-05-001 to fictional-05-100), observation_only.",
+              "Batch 6: no updates. 100 observations LAB-06-001 to LAB-06-100 (instruments fictional-06-001 to fictional-06-100), unit test_unit, observation_only. Readings include LAB-06-001 = 95.15 through LAB-06-100 = 71.75 (e.g., LAB-06-004 = 18.45, LAB-06-070 = 11.53).",
+              "Batch 7: no updates. 100 observations LAB-07-001 to LAB-07-100 (instruments fictional-07-001 to fictional-07-100), unit test_unit, observation_only. Readings include LAB-07-001 = 64.97 through LAB-07-100 = 17.21 (e.g., LAB-07-010 = 16.99, LAB-07-095 = 11.01).",
+              "Batch 8: updates empty. 100 observations LAB-08-001 to LAB-08-100 (instruments fictional-08-001 to fictional-08-100), unit test_unit, observation_only. Readings include LAB-08-001 = 43.31 through LAB-08-100 = 34.34 (e.g., LAB-08-025 = 18.64, LAB-08-050 = 28.81). LAB-08-049 and LAB-08-050 both read 28.81.",
+              "Batch 9: updates empty. 100 observations LAB-09-001 to LAB-09-100 (instruments fictional-09-001 to fictional-09-100), unit test_unit, observation_only. Readings include LAB-09-001 = 20.69 through LAB-09-100 = 83.26 (e.g., LAB-09-010 = 11.38, LAB-09-044 = 95.07). LAB-09-002 and LAB-09-083 both read 87.15.",
+              "Prior assistant turn reported a17_status unresolved (source EX-A17) and b29_value 18.4 (source REV-OLD); 18.4 is superseded by REV-NEW reading 27.6."
+            ],
+            "decisions": [
+              "B29 correction: REV-OLD value 18.4 is invalid and superseded by REV-NEW reading 27.6; the earlier 18.4 report is treated as corrected.",
+              "A17 is recorded as unresolved, not a pass, because confirmation is missing in EX-A17. No A17 confirmation appears in batches 2 through 9.",
+              "All observations are observation_only; no compliance limit or real installation is represented."
+            ],
+            "constraints": [
+              "All data are synthetic.",
+              "A17 missing confirmation is unresolved, never a pass.",
+              "Do not present missing evidence as a confirmed finding.",
+              "Retain corrections and recover exact observations when needed.",
+              "Each observation note states: Synthetic bench observation; no compliance limit or real installation is represented."
+            ],
+            "remaining_work": [
+              "No tool call is pending. Batches 1 through 9 have been read and returned.",
+              "Batch 10 or later has not been checked. B29 (27.6 via REV-NEW) and A17 status are not final until later unread batches are checked for further updates.",
+              "Confirm no later update in unread batches supersedes REV-NEW.",
+              "Obtain confirmation evidence for A17 (EX-A17) if a conclusion is required; until then A17 remains unresolved."
+            ],
+            "critical_refs": [],
+            "tool_state": [
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "status": "requested",
+                "tool": "read_synthetic_records"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              },
+              {
+                "tool": "read_synthetic_records",
+                "status": "requested"
+              }
+            ],
+            "sequence": 5,
+            "source": "model"
+          },
+          "usage": {
+            "input_tokens": 24033,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2094,
+            "total_tokens": 26127
+          }
+        }
+      ],
+      "late_detail": {
+        "expected": {
+          "LAB-01-073": "48.70",
+          "LAB-03-041": "51.56",
+          "LAB-06-088": "47.55"
+        },
+        "actual": {
+          "LAB-01-073": null,
+          "LAB-03-041": null,
+          "LAB-06-088": null
+        },
+        "wrong": [],
+        "unavailable": [
+          "LAB-01-073",
+          "LAB-03-041",
+          "LAB-06-088"
+        ],
+        "correct": []
+      },
+      "after_reread": {
+        "actual": {
+          "LAB-01-073": "48.70",
+          "LAB-03-041": "51.56",
+          "LAB-06-088": "47.55"
+        },
+        "expected": {
+          "LAB-01-073": "48.70",
+          "LAB-03-041": "51.56",
+          "LAB-06-088": "47.55"
+        },
+        "all_correct": true
+      }
+    }
+  },
+  "completed": true
+}

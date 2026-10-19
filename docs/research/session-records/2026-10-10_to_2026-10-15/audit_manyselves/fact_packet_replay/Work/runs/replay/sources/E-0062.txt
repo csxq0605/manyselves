@@ -1,0 +1,1 @@
+{"id":"E-0062","subject":"科研楼配电房/D201","fact":"实测剩余电流=2.9A；占运行电流=2.90%","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"低配评估详情","cell":"C13;J13:L13","page":null,"row":13,"column":"J","image_id":null},"value":2.9,"unit":"A","observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.4","submodule_id":"2.4.3.1","photo_refs":[]}

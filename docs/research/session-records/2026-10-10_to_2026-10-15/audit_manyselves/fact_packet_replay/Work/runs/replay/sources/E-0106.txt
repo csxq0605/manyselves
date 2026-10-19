@@ -1,0 +1,1 @@
+{"id":"E-0106","subject":"文体中心配电房/1#","fact":"电涌保护装置=OK","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"总配评估详情表","cell":"R6:S6","page":null,"row":6,"column":"R","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.3","submodule_id":"2.3.3","photo_refs":[]}

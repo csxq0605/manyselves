@@ -6,6 +6,8 @@ objective: Review cross-module relations for the fixed owner.
 input_contract: cross_owner_input
 output_contract: cross_owner_finding_submission
 tools:
+- search_text
+- open_artifact
 - submit_result
 recovery: current-reporting-recovery
 

@@ -1,0 +1,17 @@
+{
+  "workflow_id": "distribution-aggregate-existing-tail",
+  "run_id": "final-provider-run",
+  "task_id": "final-chapter-1-r0",
+  "task_attempt_id": "attempt-e0c7c277fd5a4bdd8f3da2932139eae8",
+  "agent_id": "chief-editor-auditor",
+  "identity_key": "final-chapter-1",
+  "session_id": "final-chapter-1",
+  "task_envelope_sha256": "66a30c9b452a68c6c1a4810e7498d8f4360762b3c98f074ff3a321400a5b53b4",
+  "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "input_contract_ref": "Work/runs/final-provider-run/context/final-chapter-1-input-r0.json",
+  "input_contract_sha256": "8909ee98b84025dd1e716d385597f04fc2a2ff79571d3747b3f97f21c2e81d25",
+  "subject_ref": "Work/runs/final-provider-run/edited-revisions/chief-r0.json",
+  "subject_sha256": "0082904d282ea0e932c716060443190dd78b4c5ef64b71303409040054445be2",
+  "lease_owner_id": "Csxq-Laptop:25088:201e6a2e8480440ca4a3b95742171692:attempt-e0c7c277fd5a4bdd8f3da2932139eae8",
+  "lease_epoch": 1
+}

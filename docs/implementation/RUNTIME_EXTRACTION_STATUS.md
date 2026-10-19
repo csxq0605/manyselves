@@ -6,25 +6,416 @@
 >
 > 状态：**产品完成。声明式 Kernel/Runtime 架构、六个报告入口、revise-report 影响分析与确认、非阻断 DOCX 发布、部署和产品验收均已完成；PR #4 已合并到 `main`。历史段落记录当时的失败和待验证项，不覆盖本最终结论。**
 
+> **2026-10 报告质量与性能维护仍在进行，2026-10-19再次复核后，按有界机制修复、判断交接取舍和流程比较推进；通用层全面审计不再是所有条目的前置条件。上面的产品完成状态指2026-09历史产品验收；中立能力的确定性Invoker不覆盖Provider/AgentLoop，不能据此排除当前通用模型执行缺陷。新的真实生成、耗时/token与逐项引用准确性仍未验收。**
+
 ## Program
 
 - Repository: `csxq0605/manyselves`
 - Plan base: `agent/declarative-runtime-plan`
 - Implementation branch: `agent/declarative-runtime-implementation`
 - Merged PR: <https://github.com/csxq0605/manyselves/pull/4>
+- Active maintenance PR: <https://github.com/csxq0605/manyselves/pull/6>
+- Maintenance scope and acceptance: [PR #6 报告性能与质量改进指导](PR6_REPORTING_IMPROVEMENT_GUIDE.md)（S01–S06、Q01–Q07、F01–F04）
 - Governing architecture: [`../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 - Execution protocol: [`../CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
-- Current FA work package: `Complete`
-- Current slice: `FA-08/M9.108 product completion closeout`
-- Current branch: `main`
+- Current FA work package: `Post-acceptance reporting quality maintenance`
+- Current slice: `PR #6 plan rechecked at 35cf858: confirmed budget defect separated from audit hypotheses; actual Task tools and submission Schema traced; original 17 objectives and three workflow alternatives retained`
+- Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
-- Blockers: `None`
-- Next automatic action: `None; normal maintenance only`
+- Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
+- Next automatic action: 按指导的有界工作项先修S04完整请求预算（含工具Schema，明确重建器绑定/未绑定入口），同时将S06/Q06工具核对收束为真实Task→envelope→注册工具→所需引用的差异。随后完成Q03/Q05新增判断/行动字段的必要性与净负担处置，并交付F01/F02三种写作组织的职责/依赖比较；独立分析不等核心全面审计。S01非自动返工、S02紧凑交接、S05稳定前缀、Q02已复现读取修复不重复开发。模型测量及官方状态核验分别暂缓，不挂起其余工作。
+
+### 17项清单的当前处置（2026-10-19再次复核）
+
+“已实现”只指已记录的机制行为；候选设计仍需取舍，专业效果单独验收。以下为唯一动态表，原指导的927aef5表继续作为历史基线。
+
+| 清单 | 已有实现与证据范围 | 尚需实施或作出决定 | 外部证据／效果边界 |
+| --- | --- | --- | --- |
+| S01 | advisory留档、不自动返工，blocking路径保留 | 完成F01中的返工触发/职责分析；有重复任务证据才查派发 | 历史逐finding成本不可恢复，当前误报/返工收益未测 |
+| S02 | Cross 15→10字段；Chief/Final消费及恢复已接通 | 将字段与阶段新增价值纳入F01，不重做已闭合交接 | 专业质量与实际输出/token收益未测 |
+| S03 | 审查直接结构化提交指引已接入 | 以真实Schema/终止协议定位重复输出；未见差异时不增改造 | 模型遵循和重复可见输出减少未测 |
+| S04 | 当前事实/草稿重建，历史精确去重后压缩 | 工具Schema未计入预算仍未修；明确实际窗口、请求开销及适用入口 | 真实摘要量、token估算偏差和净成本未测 |
+| S05 | 稳定前缀/动态状态分离，原生/兼容序列化已离线核验 | 预算改动时复核受影响状态/缓存路径；已有布局不重复重构 | 缓存命中和费用收益未测 |
+| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复 | 真实Task工具/引用差异、判断记录净负担尚待收束；拆章/并发需明确取舍 | 简化输入下组合分歧不是所有角色生产缺工具；实际往返减少未测 |
+| Q01 | 完整已解析事实/未引用事实可审；预期集合与显式记录对照 | 沿对象到请求/正文定位首次遗漏，结合Q03/Q05决定最小交接 | 已送达不等于使用，来源命中不等于判断/行动覆盖 |
+| Q02 | dimension、合并环境范围、公式缓存/缺值及错误读取缺陷已修 | 保持已修项关闭；新格式问题须有复现再纳入 | 缓存新鲜度、其他格式/OCR和大表内存仍有限制，不等于须全面重写 |
+| Q03 | 保留量/单位；撤销固定电压补算；判断条件随记录传递 | 既有事实/计算/parts与assessments的最小必要分工尚未决定 | 规则选择、条件适用及专业推理正确性未验收 |
+| Q04 | Cross共同快照；同源坐标及路由副本对照已进入输入 | 同对象同条件矛盾与合理差异的处置仍须核查；按证据追版本问题 | 同源坐标不证明设备身份，也不保证专业一致 |
+| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理 | assessments/observation_links的保留、简化或替代及成本决定未完成 | 可选记录和锚点只作诊断，语义覆盖未验收 |
+| Q06 | 来源归档/定位、规则状态依据传递、Module读取及修订影响已实现 | 核查实际审查职责所需来源能否到达，不自动给所有角色加读取器 | 官方状态核验受先前403阻挡；作者声明与ID存在不是现行/适用证明 |
+| Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理 | 继续核指令冲突、候选遗漏与交付；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
+| F01 | 现有阶段职责与依赖已有记录，主要写审/Cross/Chief/Final流程保留 | 三种写作组织的明确比较与阶段保留/合并/取消/条件触发决定未完成 | 不以角色名相近删阶段；收益尚未测量 |
+| F02 | 判断优先实验有已知边界；生产已有随正文写入的可选判断记录 | 与直接写/写后审比较最小交接，不预设判断优先胜出 | 新字段不证明模型先判断，候选效果仍未验收 |
+| F03 | 历史525请求、分阶段及当前请求构造已有取证 | 补当前关键路径、已删/新增负担及最后实测口径 | 历史不可恢复项标明；当前墙钟/token/费用待代表性运行 |
+| F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+
+### 2026-10-19 — 再核计划的依赖、反证与具体交付
+
+- **范围与基线：** 用户再次要求核查计划。本轮从干净的`35cf858`出发，对照原始会话、三大项17条、已有证据审计及实际Task/Provider/提交工具；只修改指导和本状态。
+- **纠正前次依赖过度：** E4预算遗漏是已确认待修；E2是验证覆盖不足；Kernel/Join/恢复及Schema冻结疑点须按实际症状定位。不能把“还不能排除”转为所有条目的全面审计前置任务，也不能把已有机制因效果未测全部重新打开。
+- **E3实际任务反证：** chief-chapter-edit、final-chief-chapter-revision、cross-joint-runtime-review均声明open_artifact/search_text。Final初审/复审则在准备阶段内联章正文与source_context，Task/envelope声明submit_result。前次同一简化envelope回放仍有效，但不足以推断这些实际任务缺工具；下一步追所需资料是否实际可达，不追求各角色工具集相同。
+- **E5已有合同机制：** submit_result的模型Schema来自结果模型，经build_module_provider_tools同时进入模型工具定义和SubmitResultTool；模块/Chief紧凑提交另经model_validate再装配，assessments也有模型生成Schema及normalize_assessments。空reporting_tool_input不能被直接解释为没有运行时校验；尚未核清的冻结/传输/恢复版本边界仅按差异展开，不预设新框架。
+- **恢复原流程比较任务：** 原会话明确提出一位主笔、专题分析并行＋主笔、章节并行＋共享事实/判断三种候选。F01/F02须交付新增信息、重复推导、串行依赖、返工和责任承接比较；无需先实现三套流程，缺模型不阻碍静态职责分析。
+- **进度归类与下一步：** 将唯一17项表移到当前区，明确已修机制、待设计决定、未修缺口与外部效果。已实施读取/非自动返工/紧凑交接/稳定前缀保留；判断与行动元数据待必要性和净负担决定，预算遗漏待修。下一自动动作按上文执行。
+- **本轮验证：** 源码及YAML静态追踪，未新增测试、未调用Provider、未生成完整报告；检查两文档链接、表格、17项覆盖、初版表不变及diff后提交原PR，保持未合并。没有将新的检查方向报告为已修复。
+
+### 2026-10-19 — 原计划根因与分层重新核查
+
+- **本轮范围：** 用户要求重新核查计划；按`6e25dda`核对原17项、应用/Binding、Compiler/Kernel/Executor/Host、通用会话与Provider边界、Reporting五条组合及中立能力。当前分支工作区开始为干净；本轮只修改原指导和本状态，不新增生产实现、测试文件或另一份进度账本。
+- **已纠正的默认归因：** Capability目录内的改动不等于领域根因；共同Compiler/Host成功也不等于通用Provider/AgentLoop已被验证。中立parameter-adjustment确有Agent动作，但适配器固定返回10并忽略Provider services，因此历史中立验收不用于证明模型上下文/工具循环正确。
+- **当前共同机制证据：** 同一个无客户数据的envelope及一个reference直接经过五个现有组合函数，均具有readable ref，Module暴露open_artifact，而Chief/Cross/Final/Aggregate不暴露；这是策略分歧的证据，不是四个生产角色各自必然不可读的结论。先明确Task工具范围和工件读取器的授权/组合合同，再决定最小修复，不能把Module局部补丁当作统一机制完成。
+- **新增确认的预算缺口：** AgentLoop的预算裁剪没有纳入tool_definitions，且消息token采用固定字符系数；尚未证明该缺口导致历史超窗/遗漏。原计划需把完整请求预算置于继续增加领域元数据之前。Compiler冻结的空reporting_tool_input与运行时反射/替换Schema之间也须追到实际调用，不推定Compiler已有语义错误。
+- **实施取舍：** 保留已定位的Excel/固定电压等领域修复与已接线代码；assessments、observation_links、候选检索回退仍需评估必要性、最小性和净负担。它们暴露定位信息，不能保证正确判断，不能作为排除核心问题的证据；本轮不盲目删除或迁目录。
+- **计划交付：** [原指导](PR6_REPORTING_IMPROVEMENT_GUIDE.md)新增E1–E8源码证据、17项逐一分层复核、修订顺序与验收要求；927aef5初版表保留历史，旧实施顺序明确标为被替代。先工具/Schema权威与预算/恢复，再评估领域协议，再决定专业流程，最终一次代表性效果验收。
+- **验证边界：** 静态调用链及一次现有组合函数协议回放（Provider请求0）支持本轮结论，不证明全平台正确或模型质量。本轮不运行新测试/全量回归；检查文档内部链接、17项覆盖、历史基线和diff，并提交到现有PR #6，保持未合并。E3–E5在本轮是核查发现/待实施任务，没有写成已修。
+
+### 2026-10-18 — 设备/环境续核与全部来源处置
+
+- 前一组已推送 `6d35f36`，未合并。继续核对剩余设备、环境及S4-6详细记录，[设备/环境复核](../research/decisions/REPORTING_PR6_DEVICE_ENVIRONMENT_REVIEW.md)列出47条详细建议逐项处置及12组具体成稿问题。三条噪声/震动NG未进正文处置、三相温差异常只进图注、消防设施NG未单列行动；补充真实对象编辑稿。不同子区域的防鼠板、夹层门窗与杂物记录不能被主房间OK抵消。
+- **纠正本轮前序分析：** E-0287详细记录确有“管理体系与风险管控机制未建立”的原评语，不能因E-0261只写未见细致就说旧报告完全无来源。保留来源归属，不扩大证明无资质、无人监护等推断；管理复核与私有草稿已补正。接地“目视未见”与扁铁缺少、操作失效与保护功能、同一开关两份来源也分别处理。
+- 已实际查看上传S4-4 J1的DISPIMG判定图：三类部位使用温升、相对温差、热点温度等不同指标，不能统一15K；图片没有足够官方版本/完整前提，未将其认证为标准。原图已在上传文件，无需用户重新提供。
+- 旧2.2.1.2将SPD浪涌功能混入电压暂降/持续暂升的响应链，知识库2.2-02/2.3-03及跨KU方法已明确区分。原S4-6的风险、数值建议和结论也不自动成为本轮已验证判断；共用完整事实包补充归属/条件说明，沿既有作者及审查链消费，无新增调用或门禁。
+- 全部316条归档Excel事实均建立私有来源处置索引：25收资、56房间状态、125总配/低配记录、27热记录及83汇总/详细记录；其中有跨模块重复路由，不称316台设备。14条旧Skill不算现场事实。深读结论对应已列案例，索引存在不等于全篇语义已合格。
+- 在真实316条上调用当前事实包渲染，五模块31/97/16/126/46条的ID、对象、事实及坐标完整保留，新来源边界均进入输出；14份Skill/15知识文档再次加载、38单元主题匹配保持，质量参考5份4,983字符。三表原字节与316数量不变。Ruff/diff通过，无新增测试、Provider或报告运行。
+- 最新项目副本 `attachments/.../reviewed-project-20261018-complete`，交付包 `PR6-完整修订资料与核对稿-20261018.zip`补入设备环境编辑稿、316来源处置索引、原始红外参考图及事实包核验。此前包保留，原项目和冻结Run不变。官方标准和实际模型质量/耗时仍未验收；本记录随下一提交推送原PR #6。
+
+### 2026-10-18 — 专业规则全范围修订与收资/房间行动闭环
+
+- 沿原S/Q/F清单继续，不要求补模型配置、不重跑完整报告、不新增模拟测试。[全部知识复核](../research/decisions/REPORTING_PR6_KNOWLEDGE_REVIEW.md)覆盖15份文件：14份修订、客户问答边界保留；专业库实际38个KU，总览误写42（2.2的8→7、2.4的17→14）。补完剩余30单元的具体判断/风险/建议边界，撤销无记录即正常、Form等级等同抗电弧、断电自动解锁、退市即不安全、通用周期/阈值/期限等无条件断言；未替换成新的未经核实数值。
+- 术语修订保留原状态及否定问句极性，不猜单位/物理量、不把“见附件”算已证实；附录改正噪声→照明、应急灯→演练、IP与接地只查接地三处索引。全部38个标准候选入口逐项列出，官方原文/现行性/适用条件仍未认证。
+- [收资与管理语义复核](../research/decisions/REPORTING_PR6_MANAGEMENT_SEMANTIC_REVIEW.md)核对25条收资、7房间×9类=63位置（56条明确状态、7个反斜杠占位符）。更正收资G/H实际为具备情况/有效性NG、备注空，不能统一解释成未收到或现场不存在。旧正文A-01把安全用具5间和操作工具6间合并成5间，漏掉独有对象；补充编辑稿分别列清两集合及7间台账缺口。原29%/14%算术对应房间，不能扩展单件工具检验合格率。
+- 旧成稿将“未见细致SOP/EOP”“维护计划待完善”“目前没有”升级为全面无制度/无计划/无生命周期管理，另把SPD未投用升级为需更换并安排采购前置；已在具体章节和行动修订稿落实更正。保留“人员不足”等确有独立来源的评语，未一概抹去真实问题。作者/运维审查方法及Chief生产定义/分发镜像同步对象合并与不确定性要求，未新增阶段或判断Agent。
+- **真实加载发现并修正材料主题匹配缺口：** 初版只有2/6/3/9/7个对应KU内联，部分报告小节无候选；现在材料增加逐项对应的检索主题，原KU身份/来源/候选标准保留。最终5/7/3/14/9全部38单元进入对应模块，当前37小节均有候选；来源数2/2/2/3/3，最大正文13,155字符。质量参考初版2份，补回准确主题标题后为5份、4,835字符。未改检索算法/预算，候选匹配不等于适用或专业正确。
+- 准备脚本修正最后KU与附录的边界，确认附录B颜色定义未被全局改写；14份角色方法9,426字符，三表仍25/208/83=316条。35个原Inputs/Knowledge业务文件与上传ZIP逐字节一致，4个macOS元数据文件不列入比较。实际准备、生产loader、mapper、定义加载、Ruff和diff检查通过；未调用Provider、未新增测试。
+- 新交付目录 `attachments/.../reviewed-project-20261018-linked`；ZIP `PR6-修订参考包-20261018.zip`包含Inputs/Knowledge、原版lineage及两份定向编辑稿/加载证据，不含旧Work/Run/配置。文件修订不是新模型成稿改善证明。S/Q/F仍未整体关闭；本条随本次提交推送原PR #6，不合并。
+
+### 2026-10-17 — 回到原计划：真实对象、方法修订与阶段职责
+
+- **重新核对结论：此前进展偏重读取、缓存、提交及局部测试，不能算三大项完成。** S01–S06已有多项代码行为修复，实际收益未测；Q01–Q07此前送达完整但正文/判断/行动未闭合；F01–F04此前主要是设计与合成对照。此次不新增合成测试、不重复全量回归、不把整份报告重跑作为前提。
+- [36对象人工语义复核](../research/decisions/REPORTING_PR6_OBJECT_SEMANTIC_REVIEW.md)逐项对照原表、旧成稿和3.2行动。更正前次概括：11.3A在2.3.2及A-02/A-07已有处理，问题是2.4.3.1整体OK的矛盾及原因/验收依据越界；4条SPD NG只有2条有未投用文字解释，另2条要明确核查，不能全部当成已确认未投用。热观测11已写/2遗漏，已有11点的统一正常判定也未获适用规则支持；2.3%<3%的比较纠正与标准适用性分开。
+- **实际材料修订：** [14份方法](../../manyselves/templates/reporting/reviewed-role-skills/README.md)全部人工重写；7份报告写作规则撤销强制推断、固定字数/配额/期限、空值推定不存在、状态组合生成因果和额外LLM自检。2份专业文件修订8个知识单元与术语定义，撤销已知内部冲突及无条件操作建议，未用新的未经核实阈值替换。其余专业条款尚未完成审查。
+- [准备命令](../../scripts/maintenance/prepare_reporting_references.py)已在上传原件上执行，生成仓库外独立项目副本；原始Skill/source及改动前Knowledge保存在review-lineage，不进新知识索引，不复制旧Work/Run。新source明确人工修订，不挪用旧hash或假称重新蒸馏。另提供包含14份Skill、9份Knowledge及真实对象定向修订稿的ZIP；没有覆盖用户本地项目或旧报告。
+- **F01/F02处置：** 判断与对象核查在现有作者任务内完成，不增加常驻判断Agent。Cross只交关系及必要接口，硬依赖必须说明依据；Chief汇总一次且保留全部异常/未知对象；Final检查成稿传递，不按知识规则追加全文自检。三个生产角色及两份现有分发镜像已同步职责。保留当前独立审查阶段，尚无证据可直接删除；未改Workflow拓扑。
+- **真实文件核验：** 生产loader加载14份，正文18,459→9,138字符；15份Knowledge建立新来源，模块来源数2/2/2/3/3，质量来源5→4。最大模块正文11,971字符、质量正文13,971字符；2.1实际收到负荷率修订、2.2实际收到温升冲突撤销。来源选择变化不等于召回提高，字符减少不换算token/提速。三表25/208/83条，原Excel字节不变；当前18条负荷率正文已改归属，其余298条与旧归档一致。
+- 无Provider调用、无新报告运行、无新增测试；执行实际准备/加载/映射，Ruff、定义加载及diff检查。首次加载发现新boundary说明短于既有80字符合同，补足后已重建并成功加载。附件产物位于 `attachments/.../reviewed-project-final`、`PR6-修订参考包.zip`、`旧报告定向修订草稿.md`，不公开复制原客户输入。
+- **仍未验收：** 官方标准现行性及条款适用、其余专业知识、模型是否遵循修订方法、真实误报/返工、费用与端到端耗时。S/Q/F三大项都不因此关闭；不能把人工编辑稿当作新模型成稿改善证据。提交见本条所在Git提交。
+
+### PR #6 / Q03–Q06、F04 — 跨Run判断依赖与知识变更
+
+- 核对现有`prepare_report_revision`确认新增判断记录、最终链接及规则原文引用会随业务快照迁移；现有递归重定位把工件引用移至新Run，完整旧来源字节随sources归档保留，不将旧依据偷偷替换成新知识内容。
+- 修复另一处实际消费缺口：原修订影响分析仅扫描正文/Claims，尚不识别新判断记录所使用的规则和状态依据。现在显式观测及规则/状态ID也进入依赖；项目Knowledge修改/删除时，按已注册来源的规范化路径（含条款定位符）定位受影响小节，交回既有auto/confirm修订流程。只是影响建议，不自动认证新规则或增加确认流程；没有依赖绑定的其他小节不机械追加。
+- 既有跨Run修订/影响分析检查通过，Ruff/diff通过，无新增测试文件。私有跨Run协议验证确认：原文引用已重定位、旧依据字节保持、没有用户小节提示时仍能从规则依赖定位一节、未关联小节不加入，unverified状态不被升级。没有Provider调用或完整报告重跑。
+- 本轮实际交付共六个聚焦提交：判断交接、稳定缓存前缀、同源观测/最终行动、通用知识召回、规则原文读取、知识变更的修订依赖。已重新核对原三大项/17项的实施与未验收边界；人工样例修订不再充当通用实现进度，未将上述协议结果当作专业成稿成功。
+
+### PR #6 / Q03、Q06、S06 — 审查实际可读的规则原文
+
+- 判断记录增加运行时生成的`rule_source_refs`，从当前来源账本关联规则全文及状态依据，不接受作者自行指定工件路径；未取得原文的来源ID独立显示。正文/规则/状态本身仍是待审查内容，不因ID或可读性而自动认证。
+- 模块初审、复审、Cross触发的局部审查、作者回改、Cross和Chief的工件合同均携带相应引用。复审保留修改前后两侧来源，避免作者移除规则后旧finding失去核对依据。完整原文使用现有工件分页读取，不重复内联进全部输入。
+- 实际读取核查暴露另一个接线缺陷：ModuleProvider先按Task业务工具列表过滤，令已有显式来源能力的generic reader也被删除。现按显式工件能力保留open_artifact/search_text/open_tool_result，业务工具继续按Task限制，未声明工具仍沿用原ConfigurationError。没有扩展任意工作区读取权限；实际工具schema可能因必要读取器增加，成本需实测。
+- 既有修订、审查delta、来源绑定、Cross和ModuleProvider/工件边界检查通过，Ruff/diff通过，无新增测试文件。私有原始资料回放验证实际ModuleProvider工具组合有读取器、引用留在声明范围、分页取得完整原文；不验证该资料条款正确性。捕获脚本先后修正嵌套目录定位、服务构造参数，实际读取器缺失则通过上述生产修复解决。
+- 本轮聚焦提交：`eefb5e1`判断交接、`f7bdb7e`缓存前缀、`14e220b`跨章与最终行动、`88b69b6`通用召回；本条规则读取接线见所在提交。PR #6保持未合并。原17项仍以生产实现、历史缺陷诊断、真实模型/费用验收分别记录；不宣称整份报告已统一成功。
+
+### PR #6 / Q06–Q07 — 通用候选召回，不依赖样例主题别名
+
+- 原整标题/编号精确匹配为空时增加语言层词片段回退：中文连续片段、完整拉丁词，按不同来源中的稀缺性及长度排序，重复文字不提高分数；不把THDi/THDu、温度/温升等当同义量，也没有项目别名、数值或设备清单。自动准备与交互ReferenceLibrary.search复用同一实现，精确命中路径优先。
+- 只从明确的来源名称判断写作方法资料；混合专业资料不因正文提到报告要求、又没命中完整分类标题就提前排除。模块上下文包含全部冻结来源的可打开locator目录；未自动选中或仍无匹配不表示无适用规则。展开仍保留完整原文/完整章节及条件，过大来源继续使用明确的完整原文定位。
+- 未修订的原始15份Knowledge在私有副本通过实际loader加载：五模块来源2/2/2/3/3→3/2/2/3/3，无匹配小节由3/0/0/5/2→0/0/0/1/0；最大正文13,970字符，目录与完整原文均可读。交互检索对原来整标题无匹配的查询获得候选。此为召回行为证据，不是专业相关性、标准正确性或模型效果验收，仍保留一节无匹配。
+- 既有知识完整性/研究所有权检查通过，Ruff/diff通过，无新增测试文件、无Provider调用。新判断交接和来源目录增加部分输入/输出；尚未测净成本，不能用此前删字段或字符变化宣称本轮整体提速。
+- 后续核对判断所用规则的完整来源能否被实际审查工具读取，继续用现有来源账本/工件引用接线；官方状态和模型专业效果仍留待其真实前提具备。
+
+### PR #6 / Q04–Q05、F01–F02 — 跨章同源观测与最终行动交接
+
+- 来源对齐基于原始路径、工作表、精确坐标、对象及观测时间；仅完全相同的规范化内容（除路由ID）标记为同一来源观测副本。不同坐标、同名对象不自动合并，内容不同也不自动判矛盾。Cross和Chief读取同一对照，继续按工况和规则判断。
+- Chief在原有分章提交中提供短`observation_links`，把E-ID对应到最终小节、正文和行动位置。初始装配保存；局部修订只替换改动小节的链接，其他链接保留；改正文却不更新链接时旧锚点不会被算作覆盖。第3.2节以已提交concern/undetermined记录为行动预期集合；仍未判断的原始观测继续在模块遗漏列表显示。
+- **生产入口更正：** 前一提交将材料接到了Chief及Final回改作者的source_context，但Final分章审查者的真实合同原来只有本章正文。此次已把判断及当前章链接投影接到`final_delivery_binding.py`的实际初审和复审入口，避免用相近文件名误认为已贯通。
+- 既有受影响检查（Cross/Chief/Final Provider、边界、aggregate入口）通过，更新一个Chief来源键断言，无新增测试文件。归档协议回放经过实际正文工具、提交、Chief装配、Final准备和局部回改：36组同源观测副本可对齐，最终链接持久化、旧锚点失效可见、其他章节链接保留。脚本首次因/tmp临时材料已不存在而停止，重新在私有临时目录准备后完成；不包含专业判断生成，不宣称真实成稿质量通过。
+- 通用Runtime文件Ruff现有两条N818命名问题位于本轮未修改的异常类（前一S05检查已报出），本轮Capability改动Ruff/diff通过。下一项继续Q06/Q07通用参考召回与适用依据消费，真实模型与官方状态核验仍暂缓。
+
+### PR #6 / S04–S05 — 动态任务状态离开缓存前缀
+
+- 复现任务board从running到completed使system正文改变；现改为稳定system及任务输入在前，运行时状态在每个逻辑请求重建后、预算核对前单独注入，真实重试沿用同一请求。不写回对话历史，不参与历史摘要，下一轮重新读取。
+- 同时修复既有预算裁剪遗漏：`current_task_state`（当前草稿）与新增`runtime_task_state`同为必保留块；超出预算时沿用原exhausted返回，不靠丢弃当前事实/草稿/board来适配。
+- 既有21项受影响检查通过。离线请求捕获确认两版board的system与稳定输入相同、动态块改变，原生Anthropic/兼容序列化符合各自缓存协议，工具配对与原trace保持，必需块超预算不被裁掉。首次捕获脚本因离线Provider未提供model元数据失败，补齐离线元数据后完成；没有真实网络模型调用。真实缓存费用与整体耗时仍未测。
+
+### PR #6 / 原计划重新核对：停止以样例材料修订代替通用实现
+
+- **偏移更正：** `38f322d`、`6d35f36`、`e55892f` 中人工编辑的14份Skill、38个KU、来源处置索引及报告稿是样例诊断/参考交付，不是Q01/Q04/Q05/Q06/Q07通用实现完成。旧“只剩标准与模型验收”的下一步表述不准确；保留材料，不继续以其数量累积实施进度。
+- **实际结构缺口：** 原ModuleSubmission仅有长正文和整段来源Claims，不能表示每项观测的判断/工况/规则/行动；审查、Cross和总编需重新从长文推导。本轮在现有write_result_part及批量写入中增加紧凑assessments，和正文、来源一次持久化；运行时从冻结事实独立列出预期范围。提交、局部修订、ModuleContentView、初审/复审、联合Cross以及Chief/Final source_context均传递同一份记录。
+- **缺口如实可见：** 未提交判断、缺少正文锚点、行动既无位置也无处置理由、规则核验未提供分别列出；旧记录/缺快照为unknown，不自动补为通过。来源ID和锚点仅证明结构定位，仍由现有审查判断事实/规则/处置是否正确，无新审批、审查Agent或质量门禁。
+- **恢复边界：** 局部改写同时替换该节判断；旧式patch改正文时清除过时判断，保留其他小节。判断单独变化进入revision diff；写入去重包含判断内容，不能因正文相同删掉不同判断的历史。没有写入客户名称、特定数值、设备清单或标准结论。
+- **本轮验证与剩余范围：** 已运行既有模块提交/修订、初审绑定、复审delta、联合Cross、Chief及Final Provider相关检查。Chief来源键预期因新增交接字段首次失败，更新既有断言后通过；没有新增测试文件。用归档事实经生产写入/submit_result持久化五模块，预期范围31/97/16/126/46全部保留；刻意不提供其余判断时279条保持未处理可见（不是旧报告缺陷计数），旧式局部patch失效清除和共享交接验证通过。Ruff/diff通过；这次协议回放没有生成专业判断、没有模型调用或完整报告重跑。Q04观测身份比较、Q05最终章行动映射、Q06/Q07通用召回/规则消费与S05动态system仍是具体实施任务，不归咎于缺Provider。
+
+### PR #6 / Q01、Q03 — 负荷率保留原表结果，不默认0.4kV补算
+
+- 后续生产检查发现S4-4两条路径都忽略E列原表结果，固定用C×0.4×1.732/D计算负荷率。合成原表使用0.69kV时，已保存11.95%的结果被重算为6.93%；E列空缺、零值或比例口径未知时也擅自得到6.93%。初始8项反例均失败，随后补充3种格式边界。
+- 当前/容量可用时优先保留E列已保存结果；明确百分比格式或带%文本才能转为百分数，带引号/转义的字面%、混合比例格式及重复%不猜换算。原公式、来源坐标、待核实的额定电压/测量侧别/口径一起交给作者；不从计算结果自动得出过载结论。缺原表结果或比例口径不明时保留电流、容量、原数值及定位缺口，不用固定电压补算。
+- 43项定向测试通过（新增负荷率11、intake16、事实包9、准备流程5、快照2），Ruff/diff通过。上传S4-4仍208条：9个负荷率观测路由成18条证据，全部数值匹配E列已保存百分比，其正文增加原表归属/公式/条件且needs_confirmation为真；其余190条事实不变，原有缺口和源文件字节不变。三表总数仍316，不再把这18条改写后的事实正文称为与旧归档逐字相同。
+- 原表公式本身的0.4kV假设尚未获侧别/额定电压证据确认，本轮不会把“忠实读取公式缓存”当作“公式工程依据正确”。没有Excel重算、Provider请求或完整报告生成；缓存过期与公式是否适用仍需核实。
+
+### PR #6 / Q02 — 收资与汇总表公式缓存读取
+
+- 生产准备入口反例复现：S2-1将公式表达式当作具备/有效性值；S4-6分类编号由公式计算时直接漏掉有缓存结果的汇总行。未缓存公式与计算错误也未进入缺口。新增9个用例覆盖两表、三类dimension、文字/零/布尔结果、不可用分类、缺备注及图片公式；先确认失败后修复（图片用例先补齐真实OOXML图片关系，再确认分类公式漏行）。
+- 两个映射器共用Capability内的缓存读取上下文：普通模式读取原单元格及已保存结果，原始文件不重算不写回；缺缓存/错误作为定位缺口，不能当结论。DISPIMG仍交既有图片绑定处理。S2-1未知分类不再沿用上一类别，备注等已知读取缺口保留needs_confirmation；S4-6依旧是需复核的既有评估。
+- 47项定向测试通过（新公式9、intake16及受影响准备/持久化/所有权22），Ruff/diff通过。上传三表再次映射25/208/83条，共316条全部与旧归档匹配，已有缺口不变、原文件字节不变。修复的是支持公式输入的生产路径；不据此声称上传样本此前有公式漏行。
+- 剩余限制：仅使用文件已保存缓存，不能判断缓存是否过期或执行Excel重算；第二份普通模式工作簿增加内存，大工作簿未基准测量。图片内容/OCR与其余格式完整性仍未验收。没有Provider请求或完整报告重跑。
+
+### PR #6 / Q01、Q03、Q06、Q07、S01 — 上传原始材料核查
+
+- [原始Skill与知识库审计](../research/decisions/REPORTING_PR6_UPLOADED_SOURCE_AUDIT.md)记录14份Skill逐份问题、定位及处置，包含3份Excel、15份Knowledge的目录与消费路径。14份共18,459字符，包内已有校验15/15匹配；原模板DOCX未提供，不能反查蒸馏忠实性。
+- 当前映射器读取25/208/83条事实，共316条，按对象、坐标、模块和事实正文全部匹配旧归档；旧归档额外14条来自SKILL.md。剩余电流14、测温13、SPD9（NG4）复现，原有缺口仍报告；本轮不重跑完整报告。
+- 原Skill中固定期限/双基准/数量配额、去事实化与当前事实混淆已逐份定位；Knowledge的80%过载、温升判级内部冲突确认进入实际模块参考。共用消费边界具体说明未知、计算条件、阈值来源与操作示例适用性；分发版蒸馏正文与Capability同步。保留原输入，没有自动过滤、改写标准或新增门禁。
+- 33项定向测试通过；真实上传包的14份正文完整保留，知识来源数量不变，五模块与质量包均在14,000字符目标内，共用说明增加267字符/包。规则说明的模型遵循、标准语义和实际费用仍未验收。附件原件与探针保存在仓库外，PR只提交代码及审计摘要。
+
+### PR #6 / Q01、Q05、Q06、S06 — 正文来源绑定与专业判断分开
+
+- [规则核查与语义更正](../research/decisions/REPORTING_PR6_RULES_AND_BINDINGS.md)纠正前次S06推论：实际作者已用紧凑ModuleSubmissionInput提交；内部整段Claims由Runtime生成，不是作者逐项重复输出。新记录标记runtime_part_binding，审计投影不再把来源解析置信度显示成专业判断概率，旧记录不猜测来源。
+- 初审/复审的完整证据包增加当前小节的精确E-ID绑定映射，保留未引用事实及旧finding需要的已移除来源。空列表与旧输入未计算分开；有绑定不等于已有判断/行动，缺绑定不自动产生阻断。提示、序列化及恢复贯通，没有新增专业门禁、模型轮次或裁剪正文。
+- 核查8份仓库自带方法，修正2.1和2.4配置中缺工况/依据的100%绝对断言及80%统一提示线。原14份真实蒸馏Skill尚未找到，不以8份分发方法或测试夹具代替验收。官方来源请求403；网络草稿保存尚未应用。
+- 验证：先复现4项失败，再完成来源/绑定、完整准备输入、初审/复审、公开runtime、联合Cross与恢复测试；受影响组86 passed，新增准备输入集成1 passed，合同所有权6 passed，共93个不同用例。保留1个既有测试夹具Pydantic序列化警告。无Provider调用，无完整报告重跑；整体专业质量及成本收益仍未验收。
+
+### PR #6 / S06 — 成功写入无需固定再列举
+
+- 单条及批量写入成功回执改为continue_task：依据回执和当前任务状态继续剩余正文或完成合同后提交；只在状态/剩余要求不明时调用list_result_parts。错误回执及其恢复要求保持原语义，未删工具、未提高并行4、未删Claims或拆2.4。
+- 52项定向测试通过（Chief修订反馈、模块runtime、任务投影及请求成本），覆盖直接使用已保存正文提交、校验反馈不重写已保存正文和恢复。变更的是工具引导，不能据此声称模型必然减少一次请求；完全冗余写入已在S04投影中移除。
+- 本轮前序提交：全清单证据 `2ae6f4a`、摘要/缓存 `667f871`、质量回放与判断边界 `01f531c`；此前Q02 `c44c390`、S02/S03 `a858f16`。未合并PR，未创建新完整报告。
+
+### PR #6 / Q01、Q03–Q07、F01/F02 — 对象覆盖回放与判断原型边界
+
+- [质量回放与处置](../research/decisions/REPORTING_PR6_QUALITY_REPLAY.md)及[汇总JSON](../research/decisions/reporting_quality_replay.json)已记录36项对象观测：当前送达14/13/9，旧正文来源别名命中9/11/0（后者不是语义覆盖率）。确认E-0071及两处SPD虽在图证中，正文判断与行动仍未吸收；生产事实包和审计提示已针对该区别补充要求，当前成稿质量尚未重新生成验证。
+- 判断优先实验ledger v2保留候选规则、明确缺观测/缺工况/未选规则/无适用规则/废止/不适用/缺量/单位与物理量冲突；缺环境温度不再丢弃温升规则上下文。29项定向测试通过，含10项新回放和边界反例；typed离线预演通过，无模型调用。实验不升级生产，历史结果不改写。
+- Q06已在共用Skill边界明确官方状态来源、核验日期和历史/当前适用区别；未完成所有规则及标准语义验收。Q07当前云端实际配置文件不存在、无active Provider及route，环境也未配置模型secret；不能从inherit推断运行模型。F01/F02保留既有责任分工，待语义质量证据再决定阶段变更。
+- 后续继续S06成功写入后的重复列举提示检查；真实质量/缓存/费用测量仍未进行，当前无模型配置只阻碍真实测量，不阻碍离线审查和修复。
+
+### PR #6 / S04、S05 — 先去重再摘要，稳定输入与动态草稿分开
+
+- 已复现：34,500字符的成功写入与当前草稿完全一致，旧顺序仍调用一次摘要；改为Capability先从原始历史精确投影，再由通用重建器复用/压缩投影后的历史。草稿变化导致旧写入重新相关时，从完整trace重新构造，不能永久删除它；重复请求复用已有摘要。原始trace不改，失败/混合工具/推理/错误来源绑定仍保留。
+- Reporting请求现在为system→任务输入→当前草稿→历史。任务输入单独标记cache_control，原生Anthropic合并相邻user消息时保留块边界；兼容端点仍发送无缓存标记的纯文本。输入每轮重新渲染，变更或恢复不会沿用旧事实。总缓存标记为system 1、任务输入1；system/task board变化仍可导致前缀失效，不能据此推断命中率或MiMo费用收益。
+- 新反例先失败后通过；95项定向测试通过（请求成本3、任务上下文9、通用投影7及受影响compaction/provider/Chief恢复/输入所有权测试）。Ruff、diff检查及全清单脚本当前代码探针通过；此前静态取证JSON保留为首轮快照，不改写历史结论。无真实Provider调用、无完整报告重跑；阈值36K/0.6未改。
+- 未验证：大事实包真实缓存命中和端到端费用；历史投影资格变化时可能需要重新摘要，这是保留恢复语义的代价。S04/S05的请求构造已验证，整体收益仍未验收。
+
+### PR #6 / 全清单首轮取证（F03/F04）
+
+- [静态证据报告](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)逐项覆盖S01–S06、Q01–Q07、F01–F04，列明生产路径、历史证据、已修/未修及实施依赖；[可复跑脚本](../../scripts/benchmarks/reporting_scope_audit.py)与[汇总JSON](../research/decisions/reporting_pr6_evidence_audit.json)纳入仓库，无原始项目正文导出。
+- S04的重要更正：当前TaskContextRebuilder先压缩system+历史，再放入精确任务状态。295,000字符事实包及两版草稿均完整，历史压缩器每次仅接收29字符。旧120次摘要不能直接归咎于当前事实包；继续关注历史写入去重发生在压缩之后。S05探针仍为system缓存标记1、message标记0；动态草稿主要在user capsule，task board是否变化另论。
+- F03/Q03重算时区分原记录评分与当前评分器。untyped原记录零错误均为0，重算三路4/4、3/4、4/4；typed为2/4、4/4、4/4。窄温升混淆计数untyped为4/4、4/4、1/4，typed为1/4、1/4、0/4；不能再沿用“24次全错”。评分器也不能覆盖自由正文全部语义。判断优先的缺规则误解释仍未解决。
+- S06已核实实际Task工具数：2.4初写16、模块初审/复审各11。Q01已有316条事实的归档送达回放，不等于成稿覆盖；Q05对象覆盖、Q06标准有效状态、Q07规则/选模仍待处理。全清单有取证记录，不表示各项实现或整体效果已完成。
+- 首组已推送：Q02 `c44c390`、S02/S03 `a858f16`。本轮77项受影响测试加1项非空关系工作流测试通过；脚本离线复跑、Ruff和文档链接检查通过。Provider调用0、完整报告重跑0；下一组按上面的Next automatic action接续。
+
+### PR #6 / S02、S03 — 精简审查综合材料并明确直接提交
+
+- S02 将 CrossSynthesisInput 从 15 个必填字段收敛为 10 个：root_causes/propagation_steps 合入 causal_chain，action_dependencies/joint_actions 合入 decision_implication，acceptance_criteria 合入 verification_method；保留关系 ID、模块与正文定位、证据、目标章节、置信与适用边界。没有取消必要接口缺陷的作者修订，也没有增加写作 Agent；最终叙事仍由 Chief 展开，Final 核对语义保留。
+- 同步 Pydantic 合同、实际 submit_result Schema、Cross/Chief/Final 提示。既有已保存的 15 字段材料在加载时把明细逐字保留到相应紧凑字段，不重写原工件；再次序列化/恢复不重复追加。新模型输出不再要求五组重复列表；不设置会截断条件/来源的字符上限。
+- S03 依据已有 13 次合成请求中 8,092 字符正文与 7,940 字符紧凑 JSON 提交参数，要求模块审计、联合 Cross、Final 完成必要核查后直接 submit_result，避免先输出完整审查报告再重复提交。没有删除内部推理或必要查证；提示改动本身尚不能证明实际模型会减少多少输出。
+- 先以紧凑材料无法通过旧合同复现失败；新用例覆盖 Chief/Final 消费、旧记录无损恢复和真实 Provider Schema。受影响组 **77 passed**；另新增非空紧凑关系的真实联合 Cross Workflow/完成记录恢复用例 **1 passed**（其余8例未重跑，前一组已覆盖）。Ruff 通过，无 Provider 调用。S02 合同与消费链离线闭合、S03 指导接入；新输出量、专业内容质量和整份报告收益仍未实测。
+
+### PR #6 / Q02 — 不可信 Excel 尺寸声明导致整表丢失
+
+- 在通用 intake 和 S4-4 路径加入缺失、过小、过大 dimension 的六个合成用例；修改前确认通用路径把文件整体标成 file_parse_failed。根因是公式视图普通模式与缓存值只读模式的行/列边界不一致，strict zip 抛错，错误尺寸还可能限制读取范围。
+- 两个缓存视图改为普通模式，从实际单元格获得边界并支持 S4-4 已有按坐标读取；保持公式缓存值、合并范围与定位。新增用例验证正常缓存 35、缺缓存 G4、错误缓存 G5 均正确保留。代价是缓存视图也驻留内存；未据小样本宣称大型工作簿性能改善。
+- intake fidelity 全文件 **16 passed**；随后与审查/合同/上下文等受影响文件合计 **77 passed**。Q02 的尺寸声明缺陷离线验证完成，不等于所有格式解析、公式计算或 Q01–Q07 已完成。S02–S06 与全清单取证仍继续。
+
+### 2026-10-15 — PR #6 总范围与实施指导
+
+- 用户确认沿完整清单推进，先提交清单作为 PR 指导。[PR6_REPORTING_IMPROVEMENT_GUIDE.md](PR6_REPORTING_IMPROVEMENT_GUIDE.md) 固定三大项、17 个编号条目、依赖顺序、交付物和验收边界；本文件继续作为唯一动态状态入口。
+- **S01–S06 速度与成本：未完成。** `927aef5` 仅完成 S01 的模块可选建议处理；S02/S03 综合写作与重复提交尚待完整核查，S04–S06 摘要、缓存和作者调用组织尚未形成经验证的改动。
+- **Q01–Q07 质量：未完成。** 完整事实包、温度类型与 Skill 边界已有局部修复；对象覆盖、数值/规则适用性、跨章一致、标准版本和正文语义仍需按旧样本逐项验证。Q02 表格读取维度缺陷尚未修复。
+- **F01–F04 流程与评估：未完成。** 保留现有历史成本和缺陷证据，建立与当前实现的映射，再决定角色职责及阶段调整；没有要求用户重新生成整份报告作为分析前置条件。
+- 本次仅提交指导及状态文档，核查相对链接、清单编号和 diff whitespace；未运行业务测试或 Provider，不增加性能/质量已验收的主张。
+
+### 2026-10-15 — 模块审计建议留档，减少自动返工
+
+- 继续使用 PR #6（未合并）的实现与已归档运行证据；本切片不要求重新生成完整报告。历史 full-report-8c70828443b9499d80f8a6bda41c670c 共 525 请求；按 task id 归属的 Cross 审查/作者返工/本地复审链共 174 请求、294,137 output tokens（总请求 33.1%、总输出 42.4%）。这不是可全部省掉的负担，不能把并行 provider-active 时间相加当墙钟耗时，也没有逐 finding 数据支持误报率或实际节省量。
+- Characterization 先复现模块 advisory 仍进入 revise。新模块审计及 Cross 触发的本地审计采用现有 review protocol v3：全部 findings 原样不可变保存；只有 blocking 进入作者修订与同一审计员 verdict。advisory-only 直接完成，混合意见只修阻断项，复审新增建议也不创建下一轮返工。提示及 Schema 同步明确：事实、风险、引用支撑和任务必需内容缺陷仍属 blocking，纯措辞偏好/可选增强不应升级为阻断项。
+- 完成记录复用 deferred_advisory_ids，区分“建议未采纳”与“已由 reviewer 解决”；复审完成时从完整 finding_refs 重建建议列表，不另建状态副本。作者修订、机器预检纠正、序列化恢复保持协议版本与原始引用。已有持久化 v1/v2 审计按其待办继续处理，不静默丢弃建议或改写旧完成记录。完成记录原校验扩展到 module v3，仍拒绝延后 blocking、漏记建议、resolved/deferred 重叠及旧协议伪造延后记录。
+- 联合 Cross 的初审及复审输入传递当前模块完成记录引用，供按需查阅可选建议；不将全部建议正文重复内联，也不自动转成 Cross 必改项。真实声明式 Workflow 的新增 local_advice 场景通过：Cross 初审 → 作者修订 → 本地审计仅建议 → Cross 复审，共 4 次模拟 Agent 调用，模块只修订一次。未新增模型调用、编排框架、Kernel 领域分支或额外门禁；未调整 Final 审计策略。
+- 验证：12 个新增定向用例覆盖无意见/仅建议/仅阻断/混合意见、初审与复审恢复、v2/v3 修订及新发现路由、完成记录拒绝错误关闭；联合 Cross、local lifecycle、completion、revision、delta、reviewer recovery、module/public runtime 共 99 个受影响测试分批通过（其余九文件 75 passed，public runtime 24 passed）。首次受影响批次暴露 3 个旧语义断言，更新预期并保留不可变记录断言后重跑 public runtime 全文件通过。Ruff 与 diff whitespace 通过。仅离线合成材料，0 Provider 请求，未跑全量回归；未用本切片声称完整报告耗时/token/质量收益已验收。
+
+### 2026-10-15 — 问题与目标验收表（当前维护未完成）
+
+- 用户要求本会话全部本地记录上传云端，并明确要求不加密。已归档为 `docs/research/session-records/2026-10-10_to_2026-10-15/` 明文目录：99 份根记录及实验工作目录共 2,571 文件，含客户报告摘录与原始结果；261 个凭据/配置、签名密钥、编译缓存和进程锁排除，完整排除清单及内容核验见 MANIFEST.json。业务代码与归档均沿用 PR #6；归档并不改变各项尚未完成的质量/性能验收结论。
+
+| 用户问题 / 完成目标 | 已接入生产的改动与证据 | 仍未满足的验收条件 |
+| --- | --- | --- |
+| 初始化读丢资料，不能以“解析成功”代替完整性 | DOCX 表格、Excel 缺公式值、PDF 空页、合并单元格边界已修；本轮保留 DOCX 段落/表格原顺序，并让知识库复用该解析器 | OCR、图中规则、嵌套表格/文本框、其余专用映射器公式与旧缓存尚未全覆盖 |
+| 能看到却写错，混淆物理量 | 红外观测区分 measured_temperature / ambient_temperature / temperature_rise，代码计算一次温升，保留单元格和缺失原因；两个路由拿到相同量值 | 结构正确不能保证自由正文正确；其他指标及专业规则适用性仍需覆盖 |
+| 不愿意查，没读到开始编 | 全范围事实包；长 Markdown 标准自动带入完整相关章节、祖先导语、范围/定义/例外和显式条号引用；未展开/未解析引用明确标记 | 词项召回与显式关联不保证语义召回；无结构长文、超窗口分片、图像依据仍待解决 |
+| 两处同样资料结论不同 | 同一冻结输入与同一计算值；联合 Cross 检查同一合并快照 | 尚无生产级跨章节共享专业判断账本；同一 ID 也不能防止文字曲解或共同错误 |
+| 作者与审计共同遵循错误 Skill | 四条消费路径统一 method_only 边界；任务合同控制范围，审计不能以作者 Skill 为事实依据；整包一次读取冻结清单；蒸馏提示要求类型/适用条件/依据定位 | 旧 14 份 Skill 只完成问题定位与消费边界修正，未逐规则修订或证明语义合格；新标签为生成要求，非语义正确性保证 |
+| 审计效果不明显，耗时反增 | 已修复反馈闭环与误分建议；40 次合成 API 调用比较单写、写后审、先判断再写 | 判断优先原型仍把“缺环境值”写成“缺规则”；必须修正后通过真实生产链对照，不能宣布胜出或直接删除审计 |
+| 累计 token 大、反复读取 | 当前事实与正文重建；本轮只从请求投影中去除与当前草稿完全相同的成功写入工具对，完整历史不删；失败、旧版本、混合读取、推理和不同证据绑定保留 | 尚未减少压缩请求本身的重复写入；批量写入工具及过期草稿需另评估；字符节省不是 token/金额结论 |
+| 运行慢、角色编排过多 | 编译重复 Schema 消除；五路 Cross 改一次联合审查；单写/审查/判断三路真实合成对照完成 | 完整报告关键路径、输入/输出/缓存/返工总量仍未验收，尚未证明快于单主笔或 Codex+Skill |
+| 压缩、召回与中断恢复 | 权威事实/当前稿件在有损历史摘要外重建；冻结 Skill 恢复测试和写入投影重启测试通过 | 36K/0.6 不变，无证据支持最优阈值或最大压缩率；代表性长任务和阶段中断演练未完成 |
+| 引用真实、版本与适用条件正确 | 完整来源 ID/文件/原文行可定位，DOCX 限定为已提取内容；条款上下文进入请求 | R ID 有效不等于原文支持结论；现行标准验证、条件匹配、引用蕴含和成稿逐项检查未完成 |
+
+### 2026-10-15 — Skill 消费边界与真实写作组织对照
+
+- 作者、模块审计、Chief/Final 使用同一 Skill 包装：Skill 是方法资料，不能替代任务合同、现场证据或标准原文。示例不是强制工程规则，缺依据的分级、寿命预测和第四章要求不能升级为必填结论。审计须独立核实证据与适用规则。作者整包加载与审计回退读取均解析现有 Run input snapshot；真实冻结后修改 live Inputs 的测试仍读旧版，未增加快照协议/Hash/Gate。
+- 蒸馏角色与 Task 明确要求方法/示例、适用条件、建议/合同要求、来源定位；模板章节以已有程序解析结构为准。没有重写用户现有 14 份 Skill，也没有以格式检查证明其语义正确。
+- 真实官方 Claude 合成实验：两种材料长度 × 两次重复 × 三种流程，先后两批仅增加显式 quantity 字段，总计 **40 请求，213,426 input / 51,073 output tokens，缓存 0**。均为脚本编排微基准，不是完整生产工作流、报告或电气标准验证；原始输出保留在仓库外 audit_manyselves/writing_architecture_ab{,_typed}.json。
+- 显式 quantity 批次，每路四次：单写平均 **6.591s，22,732 input / 6,121 output**；写后全文审改 **11.499s，49,900 / 11,362**；规则选择+程序比较+写作 **9.835s，34,780 / 8,526**。数值为各路四次累计 token、单次流程平均 wall time；不可把前者当成单请求大小。没有用价格折算金额。
+- 结构检查通过率依次 2/4、4/4、4/4；单写失败含观测 ID 漂移与两章挤入一个章节数组项，并不等于相同数量的错误专业结论。温度被写成“温升55”的定向检查依次 1/4、1/4、0/4。但判断优先四次都把存在的 R-004 错解释为缺少规则：选择阶段 unknown 丢掉候选规则，后续传播。**此路线尚不能按零错误方案上线**。未标 quantity 批次三路温度混淆分别 4/4、4/4、1/4，也说明事实表达和编排共同影响结果，不能全归咎于幻觉。
+
+### 2026-10-15 — 请求去重、结构取证与物理量
+
+- 生产 Provider 请求投影只省略完整、成功、与当前持久正文/证据绑定完全相同的 write_result_part 工具对；Runtime 只提供中立回调，判断在 Capability。历史与内部 working tail 均不改写，原推理、失败、混合工具对、旧草稿仍保留，重启可以重建。该优化发生在历史压缩之后，不声称减少摘要模型输入。
+- 同一合成材料、真实写入 Tool 结果和 Anthropic 序列化，关闭/开启该投影回调配对：1～4 段后的 message JSON 字符 **11,890→8,889；17,371→11,369；22,852→13,849；28,333→16,329**，四请求累计 **80,446→50,436（-37.3%）**。事实和当前稿件仍完整；仅为字符与出现次数、0 API 调用，非 token、费用或时延。外部脚本 request_projection_probe_1015.py 与 JSON 可复跑。
+- 长标准保留全文优先；超出既有 14K 可选正文目标时，结构取证选完整 Markdown 子树并带祖先导语、前言、范围/定义/版本/例外，以及能明确解析的条号依赖。引用循环和重复条号有测试；不截断整条、不把片段当全文，不保证隐含规则依赖完整。候选文档 Top-K 和词项排序仍存在，这是本地检索辅助生成而非“完全没有 RAG”，没有向量服务。
+- 知识库 DOCX 旧路径也丢表格，现复用通用解析器；通用解析器按原段落/表格顺序读取，保持原 locator 编号。只标为已提取文本，图像/文本框/嵌套表格不冒充已核验。既有冻结知识快照不会被静默改写，修复主要作用于新 Run 的解析。
+- 红外将观测与计算显式分开，Decimal 计算一次差值后两章路由复用；环境缺失保留 null/missing_ambient_temperature，不计算、不默认为零，也不声称无规则。规范化→事实包链路覆盖源单元格、零环境值、跨章一致、缺失值。本地重读原 S4-4 **208 条路由 / 172 组独立来源事实 / 14 条剩余电流逐项与原表一致**，不是报告全部事实正确率；未发客户数据到 API。
+- 最终本切片 focused/affected 选择 **125 passed in 48.06s**：Module runtime、Skill authority/distillation、Final/Final Chief/Aggregate Provider、task context、intake/knowledge fidelity、fact packet/research ownership、artifact parser/gateway、Runtime projection。另此前 source-ledger/preparation snapshot/tools 组通过；批次有重叠，不求独立总数。所有改动 Python 的 Ruff 与 diff whitespace 通过；未跑全量回归。可复跑合成架构脚本已纳入 scripts/benchmarks/report_writing_architectures.py，默认只预检；本地 `--typed` 预检通过，未再调用 API。
+
+### 2026-10-14 — whole-source knowledge delivery and explicit unexpanded references
+
+- Five RED cases reproduced missing preceding applicability and late exceptions, distinct references conflated by identical clipped excerpts, large sources presented as plausible fragments, quality-rule truncation, and long user requirements removed from Chapter 4 packets. The builder now shares each selected source by namespace/path across sections. It inlines complete source text when it fits, otherwise includes an explicit unexpanded marker, original locator, existing ledger full-content ref and the real open_reference entrypoint. No new framework, model call, hash or gate.
+- Removed the 900-character snippet and per-submodule reslicing paths. The 14,000-character target now limits optional source bodies; the full candidate catalogue and user requirements are never cut to meet it. Mandatory metadata/requirements may exceed this target and still face the existing full-request context check. Candidate ranking and top-three-per-submodule selection remain lexical and incomplete; no RAG, clause applicability resolver, standards validity check or automatic large-source fetch has been added. No claim that a source ID proves citation support or that an available source was read.
+- Focused/affected verification: 19 passed covering seven knowledge fidelity cases, research ownership, source-ledger recovery and Chief source completeness. A real synthetic Knowledge file over the inline target opens through OpenReferenceTool with the same R ID and exact complete text. Test groups do not constitute a generated-report comparison. Ruff and whitespace checks passed; no full suite or Provider calls.
+- Synthetic before/after module packet sizes: short source 2,140→2,337 characters (0→1 whole documents inline); distinct references with equal initial excerpts 2,164→3,684 characters (1→2 source IDs and 0→2 complete documents); oversized source 2,140→1,138 characters (still not inline, now explicitly unexpanded with complete locator). Reproducible external audit_manyselves/knowledge_packet_metrics_1014.py and JSON. These are characters, not tokens or API timings. Complete short documents can increase repeated prompt input; unexpanded long documents can require a subsequent tool round and risk being ignored. This is an interim accuracy repair, not the final cost/recall architecture.
+
+### 2026-10-14 — intake fidelity and truthful extraction gaps
+
+- RED characterization: seven synthetic regressions failed for DOCX table omission, first-row header guessing, missing formula result, empty PDF page, failed-file gap loss, filename misrouting and out-of-merge thermal context inheritance. Two additional formula tests failed for S4-4 silently skipped formula measurements and cached Excel errors. After fixes, focused/affected group passed 37 tests; no full suite, Provider calls or customer upload.
+- DOCX intake reuses the neutral artifact parser, including top-level table rows with table/row source coordinates. Generic Excel preserves every populated row as cell-coordinate observations and records merged ranges instead of treating row one as field names. Uncached/error formulas become located gaps; cached zero remains a value. S4-4 reuses its two existing workbook handles to report missing/error formula caches, excluding DISPIMG references handled by image bindings. Other specialized mappers and stale-but-present Excel caches still require review; no formula engine or OCR was added.
+- Thermal room/cabinet/ambient/humidity/load context resolves actual same-column vertical merge ranges. Unmerged blanks stay missing, even within the same room; a legitimate merge crossing a room boundary remains usable. Missing ambient temperature suppresses calculated rise and marks both routed facts for confirmation. Gaps retain provenance through normalization and existing coverage/missing-evidence policy. Empty PDF extraction is an explicit page gap (not a claim that the page is necessarily scanned); corrupted files become file-level gaps. Non-workbook S4-* filenames no longer select Excel mappers.
+- Three alternating-order synthetic parsing trials, median local seconds: 101-row DOCX table 0.00719→0.01902 (0→101 artifacts); 301-row uncached-formula workbook 0.01139→0.02749 (0→301 visible formula gaps); 60-row S4-4 thermal workbook 0.00804→0.01155 (same 120 routed facts). Raw measurements/script are outside Git in audit_manyselves/intake_timing_metrics_1014.json and intake_timing_1014.py. These small fixtures are not report latency/token/cost acceptance. Generic Excel now loads merge metadata in normal mode, increasing memory on large files; fuller observations/gaps can increase downstream prompt size. No model call was added.
+- Remaining initialization limits include Word nested/textbox/image content, image interpretation, OCR, unknown workbook semantic mapping, specialized formulas outside S4-4, standard validity/applicability and bounded knowledge packet truncation. These fixes improve source availability and missingness; they do not prove professional judgments or final prose correct. Kernel and declarative orchestration are unchanged.
+
+### 2026-10-14 — compilation-local reuse of contract compatibility checks
+
+- Followed high offline-test CPU cost with local profiling. Two Cross plans produced 428 assignability calls, 399 comparisons and 798 full Schema generations; 451.665/452.955 instrumented seconds were in assignability. Instrumented duration is not normal runtime latency. Neutral four-step characterization failed with ten adapter builds for one repeated pair.
+- Compiler now carries a per-compile set of successful contract pairs through child compilation. No global/instance cache, skipped first validation, business import, new gate, hash, lock or framework. Independent compile calls validate afresh; mutating a contract to invalid JSON Schema still fails. Four-step repeated pair now builds two adapters once per compilation.
+- Focused verification: 44 Kernel contract/sequential/control-flow/interaction/frozen-plan tests and nine joint Cross/public-entrypoint tests passed. Same-process, uninstrumented before/after trials use the a635c3c compiler with identical current definitions and compare the complete frozen plans for equality. Three alternating-order paired repeats per workflow: joint compile mean 55.037→0.813 seconds (before range 47.876–59.642, after 0.713–0.985); owner cohort 80.026→0.744 seconds. All six complete frozen plans were identical across arms. Definitions were preloaded; times exclude imports, data preparation and execution. Some trials overlapped local tests; raw process CPU times are retained. Measurements and reproducible script are recorded in the orchestration decision document and external audit_manyselves/compile_pair_metrics.json / compile_benchmark.py. No Provider or customer data is involved; compile savings are not report latency or token savings.
+
+### 2026-10-14 — one joint Cross reviewer, parallel repairs and merged-snapshot closure
+
+- Fresh production `distribution-reporting-tail` now invokes `distribution-cross-joint-review` rather than five independent owner reviewers. YAML owns review, targeted parallel author/local-audit branches, Join, recheck and Main/user exception routing. Capability ports project and accept individual steps; no Kernel business action, new framework/dependency or hidden Python workflow loop. Prior owner definitions remain for frozen plans and shared author/local-audit mechanics, not as a sixth reviewer in fresh runs.
+- Joint initial and recheck inputs contain all five current complete module views and exact refs/revisions. Findings may belong to the actually defective module. Every repair wave joins before recheck. Completion binds the last reviewed merged snapshot; latest synthesis replaces stale prior synthesis. Optional advisories remain deferred. Report instructions and parsed input changes/superseded evidence are preserved in joint, author and local-audit projections; unaffected owners do not materialize repair input files.
+- Characterization began with missing joint workflow, then exposed incomplete Main contract wiring and reuse of initial-only round-zero owner inputs. Added an explicit owner `repair` phase to reuse the author/local lifecycle without fabricating another initial reviewer. Real submit_result reverse-order verdict test exposed positional finding-id rewriting; joint verdicts now retain explicit identities. Joint-generated finding IDs include round to avoid reusing closed IDs. Coverage is still workflow-filled scope metadata, not evidence that the model semantically checked every dimension.
+- Generic Host scripts cover no finding, advice only, simultaneous incompatible repairs (both latest revisions visible), regression assigned to another owner, explicit Main accept_dispute, and completion artifact loading. Main exception scope remains the existing `cross` domain; no new exception protocol. Existing accept_dispute closure semantics retain original escalate verdict and exception decision and must not be described as proof of factual resolution. Production Provider tests exercise real submit_result, current-task projection, same-session reuse and fresh-composition recovery from a persisted joint result before creating a Provider loop. Full-report tail characterization confirms one joint review reaches Chief; it is not a complete generated report.
+- No-finding Cross dispatch drops 5→1; minimum fresh report Agent invocations become 15/17 instead of 19/21 (without/with Chapter 4; preparation, tool loops, retries and summaries excluded). The old five reviews could run concurrently. Actual model latency, monetary cost, false-negative/false-positive rates and end-to-end speed are not established. Larger joint input increases peak context; oversize relation partitioning remains unimplemented.
+- Focused/affected verification: first combined group had 48 pass / 2 fail; the Main scope mismatch and outdated five-owner entrypoint fixture were fixed, and all seven joint/tail cases passed. Updated joint plus retained owner/local lifecycle and definition ownership: 19 passed. Added instruction/input-change and reverse-verdict tests plus contract/public-entrypoint checks: 10 passed. Groups overlap. Provider same-session/fresh-composition recovery and public reporting passed in the first group. Changed-path Ruff passed; no full suite. One existing Pydantic serialization warning remains in the public-runtime fixture. Synthetic packet counts: old five inputs 19,856/85,790 chars versus joint 4,073/70,007; peak old 4,188/29,136 versus joint 4,073/70,007. This is character volume only. The high offline-test CPU cost prompted the compiler slice recorded above. No external API request, customer upload, production configuration/compaction change, service restart or push in this slice. This is an orchestration replacement, not final report-quality acceptance.
+
+### 2026-10-12 — holistic orchestration cost audit, deferred Cross advice and complete Chief/Final sources
+
+- User explicitly opened role and orchestration changes, not only prompts/compaction. Audited the fresh path (19 Agent invocations without Chapter 4, 21 with it, excluding preparation/tool loops/retries), owner-local error attribution, frozen peer revisions at Cross recheck, R/W sources excluded from automatic E-only review packets, and downstream raw-character clipping. Decision and tradeoffs: [REPORTING_COST_QUALITY_ORCHESTRATION.md](../research/decisions/REPORTING_COST_QUALITY_ORCHESTRATION.md). Joint review on merged snapshots is the next replacement direction, not yet production-wired; do not claim final-module consistency is solved.
+- Real official Claude synthetic paired comparison of d0eabff/d3a011a: three fixtures repeated twice, randomized within pairs, identical model/tools/output cap, no customer inputs. First-request input 32,458→38,932 (+19.9%); both expected verdicts 6/6. Including one baseline missing-evidence-ref correction: 7→6 requests, 41,101→38,932 input, 6,330→4,148 output, 33.113→23.046 summed API seconds. The correction alone took 9.672 seconds; this does not establish stable speed or accuracy improvement. Total experiment 13 requests, 80,033 input / 10,478 output; zero reported cache. Raw requests/results and aggregate metrics: external audit_manyselves/review_increment_ab.json and review_increment_metrics.json. Scripted API loop with production preparation/submit_result, not full-report wall time.
+- Cross optional advisories now remain immutable and flow into completion v3 deferred_advisory_ids / CrossDecisionPack v2 deferred_advisories, without automatic revision. Blocking defects retain author→local-review→Cross-recheck; mixed findings dispatch only blockers, and new recheck advice does not reopen a round. Chief/Final source refs expose the persisted pack and role contracts distinguish optional advice from accepted facts. Existing completion integrity checks account for deferred advice without allowing a blocking finding to be deferred. Old already-pending rounds retain response/verdict handling; no historical runs rewritten. Module and Final finding semantics remain unchanged. Misclassification of a real defect as advisory remains a semantic risk, not solved by schemas.
+- Generic Workflow Host characterization first failed because an advisory dispatched the author. Green fixtures verify advice-only, mixed, blocking-only and recheck-new-advice paths: a single advice-only lane uses one Agent invocation instead of the previous four, while blockers still complete their correction lifecycle. This is a deterministic dispatch saving, not 75% whole-report latency or token savings.
+- Removed six raw JSON string slices from Chief/Final assigned source projections (2,400/6,000/12,000 chars). Corrected a malformed initial test fixture, then reproduced actual unterminated-JSON failures before implementation. Six tests now retain complete module limitations, Cross relationships and special-topic tail conditions. Synthetic before/after lengths: 2,400→4,062; 6,000→7,311; 12,000→13,652 chars per relevant role, not measured tokens. No extra model call; mandatory-state size may grow and existing window limits still apply. Automatic scope splitting remains open. Metrics: external audit_manyselves/source_projection_metrics.json.
+- Focused/affected verification groups: Cross host/round/reduction `13 passed`; updated reduction/loader/Chief/Final/Cross Provider/contracts/definitions `33 passed`; complete-source/Chief/Chief Provider/Final Chief/Final Provider `24 passed` (groups overlap). No full suite. Changed-path Ruff and staged whitespace checks run before commit. No new Kernel business action, framework, dependency, lock, separate approval gate or blanket reviewer; only existing Capability routing and contract semantics changed. No customer upload, production configuration/compaction change, service restart or push. Report-level quality/citation/latency/recovery acceptance remains open.
+
+### 2026-10-12 — self-contained reviewer inputs, Cross source access and live closure checks
+
+- Reproduced two production-boundary defects before fixes: an unchanged disputed narrative/Claim vanished from the recheck delta, and initial review rejected uncited scope evidence despite `_review_evidence` already supplying it. The task-context projection added in `359bdea` removed older tasks, conflicting with the old recheck design's reliance on persistent conversation for unchanged text and Knowledge. This is an integration regression, not proof of model hallucination. A third inspection found local regression explicitly discarding the scoped Knowledge body it had just read.
+- Module recheck now supplies current narratives/Claims for the pending finding scope, changed prior Claims, diff/hash metadata, scoped current-run Knowledge, role instructions, and cited/prior/finding plus uncited scope evidence. Local regression also retains its scoped Knowledge body. Existing input validation permits additional scope facts while still requiring referenced evidence and rejecting duplicate evidence IDs; legacy compact inputs remain parseable. Scope and baseline rules remain intact. No additional LLM round, gate, dependency or generic Runtime domain logic was added. Single-request input grows versus delta-only; it remains bounded by pending scope rather than the whole conversation/module history.
+- Cross related views supplied Claims but omitted prose, while Agent/Task/Envelope exposed only `submit_result`. A production-tool characterization reproduced the missing reader. Initial and recheck envelopes now attach the frozen related module refs; file-defined roles/tasks expose existing local `search_text`/`open_artifact` tools. Access still rejects unattached refs. Cross page default/max are now 4,000/8,000 characters instead of the old forced 160,000-character minimum; Chief readers retain their previous sizes. Tests exercise actual provider composition, reading unclaimed related prose, continuation and scope rejection. No external research service was enabled.
+- Auditor instructions require evidence/condition/rule-to-conclusion comparison and explicit checks of current text against each immutable `reviewer_checks`. Author `implemented`, citation existence and hash/diff metadata are not semantic proof of closure. Cross instructions distinguish observation identity from coincident device/date/value and require evidence that both statements must agree. Capability and template prompt bodies are updated while preserving their respective frontmatter formats.
+- Focused/affected verification: 39 tests passed across delta/fact packets/local lifecycle/public reporting; 63 passed across Cross provider/recheck/definitions/workflow/local review, module runtime and task-context projection; six contract-ownership tests passed. Two affected recheck tests rerun after adding uncited-evidence/missing-required-evidence checks also passed (included in the 39). Total **108 distinct tests** in these selections. Changed-path Ruff and staged whitespace checks passed. One pre-existing Pydantic serializer warning remains in the public-runtime fixture. An earlier invocation hit Windows default GBK decoding in test fixture reads; rerun with `PYTHONUTF8=1` passed. No full suite.
+- Real official Claude (`claude-haiku-5-5`) synthetic-only module rechecks: three cases × two fresh repetitions, six requests, **38,932 input / 3,855 output / 21.024 seconds** total API duration. Unchanged erroneous text despite an implemented response stayed open 2/2; corrected text resolved 2/2; correctly different conclusions under different conditions resolved 2/2. Production preparation, role prompts, real `SubmitResultTool` and acceptance were exercised; the short closed-packet request/tool loop was scripted, not a full workflow/AgentLoop or complete report. No old-version randomized control; this is behavior evidence, not an accuracy uplift estimate.
+- Real Cross probes exposed remaining semantic failure: the model read related prose and found the same-condition contradiction, but also incorrectly created a blocking finding for different conditions. First pair: five requests, **56,407 input / 5,580 output / 28.697 seconds**; actual local reads occurred. The conflict case needed an additional submission correction because a proposed synthesis lacked required E-* refs (the fixture intentionally contained prose but no Claims/E-* refs); its final answer was accepted. After clarifying observation identity in the prompt, the unchanged different-condition fixture was repeated twice: four requests, **41,199 input / 1,835 output / 11.529 seconds**. One returned no finding; one returned an unnecessary advisory even while correctly acknowledging no factual conflict. Final submissions passed the existing contract. Correctly typed output is not proof of correct review. Some requests issued overlapping reads of the same file in one batch (open plus search, or two searches); retrieval availability alone does not eliminate waste.
+- This slice used **15 synthetic API requests, 136,538 input / 11,270 output tokens, 61.250 seconds summed API duration** (excludes local preparation/tools; not report end-to-end latency). No cache tokens were reported. Artifacts outside Git: `audit_manyselves/review_closure_probe.py`, `review_closure_live.json`, `cross_prose_probe.py`, `cross_prose_live.json`, `cross_prose_replay.json`, plus dry-run records and `审查闭环修复与真实测试.md`. Original failing traces are retained. No customer uploads, configuration/compaction threshold changes, service restart or push. Full-report correctness, regulatory citations, interruption rate, and end-to-end performance remain unverified.
+
+### 2026-10-12 — live synthetic context comparison and explicit fact-packet scope
+
+- Exercised production fact rendering, context binding/rebuilding and AgentLoop dispatch with real official Claude calls, generated Chinese fictional records, two paired fixtures and three lanes. G1 carries full facts plus cumulative history; G2 projects the current task; G3 adds history summary. Phase orchestration and a local exact-lookup tool are scripted, not the complete report workflow/submit_result acceptance chain. G3 uses a 4,096-token experimental trigger to exercise compaction cheaply; production 36K/0.6 is unchanged. This is not a production optimum or a representative end-to-end benchmark.
+- Two-fixture totals: G1 211,208 input / 1,636 output / 12.272 seconds, G2 117,103 / 1,844 / 12.190, G3 54,537 / 2,260 / 14.521. Inputs include summaries and cache buckets. G1/G2 each made six ordinary requests; G3 made five plus two summaries (34,184 input / 6.030 seconds for summaries). Lower G3 request count includes one missed retrieval and is not equal-quality savings. G2 input fell 44.6%, but observed duration was essentially unchanged. Two trials and low cache coverage cannot establish production latency or monetary savings.
+- Raw quality findings: G1 first-object fields 42/42; G2 41/42 with one contradictory initial JSON followed by a corrected second JSON; G3 38/42. G3 cited the correct 16.58 value and source but classified it normal against the fictional >10 rule; another answer asserted missing Z without looking it up, although Z existed outside the packet scope. Initial missing/conflicting observations stayed unresolved and zero stayed valid. Five actual tool calls reread already-visible T35 alongside missing Z/W. Correct source IDs and values do not prove correct conclusions. Multi-JSON corrections are retained as ambiguous, not silently scored as success.
+- Found and fixed a concrete scope-description bug: the submodule-filtered packet still claimed all records for the module. `render_fact_packet` now states module_id, submodule_ids and unassigned inclusion explicitly; absent outside-scope objects require lookup and unqueried objects cannot establish global absence. A characterization failed before the fix. Focused/affected tests: `45 passed in 17.24s`; changed-path Ruff and staged whitespace checks passed.
+- Three bounded replay calls changed only the scope header in the two failing saved G3 payloads. One replay retrieved Z/W without rereading T35 and answered 9/9 fields; the other still emitted a wrong first classification and a corrected second JSON. Stochastic spot checks without repeated unchanged controls cannot establish that the header fix caused all observed improvement or eliminated the failure class.
+- Total this slice: 22 real synthetic requests, 396,534 input / 6,968 output tokens. Main comparison had a predeclared 26-attempt ceiling and used 19; replays had a four-attempt ceiling and used three. Complete inputs/responses, timing and usage remain outside Git in `audit_manyselves/task_projection_live.json`, `task_projection_metrics.json`, `task_projection_scope_replay.json`; Chinese interpretation: `任务上下文重建_真实合成对照与取舍.md`. No customer upload, report generation, service restart, production configuration change or push. Full-report accuracy, regulatory citation support, interruptions and actual monetary savings remain unverified.
+
+### 2026-10-12 — authoritative task projection connected to reporting Provider dispatch
+
+- Generic `TaskContextRebuilder` separates exact current state from transient history without changing durable conversations, Kernel or workflow order. It excludes earlier task segments, refreshes the current capsule and reuses the compacted active tail. Same-task restart capsules do not erase completed exchanges; switching away and back does not carry an intervening task's progress. Summary requests bypass reconstruction to prevent recursive compaction and factual-packet rereads.
+- Reporting Capability binds the existing hook for module author/revision, reviewer/recheck, Cross owner (including its local workflow tasks), initial Chief, Final Chief revision, Final Auditor/recheck and Aggregate Provider compositions. Template distillation is unchanged. Author/revision eagerly enumerates its complete normalized module/submodule scope plus unassigned evidence once per binding; other roles retain their prepared typed contracts. No vector service or new RAG framework was introduced.
+- The capsule reads the current task/revision's persisted result parts and evidence-binding sidecars directly. It marks prose as working drafts, retains unresolved items from prepared contracts, and replaces earlier capsule versions instead of appending them per request. Recovery messages no longer append a full contract when reconstruction is bound. Exact facts and durable drafts remain outside lossy model summaries.
+- For projected tasks the 36K/0.6 policy now governs transient history. Full-state size is checked separately by the existing Provider-window guard. A mandatory packet that exceeds it still stops with `context_budget_exhausted`; automatic scope splitting is not implemented. The whole retained packet is still input on each request, raw observations can duplicate facts, and later-role artifact references are not automatically materialized. This is no claim of complete source coverage or hallucination elimination.
+- Characterization: missing production bindings reproduced in module reviewer and later Chief/Cross/Final Chief tests; a newly added restart test reproduced loss of completed same-task exchanges before its fix. New regressions cover last-record anomalies and exact source coordinates, preserved pending findings, refreshed drafts, revision isolation, failed summaries, nonrecursive summary dispatch, unchanged request reuse and mandatory oversize handling. Verification: `221 passed in 80.37s` across focused/affected Runtime compaction, reporting bridges, Provider compositions, recovery and workflow-host tests; changed-path Ruff passed (only the two pre-existing `agent_loop.py:N818` exclusions), and staged whitespace checks passed. No full suite run.
+- No live Provider request, customer upload, service restart, configuration change, dependency install or remote push. Existing historical/synthetic time and token measurements are not measurements of this implementation. [Context policy](../CONTEXT_HANDOFF.md) documents changed threshold semantics and limits. Maintenance remains in progress pending generation-quality and latency/cost evaluation.
+
+### 2026-10-12 — return to the original fact-delivery and context-rebuilding plan
+
+- User challenged a summary-forgetting/repeated-file-search loop. Re-read the original local research plan and implementation artifacts: intended sequence was complete compact facts (G1), task-scoped context rebuilding (G2), then controlled context management (G3). The recent synthetic history comparison did not exercise the G1/G2 combination and is not final-architecture performance evidence.
+- Production inspection: module fact packets are delivered through TaskEnvelope, inline up to 32,000 characters or by readable reference. They remain ordinary history rather than an independently reconstructed fact working set. `context_rebuilder` exists in AgentLoop but no production composition assigning a concrete implementation was found. The main missing step is automatic selection and single-copy placement of current authoritative facts, draft and unresolved work, not another summary threshold.
+- Proposed slice retains durable conversations and recovery identity, and uses Capability-owned module/object/source scope with the generic Runtime context interface. Exact known-source reads and finite-scope enumeration should happen locally without an extra model search round; genuinely unknown/out-of-scope retrieval remains on demand. Replacing a context projection avoids duplicated history but does not make its per-request input tokens free. File-result caching and Provider prefix caching must be measured separately; the current Anthropic adapter explicitly marks system text, not task fact bodies.
+- Original audit plan annotated with this correction and offline-first acceptance cases in `audit_manyselves/检索_上下文_质量与成本方案调研.md` section 10 (outside Git). This review made no production code/configuration changes, API calls, customer uploads or service restarts.
+
+### 2026-10-12 — synthetic live comparison and post-summary information preservation
+
+- After the user supplied the key, official connection, a synthetic tool roundtrip and incremental summary passed (1.785 / 1.765 / 2.313 seconds respectively). No credential value was printed. All subsequent live input was generated fictional laboratory data, not customer files.
+- Fixed-trajectory comparison on baseline `ada5701`: ten batches of 100 synthetic records, ten state/citation probes, a late three-record detail probe and an explicit reread probe. One trial per lane, rotating serial order; no statistical or report wall-time claim. No-compaction / 36K / 12K used 616,894 / 421,660 / 198,470 cumulative input tokens, 1,836 / 3,691 / 9,642 output tokens, and 22.281 / 28.968 / 48.473 summed active seconds including summaries. Summary counts 0 / 2 / 5. Cache read/write tokens were zero. Provider token totals include repeated history and must not be confused with the peak request window or dollar costs.
+- All lanes retained the 40 continually tested status/value/citation fields. No-compaction answered the three late record questions correctly; both compressed lanes returned unavailable for all three, without fabricated values. Explicitly supplying the exact records restored 3/3 in every lane. Reread was test-script driven, not proof of autonomous production recall. A pilot's strict JSON parsing misclassified explanatory prose; its artifact is retained but excluded from quality conclusions. Formal results retain raw text and parse embedded JSON separately from scoring facts.
+- Characterization reproduced three code-level information losses: valid model prose clipped to 400 characters/last 12 entries; empty model decisions replaced by stale deterministic fallback; durable stop/restart merging clipped accepted model prose again. Runtime now keeps the accepted model arrays intact, respects empty arrays and preserves accepted model prose in durable merging. Model generation remains bounded by the existing request output limit; truncated responses still preserve raw history. Deterministic extraction and exact reference ownership are unchanged. The larger valid summary can exceed the soft target; this is not a lossless semantic-summary guarantee.
+- A post-fix 12K live repeat retained all 40 state fields; early detail again unavailable 3/3 and explicit reread restored 3/3. Five summaries, 198,065 input / 7,845 output tokens, 42.881 active seconds. Different trial; no causal speedup attributed to the code fix. This run exercised immediate summaries, not process restart; restart preservation is covered by focused tests.
+- Focused/affected tests: `127 passed` across incremental compaction, compaction efficiency, context compaction, AgentLoop, AgentExecution and ProviderAgentSession. No full suite, service restart, customer report generation or remote push. Current threshold and target remain unchanged. Local audit scripts, raw responses and Chinese analysis live outside the repository under `audit_manyselves`; main analysis: `Claude真实压缩对照与信息丢失修复.md`.
+
+### 2026-10-11 — incremental handoff and official Claude Haiku 5.5 configuration
+
+- User instruction: switch this checkout to the official Claude API, use Haiku 5.5, and leave the API key for the user to fill. The prior local MiMo selection was not the desired configuration. The ignored local YAML now selects `anthropic-official` / `https://api.anthropic.com`, with an empty key and `claude-haiku-5-5` for both task and summary models. Old provider entries and credentials are retained but disabled to prevent fallback to an old service before the official key is supplied. The tracked example uses the same key-free official configuration.
+- Characterization first: six incremental-compaction cases and two initial Haiku wire cases failed before implementation. Reproduced retained-history rereading, 160-character retruncation of prior decisions, content loss on failed summaries, unaccounted serialized tool arguments, missing request-scoped summary-model selection/restoration, and rejected legacy sampling parameters.
+- Runtime now summarizes previous handoffs plus exactly the whole units selected for eviction, with task metadata. It freezes that partition; a larger actual summary may exceed the soft target rather than drop additional unsummarized content. Failed, malformed, refused, output-truncated or oversized summary requests leave working history unchanged. No new orchestration framework, provider calls, locks or hash/gate mechanism.
+- Optional `context_compaction_model` reuses the active Provider route/credentials/client through a loop-local copy. Admission and usage record the summary model; the main model is restored on success, error and cancellation. Existing behavior is inherited when the field is null. Exact refs/task identity remain Runtime-owned.
+- Haiku 5.5 omits legacy sampling parameters in both stream and non-stream requests. Independent summaries use adaptive thinking with low effort. Official documentation also exposed a pre-existing signed-thinking replay gap: the Runtime preserves thinking text but not signed content arrays. Haiku tool loops therefore explicitly use supported disabled thinking at medium effort (low for a low-reasoning hint). Adaptive-thinking tool loops are not claimed supported; quality under this compatible mode still needs real evaluation. See `docs/CONTEXT_HANDOFF.md` for official sources and limitations.
+- Focused/affected verification: `153 passed`; changed Python Ruff passed with only the two pre-existing `agent_loop.py:N818` exclusions. Local and example configuration validation confirms only the official provider enabled, correct model IDs and an empty key. Staged whitespace checks passed. No full-suite run, live API request, service restart, customer upload or remote push.
+- Same-input synthetic replay against the previous headroom fix: the 36K trigger / 100-round fixture still makes 9 summaries with identical normal-input estimate 2,644,956; summary-source estimate falls from 337,162 to 154,408 (54.20%). These count the mock summarizer's source messages, not actual Provider-billed tokens, wall-clock savings or semantic quality. Audit output: `compaction_efficiency_incremental.json` outside the repository.
+
+### 2026-10-11 — cumulative context growth, cache reuse and compaction horizon audit
+
+- Clarified user concern: each ordinary request contains the currently retained history, not just the latest increment. Peak request input determines window pressure, whereas summed request inputs include repeated history. Anthropic usage normalization includes cache reads and writes in total input.
+- Read-only historical evidence: the no-summary 2.2 author sent 822,250 cumulative input tokens over 24 requests, with a 49,238 peak and 773,248 cache reads (94.04%). In the initial 2.2 review task segment, ordinary-request cache-read fraction was 85.45% before the first summary and 2.93% after it; four summaries added 303,589 input tokens and 222.93 summed active seconds. This is observational, not a measured no-summary counterfactual or wall-clock savings claim.
+- Boundary-aware audit: full-report has 118 summary episodes after collapsing adjacent attempts; 45 were followed by at most two normal requests in the same contiguous task-id segment, and 28 by at most two normal requests for that Agent across the rest of the run. These are hindsight counts, not an online stopping oracle. Task segments may include repeated invocations.
+- Same-task successful before/after pairs: 95 for full-report, with median next-input/prior-input ratio 1.0142; 13 for revision, median 1.0217. Intervening outputs and tool results remain confounders. Missing full historical request payloads prevent exact attribution of repeated content or reconstruction of all uncompressed peaks.
+- Local `context_growth_audit.py` and `context_growth_metrics.json` verify token-bucket reconciliation and segment totals for both ledgers. `累计上下文与缓存收益核查.md` records the evidence, limitations, and cache-aware strategy implications. Summary error estimates remain distinguished from Provider-reported usage. No production settings or execution semantics changed; no Provider request or customer upload. User deferred the live comparison environment question.
+
+### 2026-10-11 — context compaction necessity and per-task strategy evaluation
+
+- User steering: assess whether bounded subagents need compression at all, which information to retain, and how to derive thresholds and compression ratios; defer budget configuration. The previous 60% post-compaction target is an engineering headroom choice, not an empirically optimal report policy.
+- Read-only historical role profile: the initial 2.2 author made 24 successful normal requests with no summary and a maximum observed input of 49,238 tokens; two Final roles also made no summaries, with maxima of 27,213 and 20,318. These observations do not certify report quality or establish other roles' uncompressed context peaks. Multiple task invocations can share an Agent identity.
+- The configured model's current official MiMo-V2.5 specification advertises a 1M-token context. The actual endpoint/deployment limit is unverified; Runtime's missing-window fallback of 128K and separate 36K estimated working-memory trigger are not evidence of that endpoint's capacity. No Provider call was made.
+- Research comparison: no semantic compaction, equivalent fact serialization, recoverable old tool-result masking, protected facts plus incremental middle-history summary and intact recent exchanges, and task-boundary reconstruction. Primary references: Anthropic context engineering, JetBrains/TUM observation masking research, and OpenHands' official condenser implementation. Coding-task findings are not report-quality validation.
+- Local audit artifacts: `context_strategy_profile.py`, `context_strategy_profile.json`, and `压缩机制选择与实验设计.md` in the external audit workspace. The note defines total versus historical compression ratios, conditional retention floors, window/output/growth constraints, and staged quality/latency comparisons. Candidate settings are experiments, not new defaults. No production setting, report, or customer source changed in this slice.
+
+### 2026-10-11 — semantic compaction headroom and latency diagnosis
+
+- User correction: previous slice completion did not finish the requested speed/cost/quality work. Semantic summarization remains the default and is useful; its net benefit must be assessed, not inferred from summary-request cost alone.
+- Read-only historical timing audit: full-report Provider observation span 118.04 minutes, 525 requests including 120 summaries; revision span 84.74 minutes, 155 requests including 20 summaries. Full-report summary requests consumed 8,523,376 ledger tokens and 97.82 summed active request minutes, which overlap with other requests and cannot be subtracted from wall time. Of 100 adjacent-summary intervals within Agent identities, 79 contained only one normal request; neighboring before/after input-token ratio median was 1.013 (observational, not a counterfactual).
+- Four reproduced defects: retained history was filled to the trigger itself; the latest user boundary was added without reserving its budget; the actual model summary could grow beyond the provisional summary without reselection; a mandatory-only oversized input still paid for a summary that removed nothing.
+- Runtime fix: trigger remains `working_memory_tokens`; post-compaction target defaults to 60% of it via `working_memory_compaction_target_ratio`. Reserve current task and intact latest exchange, then fill older units within the remaining budget. Re-select after obtaining the actual semantic summary. Skip model summarization when no historical messages can be evicted. No domain logic or new gates/locks/hashes/frameworks.
+- Same-input synthetic probe, with a fixed mock semantic summary in both versions: at 36,000 estimated-token trigger and 100 normal rounds, summary invocations 81 → 9, ordinary request estimated input 3,243,586 → 2,644,956 (18.46% lower). At 4,096 trigger / 60 rounds, summaries 53 → 14. These are deterministic scheduling/context-volume checks, not actual Provider time/token savings or semantic-quality measurements. Original measurements and scripts stay in the local audit workspace.
+- Focused/affected Runtime and config tests: `109 passed`, including semantic-decision preservation and intact tool exchanges; final configuration/session/RuntimeServices selection `15 passed` (overlap, not summed). Changed Python Ruff passed with only the two existing `agent_loop.py:N818` exclusions; staged whitespace checks passed. No real Provider call, service restart, report rewrite or customer upload.
+- Remaining: true report latency/quality comparison in an approved inference environment; long immutable task inputs, summarizer payload size and possible summary information loss still require evaluation. Current application configuration resolves to an external MiMo endpoint, not a confirmed private endpoint; this slice does not call it with customer material.
+
+### 2026-10-11 — paginated evidence recall and structured context handoff
+
+- Scope: continuation of the user's confidential local quality/cost maintenance. This slice builds on local commit `4552138`; it does not regenerate or certify the historical report.
+- Customer evidence search now accepts exact module/submodule filters and record offsets, returns total matches and the next offset, and permits an empty query to enumerate the normalized scope. Keyword misses, unavailable snapshots and past-end pages have distinct truthful outcomes. Missing snapshots are not cached as permanently empty. Numeric zero remains searchable.
+- Page cache identity includes query, filters, page size and offset. Historical top-k caches cannot establish complete counts and are not reused as paginated results. Existing run/module memory persists exact pages across restart. Source registration uses the existing batch API. No embedding service, vector database or new dependency was added; keyword ranking itself is unchanged.
+- Context handoff preserves prior structured handoffs, nested typed references, active task identity and exact tool paging/query coordinates. The module author and reviewer now pass task refs, readable refs, objective and constraints to the Runtime boundary. Model-generated prose cannot replace authoritative refs, task identity or tool state; explicit task constraints survive it.
+- `agents.defaults.context_compaction_strategy` accepts `model_summary` (unchanged default) or `structured_handoff` (skips the extra summary-model request). Both modes use the same generic compaction, persistence and restoration machinery. This is an experimental policy choice, not a legacy execution path. See [context handoff configuration](../CONTEXT_HANDOFF.md).
+- Characterization first: seven pagination failures, four compaction failures, a reviewer task-ref failure and a missing-then-created snapshot failure were reproduced before their fixes. Focused/affected selection: `159 passed`; final focused selection after additional snapshot/config/constraint checks: `42 passed, 69 deselected` (overlapping tests; not summed). Targeted Ruff passed with only the same two pre-existing `agent_loop.py:N818` exception-name findings excluded; staged diff whitespace checks passed. No full suite, live Provider, package install or service restart was performed.
+- Offline production-tool replay over a separate copy of the original frozen evidence: all 316 customer records enumerated in 29 pages across five modules; all 29 pages reused after tool recreation. Residual-current 14/14, scoped thermal 13/13 and SPD 9/9. Replay artifacts remain outside Git in the local audit workspace.
+- Remaining evidence-memory ownership checks: `2 passed` (`test_m66_ownership.py`).
+- Limits: complete enumeration covers only the existing normalized scope/classifications; unassigned items require unfiltered enumeration. It does not validate parsing, citations supporting individual claims, regulatory clause accuracy or model reasoning. Handoff is bounded and does not retain all old prose; structured-only mode may lose useful semantic decisions. No measured end-to-end latency/token/quality improvement is claimed. Large search outputs still use the existing recoverable full-result artifact path.
+- Kernel, compiler and workflow orchestration are unchanged. All evidence filters remain Capability-owned; Runtime knows only task metadata and generic tool coordinates. No new gates, locks, retries, hashes or frameworks were introduced. Local changes only; no customer upload, push or remote publication.
+
+### 2026-10-11 — complete fact delivery and recoverable reads
+
+- Scope: user requested implementation after reviewing report omissions, retrieval, context compaction and cost research. This is a maintenance slice; the 2026-09 product acceptance below is historical and does not certify present report accuracy or this change's speed/cost benefit.
+- Production path: existing `build_module_dispatch` → `prepare_module_authoring` → file-defined Agent task/Module Provider now carries a compact, complete module fact packet from the frozen normalized snapshot. Every record retains source coordinates, numbers, qualifiers and photo refs; unassigned customer facts remain visible. Packets above 32,000 characters are stored in full and explicitly delivered by reference with counts, never silently cut. Author preparation and resume preserve the readable packet ref.
+- Initial/local-scope review evidence includes normalized facts independent of the author's selected citations, while retaining cited cross-module evidence. Existing review contracts/findings handle omissions; no new approval gate or validator chain is introduced.
+- Reserved `Inputs/report-template-role-skills` content is excluded from new generic customer-evidence normalization and from search/module enumeration over historical snapshots. Historical files and IDs are not rewritten.
+- Runtime readers allow repeated pages after context loss. Existing completed-result caching still reuses actual content; legacy `already_read` empty markers are reread. When an artifact page exceeds the tool wire budget, the formatter keeps its original ref and advances `next_offset` by the content actually delivered, including JSON-escaping overhead, instead of nesting another opaque tool-result envelope.
+- Characterization: seven initial tests failed on missing fact delivery, uncited-review omissions, instruction contamination, empty rereads and nested page truncation; two additional recovery tests reproduced cached empty markers. All were corrected. Focused/affected batches: `144 passed`, `27 passed`, then `15 passed` after recovery changes (overlapping selections, not a full suite).
+- Final fact-delivery/recovery selection: `8 passed`. Targeted Ruff passed with only the two pre-existing `N818` exception-name findings in `agent_loop.py` excluded; both were independently reproduced from baseline HEAD, and no new Ruff findings remain. `git diff --cached --check` passed. Working-tree `git diff` reported a local work-tree error despite successful status/add; the staged diff was reviewed instead.
+- Commands use existing `.venv-cpython/Scripts/python.exe -m pytest -q ... --maxfail=3`, with TEMP/TMP redirected to the authorized audit workspace because sandbox temporary-directory permissions prevented fixture creation. No packages installed and no Provider called.
+- Local frozen-input replay (outside the repository, preserving original runs): 316 normalized customer records delivered across five packets, including all 14 residual-current, 13 scoped thermal and 9 SPD records; all five fit inline. This verifies delivery over existing mappings, not parsing completeness, final writing quality, regulatory correctness or measured acceleration.
+- Architecture: all electrical-domain selection/packet logic remains Capability-owned; only domain-neutral page delivery changed in Runtime. Kernel, Compiler, Workflow Host, YAML control flow and APIs unchanged. No new framework, hash/CAS, lock, gate or retry policy.
+- Remaining limits: existing taxonomy mapping can still misclassify facts; long packets require explicit reads; semantic compaction policy and knowledge retrieval ranking remain unchanged; more initial evidence can increase initial input tokens. Net cost, runtime, model faithfulness and severe-omission rate require the planned controlled generation comparison.
+- Repository-local implementation and synthetic tests only; customer replay outputs stay outside the repository. No push or remote publication during confidential local evaluation.
 
 ### M9.108 product completion closeout (2026-09-20)
 

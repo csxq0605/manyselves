@@ -1,0 +1,1165 @@
+E-0001 | 基础图纸与技术参数/中低压电气系统图 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G2:H2", "page": null, "row": 2, "column": "G", "image_id": null}
+E-0002 | 基础图纸与技术参数/竣工电气单线及控制原理图 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G3:H3", "page": null, "row": 3, "column": "G", "image_id": null}
+E-0003 | 基础图纸与技术参数/主要开关（断路器）技术参数 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G4:H4", "page": null, "row": 4, "column": "G", "image_id": null}
+E-0004 | 基础图纸与技术参数/母线统计表 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G5:H5", "page": null, "row": 5, "column": "G", "image_id": null}
+E-0005 | 基础图纸与技术参数/双电源装置统计表 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G6:H6", "page": null, "row": 6, "column": "G", "image_id": null}
+E-0006 | 基础图纸与技术参数/设备标签与挂牌实际照片 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G7:H7", "page": null, "row": 7, "column": "G", "image_id": null}
+E-0007 | 基础图纸与技术参数/关键负荷清单 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G8:H8", "page": null, "row": 8, "column": "G", "image_id": null}
+E-0008 | 运行、维护与试验记录/短路及时间/电流配合研究 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G9:H9", "page": null, "row": 9, "column": "G", "image_id": null}
+E-0009 | 运行、维护与试验记录/保护定值表 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G10:H10", "page": null, "row": 10, "column": "G", "image_id": null}
+E-0010 | 运行、维护与试验记录/保护动作/报警事件记录 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G11:H11", "page": null, "row": 11, "column": "G", "image_id": null}
+E-0011 | 运行、维护与试验记录/设备巡检/红外成像历史记录 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G12:H12", "page": null, "row": 12, "column": "G", "image_id": null}
+E-0012 | 运行、维护与试验记录/维护试验与巡检报告 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G13:H13", "page": null, "row": 13, "column": "G", "image_id": null}
+E-0013 | 运行、维护与试验记录/电能质量分析报告 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G14:H14", "page": null, "row": 14, "column": "G", "image_id": null}
+E-0014 | 运行、维护与试验记录/网压波动历史事件统计 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G15:H15", "page": null, "row": 15, "column": "G", "image_id": null}
+E-0015 | 运行、维护与试验记录/近三年电气事故/未遂事件报告 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G16:H16", "page": null, "row": 16, "column": "G", "image_id": null}
+E-0016 | 运行、维护与试验记录/承包商/临时用电管理记录 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G17:H17", "page": null, "row": 17, "column": "G", "image_id": null}
+E-0017 | 安全管理体系与人员资质/电气安全培训程序 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G18:H18", "page": null, "row": 18, "column": "G", "image_id": null}
+E-0018 | 安全管理体系与人员资质/培训记录 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G19:H19", "page": null, "row": 19, "column": "G", "image_id": null}
+E-0019 | 安全管理体系与人员资质/现有人员资质 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G20:H20", "page": null, "row": 20, "column": "G", "image_id": null}
+E-0020 | 安全管理体系与人员资质/工作票/操作票 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G21:H21", "page": null, "row": 21, "column": "G", "image_id": null}
+E-0021 | 安全管理体系与人员资质/上锁挂牌程序 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G22:H22", "page": null, "row": 22, "column": "G", "image_id": null}
+E-0022 | 安全管理体系与人员资质/EOP文件（应急操作程序） | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G23:H23", "page": null, "row": 23, "column": "G", "image_id": null}
+E-0023 | 安全管理体系与人员资质/SOP文件（标准操作程序） | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G24:H24", "page": null, "row": 24, "column": "G", "image_id": null}
+E-0024 | 安全管理体系与人员资质/现有维护计划 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G25:H25", "page": null, "row": 25, "column": "G", "image_id": null}
+E-0025 | 安全管理体系与人员资质/应急预案及演练记录 | 具备情况=NG；有效性=NG | {"file_id": "file-0e493d3e291ad22b", "path": "Inputs/S2-1收资表.xlsx", "sheet": "收资表", "cell": "G26:H26", "page": null, "row": 26, "column": "G", "image_id": null}
+E-0026 | 16号楼配电房/进线D1601 | 运行电流=123A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C3:E3", "page": null, "row": 3, "column": "C", "image_id": null}
+E-0027 | 16号楼配电房/进线D1601 | 运行电流=123A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C3:E3", "page": null, "row": 3, "column": "C", "image_id": null}
+E-0028 | 16号楼配电房/进线D1601 | 实测剩余电流=0.1A；占运行电流=0.08% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C3;J3:L3", "page": null, "row": 3, "column": "J", "image_id": null}
+E-0029 | 16号楼配电房/D1606-3 | 运行电流=60A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C4:E4", "page": null, "row": 4, "column": "C", "image_id": null}
+E-0030 | 16号楼配电房/D1606-3 | 运行电流=60A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C4:E4", "page": null, "row": 4, "column": "C", "image_id": null}
+E-0031 | 16号楼配电房/D1606-3 | 实测剩余电流=0A；占运行电流=0.00% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C4;J4:L4", "page": null, "row": 4, "column": "J", "image_id": null}
+E-0032 | 16号楼配电房/进线D1701 | 运行电流=186A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C5:E5", "page": null, "row": 5, "column": "C", "image_id": null}
+E-0033 | 16号楼配电房/进线D1701 | 运行电流=186A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C5:E5", "page": null, "row": 5, "column": "C", "image_id": null}
+E-0034 | 16号楼配电房/进线D1701 | 实测剩余电流=0.1A；占运行电流=0.05% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C5;J5:L5", "page": null, "row": 5, "column": "J", "image_id": null}
+E-0035 | 16号楼配电房/D1705-6 | 运行电流=80A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C6:E6", "page": null, "row": 6, "column": "C", "image_id": null}
+E-0036 | 16号楼配电房/D1705-6 | 运行电流=80A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C6:E6", "page": null, "row": 6, "column": "C", "image_id": null}
+E-0037 | 16号楼配电房/D1705-6 | 实测剩余电流=0A；占运行电流=0.00% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C6;J6:L6", "page": null, "row": 6, "column": "J", "image_id": null}
+E-0038 | 13号楼配电房/进线D1301 | 运行电流=171A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C7:E7", "page": null, "row": 7, "column": "C", "image_id": null}
+E-0039 | 13号楼配电房/进线D1301 | 运行电流=171A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C7:E7", "page": null, "row": 7, "column": "C", "image_id": null}
+E-0040 | 13号楼配电房/进线D1301 | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "U7:U7", "page": null, "row": 7, "column": "U", "image_id": null}
+E-0041 | 13号楼配电房/进线D1301 | 变压器温度=NG（三相温度差异大） | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "V7:W7", "page": null, "row": 7, "column": "V", "image_id": null}
+E-0042 | 13号楼配电房/进线D1301 | 实测剩余电流=0.4A；占运行电流=0.23% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C7;J7:L7", "page": null, "row": 7, "column": "J", "image_id": null}
+E-0043 | 13号楼配电房/D1304-6 | 运行电流=50A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C8:E8", "page": null, "row": 8, "column": "C", "image_id": null}
+E-0044 | 13号楼配电房/D1304-6 | 运行电流=50A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C8:E8", "page": null, "row": 8, "column": "C", "image_id": null}
+E-0045 | 13号楼配电房/D1304-6 | 实测剩余电流=0A；占运行电流=0.00% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C8;J8:L8", "page": null, "row": 8, "column": "J", "image_id": null}
+E-0046 | 文体中心配电房/1D1 | 运行电流=26A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C9:E9", "page": null, "row": 9, "column": "C", "image_id": null}
+E-0047 | 文体中心配电房/1D1 | 运行电流=26A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C9:E9", "page": null, "row": 9, "column": "C", "image_id": null}
+E-0048 | 文体中心配电房/1D1 | 实测剩余电流=0.7A；占运行电流=2.69% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C9;J9:L9", "page": null, "row": 9, "column": "J", "image_id": null}
+E-0049 | 文体中心配电房/1D1 | 其他检查发现=过热（负荷高、出风口积灰、散热差） | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "X9:Z9", "page": null, "row": 9, "column": "X", "image_id": null}
+E-0050 | 文体中心配电房/2D1 | 运行电流=15A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C10:E10", "page": null, "row": 10, "column": "C", "image_id": null}
+E-0051 | 文体中心配电房/2D1 | 运行电流=15A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C10:E10", "page": null, "row": 10, "column": "C", "image_id": null}
+E-0052 | 文体中心配电房/2D1 | 实测剩余电流=0.8A；占运行电流=5.33% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C10;J10:L10", "page": null, "row": 10, "column": "J", "image_id": null}
+E-0053 | 文体中心配电房/3D1 | 运行电流=140A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C11:E11", "page": null, "row": 11, "column": "C", "image_id": null}
+E-0054 | 文体中心配电房/3D1 | 运行电流=140A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C11:E11", "page": null, "row": 11, "column": "C", "image_id": null}
+E-0055 | 文体中心配电房/3D1 | 实测剩余电流=2.1A；占运行电流=1.50% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C11;J11:L11", "page": null, "row": 11, "column": "J", "image_id": null}
+E-0056 | 科研楼配电房/D101 | 运行电流=100A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C12:E12", "page": null, "row": 12, "column": "C", "image_id": null}
+E-0057 | 科研楼配电房/D101 | 运行电流=100A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C12:E12", "page": null, "row": 12, "column": "C", "image_id": null}
+E-0058 | 科研楼配电房/D101 | 实测剩余电流=0A；占运行电流=0.00% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C12;J12:L12", "page": null, "row": 12, "column": "J", "image_id": null}
+E-0059 | 科研楼配电房/D101 | 其他检查发现=裸露电缆 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "X12:Z12", "page": null, "row": 12, "column": "X", "image_id": null}
+E-0060 | 科研楼配电房/D201 | 运行电流=100A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C13:E13", "page": null, "row": 13, "column": "C", "image_id": null}
+E-0061 | 科研楼配电房/D201 | 运行电流=100A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C13:E13", "page": null, "row": 13, "column": "C", "image_id": null}
+E-0062 | 科研楼配电房/D201 | 实测剩余电流=2.9A；占运行电流=2.90% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C13;J13:L13", "page": null, "row": 13, "column": "J", "image_id": null}
+E-0063 | 科研楼配电房/D204-1 | 运行电流=40A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C14:E14", "page": null, "row": 14, "column": "C", "image_id": null}
+E-0064 | 科研楼配电房/D204-1 | 运行电流=40A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C14:E14", "page": null, "row": 14, "column": "C", "image_id": null}
+E-0065 | 科研楼配电房/D204-1 | 实测剩余电流=1.6A；占运行电流=4.00% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C14;J14:L14", "page": null, "row": 14, "column": "J", "image_id": null}
+E-0066 | 老配电房（低压）/18#柜 | 运行电流=262A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C15:E15", "page": null, "row": 15, "column": "C", "image_id": null}
+E-0067 | 老配电房（低压）/18#柜 | 运行电流=262A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C15:E15", "page": null, "row": 15, "column": "C", "image_id": null}
+E-0068 | 老配电房（低压）/18#柜 | 实测剩余电流=1.1A；占运行电流=0.42% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C15;J15:L15", "page": null, "row": 15, "column": "J", "image_id": null}
+E-0069 | 老配电房（低压）/14#柜-3 | 运行电流=25A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C16:E16", "page": null, "row": 16, "column": "C", "image_id": null}
+E-0070 | 老配电房（低压）/14#柜-3 | 运行电流=25A；未提供额定容量，不能据此计算负荷率或判断过载 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C16:E16", "page": null, "row": 16, "column": "C", "image_id": null}
+E-0071 | 老配电房（低压）/14#柜-3 | 实测剩余电流=11.3A；占运行电流=45.20% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "低配评估详情", "cell": "C16;J16:L16", "page": null, "row": 16, "column": "J", "image_id": null}
+E-0072 | 16号楼配电房/16号楼 | 运行电流=123A；变压器容量=2000kVA；计算负荷率=4.26% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C3:E3", "page": null, "row": 3, "column": "C", "image_id": null}
+E-0073 | 16号楼配电房/16号楼 | 运行电流=123A；变压器容量=2000kVA；计算负荷率=4.26% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C3:E3", "page": null, "row": 3, "column": "C", "image_id": null}
+E-0074 | 16号楼配电房/16号楼 | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F3:F3", "page": null, "row": 3, "column": "F", "image_id": null}
+E-0075 | 16号楼配电房/16号楼 | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G3:H3", "page": null, "row": 3, "column": "G", "image_id": null}
+E-0076 | 16号楼配电房/16号楼 | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L3:M3", "page": null, "row": 3, "column": "L", "image_id": null}
+E-0077 | 16号楼配电房/16号楼 | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N3:O3", "page": null, "row": 3, "column": "N", "image_id": null}
+E-0078 | 16号楼配电房/16号楼 | 谐波=2.3% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P3:Q3", "page": null, "row": 3, "column": "P", "image_id": null}
+E-0079 | 16号楼配电房/16号楼 | 电涌保护装置=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R3:S3", "page": null, "row": 3, "column": "R", "image_id": null}
+E-0080 | 16号楼配电房/16号楼 | 变压器噪声震动=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T3:T3", "page": null, "row": 3, "column": "T", "image_id": null}
+E-0081 | 16号楼配电房/17号楼 | 运行电流=186A；变压器容量=2000kVA；计算负荷率=6.44% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C4:E4", "page": null, "row": 4, "column": "C", "image_id": null}
+E-0082 | 16号楼配电房/17号楼 | 运行电流=186A；变压器容量=2000kVA；计算负荷率=6.44% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C4:E4", "page": null, "row": 4, "column": "C", "image_id": null}
+E-0083 | 16号楼配电房/17号楼 | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F4:F4", "page": null, "row": 4, "column": "F", "image_id": null}
+E-0084 | 16号楼配电房/17号楼 | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G4:H4", "page": null, "row": 4, "column": "G", "image_id": null}
+E-0085 | 16号楼配电房/17号楼 | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L4:M4", "page": null, "row": 4, "column": "L", "image_id": null}
+E-0086 | 16号楼配电房/17号楼 | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N4:O4", "page": null, "row": 4, "column": "N", "image_id": null}
+E-0087 | 16号楼配电房/17号楼 | 谐波=2.3% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P4:Q4", "page": null, "row": 4, "column": "P", "image_id": null}
+E-0088 | 16号楼配电房/17号楼 | 电涌保护装置=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R4:S4", "page": null, "row": 4, "column": "R", "image_id": null}
+E-0089 | 16号楼配电房/17号楼 | 变压器噪声震动=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T4:T4", "page": null, "row": 4, "column": "T", "image_id": null}
+E-0090 | 13号楼配电房/11-13号楼 | 运行电流=171A；变压器容量=1600kVA；计算负荷率=7.40% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C5:E5", "page": null, "row": 5, "column": "C", "image_id": null}
+E-0091 | 13号楼配电房/11-13号楼 | 运行电流=171A；变压器容量=1600kVA；计算负荷率=7.40% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C5:E5", "page": null, "row": 5, "column": "C", "image_id": null}
+E-0092 | 13号楼配电房/11-13号楼 | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F5:F5", "page": null, "row": 5, "column": "F", "image_id": null}
+E-0093 | 13号楼配电房/11-13号楼 | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G5:H5", "page": null, "row": 5, "column": "G", "image_id": null}
+E-0094 | 13号楼配电房/11-13号楼 | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L5:M5", "page": null, "row": 5, "column": "L", "image_id": null}
+E-0095 | 13号楼配电房/11-13号楼 | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N5:O5", "page": null, "row": 5, "column": "N", "image_id": null}
+E-0096 | 13号楼配电房/11-13号楼 | 谐波=2.3% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P5:Q5", "page": null, "row": 5, "column": "P", "image_id": null}
+E-0097 | 13号楼配电房/11-13号楼 | 电涌保护装置=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R5:S5", "page": null, "row": 5, "column": "R", "image_id": null}
+E-0098 | 13号楼配电房/11-13号楼 | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T5:T5", "page": null, "row": 5, "column": "T", "image_id": null}
+E-0099 | 文体中心配电房/1# | 运行电流=34A；变压器容量=1600kVA；计算负荷率=1.47% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C6:E6", "page": null, "row": 6, "column": "C", "image_id": null}
+E-0100 | 文体中心配电房/1# | 运行电流=34A；变压器容量=1600kVA；计算负荷率=1.47% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C6:E6", "page": null, "row": 6, "column": "C", "image_id": null}
+E-0101 | 文体中心配电房/1# | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F6:F6", "page": null, "row": 6, "column": "F", "image_id": null}
+E-0102 | 文体中心配电房/1# | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G6:H6", "page": null, "row": 6, "column": "G", "image_id": null}
+E-0103 | 文体中心配电房/1# | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L6:M6", "page": null, "row": 6, "column": "L", "image_id": null}
+E-0104 | 文体中心配电房/1# | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N6:O6", "page": null, "row": 6, "column": "N", "image_id": null}
+E-0105 | 文体中心配电房/1# | 谐波=1.4% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P6:Q6", "page": null, "row": 6, "column": "P", "image_id": null}
+E-0106 | 文体中心配电房/1# | 电涌保护装置=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R6:S6", "page": null, "row": 6, "column": "R", "image_id": null}
+E-0107 | 文体中心配电房/1# | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T6:T6", "page": null, "row": 6, "column": "T", "image_id": null}
+E-0108 | 文体中心配电房/2# | 运行电流=35A；变压器容量=1600kVA；计算负荷率=1.52% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C7:E7", "page": null, "row": 7, "column": "C", "image_id": null}
+E-0109 | 文体中心配电房/2# | 运行电流=35A；变压器容量=1600kVA；计算负荷率=1.52% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C7:E7", "page": null, "row": 7, "column": "C", "image_id": null}
+E-0110 | 文体中心配电房/2# | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F7:F7", "page": null, "row": 7, "column": "F", "image_id": null}
+E-0111 | 文体中心配电房/2# | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G7:H7", "page": null, "row": 7, "column": "G", "image_id": null}
+E-0112 | 文体中心配电房/2# | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L7:M7", "page": null, "row": 7, "column": "L", "image_id": null}
+E-0113 | 文体中心配电房/2# | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N7:O7", "page": null, "row": 7, "column": "N", "image_id": null}
+E-0114 | 文体中心配电房/2# | 谐波=1.4% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P7:Q7", "page": null, "row": 7, "column": "P", "image_id": null}
+E-0115 | 文体中心配电房/2# | 电涌保护装置=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R7:S7", "page": null, "row": 7, "column": "R", "image_id": null}
+E-0116 | 文体中心配电房/2# | 变压器噪声震动=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T7:T7", "page": null, "row": 7, "column": "T", "image_id": null}
+E-0117 | 文体中心配电房/3# | 运行电流=58A；变压器容量=1600kVA；计算负荷率=2.51% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C8:E8", "page": null, "row": 8, "column": "C", "image_id": null}
+E-0118 | 文体中心配电房/3# | 运行电流=58A；变压器容量=1600kVA；计算负荷率=2.51% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C8:E8", "page": null, "row": 8, "column": "C", "image_id": null}
+E-0119 | 文体中心配电房/3# | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F8:F8", "page": null, "row": 8, "column": "F", "image_id": null}
+E-0120 | 文体中心配电房/3# | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G8:H8", "page": null, "row": 8, "column": "G", "image_id": null}
+E-0121 | 文体中心配电房/3# | 等电位连接与接地=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L8:M8", "page": null, "row": 8, "column": "L", "image_id": null}
+E-0122 | 文体中心配电房/3# | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N8:O8", "page": null, "row": 8, "column": "N", "image_id": null}
+E-0123 | 文体中心配电房/3# | 谐波=1.3% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P8:Q8", "page": null, "row": 8, "column": "P", "image_id": null}
+E-0124 | 文体中心配电房/3# | 电涌保护装置=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R8:S8", "page": null, "row": 8, "column": "R", "image_id": null}
+E-0125 | 文体中心配电房/3# | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T8:T8", "page": null, "row": 8, "column": "T", "image_id": null}
+E-0126 | 科研楼配电房/1# | 运行电流=100A；变压器容量=1000kVA；计算负荷率=6.93% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C9:E9", "page": null, "row": 9, "column": "C", "image_id": null}
+E-0127 | 科研楼配电房/1# | 运行电流=100A；变压器容量=1000kVA；计算负荷率=6.93% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C9:E9", "page": null, "row": 9, "column": "C", "image_id": null}
+E-0128 | 科研楼配电房/1# | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F9:F9", "page": null, "row": 9, "column": "F", "image_id": null}
+E-0129 | 科研楼配电房/1# | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G9:H9", "page": null, "row": 9, "column": "G", "image_id": null}
+E-0130 | 科研楼配电房/1# | 等电位连接与接地=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L9:M9", "page": null, "row": 9, "column": "L", "image_id": null}
+E-0131 | 科研楼配电房/1# | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N9:O9", "page": null, "row": 9, "column": "N", "image_id": null}
+E-0132 | 科研楼配电房/1# | 谐波=1.83% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P9:Q9", "page": null, "row": 9, "column": "P", "image_id": null}
+E-0133 | 科研楼配电房/1# | 电涌保护装置=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R9:S9", "page": null, "row": 9, "column": "R", "image_id": null}
+E-0134 | 科研楼配电房/1# | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T9:T9", "page": null, "row": 9, "column": "T", "image_id": null}
+E-0135 | 科研楼配电房/2# | 运行电流=100A；变压器容量=1000kVA；计算负荷率=6.93% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C10:E10", "page": null, "row": 10, "column": "C", "image_id": null}
+E-0136 | 科研楼配电房/2# | 运行电流=100A；变压器容量=1000kVA；计算负荷率=6.93% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C10:E10", "page": null, "row": 10, "column": "C", "image_id": null}
+E-0137 | 科研楼配电房/2# | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F10:F10", "page": null, "row": 10, "column": "F", "image_id": null}
+E-0138 | 科研楼配电房/2# | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G10:H10", "page": null, "row": 10, "column": "G", "image_id": null}
+E-0139 | 科研楼配电房/2# | 等电位连接与接地=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L10:M10", "page": null, "row": 10, "column": "L", "image_id": null}
+E-0140 | 科研楼配电房/2# | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N10:O10", "page": null, "row": 10, "column": "N", "image_id": null}
+E-0141 | 科研楼配电房/2# | 谐波=1.9% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "P10:Q10", "page": null, "row": 10, "column": "P", "image_id": null}
+E-0142 | 科研楼配电房/2# | 电涌保护装置=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R10:S10", "page": null, "row": 10, "column": "R", "image_id": null}
+E-0143 | 科研楼配电房/2# | 变压器噪声震动=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "T10:T10", "page": null, "row": 10, "column": "T", "image_id": null}
+E-0144 | 老配电房（低压）/变压器 | 运行电流=262A；变压器容量=1600kVA；计算负荷率=11.34% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C11:E11", "page": null, "row": 11, "column": "C", "image_id": null}
+E-0145 | 老配电房（低压）/变压器 | 运行电流=262A；变压器容量=1600kVA；计算负荷率=11.34% | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "C11:E11", "page": null, "row": 11, "column": "C", "image_id": null}
+E-0146 | 老配电房（低压）/变压器 | 安全连锁=无 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "F11:F11", "page": null, "row": 11, "column": "F", "image_id": null}
+E-0147 | 老配电房（低压）/变压器 | 裸露导体绝缘防护=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "G11:H11", "page": null, "row": 11, "column": "G", "image_id": null}
+E-0148 | 老配电房（低压）/变压器 | 等电位连接与接地=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "L11:M11", "page": null, "row": 11, "column": "L", "image_id": null}
+E-0149 | 老配电房（低压）/变压器 | 色标标识=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "N11:O11", "page": null, "row": 11, "column": "N", "image_id": null}
+E-0150 | 老配电房（低压）/变压器 | 电涌保护装置=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "总配评估详情表", "cell": "R11:S11", "page": null, "row": 11, "column": "R", "image_id": null}
+E-0151 | 16号楼配电房 | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B4:C4", "page": null, "row": 4, "column": "B", "image_id": null}
+E-0152 | 16号楼配电房 | 出口应急灯=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D4:E4", "page": null, "row": 4, "column": "D", "image_id": null}
+E-0153 | 16号楼配电房 | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F4:G4", "page": null, "row": 4, "column": "F", "image_id": null}
+E-0154 | 16号楼配电房 | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H4:I4", "page": null, "row": 4, "column": "H", "image_id": null}
+E-0155 | 16号楼配电房 | 安全用具=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J4:K4", "page": null, "row": 4, "column": "J", "image_id": null}
+E-0156 | 16号楼配电房 | 操作工具=OK；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L4:M4", "page": null, "row": 4, "column": "L", "image_id": null}
+E-0157 | 16号楼配电房 | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N4:O4", "page": null, "row": 4, "column": "N", "image_id": null}
+E-0158 | 16号楼配电房 | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P4:Q4", "page": null, "row": 4, "column": "P", "image_id": null}
+E-0159 | 13号楼配电房 | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B5:C5", "page": null, "row": 5, "column": "B", "image_id": null}
+E-0160 | 13号楼配电房 | 出口应急灯=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D5:E5", "page": null, "row": 5, "column": "D", "image_id": null}
+E-0161 | 13号楼配电房 | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F5:G5", "page": null, "row": 5, "column": "F", "image_id": null}
+E-0162 | 13号楼配电房 | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H5:I5", "page": null, "row": 5, "column": "H", "image_id": null}
+E-0163 | 13号楼配电房 | 安全用具=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J5:K5", "page": null, "row": 5, "column": "J", "image_id": null}
+E-0164 | 13号楼配电房 | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L5:M5", "page": null, "row": 5, "column": "L", "image_id": null}
+E-0165 | 13号楼配电房 | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N5:O5", "page": null, "row": 5, "column": "N", "image_id": null}
+E-0166 | 13号楼配电房 | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P5:Q5", "page": null, "row": 5, "column": "P", "image_id": null}
+E-0167 | 文体中心配电房 | 门窗合规=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B6:C6", "page": null, "row": 6, "column": "B", "image_id": null}
+E-0168 | 文体中心配电房 | 出口应急灯=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D6:E6", "page": null, "row": 6, "column": "D", "image_id": null}
+E-0169 | 文体中心配电房 | 防鼠板=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F6:G6", "page": null, "row": 6, "column": "F", "image_id": null}
+E-0170 | 文体中心配电房 | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H6:I6", "page": null, "row": 6, "column": "H", "image_id": null}
+E-0171 | 文体中心配电房 | 安全用具=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J6:K6", "page": null, "row": 6, "column": "J", "image_id": null}
+E-0172 | 文体中心配电房 | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L6:M6", "page": null, "row": 6, "column": "L", "image_id": null}
+E-0173 | 文体中心配电房 | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N6:O6", "page": null, "row": 6, "column": "N", "image_id": null}
+E-0174 | 文体中心配电房 | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P6:Q6", "page": null, "row": 6, "column": "P", "image_id": null}
+E-0175 | 科研楼开闭所 | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B7:C7", "page": null, "row": 7, "column": "B", "image_id": null}
+E-0176 | 科研楼开闭所 | 出口应急灯=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D7:E7", "page": null, "row": 7, "column": "D", "image_id": null}
+E-0177 | 科研楼开闭所 | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F7:G7", "page": null, "row": 7, "column": "F", "image_id": null}
+E-0178 | 科研楼开闭所 | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H7:I7", "page": null, "row": 7, "column": "H", "image_id": null}
+E-0179 | 科研楼开闭所 | 安全用具=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J7:K7", "page": null, "row": 7, "column": "J", "image_id": null}
+E-0180 | 科研楼开闭所 | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L7:M7", "page": null, "row": 7, "column": "L", "image_id": null}
+E-0181 | 科研楼开闭所 | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N7:O7", "page": null, "row": 7, "column": "N", "image_id": null}
+E-0182 | 科研楼开闭所 | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P7:Q7", "page": null, "row": 7, "column": "P", "image_id": null}
+E-0183 | 科研楼配电房 | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B8:C8", "page": null, "row": 8, "column": "B", "image_id": null}
+E-0184 | 科研楼配电房 | 出口应急灯=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D8:E8", "page": null, "row": 8, "column": "D", "image_id": null}
+E-0185 | 科研楼配电房 | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F8:G8", "page": null, "row": 8, "column": "F", "image_id": null}
+E-0186 | 科研楼配电房 | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H8:I8", "page": null, "row": 8, "column": "H", "image_id": null}
+E-0187 | 科研楼配电房 | 安全用具=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J8:K8", "page": null, "row": 8, "column": "J", "image_id": null}
+E-0188 | 科研楼配电房 | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L8:M8", "page": null, "row": 8, "column": "L", "image_id": null}
+E-0189 | 科研楼配电房 | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N8:O8", "page": null, "row": 8, "column": "N", "image_id": null}
+E-0190 | 科研楼配电房 | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P8:Q8", "page": null, "row": 8, "column": "P", "image_id": null}
+E-0191 | 老配电房（高压） | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B9:C9", "page": null, "row": 9, "column": "B", "image_id": null}
+E-0192 | 老配电房（高压） | 出口应急灯=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D9:E9", "page": null, "row": 9, "column": "D", "image_id": null}
+E-0193 | 老配电房（高压） | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F9:G9", "page": null, "row": 9, "column": "F", "image_id": null}
+E-0194 | 老配电房（高压） | 消防设施=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H9:I9", "page": null, "row": 9, "column": "H", "image_id": null}
+E-0195 | 老配电房（高压） | 安全用具=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J9:K9", "page": null, "row": 9, "column": "J", "image_id": null}
+E-0196 | 老配电房（高压） | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L9:M9", "page": null, "row": 9, "column": "L", "image_id": null}
+E-0197 | 老配电房（高压） | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N9:O9", "page": null, "row": 9, "column": "N", "image_id": null}
+E-0198 | 老配电房（高压） | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P9:Q9", "page": null, "row": 9, "column": "P", "image_id": null}
+E-0199 | 老配电房（低压） | 门窗合规=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "B10:C10", "page": null, "row": 10, "column": "B", "image_id": null}
+E-0200 | 老配电房（低压） | 出口应急灯=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "D10:E10", "page": null, "row": 10, "column": "D", "image_id": null}
+E-0201 | 老配电房（低压） | 防鼠板=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "F10:G10", "page": null, "row": 10, "column": "F", "image_id": null}
+E-0202 | 老配电房（低压） | 消防设施=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "H10:I10", "page": null, "row": 10, "column": "H", "image_id": null}
+E-0203 | 老配电房（低压） | 安全用具=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "J10:K10", "page": null, "row": 10, "column": "J", "image_id": null}
+E-0204 | 老配电房（低压） | 操作工具=NG；补充记录=无台账 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "L10:M10", "page": null, "row": 10, "column": "L", "image_id": null}
+E-0205 | 老配电房（低压） | 整机备件=NG | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "N10:O10", "page": null, "row": 10, "column": "N", "image_id": null}
+E-0206 | 老配电房（低压） | 通道及杂物=OK | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "配电房合规性", "cell": "P10:Q10", "page": null, "row": 10, "column": "P", "image_id": null}
+E-0207 | 红外热成像缺陷判定标准 | 原始诊断表提供低压断路器触头、母线连接处，电缆终端头、接线端子以及刀开关、熔断器连接处的缺陷等级判定图 | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "J1", "page": null, "row": 1, "column": "J", "image_id": null}
+E-0208 | 16号楼配电房/进线D1701 | 检测部位=低压断路器触头、母线连接处；测点温度=31.7℃；检测时负荷率=63.74%；环境温度=27.6℃；相对环境温升=4.1K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A3:K3", "page": null, "row": 3, "column": "G", "image_id": null}
+E-0209 | 16号楼配电房/进线D1701 | 检测部位=低压断路器触头、母线连接处；测点温度=31.7℃；检测时负荷率=63.74%；环境温度=27.6℃；相对环境温升=4.1K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A3:K3", "page": null, "row": 3, "column": "G", "image_id": null}
+E-0210 | 16号楼配电房/进线D1601 | 检测部位=未填写；测点温度=32.5℃；环境温度=27.6℃；相对环境温升=4.9K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K6", "page": null, "row": 6, "column": "G", "image_id": null}
+E-0211 | 16号楼配电房/进线D1601 | 检测部位=未填写；测点温度=32.5℃；环境温度=27.6℃；相对环境温升=4.9K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K6", "page": null, "row": 6, "column": "G", "image_id": null}
+E-0212 | 16号楼配电房/D1607 | 检测部位=未填写；测点温度=29.4℃；环境温度=27.6℃；相对环境温升=1.8K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K7", "page": null, "row": 7, "column": "G", "image_id": null}
+E-0213 | 16号楼配电房/D1607 | 检测部位=未填写；测点温度=29.4℃；环境温度=27.6℃；相对环境温升=1.8K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K7", "page": null, "row": 7, "column": "G", "image_id": null}
+E-0214 | 16号楼配电房/D1705-6 | 检测部位=未填写；测点温度=31.6℃；环境温度=27.6℃；相对环境温升=4.0K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K8", "page": null, "row": 8, "column": "G", "image_id": null}
+E-0215 | 16号楼配电房/D1705-6 | 检测部位=未填写；测点温度=31.6℃；环境温度=27.6℃；相对环境温升=4.0K；环境湿度=39%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A6:K8", "page": null, "row": 8, "column": "G", "image_id": null}
+E-0216 | 13号楼配电房/进线D1301 | 检测部位=未填写；测点温度=24.4℃；环境温度=23.9℃；相对环境温升=0.5K；环境湿度=73.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A9:K9", "page": null, "row": 9, "column": "G", "image_id": null}
+E-0217 | 13号楼配电房/进线D1301 | 检测部位=未填写；测点温度=24.4℃；环境温度=23.9℃；相对环境温升=0.5K；环境湿度=73.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A9:K9", "page": null, "row": 9, "column": "G", "image_id": null}
+E-0218 | 13号楼配电房/D1304-6 | 检测部位=未填写；测点温度=24.1℃；环境温度=23.9℃；相对环境温升=0.2K；环境湿度=73.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A10:K10", "page": null, "row": 10, "column": "G", "image_id": null}
+E-0219 | 13号楼配电房/D1304-6 | 检测部位=未填写；测点温度=24.1℃；环境温度=23.9℃；相对环境温升=0.2K；环境湿度=73.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A10:K10", "page": null, "row": 10, "column": "G", "image_id": null}
+E-0220 | 文体中心配电房/1D1 | 检测部位=未填写；测点温度=36.1℃；环境温度=25.9℃；相对环境温升=10.2K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A11:K11", "page": null, "row": 11, "column": "G", "image_id": null}
+E-0221 | 文体中心配电房/1D1 | 检测部位=未填写；测点温度=36.1℃；环境温度=25.9℃；相对环境温升=10.2K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A11:K11", "page": null, "row": 11, "column": "G", "image_id": null}
+E-0222 | 文体中心配电房/2D1 | 检测部位=未填写；测点温度=37.5℃；环境温度=25.9℃；相对环境温升=11.6K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A12:K12", "page": null, "row": 12, "column": "G", "image_id": null}
+E-0223 | 文体中心配电房/2D1 | 检测部位=未填写；测点温度=37.5℃；环境温度=25.9℃；相对环境温升=11.6K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A12:K12", "page": null, "row": 12, "column": "G", "image_id": null}
+E-0224 | 文体中心配电房/3D1 | 检测部位=未填写；测点温度=37.8℃；环境温度=25.9℃；相对环境温升=11.9K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A13:K13", "page": null, "row": 13, "column": "G", "image_id": null}
+E-0225 | 文体中心配电房/3D1 | 检测部位=未填写；测点温度=37.8℃；环境温度=25.9℃；相对环境温升=11.9K；环境湿度=60.7%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A13:K13", "page": null, "row": 13, "column": "G", "image_id": null}
+E-0226 | 科研楼配电房/D101 | 检测部位=未填写；测点温度=29.2℃；环境温度=26℃；相对环境温升=3.2K；环境湿度=62%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A14:K14", "page": null, "row": 14, "column": "G", "image_id": null}
+E-0227 | 科研楼配电房/D101 | 检测部位=未填写；测点温度=29.2℃；环境温度=26℃；相对环境温升=3.2K；环境湿度=62%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A14:K14", "page": null, "row": 14, "column": "G", "image_id": null}
+E-0228 | 科研楼配电房/D201 | 检测部位=未填写；测点温度=31.3℃；环境温度=26℃；相对环境温升=5.3K；环境湿度=62%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A15:K15", "page": null, "row": 15, "column": "G", "image_id": null}
+E-0229 | 科研楼配电房/D201 | 检测部位=未填写；测点温度=31.3℃；环境温度=26℃；相对环境温升=5.3K；环境湿度=62%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A15:K15", "page": null, "row": 15, "column": "G", "image_id": null}
+E-0230 | 老配电房（低压）/18# | 检测部位=未填写；测点温度=26.9℃；环境温度=23.9℃；相对环境温升=3.0K；环境湿度=66.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A16:K16", "page": null, "row": 16, "column": "G", "image_id": null}
+E-0231 | 老配电房（低压）/18# | 检测部位=未填写；测点温度=26.9℃；环境温度=23.9℃；相对环境温升=3.0K；环境湿度=66.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A16:K16", "page": null, "row": 16, "column": "G", "image_id": null}
+E-0232 | 老配电房（低压）/17# | 检测部位=未填写；测点温度=27.1℃；环境温度=23.9℃；相对环境温升=3.2K；环境湿度=66.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A17:K17", "page": null, "row": 17, "column": "G", "image_id": null}
+E-0233 | 老配电房（低压）/17# | 检测部位=未填写；测点温度=27.1℃；环境温度=23.9℃；相对环境温升=3.2K；环境湿度=66.2%RH | {"file_id": "file-25864794bcef574c", "path": "Inputs/S4-4诊断工作用表.xlsx", "sheet": "红外热成像检测记录表", "cell": "A17:K17", "page": null, "row": 17, "column": "G", "image_id": null}
+E-0234 | 评估总表 2.1.1 | 既有评估结论=目前所有变压器均处于低负载状态运行，暂无此项风险；既有行动建议=建议依托能源管理系统实时监测负荷，动态分析过载风险; | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F5:G5", "page": null, "row": 5, "column": "F", "image_id": null}
+E-0235 | 评估总表 2.1.2 | 既有评估结论=双路电源供电，需人工切换 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F6:G6", "page": null, "row": 6, "column": "F", "image_id": null}
+E-0236 | 评估总表 2.1.3 | 既有评估结论=备用电源无法自动切换 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F7:G7", "page": null, "row": 7, "column": "F", "image_id": null}
+E-0237 | 评估总表 2.1.4 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F8:G8", "page": null, "row": 8, "column": "F", "image_id": null}
+E-0238 | 评估总表 2.1.5 | 既有评估结论=多数电容柜未投入使用 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F9:G9", "page": null, "row": 9, "column": "F", "image_id": null}
+E-0239 | 评估总表 2.2.1.1 | 既有评估结论=谐波电压最高为2.3%，无此项风险 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F12:G12", "page": null, "row": 12, "column": "F", "image_id": null}
+E-0240 | 评估总表 2.2.1.2 | 既有评估结论=OK；既有行动建议=智能平台监测 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F13:G13", "page": null, "row": 13, "column": "F", "image_id": null}
+E-0241 | 评估总表 2.2.1.3 | 既有评估结论=OK；既有行动建议=智能平台监测 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F14:G14", "page": null, "row": 14, "column": "F", "image_id": null}
+E-0242 | 评估总表 2.2.2.1 | 既有评估结论=OK；既有行动建议=智能平台监测母排温度和载流量 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F16:G16", "page": null, "row": 16, "column": "F", "image_id": null}
+E-0243 | 评估总表 2.2.2.2 | 既有评估结论=目前没有局放监测装置；既有行动建议=通过智能平台关注高压柜局放情况，持续进行隐患排查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F17:G17", "page": null, "row": 17, "column": "F", "image_id": null}
+E-0244 | 评估总表 2.2.2.3 | 既有评估结论=1)评估所见区域运行环境（温度、湿度、粉尘）均正常；
+2)环境风险：存在门窗密封不严、防鼠板缺失、户外箱变防护措施不佳等现象
+3)人身安全风险：绝缘胶垫不规范、盖板缺失、电缆沟积水。；既有行动建议=立即整改
+智能平台监测运行环境
+定期维护巡检 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F18:G18", "page": null, "row": 18, "column": "F", "image_id": null}
+E-0245 | 评估总表 2.3.2 | 既有评估结论=目前没有监测；既有行动建议=规范剩余电流保护；利用智能平台监测 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F21:G21", "page": null, "row": 21, "column": "F", "image_id": null}
+E-0246 | 评估总表 2.3.3 | 既有评估结论=低压系统抗过压是通过各盘柜进线处的电涌保护装置实现，此装置部分未投入使用。；既有行动建议=智能平台监测过压
+维护巡检时确认避雷器及电涌装置功能 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F22:G22", "page": null, "row": 22, "column": "F", "image_id": null}
+E-0247 | 评估总表 2.4.1.1 | 既有评估结论=14号宿舍楼室外箱变内开关损坏，无法分合；既有行动建议=尽快检修更换 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F25:G25", "page": null, "row": 25, "column": "F", "image_id": null}
+E-0248 | 评估总表 2.4.1.2 | 既有评估结论=所有低压一级配电柜分隔形式均为2级，科研楼配电房D104出线柜母排暴露，对内燃弧的蔓延没有限制能力。；既有行动建议=完善保护措施，加强维护监测，防止发生燃弧 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F26:G26", "page": null, "row": 26, "column": "F", "image_id": null}
+E-0249 | 评估总表 2.4.1.3 | 既有评估结论=柜门打不开（被遮挡）；既有行动建议=定期确认有效性 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F27:G27", "page": null, "row": 27, "column": "F", "image_id": null}
+E-0250 | 评估总表 2.4.1.4 | 既有评估结论=部分工作状态指示灯损坏，有误操作风险；既有行动建议=维修恢复 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F28:G28", "page": null, "row": 28, "column": "F", "image_id": null}
+E-0251 | 评估总表 2.4.2.1 | 既有评估结论=配电箱内接线处裸露；既有行动建议=维护时消缺 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F30:G30", "page": null, "row": 30, "column": "F", "image_id": null}
+E-0252 | 评估总表 2.4.2.2 | 既有评估结论=科研楼开闭所：缺少接地扁铁
+科研楼配电房：缺少接地扁铁
+老配电房（高压）：缺少接地扁铁
+老配电房（低压）：缺少接地扁铁；既有行动建议=专项整改 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F31:G31", "page": null, "row": 31, "column": "F", "image_id": null}
+E-0253 | 评估总表 2.4.2.3 | 既有评估结论=存在多处不规范连接现象 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F32:G32", "page": null, "row": 32, "column": "F", "image_id": null}
+E-0254 | 评估总表 2.4.2.4 | 既有评估结论=变压器、配电柜缺少有效编号体系，无法快速定位 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F33:G33", "page": null, "row": 33, "column": "F", "image_id": null}
+E-0255 | 评估总表 2.4.2.5 | 既有评估结论=桥架损坏导致电缆长期风吹日晒，加速电缆老化；既有行动建议=维护时消缺 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F34:G34", "page": null, "row": 34, "column": "F", "image_id": null}
+E-0256 | 评估总表 2.4.2.6 | 既有评估结论=多处封堵不严/缺少封堵；既有行动建议=维护时消缺 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F35:G35", "page": null, "row": 35, "column": "F", "image_id": null}
+E-0257 | 评估总表 2.4.3.1 | 既有评估结论=零地混接或漏电可能；既有行动建议=尽快确定原因，并消除 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F37:G37", "page": null, "row": 37, "column": "F", "image_id": null}
+E-0258 | 评估总表 2.4.3.2 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F38:G38", "page": null, "row": 38, "column": "F", "image_id": null}
+E-0259 | 评估总表 2.4.3.3 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F39:G39", "page": null, "row": 39, "column": "F", "image_id": null}
+E-0260 | 评估总表 2.4.4 | 既有评估结论=多处末端配电箱接线不规范、绝缘皮缺失 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F40:G40", "page": null, "row": 40, "column": "F", "image_id": null}
+E-0261 | 评估总表 2.5.1 | 既有评估结论=未见细致SOP/EOP；既有行动建议=逐步优化SOP/EOP并演练EOP | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F42:G42", "page": null, "row": 42, "column": "F", "image_id": null}
+E-0262 | 评估总表 2.5.2 | 既有评估结论=不规范；既有行动建议=规范化管理 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F43:G43", "page": null, "row": 43, "column": "F", "image_id": null}
+E-0263 | 评估总表 2.5.3.1 | 既有评估结论=人员不足；既有行动建议=利用智能平台，优化巡检 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F45:G45", "page": null, "row": 45, "column": "F", "image_id": null}
+E-0264 | 评估总表 2.5.3.2 | 既有评估结论=维护计划待完善；既有行动建议=根据关键性分级，优化维护内容与频度 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F46:G46", "page": null, "row": 46, "column": "F", "image_id": null}
+E-0265 | 评估总表 2.5.3.3 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F47:G47", "page": null, "row": 47, "column": "F", "image_id": null}
+E-0266 | 评估总表 2.5.4 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F48:G48", "page": null, "row": 48, "column": "F", "image_id": null}
+E-0267 | 评估总表 2.5.5 | 既有评估结论=OK | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F49:G49", "page": null, "row": 49, "column": "F", "image_id": null}
+E-0268 | 评估总表 2.5.6 | 既有评估结论=已考虑备件；既有行动建议=根据关键性分级，优化应急备件清单 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F50:G50", "page": null, "row": 50, "column": "F", "image_id": null}
+E-0269 | 评估总表 2.5.7 | 既有评估结论=目前没有 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "评估信息汇总表", "cell": "F51:G51", "page": null, "row": 51, "column": "F", "image_id": null}
+E-0270 | 评估总表 2.2.2.3 | 既有问题=科研楼配电站绝缘胶垫缺失，人身安全防护措施不到位；既有风险=操作人员触电风险增加，发生高压接地故障时跨步电压和接触电压可能危及人身安全；绝缘胶垫不规范导致防护失效；既有建议=1)建议立即铺设不小于8mm的绝缘垫（推荐10mm）；
+2)定期检查绝缘垫完整性。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B5:F5", "page": null, "row": 5, "column": "C", "image_id": null}
+E-0271 | 评估总表 2.2.2.3 | 既有问题=科研楼开闭所绝缘胶垫缺失，人身安全防护措施不到位；既有风险=操作人员触电风险增加，发生高压接地故障时跨步电压和接触电压可能危及人身安全；绝缘胶垫不规范导致防护失效；既有建议=1)建议立即铺设不小于8mm的绝缘垫（推荐10mm）；
+2)定期检查绝缘垫完整性。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B6:F6", "page": null, "row": 6, "column": "C", "image_id": null}
+E-0272 | 评估总表 2.2.2.3 | 既有问题=16号楼配电站、13号楼配电站、文体中心配电站、老配电房（高压）、老配电房（低压），均存在绝缘胶垫不规范问题，有的缺失，有的已年久发霉；既有风险=操作人员触电风险增加，发生高压接地故障时跨步电压和接触电压可能危及人身安全；绝缘胶垫不规范导致防护失效；既有建议=1)建议立即铺设不小于8mm的绝缘垫（推荐10mm）；
+2)定期检查绝缘垫完整性。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B7:F7", "page": null, "row": 7, "column": "C", "image_id": null}
+E-0273 | 评估总表 2.2.2.3 | 既有问题=室外箱变缺少防护和安全锁；既有风险=存在人身触电风险；既有建议=建议增加护栏、门锁等防范措施，并由专人负责管理。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B8:F8", "page": null, "row": 8, "column": "C", "image_id": null}
+E-0274 | 评估总表 2.2.2.3 | 既有问题=教学楼里面的配电箱缺少防火封堵，存在漏水触电风险，现场能看到明显的漏水痕迹；既有风险=发生火灾时火焰和烟气可能沿电缆孔洞蔓延至其他区域，扩大火灾范围；
+漏水渗入配电箱内可能导致线路短路、漏电或设备损坏，存在严重触电及电气火灾风险；既有建议=1)按GB 23864标准对配电箱电缆穿越处进行防火封堵，采用防火泥或防火包封堵；
+2)排查并修复楼顶或管道漏水点，消除水源隐患；
+3)对受潮配电箱进行干燥处理，检查绝缘电阻合格后方可恢复供电；
+4)建立定期巡检制度，检查封堵完好性和漏水情况。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B9:F9", "page": null, "row": 9, "column": "C", "image_id": null}
+E-0275 | 评估总表 2.2.2.3 | 既有问题=13号楼配电房缺少电缆沟盖板；既有风险=人员行走时容易踩空跌入沟内，造成摔伤或触碰带电电缆导致触电事故；同时杂物、灰尘容易落入沟内，积水无法有效排除，加速电缆老化，存在人身伤害和电气安全风险；既有建议=1)立即测量电缆沟尺寸，采购并安装符合承重要求的电缆沟盖板；
+2)盖板应选用防滑、防火材料，并具有足够的机械强度；
+3)盖板与沟体之间应配合紧密，防止位移和异响；
+4)清理电缆沟内杂物和积水，检查电缆状态；
+5)建立电缆沟盖板定期巡检制度，发现损坏及时更换。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B10:F10", "page": null, "row": 10, "column": "C", "image_id": null}
+E-0276 | 评估总表 2.2.2.3 | 既有问题=13号楼配电室电缆沟有积水；既有风险=降低绝缘性能，可能引发短路、漏电或接地故障；
+潮湿环境加速设备锈蚀，存在电气火灾及人员触电风险；既有建议=1)立即清理电缆沟积水，检查并修复排水系统；
+2)检查电缆绝缘层是否受损，必要时更换受潮电缆；
+3)在电缆沟低洼处增设集水井和自动排水泵；
+4)对电缆沟进行防水处理，检查并封堵渗水源；
+5)建立定期巡检制度，雨季加强排水检查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B11:F11", "page": null, "row": 11, "column": "C", "image_id": null}
+E-0277 | 评估总表 2.2.2.3 | 既有问题=文体中心配电房电缆沟盖板不合规；既有风险=存在人身伤害和电气安全隐患；既有建议=1)检查现有盖板规格，更换为符合GB/T 23858标准的承重型电缆沟盖板；
+2)盖板应与沟体配合紧密，具有防滑措施，必要时加装固定卡扣；
+3)将电缆沟盖板纳入定期巡检内容，发现损坏及时更换。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B12:F12", "page": null, "row": 12, "column": "C", "image_id": null}
+E-0278 | 评估总表 2.2.2.3 | 既有问题=文体中心配电房电缆沟内有杂物、积水；既有风险=易引发火灾，且阻碍散热和巡检；
+积水导致电缆绝缘下降，可能引发短路漏电；杂物与积水混合加速设备腐蚀，存在电气火灾、设备损坏及人员触电风险；既有建议=1)立即清理电缆沟内所有杂物和积水，保持沟内清洁干燥；
+2)检查电缆外层是否受损，测量绝缘电阻；
+3)修复电缆沟排水和防水措施，防止再次积水；
+4)加装电缆沟盖板并定期巡检，防止杂物再次进入；
+5)建立电缆沟定期清理维护制度。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B13:F13", "page": null, "row": 13, "column": "C", "image_id": null}
+E-0279 | 评估总表 2.4.2.1 | 既有问题=科研楼配电房D104出线柜母线接头裸露；既有风险=存在操作人员触电风险；既有建议=1)建议立即加装防护罩，完善保护措施；
+2)在柜门张贴高压危险警示标识。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B14:F14", "page": null, "row": 14, "column": "C", "image_id": null}
+E-0280 | 评估总表 2.4.2.5 | 既有问题=文体中心配电房电缆接线不规范，且柜体有火灾痕迹；既有风险=会导致局部过热，可能引发电气火灾；柜体已有火灾痕迹说明曾发生过过热或电弧故障，若不及时处理可能再次引发火灾，存在严重电气火灾及设备损坏风险；既有建议=1)立即对不规范接线进行整改；
+2)全面检查柜内元器件状态，更换受损部件；
+3)清理柜内火灾残留物，检查绝缘距离是否符合要求；
+4)对柜体进行修复或更换，确保防护等级达标；
+5)加强日常巡检，利用红外测温监测接点温度。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B15:F15", "page": null, "row": 15, "column": "C", "image_id": null}
+E-0281 | 评估总表 2.4.2.5 | 既有问题=教职工宿舍楼室外箱变私拉乱接（影响柜门开启及日常维保）；既有风险=存在火灾隐患；既有建议=1)立即清理私拉乱接的线路，统一规范布线，确保线路走桥架或穿管保护；
+2)确保日常维保通道畅通；
+3)加强用电管理，严禁私拉乱接。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B16:F16", "page": null, "row": 16, "column": "C", "image_id": null}
+E-0282 | 评估总表 2.4.2.2 | 既有问题=科研楼开闭所、配电房，老配电房（高压）、老配电房（低压），目视均没有看到等电位接地体；既有风险=存在触电风险；既有建议=建议核实查，若无等电位接地体需尽快完善 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B17:F17", "page": null, "row": 17, "column": "C", "image_id": null}
+E-0283 | 评估总表 2.4.2.3 | 既有问题=第二实训楼一层强电间动力柜零线腐蚀严重，即将断裂；既有风险=裸露带电导体可能引发人员触电事故，或造成相间短路、接地故障，存在火灾风险；电缆混乱缺乏防护，有电缆损坏及电气火灾风险；既有建议=1)建议立即更换现有零线；
+2)检查电缆敷设路径，消除机械损伤隐患；
+3)规范电缆走向，确保电缆可靠固定；
+4)加强配电房巡检，建立缺陷闭环管理制度。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B18:F18", "page": null, "row": 18, "column": "C", "image_id": null}
+E-0284 | 评估总表 2.4.2.3 | 既有问题=教职工宿舍楼室外箱变断路器临时固定在零排上；既有风险=可能引发过热、电弧故障；还可能造成误操作或检修时误判回路，存在电气火灾、设备损坏及人员触电风险；既有建议=1)立即停电，将断路器从错误位置拆除；
+2)按规范在专用DIN导轨或安装支架上重新固定断路器；
+3)检查零排和断路器端子是否因过热受损，必要时更换。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B19:F19", "page": null, "row": 19, "column": "C", "image_id": null}
+E-0285 | 评估总表 2.4.1.4 | 既有问题=14号宿舍楼箱变，断路器开关损坏，无法实现分合闸操作；既有风险=失去正常控制和保护功能，发生故障时无法及时切断电源；存在电气火灾、设备损坏及人员触电的严重安全风险；既有建议=1)立即更换损坏的断路器开关，选择与原型号匹配或技术参数更优的产品；
+2)更换前检查回路负荷情况，临时安排转供或限电措施；
+3)更换后进行分合闸测试和保护功能验证；
+4)建立断路器定期检查和维护制度，确保操作机构灵活可靠。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B20:F20", "page": null, "row": 20, "column": "C", "image_id": null}
+E-0286 | 评估总表 2.4.2.3 | 既有问题=宿舍楼强电间交流配电柜线路老化，柜体腐蚀严重，接线端螺帽生锈与断路器黏连；；既有风险=存在触电风险；既有建议=1)立即安排停电检修，更换腐蚀严重的柜体和受损部件；
+2)更换生锈黏连的螺帽和断路器，确保连接可靠、操作灵活；
+3)对老化线路进行绝缘测试，不合格的予以更换；
+4)改善强电间环境条件（通风、防潮），减缓设备腐蚀老化；
+5)制定设备更新改造计划，逐步淘汰超期服役设备。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B21:F21", "page": null, "row": 21, "column": "C", "image_id": null}
+E-0287 | 评估总表 2.5.1 | 既有问题=现场未见完善的电气设备标准操作程序(SOP)和应急操作程序(EOP)，运维管理体系与风险管控机制未建立；既有风险=操作人员缺乏标准化作业指导，误操作风险高；发生紧急情况时无法快速、正确处置，可能扩大事故影响；以消除人为误操作风险；既有建议=1)编制覆盖全部电气设备的SOP/EOP文件；
+2)明确倒闸操作、设备巡检、异常处置等关键流程；
+3)逐步优化SOP/EOP并演练EOP；
+4)定期组织培训和演练，确保操作人员熟练掌握。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B22:F22", "page": null, "row": 22, "column": "C", "image_id": null}
+E-0288 | 评估总表 2.3.3 | 既有问题=17号楼变压器浪涌保护器未投用；既有风险=当雷击或操作过电压发生时，无法有效限制瞬态过电压，变压器及下游设备可能因过压而损坏绝缘，存在设备损毁及引发下游连锁故障的风险；既有建议=1)立即检查浪涌保护器未投用的原因（如损坏、选型不当、误断开），排除故障后恢复投入；
+2)如SPD损坏，更换符合GB/T 18802标准且通流容量匹配的产品；
+3)在维护巡检中增加SPD状态检查项目，确认指示灯正常、模块未劣化；
+4)建立雷雨季前专项检查制度，确保防雷设施可靠运行。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B24:F24", "page": null, "row": 24, "column": "C", "image_id": null}
+E-0289 | 评估总表 2.2.2.3 | 既有问题=16号楼变压器变压器异响、震动；既有风险=长期带病运行可能导致故障扩大，引发变压器烧毁、短路停电甚至火灾事故；既有建议=1)安排专业人员进行变压器带电检测和停电试验，包括绝缘电阻、直流电阻、变比和空载试验；
+2)检查变压器紧固件是否松动，必要时进行紧固或加装减振垫；
+3)如检测发现内部故障迹象，立即安排变压器返厂检修或更换；
+4)加强日常巡检，利用红外测温和振动监测手段跟踪运行状态；
+5)考虑安装变压器在线监测装置，实时掌握运行健康状况。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B25:F25", "page": null, "row": 25, "column": "C", "image_id": null}
+E-0290 | 评估总表 2.2.2.3 | 既有问题=16号楼配电室光伏并网柜配电间缺少防鼠板；既有风险=老鼠等小动物可能进入配电柜内部，咬噬电缆绝缘层或在带电部件间爬行造成相间短路，可能引发设备跳闸、损坏甚至电气火灾，严重影响供电可靠性；既有建议=1)立即在所有配电间门口安装防鼠板（高度不低于40cm），材质选用金属或光滑塑料板；
+2)封堵配电间内所有孔洞、缝隙，防止小动物从其他途径进入；
+3)在配电间周围设置防鼠诱饵站，定期进行灭鼠工作；
+4)定期检查防鼠设施完好性，确保无破损或缺失；
+5)建立配电间防小动物管理制度，纳入日常巡检内容。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B26:F26", "page": null, "row": 26, "column": "C", "image_id": null}
+E-0291 | 评估总表 2.4.2.1 | 既有问题=第二实训楼一层强电间配电箱内存在铜线裸露现象；既有风险=带电导体失去绝缘保护，人员触碰极易发生触电事故；存在严重人身触电和火灾风险；既有建议=1)立即断电，对裸露铜线进行绝缘包扎或加装绝缘套管；
+2)检查配电箱内所有接线端子，紧固松动连接；
+3)加装或修复配电箱防护面板，防止人员误触带电部分；
+4)整改完成后进行绝缘电阻测试和通电试验。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B27:F27", "page": null, "row": 27, "column": "C", "image_id": null}
+E-0292 | 评估总表 2.2.2.3 | 既有问题=文体中心配电房不是防火门，缺少安全出口指示灯；既有风险=发生火灾时无法有效阻止火势蔓延和烟气扩散；人员难以快速找到安全出口，延误逃生时机，存在严重人身安全和消防隐患；既有建议=1)将配电房门更换为甲级防火门，确保防火分隔符合规范要求；
+2)在配电房门口上方和疏散通道设置安全出口指示灯，接入应急照明系统；
+3)检查配电房内应急照明设施是否完好，确保停电时能自动启动。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B28:F28", "page": null, "row": 28, "column": "C", "image_id": null}
+E-0293 | 评估总表 2.3.3 | 既有问题=文体中心配电房2#变压器浪涌保护器未投用；既有风险=当雷击或操作过电压发生时，无法有效钳制过电压，变压器绕组和绝缘可能因过压而击穿损坏，进而引发变压器爆炸、火灾或大面积停电事故；既有建议=1)立即检查浪涌保护器状态，如未损坏则恢复投入运行；
+2)如SPD已劣化或损坏，按规范更换匹配型号的产品；
+3)检查SPD前端保护熔断器是否正常，确保SPD得到有效保护；
+4)在维护巡检中增加SPD状态检查，确认模块指示正常；
+5)建立防雷设施台账，雷雨季节前进行专项检查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B29:F29", "page": null, "row": 29, "column": "C", "image_id": null}
+E-0294 | 评估总表 2.2.2.3 | 既有问题=科研楼开闭所、科研楼配电房安全出口灯未接线；既有风险=当发生停电或火灾等紧急情况时，人员无法快速识别疏散方向和安全出口位置，可能导致逃生延误，存在严重人身安全隐患；既有建议=1)立即检查安全出口指示灯的电源线路，完成接线并接入应急照明回路；
+2)如灯具损坏，更换符合消防认证（CCCF）的应急指示灯；
+3)对应急照明系统进行测试，确认停电时能自动切换至应急电源；
+4)检查配电房内所有应急照明设施，确保完好率达到100%；
+5)将应急照明纳入日常巡检，每月进行一次功能测试。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B30:F30", "page": null, "row": 30, "column": "C", "image_id": null}
+E-0295 | 评估总表 2.2.2.3 | 既有问题=老配电房（高压、低压）缺少安全出口灯；既有风险=当发生停电或火灾等紧急情况时，人员无法快速识别疏散方向和安全出口位置，可能导致逃生延误，存在严重人身安全隐患；既有建议=1)在老配电房（高压和低压）各出入口上方安装安全出口指示灯，接入应急照明系统；
+2)同时增设应急照明灯具，确保停电时配电房内具有足够的照度；
+3)应急照明系统应能自动切换，持续供电时间不少于90分钟；
+4)疏散通道应保持畅通，不得堆放杂物；
+5)建立应急照明设施台账，每月进行功能测试。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B31:F31", "page": null, "row": 31, "column": "C", "image_id": null}
+E-0296 | 评估总表 2.2.2.3 | 既有问题=老配电房（高压）电缆夹层门没锁，窗户缺失，电缆杂乱；既有风险=无关人员可能误入，触碰高压电缆引发触电事故；窗户缺失导致雨水、杂物和小动物进入，加速电缆绝缘老化，可能引发短路或接地故障；电缆杂乱无章影响散热和巡检，存在人身触电、设备损坏和电气火灾多重风险；既有建议=1)立即对电缆夹层门加装锁具，实行钥匙管理制度，仅授权人员可进入；
+2)修复或更换缺失的窗户，确保密封良好，防止雨水和异物进入；
+3)对杂乱电缆进行整理、绑扎和标识，按照电压等级和回路分区敷设；
+4)清理夹层内杂物，检查电缆外层是否受损；
+5)建立电缆夹层巡检制度，定期检查门窗完好性和电缆运行状态。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B32:F32", "page": null, "row": 32, "column": "C", "image_id": null}
+E-0297 | 评估总表 2.2.2.3 | 既有问题=老配电房（低压）存在易燃杂物堆积；既有风险=存在严重电气火灾和人员安全隐患；既有建议=1)立即清理配电房内所有易燃杂物和可燃物，保持室内整洁；
+2)检查配电房通风和散热条件，确保杂物清理后设备正常运行；
+3)建立定期检查和考核制度，防止杂物再次堆积。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B33:F33", "page": null, "row": 33, "column": "C", "image_id": null}
+E-0298 | 评估总表 2.4.1.4 | 既有问题=老配电房（低压）出线柜多处开关状态指示灯损坏；既有风险=运维人员无法直观判断断路器的分合闸状态、储能状态和故障信号，容易造成误判；存在误操作、电弧灼伤和设备损坏风险；既有建议=1)检查损坏指示灯的原因（灯泡烧毁、线路断开、电源故障），逐一修复或更换；
+2)对所有出线柜指示灯进行全面检查，批量更换老化部件；
+3)将指示灯检查纳入日常巡检项目，确保状态显示正确可靠。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B34:F34", "page": null, "row": 34, "column": "C", "image_id": null}
+E-0299 | 评估总表 2.4.2.1 | 既有问题=各楼层墙壁上的配电箱多处存在烧损痕迹，线路老化问题普遍，绝缘防护不到位，线路破损；既有风险=易引发短路、漏电和电气火灾，存在严重电气火灾和人身触电风险；既有建议=1)对所有存在烧损痕迹的配电箱进行全面检查和整改；
+2)更换老化线路和破损绝缘层，对裸露导体进行绝缘恢复或加装护套；
+3)检查配电箱内断路器和接线端子，更换过热变色或烧损部件；
+4)清理配电箱内灰尘和杂物，保持整洁和散热良好；
+5)建立配电箱定期巡检制度，利用红外测温检测异常发热点。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B35:F35", "page": null, "row": 35, "column": "C", "image_id": null}
+E-0300 | 评估总表 2.4.2.5 | 既有问题=A教学楼一层环廊东南角配电箱安装不规范，无法巡查检修；既有风险=紧急情况下无法快速切断电源，延误故障处置；既有建议=1)重新选择符合规范的位置安装配电箱，底边距地高度宜为1.3-1.5m，便于操作和观察；
+2)在配电箱周围设置警示线和标识，防止被再次遮挡；
+3)对其他区域配电箱安装情况进行排查，一并整改不规范项目。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B36:F36", "page": null, "row": 36, "column": "C", "image_id": null}
+E-0301 | 评估总表 2.2.2.3 | 既有问题=多数强电间存在杂物堆积现象；既有风险=阻碍散热通道，使设备运行温度升高；杂物可能被电气设备引燃导致火灾；同时杂物堆积妨碍巡检和紧急操作，延误事故处置，存在电气火灾和设备过热风险；既有建议=1)立即清理所有强电间内的杂物，保持室内整洁和通道畅通；
+2)在强电间门口张贴"禁止堆放杂物"和"高压危险"警示标识；
+3)检查强电间通风条件，确保散热良好；
+4)对强电间门锁进行管理，防止无关人员进入堆放物品；
+5)建立定期巡检制度，每周检查强电间环境和杂物情况。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B37:F37", "page": null, "row": 37, "column": "C", "image_id": null}
+E-0302 | 评估总表 2.4.2.5 | 既有问题=第一二餐厅强电间年久失修，桥架老化严重、线路裸露；既有风险=存在触电及火灾风险；既有建议=1)对餐厅强电间进行全面检修，制定整改方案和时间表；
+2)更换老化、变形和腐蚀的电缆桥架，重新规范敷设电缆；
+3)对裸露线路进行绝缘恢复，加装防护套管或线槽；
+4)检查并紧固所有接线端子，测量绝缘电阻和接地电阻。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B38:F38", "page": null, "row": 38, "column": "C", "image_id": null}
+E-0303 | 评估总表 2.4.2.1 | 既有问题=科研楼一层强电间，配电箱内接线裸露，绝缘不规范；既有风险=带电导体失去有效绝缘保护，人员触碰时极易发生触电事故；裸露导体之间或与其他金属部件接触可能引发短路和电弧故障，存在严重人身触电和电气火灾风险；既有建议=1)立即对裸露接线进行整改，按规范进行绝缘包扎或加装绝缘护套；
+2)检查所有接线端子是否紧固，接触是否良好，排除松动和过热隐患。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B39:F39", "page": null, "row": 39, "column": "C", "image_id": null}
+E-0304 | 评估总表 2.2.2.3 | 既有问题=篮球主馆三层配电箱，防水防护不规范（没有吊顶），柜体下方静电地板塌陷，有明显的烧毁痕迹；既有风险=存在严重电气火灾和人身触电风险；既有建议=1)立即在配电箱上方加装防水挡板或吊顶，防止漏水滴入；
+2)检查并修复静电地板塌陷区域，查明塌陷原因（是否因过热变形或结构损坏）；
+3)对配电箱及周围线路进行全面检查，更换所有烧损部件；
+4)检查楼层防水状况，修复渗漏源；
+5)在该区域增设温感探测器和监控，加强日常巡检频次。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B40:F40", "page": null, "row": 40, "column": "C", "image_id": null}
+E-0305 | 评估总表 2.2.2.3 | 既有问题=宿舍楼空调配电柜所在房间布置了洗衣机，导致配电柜常见处于高湿环境，加速柜体老化、绝缘失效；既有风险=存在严重的安全风险；既有建议=1)立即将洗衣机移出配电柜所在房间，或在两者之间设置有效防水隔离措施；
+2)在配电房间安装除湿机或通风设备，控制室内湿度在60%以下；
+3)对配电柜进行防潮处理，检查柜体密封条是否完好；
+4)定期测量配电柜内绝缘电阻，跟踪绝缘老化趋势；
+5)考虑将配电柜迁移至干燥、通风良好的专用配电间；
+6)建立高湿环境配电设备专项巡检制度，雨季加强检查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B41:F41", "page": null, "row": 41, "column": "C", "image_id": null}
+E-0306 | 评估总表 2.2.2.3 | 既有问题=文体中心配电房缺少空调，相比于其他配电房，柜内温升明显；既有风险=夏天极端天气有超温风险；既有建议=1)为文体中心配电房安装工业空调或专用机房空调，控制室温在40℃以下；
+2)在配电房增设温湿度监测装置，接入智能平台实现超限告警；
+3)加强夏季高温时段巡检，利用红外测温检测设备温度；
+4)检查配电柜散热孔是否畅通，必要时增设排气扇辅助散热。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B43:F43", "page": null, "row": 43, "column": "C", "image_id": null}
+E-0307 | 评估总表 2.2.2.3 | 既有问题=老配电房（高压）墙面有渗水痕迹；既有风险=导致空气湿度升高、设备绝缘性能下降；水分可能沿墙面流入电缆沟或配电柜底部，引发电缆绝缘击穿、金属部件腐蚀和接地故障，长期受潮还可能引发霉菌滋生，存在电气故障和人身触电风险；既有建议=1)查明渗水原因（外墙裂缝、屋顶渗漏、管道漏水等），从源头进行堵漏修复；
+2)对配电房内外墙面进行防水处理，涂刷防水涂料或铺设防水卷材；
+3)建立雨季专项检查制度，及时发现和处理渗漏问题。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B44:F44", "page": null, "row": 44, "column": "C", "image_id": null}
+E-0308 | 评估总表 2.4.2.4 | 既有问题=老配电房（高压）配电柜出线去处标注不清晰；既有风险=运维人员无法快速识别各回路供电范围和对应负荷，影响日常巡检、故障排查和应急处置；紧急情况下可能因无法确定回路关系而延误处置，甚至误操作错误回路，存在运维效率低下和误操作风险；既有建议=1)对所有配电柜出线进行逐一核对和标识，制作清晰的电缆去向标牌；
+2)标牌应包含回路编号、供电区域、负荷名称、电缆规格等信息；
+3)建立配电系统台账和单线图，确保图纸与实际接线一致；
+4)使用统一的编号规则和颜色标识，便于快速识别；
+5)定期检查标识完好性，发现褪色或脱落及时更换。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B45:F45", "page": null, "row": 45, "column": "C", "image_id": null}
+E-0309 | 评估总表 2.4.2.4 | 既有问题=各建筑楼栋三级配电柜的名称都一致，没有区分，不利于快速定位问题发生位置；既有风险=当发生故障或需要操作时，运维人员无法快速定位具体配电柜位置，延误故障排查和应急处理；同时不利于设备台账管理和维护计划制定，存在运维效率低下和应急处置延误风险；既有建议=1)对所有三级配电柜进行统一编号，编号规则应体现楼栋、楼层、区域等信息；
+2)在配电柜醒目位置粘贴标识牌，注明编号、供电范围和管理责任人；
+3)建立配电柜台账，记录每台设备的型号、位置、投运日期等信息；
+4)更新配电系统图纸，在单线图上标注各配电柜编号和位置；
+5)将标识管理纳入设备验收和巡检内容，确保标识清晰准确。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B46:F46", "page": null, "row": 46, "column": "C", "image_id": null}
+E-0310 | 评估总表 2.4.2.5 | 既有问题=综合楼旁水系（旱喷）配电箱，私拉乱接、线路老化，箱内线路混乱；既有风险=易导致短路、过载和接触不良；线路老化使绝缘性能下降，可能引发漏电和电气火灾；箱内混乱还妨碍散热和检修，存在严重电气火灾、设备损坏和人员触电风险；既有建议=1)立即清理配电箱内私拉乱接的线路，恢复规范接线；
+2)更换老化线路，按负荷计算选择合适线径，确保满足载流量要求；
+3)整理箱内接线，绑扎固定，保持间距和散热空间；
+4)检查断路器配置是否合理，确保与负荷匹配并具有过载保护功能；
+5)修复配电箱门，防止非授权人员随意开启；
+6)张贴安全用电警示标识和接线示意图。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B47:F47", "page": null, "row": 47, "column": "C", "image_id": null}
+E-0311 | 评估总表 2.4.2.6 | 既有问题=篮球主馆屋面风冷热泵动力柜，柜门密封不严，导致柜内淋雨暴晒，内部线路绝缘皮老化加重；既有风险=严重影响设备寿命和安全运行，存在电气短路、设备损坏和电气火灾风险；既有建议=1)立即更换或修复柜门密封条，确保柜门关闭后密封良好；
+2)检查柜体接缝和进线孔封堵，采用防水胶泥或密封圈封堵所有缝隙；
+3)在柜顶加装防水雨檐，防止雨水直接冲刷柜门；
+4)评估动力柜IP等级是否符合户外安装要求，必要时更换为IP54及以上等级柜体；
+5)考虑在动力柜上方搭建遮阳防雨棚，降低日晒雨淋影响；
+6)建立屋面设备专项巡检制度，雨季和高温季节加强检查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B48:F48", "page": null, "row": 48, "column": "C", "image_id": null}
+E-0312 | 评估总表 2.4.2.5 | 既有问题=篮球主馆屋面电缆桥架盖板缺失，导致动力电缆老化加速；既有风险=动力电缆长期暴露于风吹日晒雨淋环境中，绝缘层加速老化、开裂，金属铠装腐蚀；水分进入可能引发相间短路或接地故障，同时鸟类和小动物可能损坏电缆，存在电气短路、设备损坏和电气火灾风险；既有建议=1)立即测量桥架规格，采购并安装匹配的桥架盖板；
+2)盖板应牢固固定，防止大风掀起，必要时加装卡扣；
+3)检查暴露电缆的绝缘状况，测量绝缘电阻，发现老化及时更换；
+4)建立屋面桥架巡检制度，发现盖板松动或缺失及时处理。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B49:F49", "page": null, "row": 49, "column": "C", "image_id": null}
+E-0313 | 评估总表 2.5.5 | 既有问题=所有三级配电箱及配电箱所在房间都缺乏有效的锁闭管理；既有风险=非授权人员（包括学生、外来人员）可能随意接触带电设备，存在严重触电风险；同时可能因误操作导致设备跳闸或损坏，存在人身触电、设备损坏和供电中断风险；既有建议=1)对所有三级配电箱加装锁具，实行钥匙分级管理制度；
+2)配电房间安装门禁或可靠门锁，仅授权运维人员可进入；
+3)在配电箱和房间门口张贴"高压危险，非专业人员禁止操作"警示标识；
+4)建立钥匙领用登记制度，记录钥匙借用和归还情况；
+5)对现有配电箱进行排查，确保所有箱体完好、箱门能可靠关闭并上锁。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B50:F50", "page": null, "row": 50, "column": "C", "image_id": null}
+E-0314 | 评估总表 2.4.2.5 | 既有问题=图书馆电梯机房，私拉乱接，接线不规范（飞线、线径选择不当）；既有风险=飞线无固定保护易被机械损伤，线径过小会导致线路过载发热，可能引发绝缘熔化、短路和电气火灾；同时不规范接线影响电梯供电可靠性，存在电气火灾、设备损坏和人员被困风险；既有建议=1)立即拆除所有私拉乱接的飞线，按规范重新布线（穿管或走桥架保护）；
+2)根据负荷计算选择合适线径，确保满足载流量和压降要求；
+3)所有线路应固定牢靠，避免与运动部件接触；
+4)加装或恢复配电箱，集中管理机房内用电回路；
+5)检查电梯供电回路的保护配置，确保过载、短路保护完备；
+6)建立机房用电管理制度，禁止私拉乱接行为。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B51:F51", "page": null, "row": 51, "column": "C", "image_id": null}
+E-0315 | 评估总表 2.4.2.6 | 既有问题=综合楼负一层人防配电箱，生锈老化严重；既有风险=锈蚀可能导致接地不良、短路和漏电保护失效，同时影响设备正常操作和分断能力，存在电气火灾、漏电触电和设备故障多重风险；既有建议=1)对生锈配电箱进行评估，严重腐蚀的予以整体更换；
+2)新箱体应选用防潮防腐材质（如不锈钢或喷塑钢板），防护等级不低于IP54；
+3)改善负一层通风和除湿条件，降低环境湿度；
+4)检查箱内所有元件和接线，更换锈蚀部件，紧固松动连接，定期检查功能是否正常；
+5)对箱体进行防锈处理，定期涂刷防锈漆；
+6)建立潮湿环境设备专项巡检制度，加强防腐检查。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B52:F52", "page": null, "row": 52, "column": "C", "image_id": null}
+E-0316 | 评估总表 2.4.2.6 | 既有问题=部分线缆穿越墙体/楼板处缺少防火封堵，多处封堵不严/缺少封堵；既有风险=发生火灾时火焰和烟气可能沿电缆孔洞蔓延，扩大火灾范围；；既有建议=1)按规范对所有线缆穿越处进行防火封堵；
+2)采用符合GB 23864标准的防火封堵材料；
+3)定期检查封堵完好性。 | {"file_id": "file-013a9efb52231caa", "path": "Inputs/S4-6评估总表.xlsx", "sheet": "结论建议汇总表", "cell": "B53:F53", "page": null, "row": 53, "column": "C", "image_id": null}
+E-0317 | REV-DEMO-影响分析补充.txt | ﻿【REV-DEMO 影响分析补充】
+复核编号：REV-DEMO-IMPACT-20260914
+主题：2.3 保护定值核对
+事实：现场已完成一次定值核对记录，仍有 1 项待签字闭环。
+边界：本条为演示资料，不构成对真实项目的合规结论。
+关联模块：2.3 | {"file_id": "file-406d5afec9e4697a", "path": "Inputs/REV-DEMO-影响分析补充.txt", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0318 | SKILL.md | ---
+name: report-template-auditor-2.1
+description: 模块2.1（电力系统架构问题）Auditor审计方法——从模板提炼的可观察审计准则、失败表现和复核动作，仅含审计指令，不含写作指令。
+---
+
+# auditor-2.1 模块 Auditor Skill：电力系统架构问题
+
+## 一、可观察审计准则
+
+对模块2.1的输出进行以下维度审计：
+
+### A. 证据完备性
+1. 每个子主题（负荷分配、供电路径、自动切换、环流防范、无功补偿）是否均包含完整的"现状→风险→建议→依据"四步结构？
+2. 现状描述中的关键数据（如负载率、供电方式、切换配置）是否均有可追溯的证据来源？
+3. 跨模块引用（如引用电能质量数据）是否准确标注了引用点？
+
+### B. 分析逻辑
+4. 风险分析是否包含因果机理（物理/电气层面）→ 影响范围（设备/产线/全厂）→ 时间维度（短期急性/长期慢性）三层内容？
+5. 当存在多个相互关联的风险（如过载+谐波），分析是否说明了叠加效应？
+6. 建议是否与风险分析中识别的问题一一对应？
+
+### C. 行动可执行性
+7. 建议是否按紧迫程度分级（立即/短期/中期/长期）？
+8. 每条建议是否包含具体操作步骤和预期效果？
+9. 涉及跨模块协调的建议是否注明了同步推进要求？
+
+### D. 图示一致性
+10. 汇总表格中的数据与正文描述是否一致？
+11. 工艺流程图或单线图上的标注是否与文字描述匹配？
+
+## 二、典型失败表现
+
+| 失败类型 | 可观察表现 |
+|----------|------------|
+| 证据断链 | 现状描述引用了数据但未说明来源，或数据与表格不一致 |
+| 风险表面化 | 风险分析仅给出"可能导致XX"的结论，缺少因果机理推导 |
+| 建议空泛 | 建议仅写"加强管理""完善配置"，无具体操作步骤和验收标准 |
+| 跨模块脱节 | 本模块引用了其他模块的数据但引用错误，或与其他模块的分析矛盾 |
+| 分级缺失 | 所有建议未标注紧迫程度，管理层无法判断优先级 |
+
+## 三、复核动作
+
+1. **结构完整性扫描**：逐一检查每个子主题是否包含四步结构，标记缺失步骤。
+2. **数据一致性核对**：将正文中的关键数据与汇总表格交叉核对，标记不一致项。
+3. **风险-建议映射检查**：列出所有已识别的风险点，逐一检查是否有对应建议，标记无建议的风险。
+4. **紧迫程度标注检查**：检查所有建议是否已标注时间框架，标记未标注项。
+5. **跨模块一致性检查**：检查本模块引用的其他模块数据是否与其他模块正文一致。 | {"file_id": "file-6b51341d6b14591c", "path": "Inputs/report-template-role-skills/auditor-2.1/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0319 | SKILL.md | ---
+name: report-template-auditor-2.2
+description: 模块2.2（环境工况风险）Auditor审计方法——从模板提炼的可观察审计准则、失败表现和复核动作，仅含审计指令，不含写作指令。
+---
+
+# auditor-2.2 模块 Auditor Skill：环境工况风险
+
+## 一、可观察审计准则
+
+### A. 证据完备性
+1. 电能质量子主题是否同时给出了国标限值和优质运行推荐值两个参照基准？
+2. 各测量点的数据是否用表格呈现，超标点是否已标注？
+3. 物理环境问题的照片是否包含位置标注和规范依据？
+4. 红外测温数据是否包含"实测温度+环境温度+温升"三要素？
+
+### B. 分析逻辑
+5. 电能质量风险分析是否说明了对同一母线上其他设备的干扰机制？
+6. 是否分析了与已有过载/架构问题的叠加效应？
+7. 物理环境风险是否区分了"直接危害"与"间接恶化"两个层次？
+
+### C. 治理方案层次
+8. 治理建议是否按"源头抑制→主干滤波→运行调整→监测预警"四层组织？
+9. 是否同时给出了临时管控措施和长期治理方案？临时措施是否说明了局限性？
+10. 监测建议是否包含监测点位、接入方式、预警阈值、应急流程四要素？
+
+### D. 数据准确性
+11. THDu等指标的引用值是否与标准条款号匹配？
+12. 温度异常的温升计算是否正确（实测温度减环境温度）？
+
+## 二、典型失败表现
+
+| 失败类型 | 可观察表现 |
+|----------|------------|
+| 基准缺失 | 电能质量数据仅给出实测值，未与标准限值对比 |
+| 叠加分析遗漏 | 未分析谐波+过载的叠加效应，或未说明物理环境如何加速电气老化 |
+| 治理方案不完整 | 仅有集中治理建议，缺少就地治理和监测机制 |
+| 临时措施空白 | 在长期方案未到位前，未给出可立即执行的临时管控措施 |
+| 照片无标注 | 现场照片未标注位置和问题描述，读者无法定位 |
+
+## 三、复核动作
+
+1. **基准对照检查**：核对所有电能质量指标是否同时给出两个参照基准。
+2. **叠加分析检查**：检查本模块是否分析了与其他模块已识别风险的叠加效应。
+3. **治理方案层次检查**：列出治理建议，检查是否覆盖"源头→主干→运行→监测"四层。
+4. **临时措施检查**：检查长期方案到位前是否有临时管控措施及其局限性说明。
+5. **照片标注检查**：检查所有现场照片是否包含位置、问题、依据三要素。 | {"file_id": "file-5862c5b94c9968fb", "path": "Inputs/report-template-role-skills/auditor-2.2/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0320 | SKILL.md | ---
+name: report-template-auditor-2.3
+description: 模块2.3（针对故障的保护）Auditor审计方法——从模板提炼的可观察审计准则、失败表现和复核动作，仅含审计指令，不含写作指令。
+---
+
+# auditor-2.3 模块 Auditor Skill：针对故障的保护
+
+## 一、可观察审计准则
+
+### A. 计算与证据
+1. 保护定值分析是否声明了计算工具版本、模型范围和运行方式前提？
+2. TCC配合曲线或关键结论是否以可视化方式呈现？
+3. 零序/漏电保护的核查是否按系统层级逐层进行（高压→低压一级→二三级→末端）？
+4. 各层级的"是否配置""是否投运""实测状态"三要素是否齐全？
+
+### B. 风险分类
+5. 风险分析是否区分了"无保护运行""保护误动""越级跳闸"三类风险？
+6. 每类风险是否说明了典型故障触发条件？
+7. 保护缺失与已发现的其他模块风险（如过载、谐波）之间是否分析了关联？
+
+### C. 建议完整性
+8. 定值调整建议是否包含整定依据（躲过什么条件、满足什么要求）？
+9. 是否包含传动试验验证环节？
+10. 是否包含定值管理制度的长期建议？
+11. 零序/漏电保护建议是否覆盖"立即恢复→短期完善→中期测试→管理措施"四层？
+
+### D. 标准引用
+12. 依据段是否列出了继电保护整定、漏电保护相关的标准编号与条款号？
+
+## 二、典型失败表现
+
+| 失败类型 | 可观察表现 |
+|----------|------------|
+| 计算黑箱 | 未说明计算工具和前提条件，定值调整建议缺乏技术依据 |
+| 风险混淆 | 将"无保护运行"和"保护误动"混为一谈，未区分后果差异 |
+| 建议无依据 | 定值调整建议未说明整定原则（如躲过涌流、躲过自启动） |
+| 传动验证缺失 | 仅给出定值调整方案，未要求调整后进行传动试验验证 |
+| 层级遗漏 | 零序/漏电核查未覆盖全部系统层级，存在检查盲区 |
+
+## 三、复核动作
+
+1. **计算前提检查**：核对保护定值分析是否声明了计算工具、模型和前提条件。
+2. **风险分类检查**：列出所有已识别的保护相关风险，检查是否明确区分了三类风险。
+3. **整定依据检查**：检查每条定值调整建议是否包含整定原则说明。
+4. **传动试验检查**：检查是否包含定值调整后的传动试验验证要求。
+5. **层级完整性检查**：检查零序/漏电保护核查是否覆盖全部系统层级。 | {"file_id": "file-99e0da976b9245d0", "path": "Inputs/report-template-role-skills/auditor-2.3/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0321 | SKILL.md | ---
+name: report-template-auditor-2.4
+description: 模块2.4（配电设备/元件风险）Auditor审计方法——从模板提炼的可观察审计准则、失败表现和复核动作，仅含审计指令，不含写作指令。
+---
+
+# auditor-2.4 模块 Auditor Skill：配电设备/元件风险
+
+## 一、可观察审计准则
+
+### A. 配置与选型
+1. 分断能力校核是否说明了短路电流计算方法和运行方式？
+2. 是否用"开断电流占比"量化了各开关的裕度？
+3. 分隔形式、安全连锁/闭锁、状态显示等子项是否均有独立的现状-风险-建议结构？
+
+### B. 安装规范性
+4. 缺陷是否按类别（裸露导体、接地、标识、电缆、封堵）分类呈现？
+5. 每条缺陷是否包含位置、设备、缺陷描述三要素？
+6. 风险分析是否区分了"正常工况慢性危害"与"故障工况耦合放大"两层？
+
+### C. 带病运行
+7. 带病运行问题是否独立成节，集中呈现所有运行异常？
+8. 每条异常是否说明了恶化路径和处理紧迫性？
+9. 是否与安装规范性问题中的缺陷形成呼应（不重复但不遗漏）？
+
+### D. 建议可验证性
+10. 每条建议是否包含验收标准？
+11. 是否对个别缺陷提出了扩展排查要求？
+12. 缺陷是否按"致命→重大→一般"三级标注？
+
+## 二、典型失败表现
+
+| 失败类型 | 可观察表现 |
+|----------|------------|
+| 校核无方法 | 分断能力校核未说明计算方法，仅给出结论 |
+| 缺陷散列 | 安装规范性缺陷未分类，读者无法系统掌握 |
+| 带病运行遗漏 | 运行异常分散在各子主题中，未集中汇总 |
+| 建议无验收标准 | 建议仅写"整改""修复"，未说明整改后的验收标准 |
+| 分级缺失 | 缺陷未标注严重程度，管理层无法判断优先级 |
+
+## 三、复核动作
+
+1. **校核方法检查**：核对分断能力校核是否包含计算方法和裕度分析。
+2. **缺陷分类检查**：检查安装规范性缺陷是否按类别分类呈现。
+3. **带病运行汇总检查**：检查带病运行问题是否独立成节且覆盖所有已发现的运行异常。
+4. **验收标准检查**：检查每条建议是否包含可量化的验收标准。
+5. **分级标注检查**：检查所有缺陷是否标注了严重程度等级。 | {"file_id": "file-25ed47edfbc2e088", "path": "Inputs/report-template-role-skills/auditor-2.4/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0322 | SKILL.md | ---
+name: report-template-auditor-2.5
+description: 模块2.5（运维管理与风险管控）Auditor审计方法——从模板提炼的可观察审计准则、失败表现和复核动作，仅含审计指令，不含写作指令。
+---
+
+# auditor-2.5 模块 Auditor Skill：运维管理与风险管控
+
+## 一、可观察审计准则
+
+### A. 调研与证据
+1. 每个子维度（SOP/EOP、图纸资料、巡检维护、智能化、LOTO、退市设备、备件管理）的现状描述是否说明了调研方法（文件审阅、访谈、现场观察、记录抽查）？
+2. 图纸资料和管理文件的完备性是否用"有效性×更新状态"矩阵呈现？
+3. 人员与组织信息是否仅描述结构性发现，未迁入具体人名？
+
+### B. 风险传导分析
+4. 风险分析是否区分了"误操作与人身伤害""设备故障扩大化""应急响应失效"三类风险路径？
+5. 每类风险是否说明了管理缺失如何转化为技术风险的传导机制？
+6. SOP/EOP缺失的风险是否关联了已发现的保护、设备等模块的具体缺陷？
+
+### C. 管理体系建议
+7. 建议是否按"制度建设→流程落地→培训演练→持续改进"四层组织？
+8. SOP/EOP建议是否给出了至少一个完整流程的结构化框架？
+9. 巡检建议是否包含标准化巡检SOP的结构框架（巡检项目、判定标准、异常处置）？
+10. 长期建议是否描绘了从"经验驱动"到"制度驱动"再到"数据驱动"的升级路径？
+
+### D. 闭环管理
+11. 所有管理建议是否包含闭环要素（发现→登记→评估→处理→验收→销号）？
+12. 管理成熟度升级建议是否按层次递进，每层有明确的目标和产出？
+
+## 二、典型失败表现
+
+| 失败类型 | 可观察表现 |
+|----------|------------|
+| 调研方法不清 | 现状描述未说明信息来源，读者无法判断证据可靠性 |
+| 风险传导断链 | 仅说"存在XX风险"，未说明管理缺失如何转化为技术后果 |
+| 建议空泛化 | 建议仅写"完善制度""加强培训"，无结构化框架和具体产出 |
+| 闭环缺失 | 管理建议未包含闭环管理要素，无法追踪执行效果 |
+| 人名泄露 | 现状描述中迁入了具体人员姓名 |
+
+## 三、复核动作
+
+1. **调研方法检查**：检查每个子维度是否说明了调研方法和信息来源。
+2. **风险传导检查**：检查风险分析是否包含管理缺失→技术风险的完整传导路径。
+3. **框架完整性检查**：检查SOP/EOP、巡检SOP等建议是否包含结构化框架。
+4. **闭环要素检查**：检查所有管理建议是否包含闭环管理要素。
+5. **隐私检查**：检查是否迁入了具体人员姓名或组织名称。 | {"file_id": "file-c2a9a3c181f4944c", "path": "Inputs/report-template-role-skills/auditor-2.5/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0323 | SKILL.md | ---
+name: report-template-author-2.1
+description: 模块2.1（电力系统架构问题）作者写作方法——从模板提炼的证据限定、分析推进、行动建议、图证叙事和自检方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# author-2.1 模块作者 Skill：电力系统架构问题
+
+## 一、证据限定
+
+1. **观察来源声明**：每个子主题开篇用"现状描述"段落明确说明数据来源（如设计文件查阅、现场抽检复核、运行数据整合），避免读者误判数据口径。
+2. **数据引用粒度**：引用具体设备的关键参数时，保留量纲与比较基准（如"实测负载率达 X%，对应额定电流 Y A"），使读者可自行判断严重程度。
+3. **交叉引用边界**：当本模块引用其他模块的数据（如电能质量、保护定值），仅在本模块用"详见 §X.X.X"标注引用点，不重复展开被引用模块的完整分析。
+
+## 二、分析推进方式
+
+模板采用**四步递进结构**，每节均按此推进：
+
+| 步骤 | 功能 | 写作要求 |
+|------|------|----------|
+| ① 现状描述 | 用量化事实呈现当前状态 | 先给出汇总表格或图表，再用文字逐点补充关键发现；文字中每一条发现必须能对应到表格或图片中的具体数据行 |
+| ② 风险分析 | 从当前状态推导危害 | 每条风险须包含：(a) 物理/电气机理的简要因果链；(b) 对生产连续性或人身安全的具体影响；(c) 时间维度（短期急性 vs 长期慢性）|
+| ③ 建议 | 分层给出行动方案 | 按紧迫程度分"立即—短期—中期—长期"四级；每条建议应包含：做什么、怎么做、达到什么效果 |
+| ④ 依据 | 标注规范支撑 | 列出与建议相关的标准编号与条款号，不抄写标准正文 |
+
+## 三、行动建议组织方法
+
+1. **分层时效标签**：建议必须标注时间框架（"立即/1个月内""短期/1-3个月""中期/3-6个月""长期/持续"），使管理层可直接转化为整改计划。
+2. **建议-依据-闭环**：每条建议后附"依据"段，给出标准编号与条款号；如建议涉及其他模块，注明"与 §X.X.X 节同步推进"以避免执行遗漏。
+3. **量化操作步骤**：建议中涉及操作时，用编号步骤（①②③）逐条列出具体动作，避免笼统表述。
+
+## 四、图证叙事方法
+
+1. **图-表-文三角验证**：对同一组数据，先用汇总表呈现数值，再用现场照片或单线图标注关键位置，最后用文字解释异常点——形成"数据→视觉→文字"三重印证。
+2. **工艺流程图标注法**：将关键负荷用颜色区分标注在工艺流程图上，并附对应的一次图位置，使非电气专业读者也能理解供电路径。
+3. **对比呈现**：当同一系统存在多个同类设备，仅部分异常时，用表格同时展示所有设备数据，在异常行用标注（如加粗或颜色标记）引导读者注意。
+
+## 五、作者自检清单
+
+完成本模块写作后，逐项核对：
+
+- [ ] 每个子主题是否均包含完整的"现状→风险→建议→依据"四步结构？
+- [ ] 现状描述中的每条关键发现是否均可追溯到现场数据或文档证据？
+- [ ] 风险分析是否包含因果机理、影响范围和时间维度三层内容？
+- [ ] 建议是否按紧迫程度分级，且每条建议都包含具体操作步骤？
+- [ ] 跨模块引用是否准确，且未重复展开被引用模块内容？
+- [ ] 图表与文字描述是否一致，无遗漏或矛盾？
+- [ ] 是否已去除所有具体客户名称、设备编号、数值等项目事实？（仅在模板方法中保留结构化样例） | {"file_id": "file-e4699dd7e498111a", "path": "Inputs/report-template-role-skills/author-2.1/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0324 | SKILL.md | ---
+name: report-template-author-2.2
+description: 模块2.2（环境工况风险）作者写作方法——从模板提炼的证据限定、分析推进、行动建议、图证叙事和自检方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# author-2.2 模块作者 Skill：环境工况风险
+
+## 一、证据限定
+
+1. **分维度数据采集声明**：本模块覆盖电气环境（电能质量）与物理环境两个维度。开篇用段落说明本次评估从哪些维度展开，以及各维度的测量方法或观测手段。
+2. **标准限值对照法**：涉及电能质量指标时，必须同时给出"国标限值"和"优质运行推荐值"两个参照基准，用实测值与两个基准的对比来定位问题严重程度。
+3. **多层级数据呈现**：物理环境风险的数据来源包括红外测温、目视检查、环境监测等，每个来源需在对应子主题中独立声明，不混淆数据口径。
+
+## 二、分析推进方式
+
+本模块采用**扩展版四步结构**，因涉及多个子维度而增加"分类→诊断"环节：
+
+| 步骤 | 功能 | 写作要求 |
+|------|------|----------|
+| ① 分类概述 | 说明本子维度覆盖哪些关注点 | 用编号列表列出关注点，每点用一句话说明其与设备安全的关联 |
+| ② 现状描述 | 逐区域/逐设备呈现测量数据 | 电能质量类：用表格列出各测量点的THDu、THDi等指标，标注超标点；物理环境类：用照片+位置标注呈现异常 |
+| ③ 风险分析 | 从机理角度解释危害 | 电能质量风险须说明：(a) 谐波如何增加附加损耗；(b) 对同一母线上其他设备的干扰机制；(c) 与已有过载问题的叠加效应。物理环境风险须区分"直接危害"与"间接恶化"两个层次 |
+| ④ 专项治理建议 | 针对性解决方案 | 按"集中治理→就地治理→监测机制"三层组织建议；每条建议需说明治理原理、安装位置、容量选择方法 |
+
+## 三、行动建议组织方法
+
+1. **治理方案层次化**：电能质量治理建议按"源头抑制（就地加装电抗器）→主干滤波（集中安装APF/SVG）→运行调整（电容柜投切方式调整）→监测预警"四层递进组织。
+2. **临时措施与长期方案并行**：在长期治理方案未到位前，必须给出可立即执行的临时管控措施（如暂停电容柜运行、降负荷等），并说明临时措施的局限性。
+3. **监测闭环**：建议中必须包含"建立常态化监测机制"的内容，说明监测点位、接入平台方式、预警阈值设定、超标后应急处置流程。
+
+## 四、图证叙事方法
+
+1. **热力分布图**：对电能质量数据，用谐波含量热力分布图（在单线图或配电区域图上用颜色标注超标程度）使读者直观理解污染范围。
+2. **红外照片对比**：对设备发热问题，用红外测温照片标注测量点位与温度值，与环境温度形成温差（温升）计算，再与规范限值对比。
+3. **物理环境缺陷照片集**：对物理环境问题，每张照片配"位置+问题描述+规范依据"三要素，按风险等级排序呈现。
+
+## 五、作者自检清单
+
+- [ ] 电能质量数据是否同时给出了国标限值和推荐运行值两个参照基准？
+- [ ] 风险分析是否包含了与同模块其他子项（如过载）或跨模块（如保护误动）的叠加分析？
+- [ ] 治理建议是否形成了"源头→主干→运行→监测"的完整方案链？
+- [ ] 临时措施与长期方案是否分别说明了适用条件与局限性？
+- [ ] 物理环境问题的照片是否包含位置标注和规范依据？ | {"file_id": "file-d26b5b626e21c6bc", "path": "Inputs/report-template-role-skills/author-2.2/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0325 | SKILL.md | ---
+name: report-template-author-2.3
+description: 模块2.3（针对故障的保护）作者写作方法——从模板提炼的证据限定、分析推进、行动建议、图证叙事和自检方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# author-2.3 模块作者 Skill：针对故障的保护
+
+## 一、证据限定
+
+1. **计算工具与模型声明**：保护定值分析需开篇说明使用的仿真工具版本、计算模型范围（哪些电压等级、哪些厂区），以及计算前提条件（最大/最小运行方式）。
+2. **TCC曲线引用**：保护配合分析必须附时间-电流特性（TCC）曲线图或其关键结论摘要，用"曲线重合"或"级差不足"等量化描述替代主观判断。
+3. **逐层核查法**：零序/漏电保护的现状描述应按系统层级（高压侧→低压一级→二三级配电→末端）逐层核查，每层给出"是否配置""是否投运""实测状态"三要素。
+
+## 二、分析推进方式
+
+本模块采用**计算验证型四步结构**：
+
+| 步骤 | 功能 | 写作要求 |
+|------|------|----------|
+| ① 现状描述 | 呈现计算/核查结果 | 先用汇总表列出各关键开关的保护定值、配合状态；再逐项说明发现的具体缺陷。对保护缺失的设备，明确标注"无保护运行" |
+| ② 风险分析 | 从故障场景推导后果 | 必须区分三类风险：(a) 无保护运行→故障无法切除；(b) 保护误动→非计划停机；(c) 越级跳闸→事故范围扩大。每类风险须说明典型故障触发条件 |
+| ③ 建议 | 给出定值调整方案 | 按"重新整定→优化配合→传动验证→定值管理"四步组织；定值调整建议必须说明整定依据（躲过什么、满足什么要求） |
+| ④ 依据 | 标注保护规程 | 列出继电保护整定相关的标准编号与条款号 |
+
+## 三、行动建议组织方法
+
+1. **定值调整优先级**：将定值缺陷按"致命（无保护运行）→严重（越级跳闸）→一般（配合不理想）"分级，致命项标注"立即整改"。
+2. **传动试验闭环**：建议中必须包含"定值调整后开展保护传动试验"的验证环节，说明试验内容（TCC曲线复测、上下级选择性验证）和报告归档要求。
+3. **定值管理制度**：长期建议须包含"建立定值管理制度"，明确定值表编制、审核、备案、年度复核的闭环流程。
+
+## 四、图证叙事方法
+
+1. **TCC配合曲线叠加图**：将上下级保护的TCC曲线叠加在同一张图上，用颜色区分各级保护的动作区域，标注重合或级差不足的位置。
+2. **保护配置矩阵表**：用矩阵表横轴列设备、纵轴列保护功能（速断、过流、零序等），用"✓/✗/未投"标记各设备的保护状态，使缺失项一目了然。
+3. **故障场景推演图**：对关键风险，用流程图展示"故障发生→保护动作/拒动→后果演变"的推演路径。
+
+## 五、作者自检清单
+
+- [ ] 保护定值分析是否说明了计算工具、模型范围和前提条件？
+- [ ] 风险分析是否区分了"无保护""误动""越级跳闸"三类风险？
+- [ ] 定值调整建议是否包含整定依据（躲过什么条件）？
+- [ ] 是否包含传动试验验证和定值管理制度的长期建议？
+- [ ] TCC配合曲线或关键结论是否以可视化方式呈现？ | {"file_id": "file-808a4ccb73ee1709", "path": "Inputs/report-template-role-skills/author-2.3/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0326 | SKILL.md | ---
+name: report-template-author-2.4
+description: 模块2.4（配电设备/元件风险）作者写作方法——从模板提炼的证据限定、分析推进、行动建议、图证叙事和自检方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# author-2.4 模块作者 Skill：配电设备/元件风险
+
+## 一、证据限定
+
+1. **校核计算声明**：涉及额定/分断能力校核时，需说明短路电流计算方法（仿真软件、运行方式），并用"开断电流占比"量化裕度。
+2. **现场核查证据类型**：安装规范性问题的证据来源包括目视检查、红外测温、照片记录等，每类证据需在对应段落中独立声明。
+3. **带病运行专项**：带病运行问题汇总应独立成节，将分散在各子主题中发现的运行异常集中呈现，便于管理层一次性掌握。
+
+## 二、分析推进方式
+
+本模块采用**分类诊断型结构**，因涵盖配置选型、安装规范、带病运行三个子维度：
+
+### 配置与选型子维度
+| 步骤 | 写作要求 |
+|------|----------|
+| ① 校核结果 | 用表格列出各关键开关的额定分断能力、系统短路电流、占比，标注不匹配项 |
+| ② 风险分析 | 说明不匹配导致的后果：拒动、爆炸、事故范围扩大；分析系统扩容后裕度变化趋势 |
+| ③ 建议 | 立即更换不匹配设备 + 建立动态校核机制 + 预留裕度原则 |
+
+### 安装规范性子维度
+| 步骤 | 写作要求 |
+|------|----------|
+| ① 缺陷清单 | 按缺陷类别（裸露导体、接地、标识、电缆敷设、封堵等）分类列出，每条含位置、设备、缺陷描述 |
+| ② 风险分析 | 每类缺陷须区分"正常工况下的慢性危害"与"故障工况下的耦合放大效应"两个层次 |
+| ③ 建议 | 按"立即→短期→长期"分级；立即项必须是可在一个检修窗口内完成的具体动作 |
+
+### 带病运行子维度
+| 步骤 | 写作要求 |
+|------|----------|
+| ① 异常汇总 | 独立列表呈现所有运行异常，每条含异常现象、影响范围、当前状态 |
+| ② 风险分析 | 说明每条异常若不处理将如何恶化，给出恶化路径和时间估计 |
+| ③ 建议 | 按紧急程度排序，每条建议含整改动作、验收标准 |
+
+## 三、行动建议组织方法
+
+1. **缺陷分级管理**：所有缺陷按"致命→重大→一般"三级标注，致命项必须在建议中标注"立即整改"。
+2. **整改闭环**：每条建议需包含验收标准（如"修复后复测接地电阻≤X Ω""封堵层厚度不小于Y mm"），确保整改可验证。
+3. **扩展排查原则**：当发现个别设备存在某类缺陷时，建议中应包含"对全厂同类型设备进行扩展排查"的条款。
+
+## 四、图证叙事方法
+
+1. **缺陷位置标注图**：在配电系统单线图或区域分布图上标注所有缺陷位置，用颜色区分严重程度。
+2. **对比照片**：对安装规范性问题，用"问题现场照片"+"规范要求示意图"对比呈现。
+3. **分断能力校核表**：用表格清晰呈现各开关的分断能力与系统短路电流的对比关系。
+
+## 五、作者自检清单
+
+- [ ] 分断能力校核是否包含计算方法和裕度分析？
+- [ ] 安装规范性缺陷是否分类呈现，每类包含位置、描述、风险、建议四要素？
+- [ ] 带病运行问题是否独立汇总，而非分散在各子主题中？
+- [ ] 每条建议是否包含验收标准，使整改可验证？
+- [ ] 是否对个别缺陷提出了扩展排查要求？ | {"file_id": "file-fd8d25d1d7ed407f", "path": "Inputs/report-template-role-skills/author-2.4/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0327 | SKILL.md | ---
+name: report-template-author-2.5
+description: 模块2.5（运维管理与风险管控）作者写作方法——从模板提炼的证据限定、分析推进、行动建议、图证叙事和自检方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# author-2.5 模块作者 Skill：运维管理与风险管控
+
+## 一、证据限定
+
+1. **调研方法声明**：运维管理类信息来源于文件审阅、人员访谈、现场观察、记录抽查等，需在各子主题开篇说明调研范围和方法。
+2. **文件有效性矩阵**：对图纸资料、SOP/EOP等管理文件，用"有效性（是/否）× 更新状态（是/否）"矩阵呈现完备性，避免笼统描述。
+3. **人员与组织信息**：涉及组织架构、人员资质等信息时，仅说明结构性发现（如岗位缺失、职责过宽），不迁入具体人名或组织名称。
+
+## 二、分析推进方式
+
+本模块采用**管理诊断型结构**，涵盖SOP/EOP、图纸资料、巡检维护、智能化手段、LOTO、退市设备、备件管理七个子维度：
+
+### 通用四步推进
+
+| 步骤 | 功能 | 写作要求 |
+|------|------|----------|
+| ① 现状描述 | 呈现管理现状 | 对比"应有"与"实有"的差距，用清单式列举缺失项；对已有的管理措施说明其覆盖范围和执行质量 |
+| ② 风险分析 | 从管理缺失推导运行风险 | 必须区分三类风险路径：(a) 误操作与人身伤害；(b) 设备故障扩大化；(c) 应急响应失效。每类风险需说明管理缺失如何转化为技术风险 |
+| ③ 建议 | 分层建立管理体系 | 按"制度建设→流程落地→培训演练→持续改进"四层组织建议 |
+| ④ 依据 | 标注安全管理法规 | 列出与建议相关的安全规程、管理标准编号 |
+
+### 各子维度特殊要求
+
+**SOP/EOP**：现状描述需覆盖倒闸操作、停送电、检修作业、临时用电等全部操作类型；建议需给出至少一个完整SOP的结构化样例（去除项目事实后的框架）。
+
+**图纸资料**：用表格逐项列出各类技术文件的"有效性"和"更新状态"，对缺失项说明其运行影响。
+
+**巡检维护**：需同时评估巡检内容深度、记录形式、缺陷闭环三个维度；建议中应包含标准化巡检SOP的结构框架。
+
+**智能化手段**：分析应区分"数据采集层""分析服务层""决策应用层"三个层次的成熟度；建议按层次递进升级。
+
+**LOTO**：需同时检查实物（锁具、挂牌等）完备性和程序文件有效性，发现"有物无制"时重点强调制度缺失风险。
+
+**退市设备与生命周期**：分析应覆盖"退役判定→处置管控→生命周期档案→经济性评估"全链条。
+
+**备件管理**：需评估清单完备性、日常管理记录、质量检验、供应商保障四个维度。
+
+## 三、行动建议组织方法
+
+1. **制度-流程-培训三层递进**：每条建议先建制度框架，再设计操作流程，最后配套培训考核。
+2. **管理成熟度路径**：长期建议应描绘从"经验驱动"到"制度驱动"再到"数据驱动"的管理升级路径。
+3. **闭环管理原则**：所有管理类建议必须包含"闭环"要素——发现→登记→评估→处理→验收→销号。
+
+## 四、图证叙事方法
+
+1. **管理文件完备性矩阵**：用"有效性×更新状态"二维表格呈现所有管理文件的状态。
+2. **维护覆盖全景图**：用"设备类型×维护项目"矩阵表展示维护覆盖情况，用颜色标注缺失项。
+3. **组织架构图**：用简化组织图呈现运维架构，标注人员配置的结构性短板。
+
+## 五、作者自检清单
+
+- [ ] 每个子维度的现状描述是否同时覆盖"制度有无"和"执行质量"两个层面？
+- [ ] 风险分析是否说明了管理缺失→技术风险→后果的完整传导路径？
+- [ ] 建议是否按"制度→流程→培训"三层递进组织？
+- [ ] 所有管理建议是否包含闭环管理要素？
+- [ ] 是否避免了迁入具体人员姓名和组织名称？ | {"file_id": "file-335980706db08fa5", "path": "Inputs/report-template-role-skills/author-2.5/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0328 | SKILL.md | ---
+name: report-template-chief-editor-chapter-1
+description: 第1章（配电评估概述）Chief Editor综合方法——从模板提炼的章节组织、综合、叙事和质量校核方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# chief-editor-chapter-1 Skill：配电评估概述
+
+## 一、章节定位与组织结构
+
+第1章是报告的"管理层入口"，目标是让决策者在3分钟内掌握系统健康状况和优先行动方向。本章组织为三个递进层级：
+
+| 层级 | 内容 | 读者目标 |
+|------|------|----------|
+| 1.1 评估背景 | 评估的委托方、范围、时间、覆盖维度 | 了解评估的基本信息和范围 |
+| 1.2 健康度总览 | 五大维度的总体健康度评价 + 核心结论摘要 | 快速掌握系统整体状况 |
+| 1.3 各区域执行摘要 | 按区域分别给出核心发现、TOP5风险、分阶段整改建议 | 了解各区域的具体情况和行动优先级 |
+
+## 二、评估背景写作方法
+
+1. **委托与范围声明**：说明委托方、评估对象（厂区/区域）、评估时间区间、覆盖的电压等级范围。
+2. **五大维度声明**：列出评估涵盖的五个维度（架构、环境、保护、设备、运维），用一句话说明每个维度的关注焦点。
+3. **专项需求回应**：如委托方提出了专项调研需求，在此段逐一列出，并说明已在报告中给出结果与建议。
+
+## 三、健康度总览写作方法
+
+### 总体健康度评价
+1. 用一段话给出定性总体评价，用比喻或类比使非电气专业管理者理解（如"基础架构基本合理，但保护系统与运维体系存在明显短板"）。
+2. 评价应包含正面肯定（哪些方面尚可）和重点关注（哪些方面存在短板），避免纯负面表述。
+
+### 五大维度健康度表
+3. 用表格呈现五个维度的评估结果，每行包含：评估维度、健康状态、关键异常指标、风险等级。
+4. 风险等级用"高/中/低"三级标注，使读者一目了然。
+
+### 核心结论摘要
+5. 用TOP N（如TOP5）列表呈现需重点关注的风险项，每条包含：风险描述、危害后果、行动建议、时间框架。
+6. 用分阶段整改任务清单（立即/短期/中期/长期）给出行动路线图，每阶段列出核心任务和预期效果。
+
+## 四、各区域执行摘要写作方法
+
+对每个评估区域，按以下固定结构组织：
+
+1. **区域概况**：用结构化要素表（供电架构、运行现状、最大风险、核心结论）概括区域基本情况。
+2. **五大维度核心发现**：用表格按维度列出风险等级和核心发现，与第2章正文形成摘要对应关系。
+3. **需重点关注风险TOP5**：按优先级排序，每条含风险描述、危害后果、行动时限。
+4. **分阶段整改建议**：按"立即→短期→中期→长期"四级给出时间框架和核心任务。
+
+## 五、综合与质量校核
+
+1. **向下一致性**：第1章的健康度评价和风险排名必须与第2章各模块的分析结论一致。
+2. **向上引导性**：第1章的TOP5风险和整改路线图必须为第3章的结论与建议奠定基础。
+3. **区域间对比**：各区域摘要应使用统一的维度和风险等级标准，使读者可横向对比。
+4. **数据来源标注**：健康度总览中的关键数据（如负载率、THDu值）应可追溯到第2章的具体分析段落。 | {"file_id": "file-560ff25135abfa3a", "path": "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0329 | SKILL.md | ---
+name: report-template-chief-editor-chapter-3
+description: 第3章（结论与建议）Chief Editor综合方法——从模板提炼的风险汇总组织、改善行动速查表设计和质量校核方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# chief-editor-chapter-3 Skill：结论与建议
+
+## 一、章节定位与组织结构
+
+第3章是报告的"行动转化"章节，将第2章的技术分析转化为管理层可直接执行的决策依据。组织为两个部分：
+
+| 部分 | 功能 | 读者目标 |
+|------|------|----------|
+| 3.1 风险/问题汇总与概览 | 将所有模块发现的风险按维度汇总，形成全景视图 | 一次性掌握全部风险 |
+| 3.2 改善行动速查表 | 将所有建议转化为带优先级和时间框架的行动列表 | 直接用于制定整改计划和分配资源 |
+
+## 二、风险/问题汇总与概览写作方法
+
+### 汇总结构
+1. 先用一段话给出各维度的核心结论总括（如"系统架构较完善但存在容量瓶颈，电能质量为最突出短板……"）。
+2. 按五个评估维度逐一列出风险要点，使用"■"符号标记每条发现，保持与第2章各模块的对应关系。
+3. 每条发现用一句话概括问题和影响，避免展开详细分析（详细分析在第2章）。
+
+### 风险全景表
+4. 设计一张"维度×健康状态×关键异常指标×风险等级"的汇总表，使读者可在一张表内掌握全部维度的风险状况。
+
+## 三、改善行动速查表写作方法
+
+### 表格设计
+1. 速查表的核心列：优先级、风险描述、危害、行动建议。
+2. 按优先级排序（1为最高），每条风险对应一条行动建议。
+3. 行动建议应包含时间框架（如"2个月内完成""3个月内完成"）。
+
+### 分阶段整改路线图
+4. 在速查表之后，设计一张"阶段×时间×核心任务×预期效果"的路线图表格。
+5. 阶段划分为：立即行动（0-1个月）、短期治理（1-3个月）、中期建设（3-6个月）、长期优化（持续）。
+6. 每个阶段列出2-4项核心任务，每项任务用编号标注，任务之间按紧迫程度排序。
+7. 每个阶段的"预期效果"列说明该阶段完成后达到的改善目标。
+
+### 优先级确定原则
+8. 优先级排序应综合考虑：(a) 人身安全风险→(b) 设备损坏风险→(c) 生产中断风险→(d) 合规风险→(e) 经济性风险。
+9. 已发生过事故或存在明确故障先兆的风险项应排在最高优先级。
+
+## 四、综合与质量校核
+
+1. **向上一致性**：速查表中的每条风险必须可在第2章找到对应的详细分析段落。
+2. **向下引导性**：速查表中的行动建议应为第4章专项分析提供框架支撑。
+3. **无遗漏**：第2章所有模块的"建议"段落中提到的行动项，均应在速查表中出现（可合并同类项但不可遗漏）。
+4. **无矛盾**：速查表中的优先级排序应与第1章健康度总览中的风险等级一致。
+5. **可执行性**：每条行动建议应足够具体，使执行者无需回看第2章即可理解要做什么。 | {"file_id": "file-7a031eb6e3e09306", "path": "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0330 | SKILL.md | ---
+name: report-template-chief-editor-chapter-4
+description: 第4章（专项问题分析）Chief Editor综合方法——从模板提炼的专项分析组织、前瞻规划方法和质量校核方法，仅约束表达与推理，不迁移任何项目事实。
+---
+
+# chief-editor-chapter-4 Skill：专项问题分析
+
+## 一、章节定位与组织结构
+
+第4章是报告的"前瞻规划"章节，将评估发现转化为面向未来的规划建议和专项解决方案。本章按专项主题独立组织，每个专项自成体系：
+
+| 专项 | 内容性质 | 与前文章节的关系 |
+|------|----------|------------------|
+| 新工厂规划建议 | 前瞻性设计指导 | 将第2章发现的系统性缺陷转化为设计阶段的"前置规避"原则 |
+| 增容建议 | 针对性工程方案 | 将第2章发现的过载/容量问题转化为具体增容方案 |
+| 日常用电管理建议 | 管理优化指引 | 将第2章运维管理发现转化为日常管理优化方案 |
+| 应急管理及合规性建议 | 合规与应急管理 | 将第2章保护和运维发现转化为应急和合规管理方案 |
+
+## 二、新工厂规划建议写作方法
+
+### 原则声明
+1. 开篇声明规划原则（如"前置规避"——将事后整改转化为事前防控）。
+
+### 分要素规划
+2. 按以下要素逐一给出规划建议，每个要素包含设计原则、选型要求、配置标准：
+   - **系统架构与负荷分配**：变压器选型裕度、母线分段方式、关键负荷双回路要求
+   - **电能质量前置治理**：谐波源隔离、滤波装置配置、无功补偿选型
+   - **设备选型与继电保护**：高压柜型选择、低压柜分隔形式、接地系统设计
+   - **安全防护与环境控制**：漏电监测、防火封堵、环境控制系统
+   - **智能化与运维体系**：监控平台、视频巡检、SOP/EOP编制、备件储备
+
+### 各阶段管控要点
+3. 用表格呈现设计→选型→施工→调试→投运各阶段的核心工作和管控要点，使规划建议可分阶段执行。
+
+## 三、增容建议写作方法
+
+1. **现状分析**：说明当前容量瓶颈的具体表现和紧迫性。
+2. **方案比选**：给出两个或以上方案，每方案包含技术描述、适用条件、优缺点。
+3. **推荐方案**：明确推荐哪个方案及推荐理由。
+4. **增容后校核清单**：列出增容后必须重新校核的内容（保护定值、短路电流、接地系统等），确保增容不引入新问题。
+5. **临时过渡措施**：在增容施工期间的临时负荷调整方案。
+
+## 四、日常管理与应急管理建议写作方法
+
+1. **日常管理建议**：按管理维度（用电管理、巡检优化、培训考核等）分条给出优化建议。
+2. **应急管理建议**：按应急类型（电气火灾、触电事故、全厂停电）分别给出预案框架。
+3. **合规性建议**：按法规要求分类（预防性试验、防雷检测、档案管理等）给出合规措施。
+
+## 五、综合与质量校核
+
+1. **问题溯源**：每条专项建议的出发点必须可在第2章找到对应的发现或问题。
+2. **前瞻一致性**：新工厂规划建议应系统性地规避第2章发现的所有系统性缺陷。
+3. **方案可比性**：增容建议的各方案应使用统一的评价维度（成本、工期、效果、风险），便于决策。
+4. **覆盖完整性**：委托方在评估背景中提出的专项需求必须在本章逐一回应。
+5. **前后呼应**：第4章的建议应与第3章速查表中的长期优化项目形成对应关系。 | {"file_id": "file-fa4ebcb7383e6bb9", "path": "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}
+E-0331 | SKILL.md | ---
+name: report-template-final-auditor
+description: 最终验收审计方法——从模板提炼的跨章节通用验收准则和复核动作，仅包含通用的质量验收标准，不含任何章节特定的写作指令。
+---
+
+# final-auditor Skill：最终验收
+
+## 一、跨章节一致性验收准则
+
+### A. 纵向一致性（章节间）
+1. **第1章→第2章**：第1章健康度总览中的每个风险等级和关键异常指标，是否可在第2章对应模块中找到详细分析支撑？
+2. **第2章→第3章**：第3章速查表中的每条风险和建议，是否可在第2章中找到对应的发现和建议段落？
+3. **第3章→第4章**：第4章专项建议的出发点，是否与第3章长期优化项目对应？
+4. **第1章→第3章**：第1章的TOP5风险优先级与第3章速查表的优先级排序是否一致？
+
+### B. 横向一致性（模块间）
+5. **数据一致性**：同一设备或系统的数据在不同模块中被引用时，数值是否一致？
+6. **风险关联性**：当一个模块的风险依赖于另一个模块的条件（如过载+谐波叠加），两个模块的分析是否互相呼应？
+7. **建议协调性**：当多个模块的建议涉及同一设备或系统时，建议之间是否协调（不矛盾、不遗漏）？
+
+### C. 行动可执行性
+8. **建议具体性**：所有建议是否包含具体操作步骤、时间框架和验收标准？
+9. **优先级合理性**：优先级排序是否综合考虑了人身安全、设备安全、生产连续性、合规性、经济性？
+10. **分阶段完整性**：整改路线图是否覆盖了立即/短期/中期/长期四个阶段，每个阶段是否有明确的核心任务和预期效果？
+
+## 二、内容完整性验收
+
+### A. 结构完整性
+11. 报告是否包含完整的四个章节（概述、评估内容、结论与建议、专项分析）？
+12. 第2章是否覆盖了全部五个评估维度？
+13. 每个评估维度是否包含完整的子主题？
+14. 每个子主题是否包含完整的"现状→风险→建议→依据"四步结构？
+
+### B. 证据完整性
+15. 现状描述中的关键数据是否均有可追溯的证据来源？
+16. 照片、图表、表格是否与文字描述一致？
+17. 标准引用是否准确（标准编号、条款号与引用内容匹配）？
+
+### C. 委托需求覆盖
+18. 委托方在评估背景中提出的所有专项需求是否在报告中逐一回应？
+
+## 三、最终验收复核动作
+
+1. **纵向一致性扫描**：逐章对照，检查第1章→第2章→第3章→第4章的数据和结论一致性。
+2. **横向一致性扫描**：逐模块对照，检查跨模块引用的数据一致性和建议协调性。
+3. **建议完整性扫描**：列出第2章所有模块的建议，逐一检查是否在第3章速查表中出现。
+4. **优先级合理性审查**：审查优先级排序是否符合安全优先原则。
+5. **结构完整性检查**：检查报告是否覆盖全部章节、维度、子主题和四步结构。
+6. **证据可追溯性检查**：抽查关键数据，检查是否可追溯到现场测量或文档证据。
+7. **委托需求覆盖检查**：逐条核对委托方需求是否已回应。 | {"file_id": "file-07a1bbfcf0e1c169", "path": "Inputs/report-template-role-skills/final-auditor/SKILL.md", "sheet": null, "cell": null, "page": null, "row": null, "column": null, "image_id": null}

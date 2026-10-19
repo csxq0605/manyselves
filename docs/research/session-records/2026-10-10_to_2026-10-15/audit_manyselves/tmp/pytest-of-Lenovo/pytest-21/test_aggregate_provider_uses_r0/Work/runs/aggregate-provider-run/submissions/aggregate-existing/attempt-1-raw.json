@@ -1,0 +1,28 @@
+{
+  "agent_id": "aggregate-editor",
+  "task_id": "aggregate-existing",
+  "revision": 0,
+  "raw_payload": {
+    "kind": "edited_report_submission",
+    "title": "汇总报告",
+    "assessment_background": "背景正文。",
+    "findings_overview": "发现正文。",
+    "regional_executive_summary": "区域摘要正文。",
+    "module_narratives": {
+      "2.1": "[[APPROVED_MODULE:2.1]] 模块 2.1 的汇总正文。",
+      "2.2": "[[APPROVED_MODULE:2.2]] 模块 2.2 的汇总正文。",
+      "2.3": "[[APPROVED_MODULE:2.3]] 模块 2.3 的汇总正文。",
+      "2.4": "[[APPROVED_MODULE:2.4]] 模块 2.4 的汇总正文。",
+      "2.5": "[[APPROVED_MODULE:2.5]] 模块 2.5 的汇总正文。"
+    },
+    "risk_panorama": "风险全景正文。",
+    "dimension_risk_analysis": "维度风险正文。",
+    "data_gap_analysis": "数据缺口正文。",
+    "improvement_action_plan": "改进行动正文。",
+    "special_topic_analysis": null,
+    "tables": [],
+    "photo_ids": [],
+    "unresolved_editorial_issues": [],
+    "revision_responses": []
+  }
+}

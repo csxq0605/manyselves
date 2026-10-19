@@ -35,7 +35,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     TaskEnvelope,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
-    DeclarativeCrossOwnerRuntimeContext,
+    cross_runtime_context,
 )
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     ModuleProviderDependencies,
@@ -90,6 +90,7 @@ class CrossProviderRuntime:
         )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
             "cross-module-reviewer": self,
+            "cross-relation-reviewer": self,
             "main-agent": self,
         }
 
@@ -143,11 +144,7 @@ class CrossProviderRuntime:
         task_id: str,
         recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
-        context = (
-            value
-            if isinstance(value, DeclarativeCrossOwnerRuntimeContext)
-            else DeclarativeCrossOwnerRuntimeContext.model_validate(value)
-        )
+        context = cross_runtime_context(value)
         preparation = CrossOwnerAgentInvoker.preparation_for_output(
             context,
             task.output_contract,
@@ -209,11 +206,7 @@ class CrossProviderRuntime:
         recovery_policy: RecoveryPolicyDefinition | None = None,
         task_attempt: ProviderTaskAttempt | None = None,
     ) -> CrossOwnerAgentInvoker:
-        context = (
-            value
-            if isinstance(value, DeclarativeCrossOwnerRuntimeContext)
-            else DeclarativeCrossOwnerRuntimeContext.model_validate(value)
-        )
+        context = cross_runtime_context(value)
         preparation = CrossOwnerAgentInvoker.preparation_for_output(
             context,
             task.output_contract,

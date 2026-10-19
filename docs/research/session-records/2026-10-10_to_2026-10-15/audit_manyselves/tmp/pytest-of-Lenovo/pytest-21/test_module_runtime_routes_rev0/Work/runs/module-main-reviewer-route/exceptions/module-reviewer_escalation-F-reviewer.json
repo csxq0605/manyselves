@@ -1,0 +1,35 @@
+{
+  "kind": "workflow_exception_input",
+  "run_id": "module-main-reviewer-route",
+  "scope": "module",
+  "trigger": "reviewer_escalation",
+  "finding_ids": [
+    "F-reviewer"
+  ],
+  "subject_refs": [
+    "Work/runs/module-main-reviewer-route/modules/2.4-r1.json"
+  ],
+  "finding_refs": [
+    "Work/runs/module-main-reviewer-route/reviews/findings.json"
+  ],
+  "verdicts": [
+    {
+      "finding_id": "F-reviewer",
+      "verdict": "escalate",
+      "reason": "作者与审查者对该 finding 仍存在无法在本轮消解的分歧。",
+      "evidence_refs": [
+        "Work/runs/module-main-reviewer-route/modules/2.4-r1.json"
+      ]
+    }
+  ],
+  "revision_responses": [
+    {
+      "finding_id": "F-reviewer",
+      "action": "implemented",
+      "summary": "作者已经完成目标小节的修订并补充了对应的验证说明。",
+      "changed_target_ids": [
+        "2.4.1.1"
+      ]
+    }
+  ]
+}

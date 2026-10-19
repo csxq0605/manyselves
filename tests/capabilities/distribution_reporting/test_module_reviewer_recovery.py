@@ -178,6 +178,14 @@ async def test_module_reviewer_bridge_recovers_in_same_session(
     bus_task = asyncio.create_task(bus.process_queue())
 
     class ScriptedReviewerLoop:
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder):
+            self.context_rebuilder = rebuilder
+
+        def begin_typed_task(self, context):
+            self.task_context = context
+
         def __init__(self, runtime_id: str) -> None:
             self.runtime_id = runtime_id
             self.received: list[UserMessage] = []
@@ -279,6 +287,9 @@ async def test_module_reviewer_bridge_recovers_in_same_session(
     assert outcome.result["status"] == "completed"
     assert outcome.result["submission"]["kind"] == "module_review_finding_submission"
     assert len(loops) == 1
+    assert loops[0].context_rebuilder is not None
+    assert loops[0].task_context["input_refs"] == context.review.prepared.envelope.input_refs
+    assert loops[0].task_context["objective"] == context.review.prepared.envelope.objective
     assert [message.turn_kind for message in loops[0].received] == [
         "task_initial",
         continuation_kind,
