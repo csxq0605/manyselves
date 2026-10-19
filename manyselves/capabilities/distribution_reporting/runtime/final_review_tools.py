@@ -391,6 +391,7 @@ class FinalReviewTools:
         )
         source_context.update(final_observation_context(
             state.get("module_submissions", {}), edited, _section_bodies(edited, chapter_id),
+            workspace=self.workspace, run_id=str(state["run_id"]),
         ))
         revision = review.revision_number
         run_id = str(state["run_id"])

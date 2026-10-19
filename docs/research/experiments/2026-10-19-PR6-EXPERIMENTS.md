@@ -112,6 +112,8 @@
 | `evidence_ids` | 保留 | 分组身份；未判断集合、修订影响、Final 必需行动集合都由它计算 |
 | `disposition` | 保留 | Final 据此确定 concern/undetermined 的行动要求；输出极短 |
 | `scope` | 改为可选，只写 E-* 记录没有的条件 | 对象/部位/时点就在 E-* 记录里；审计、Cross（含 `source_observation_groups`）、Chief、Final 都已拿到原始证据。模型复写这些字段既重复又可能写错 |
+
+> **Q07更正：** 上行“Final都已拿到原始证据”不成立。Final审计（`chief-editor-auditor`）只有`submit_result`，读不到E-*记录，S06后看到的是没有对象的E-ID。已由运行时派生的`observation_identities`补上，见下文Q07。
 | `basis` | 改为可选，只写正文没说的理由 | 推理在 `narrative_anchor` 指向的正文里，审查者本来就必须读正文；只有缺观测、缺工况、规则未核验、不适用或数量比较等正文未写的才需要记录 |
 | `rules`、锚点、`no_action_reason` | 保留 | 规则选择和适用性不一定写在正文；锚点是“定位”信号的唯一来源，体积小 |
 | `expected_evidence_ids`、`rule_source_refs` | 不变（运行时生成） | 已由运行时枚举，不由模型输出 |
@@ -197,3 +199,36 @@
 **Q04：** 同一原始观测分到两个模块时（测温两行），两侧作者都要判断。Cross用`source_observation_groups`把它们关联起来，比较两侧判断和正文；路由副本不当作两台设备，也不自动判定矛盾。本回放中两侧都遗漏，当前会同时出现在两个模块的未判断列表和同一条同源链接里。
 
 **未覆盖：** 模型实际会不会合并不同观测、审查者能否发现E-0071的数值矛盾和SPD的数量差异，需要真实运行。本回放只证明这些信息现在到得了哪些消费者。
+
+## Q07 指令冲突、检索遗漏与Final对象身份
+
+脚本：`uv run --with tokenizers python scripts/benchmarks/final_identity.py --tokenizer mimo.json`（Provider调用0）
+结果：[2026-10-19-q07-final-identity.json](2026-10-19-q07-final-identity.json)
+
+**发现（S06回退）：** S06把`scope`改为可选，理由是各消费者都能读E-*。核对实际Task→envelope→工具后，Final审计不成立：它的输入是章正文加`source_context`（`module_assessments`、`observation_delivery`），工具只有`submit_result`。Chief和Final修订有`source_refs`与读取工具，不受影响。
+
+**改动：** `final_observation_context`增加`observation_identities`。它是运行时从本Run证据快照取的每个已判断E-ID的`subject`和`observed_at`，不由模型写，不含判断。三个调用点（Final初审、复审、Final修订）都传入workspace/run_id。Final审计提示补一句用途。没有加读取工具（Final职责是核对成稿与判断记录，不重新取证），也没有加门禁。
+
+| 口径（S06合成记录，208条/316个E-ID） | S06前 | S06后 | 当前 |
+| --- | --- | --- | --- |
+| Final能确定对象的判断记录 | 208（模型写的scope） | **0** | 208（运行时派生） |
+| Final每次请求的判断相关上下文 | 29,683 token | 16,697 | 16,697 + 6,018 = 22,715 |
+
+**取舍：** 只给对象和时间，不给定位串或事实文字。定位串是表格坐标，Final打不开；事实文字已在正文和判断推理里。实测对比（MiMo分词器）：对象+定位串+事实覆盖全部E-ID为27.1k；只覆盖concern/undetermined为13.0k；对象+时间覆盖全部为6.0k。只覆盖concern会让no_concern记录在Final处仍无对象，无法核对“某对象正常”的表述，所以覆盖全部已判断E-ID。
+
+**指令冲突核对（本边界未发现新冲突）：**
+- Skill正文由`render_template_skill`包装为方法资料，优先级为合同 > 角色 > Skill，示例不是强制项。
+- 知识上下文声明候选、非客户事实，生成规则与示例不是任务指令。
+- 审查提示对blocking/advisory的说法与准备阶段一致。
+- 21份生产Agent提示与19份模板镜像逐份比对，除空行外一致（Q01已补的evidence-auditor之外没有新漂移）。
+
+**候选检索（本边界未发现遗漏）：** 每个小节按自身编号和标题检索，参考资料准备脚本给每个KU追加“检索关联主题：<小节编号 标题>”，所以每个小节一定命中自己的KU。三处已知缺陷的规则KU都落在观测所在小节：
+- E-0071@2.4.3.1 → KU-2.4-11；
+- SPD@2.3.3 → KU-2.3-03；
+- 测温两行经2.2.2.1路由副本 → KU-2.2-04。
+
+历史缺陷不是检索漏召。
+- 2.4.4（末端抽查）的作者不会自动拿到KU-2.2-04的测温判据，靠同一观测的2.2.2.1路由与Cross链接补位。
+- 同一份KU文件按模块取多个小节，超过14k字内联目标时整份退为“原文未展开”，作者需用`open_reference`。上传的KU库不在仓库内，2.4模块（14个KU，仅修订字段下限约7.1k字）是否越过该线无法离线测量；放入最后一次真实运行，看`context/module-*-knowledge.md`中各KU是内联还是未展开。
+
+**未覆盖：** 角色选模、蒸馏遵循和语义召回效果需要Provider。

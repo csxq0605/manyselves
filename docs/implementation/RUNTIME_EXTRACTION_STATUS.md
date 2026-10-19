@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 Q01/Q03/Q04: known omissions replayed through current reviewer/assessment/Cross inputs; uncited thermal rows now reach every consumer; auditor checks grouped records per E-ID; template mirror synced`
+- Current slice: `PR #6 Q07: Final auditor regains object identity via runtime-derived observation_identities (S06 regression fixed); instruction precedence and candidate retrieval checked, no new conflict or omission found`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：Q07，离线核对身份/Task/Skill/知识指令冲突及候选检索遗漏（只修可定位冲突）；随后F04逐项收束并准备最后一次真实运行口径。S03、模型测量及官方状态核验暂缓。
+- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：F04逐项收束（机制/根因/决策/效果分列），并准备最后一次真实运行口径（含KU内联/未展开核对）。S03、模型测量及官方状态核验暂缓。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 
@@ -41,18 +41,27 @@
 | S03 | 审查直接结构化提交指引已接入 | 以真实Schema/终止协议定位重复输出；未见差异时不增改造 | 模型遵循和重复可见输出减少未测 |
 | S04 | 当前事实/草稿重建，历史精确去重后压缩；按字符类别估算token，工具Schema计入裁剪预算与Provider准入；压缩阈值按真实token等价换算72000 | 已关闭；真实usage出现明显偏差时再校准系数 | 三个公开分词器离线校准（中文内容0.92–1.12）；Provider实测usage未对照 |
 | S05 | 稳定前缀→只追加历史→可变状态末尾；滚动缓存断点（≤4），Anthropic tool_use/tool_result块携带断点 | 已关闭；剩余不可复用主要是每轮重发的草稿全文，归S06/F01 | 13请求离线会话可复用份额：兼容60.6%→79.8%、Anthropic 52.5%→71.8%；真实计费未测 |
-| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复；判断记录`scope`/`basis`改为只补E-*记录和正文未写的内容 | 已关闭；F01不支持合并模块（单会话事实×2.4–3.6），拆2.4无瓶颈证据，不采纳 | 合成下限：作者判断输出29.1k→15.6k token（2.4：12.9k→6.7k）；模型实际输出与续写次数未测 |
+| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复；判断记录`scope`/`basis`改为只补E-*记录和正文未写的内容；Final审计读不到E-*，由Q07的运行时`observation_identities`补对象/时间 | 已关闭；F01不支持合并模块（单会话事实×2.4–3.6），拆2.4无瓶颈证据，不采纳 | 合成下限：作者判断输出29.1k→15.6k token（2.4：12.9k→6.7k）；模型实际输出与续写次数未测 |
 | Q01 | 完整已解析事实/未引用事实可审；预期集合与显式记录对照；已知三处缺陷回放：未引用的测温两行改前审查者不可见，当前经审查证据（标未绑定）、未判断列表和Cross同源链接到达全部消费者 | 已关闭机制部分；作者合并不同观测时只剩审查者逐条比对（提示已补） | 可见不等于被发现；模型实际遗漏率与审查发现率待真实运行 |
 | Q02 | dimension、合并环境范围、公式缓存/缺值及错误读取缺陷已修 | 保持已修项关闭；新格式问题须有复现再纳入 | 缓存新鲜度、其他格式/OCR和大表内存仍有限制，不等于须全面重写 |
 | Q03 | 保留量/单位；撤销固定电压补算；判断条件随记录传递；分工已定：事实/计算在事实包，判断在随正文的紧凑记录，推理在正文（S06/F02） | E-0071数值与正文矛盾、SPD数量差异属作者判断，结构信号只在作者未合并时出现 | 规则选择、条件适用及专业推理正确性未验收 |
 | Q04 | Cross共同快照；同源坐标及路由副本对照已进入输入；回放确认测温两行的2.2/2.4路由副本在同一链接中，两侧未判断同时可见 | 同对象同条件矛盾只能由Cross按链接比较判断，不自动判定；按证据追版本问题 | 同源坐标不证明设备身份，也不保证专业一致 |
-| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理；逐字段保留/简化决定已完成（observation_links保留） | 已关闭；真实运行看定位列表是否仍有用 | Chief/Final每次请求的module_assessments 31.1k→16.7k token；可选记录和锚点只作诊断，语义覆盖未验收 |
+| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理；逐字段保留/简化决定已完成（observation_links保留） | 已关闭；真实运行看定位列表是否仍有用 | Chief/Final每次请求的module_assessments 31.1k→16.7k token（Final另加对象身份6.0k）；可选记录和锚点只作诊断，语义覆盖未验收 |
 | Q06 | 来源归档/定位、规则状态依据传递、Module读取及修订影响已实现 | 核查实际审查职责所需来源能否到达，不自动给所有角色加读取器 | 官方状态核验受先前403阻挡；作者声明与ID存在不是现行/适用证明 |
-| Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理 | 继续核指令冲突、候选遗漏与交付；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
+| Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理；Final对象身份由运行时派生（208/208记录可定位，S06后为0）；Skill/知识/审查指令优先级与21份提示镜像核对无新冲突；三处已知缺陷的规则KU均由小节检索命中 | 已关闭可离线部分；真实运行核对2.4等模块KU是内联还是退为未展开；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
 | F01 | 三种组织已比较：章节并行串行活跃下限110.4分钟，主笔264.0，专题＋主笔156.7–179.6；逐阶段输入/产出/依赖/处置已列；拓扑保留 | 已关闭；不以“只改措辞”跳过局部审查（需新门禁） | 活跃时间下限来自旧编排归档，不是墙钟预测；成稿质量胜负待真实运行 |
 | F02 | 直接写/写后审/先判断再写已比较；最小交接为作者同会话随正文提交的紧凑判断记录，不增加独立判断阶段 | 已关闭 | 2026-10-15实验的误判形态已由保留候选规则/缺失条件避开；模型是否先判断未验收 |
 | F03 | 历史525请求、分阶段及当前请求构造已有取证；`run_metrics.py`按阶段输出请求/token/缓存/压缩/活跃并集与请求级等待链，`reporting_critical_path.py`按生产YAML给出结构关键路径 | 最后一次真实运行用run_metrics测量；F01用critical_path对比拓扑 | 当前常见场景串行LLM深度12–14（首读通过为5），三处审查循环占主要；每阶段真实耗时待实测 |
 | F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+
+### 2026-10-19 — Q07 Final对象身份、指令冲突与候选检索
+
+- **发现：** S06以“各消费者都能读E-*”为由把`scope`改为可选；Final审计实际只有`submit_result`，输入不含E-*内容，S06后判断记录在Final处没有对象。
+- **改动：** `final_observation_context`新增运行时派生的`observation_identities`（每个已判断E-ID的subject/observed_at），Final初审、复审和Final修订三处调用传入workspace/run_id；Final审计提示补用途说明。不是模型字段，不含判断，无新门禁。
+- **实验：** `scripts/benchmarks/final_identity.py`（S06合成记录，MiMo分词器）：Final可定位对象的记录208→0（S06）→208；判断相关上下文29.7k→16.7k→22.7k token。定位串/事实文字和仅覆盖concern的方案已对比并放弃，理由见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q07-指令冲突检索遗漏与final对象身份)。
+- **核对未发现：** Skill/知识/审查指令优先级一致；生产提示与模板镜像除空行外一致；KU准备脚本给每个KU加本小节检索主题，三处已知缺陷的规则KU都被所在小节命中，不是检索漏召。
+- **待真实运行：** 同一KU文件超过14k字内联目标时整份退为未展开，上传库不在仓库，无法离线测量。
+- **验证：** Ruff；Final provider/投影/入口/合同/Skill权威相关定向测试40项通过；未新增测试。
 
 ### 2026-10-19 — Q01/Q03/Q04 已知遗漏的首次可见位置
 

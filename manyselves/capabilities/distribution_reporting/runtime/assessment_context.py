@@ -145,8 +145,24 @@ def source_observation_groups(workspace: Path, run_id: str) -> list[dict] | None
     return result
 
 
+def observation_identities(workspace: Path, run_id: str, modules: dict[str, ModuleSubmission]) -> str:
+    """Runtime-derived object/time for every judged E-ID; Final has no E-* tools."""
+    index = ProjectEvidenceIndex(workspace, run_id)
+    known = {item.id: item for item in index.items()} if index.path.is_file() else {}
+    judged = sorted({
+        eid for module in modules.values() for part in module.assessments.values()
+        for record in part.records or [] for eid in record.evidence_ids if eid in known
+    })
+    return json.dumps({
+        eid: {"subject": known[eid].subject,
+              **({"observed_at": known[eid].observed_at} if known[eid].observed_at else {})}
+        for eid in judged
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
 def final_observation_context(
     modules: dict, report: EditedReportSubmission, bodies: dict[str, str],
+    *, workspace: Path, run_id: str,
 ) -> dict[str, str]:
     """Final checks actual current passages, including after a bounded revision."""
     typed = {
@@ -165,6 +181,7 @@ def final_observation_context(
     }
     return {
         "module_assessments": assessment_source_context(typed),
+        "observation_identities": observation_identities(workspace, run_id, typed),
         "observation_delivery": json.dumps({
             "links": [link.model_dump(mode="json") for link in links],
             "invalid_narrative_links": [index for index, link in enumerate(links)

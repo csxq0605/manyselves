@@ -1,0 +1,24 @@
+{
+  "provider_calls": 0,
+  "judged_records": 208,
+  "judged_evidence_ids": 316,
+  "records_with_object_identity": {
+    "pre_s06_scope": 208,
+    "s06_compact": 0,
+    "now_runtime_identities": 208
+  },
+  "final_context_tokens": {
+    "pre_s06_module_assessments": 29683,
+    "s06_module_assessments": 16697,
+    "observation_identities": 6018,
+    "now_total": 22715
+  },
+  "example": {
+    "E-0071": {
+      "subject": "老配电房（低压）/14#柜-3"
+    },
+    "E-0230": {
+      "subject": "老配电房（低压）/18#"
+    }
+  }
+}

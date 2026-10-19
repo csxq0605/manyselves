@@ -140,6 +140,11 @@ def downstream_context(grouped: bool, compact: bool) -> str:
     from manyselves.capabilities.distribution_reporting.runtime.assessment_context import (
         assessment_source_context,
     )
+
+    return assessment_source_context(synthetic_modules(grouped, compact))
+
+
+def synthetic_modules(grouped: bool, compact: bool) -> dict:
     from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
         REPORT_TAXONOMY,
         ModuleSubmission,
@@ -163,7 +168,7 @@ def downstream_context(grouped: bool, compact: bool) -> str:
             assessments={part_id: PartAssessment(expected_evidence_ids=expected[part_id], records=records)
                          for part_id, records in parts.items()},
         )
-    return assessment_source_context(modules)
+    return modules
 
 
 def links_for(records: dict[str, list[dict]]) -> list[dict]:

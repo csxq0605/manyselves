@@ -184,6 +184,7 @@ class FinalChapterTools:
             section_bodies=_section_bodies(edited, typed_chapter),
             source_context=final_observation_context(
                 state.get("module_submissions", {}), edited, _section_bodies(edited, typed_chapter),
+                workspace=self.workspace, run_id=str(state["run_id"]),
             ),
             special_topic_plan=edited.special_topic_plan,
             revision=0,
@@ -383,6 +384,7 @@ class FinalChapterTools:
             section_bodies=changed_bodies,
             source_context=final_observation_context(
                 state.get("module_submissions", {}), review.current, changed_bodies,
+                workspace=self.workspace, run_id=run_id,
             ),
             unchanged_section_sha256=unchanged_section_sha256,
             required_findings=list(findings),
