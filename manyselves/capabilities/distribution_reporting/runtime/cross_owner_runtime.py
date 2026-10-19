@@ -239,17 +239,41 @@ def _related_view(
     module: ModuleSubmission,
     *,
     subject_ref: str,
+    evidence_ids: set[str] | None = None,
 ) -> CrossOwnerRelatedModuleView:
+    """Compact related view; with ``evidence_ids`` only claims on those objects."""
+
     content = module_content_view(module)
+    claims = module.claims
+    by_submodule = content.evidence_ids_by_submodule
+    if evidence_ids is not None:
+        claims = [claim for claim in claims if evidence_ids & set(claim.source_ids)]
+        by_submodule = {
+            key: [item for item in values if item in evidence_ids]
+            for key, values in by_submodule.items()
+        }
     return CrossOwnerRelatedModuleView(
         module_id=module.module_id,
         revision=module.revision,
         subject_ref=subject_ref,
         submodule_ids=list(content.submodule_narratives),
-        claims=module.claims,
-        evidence_ids_by_submodule=content.evidence_ids_by_submodule,
+        claims=claims,
+        evidence_ids_by_submodule=by_submodule,
         unresolved_questions=content.unresolved_questions,
     )
+
+
+def _owner_dossiers(state: Mapping[str, Any], workspace, owner_module_id: str) -> list[dict] | None:
+    """Dossiers for this owner; None when the run has no joint dossiers (old path)."""
+
+    ref = state.get("joint_dossiers_ref")
+    if not ref:
+        return None
+    payload = json.loads((Path(workspace) / str(ref)).read_text(encoding="utf-8"))
+    return [
+        dossier for dossier in payload.get("dossiers", [])
+        if owner_module_id in dossier.get("module_ids", [])
+    ]
 
 
 def _build_owner_input(
@@ -260,8 +284,24 @@ def _build_owner_input(
     owner_module_id: str,
     review_round: int,
     phase: str = "initial",
+    dossiers: list[dict] | None = None,
 ) -> tuple[CrossOwnerInput, str]:
     owner = modules[owner_module_id]
+    dossier_evidence = (
+        {fact["evidence_id"] for dossier in dossiers for fact in dossier["facts"]}
+        | {
+            evidence_id for dossier in dossiers for judgment in dossier["judgments"]
+            for evidence_id in judgment["evidence_ids"]
+        }
+        if dossiers else None
+    )
+    owner_scope = (
+        {
+            item["submodule_id"] for dossier in dossiers for item in dossier["submodules"]
+            if item["module_id"] == owner_module_id
+        } & set(owner.submodule_narratives)
+        if dossiers else None
+    ) or None
     owner_ref = _module_subject_ref(state, metadata, owner)
     related_refs: dict[str, str] = {}
     related_revisions: dict[str, int] = {}
@@ -276,9 +316,10 @@ def _build_owner_input(
         related_views[module_id] = _related_view(
             related,
             subject_ref=related_ref,
+            evidence_ids=dossier_evidence,
         )
 
-    owner_view: ModuleContentView = module_content_view(owner)
+    owner_view: ModuleContentView = module_content_view(owner, owner_scope)
     contract = CrossOwnerInput(
         phase=phase,
         run_id=str(state["run_id"]),
@@ -289,6 +330,7 @@ def _build_owner_input(
         owner_subject_revision=owner.revision,
         owner_subject=owner_view,
         owner_scope_submodule_ids=list(owner_view.submodule_narratives),
+        joint_dossiers=list(dossiers or []),
         related_module_refs=related_refs,
         related_module_revisions=related_revisions,
         related_module_views=related_views,
@@ -327,6 +369,11 @@ def _build_initial_envelope(
             "related_module_views 是紧凑只读关系视图，不得修改或创建其他模块 finding",
             "initial 只提交 cross_owner_finding_submission",
             "coverage 仅证明当前 owner 检查过六个维度，不代表 approved",
+            *([
+                "本轮只审查 joint_dossiers 中的对象：逐个对象核对各模块的事实、判断和正文摘录是否说得通；"
+                "不同模块按各自方面判断时允许结论不同，同一方面以负责小节为准；"
+                "只为本模块需要改的地方创建 finding，其他模块的问题由它自己的 owner 审查提出",
+            ] if contract.joint_dossiers else []),
         ],
         allowed_outputs=["cross_owner_finding_submission"],
         allowed_tools=["search_text", "open_artifact", "submit_result"],
@@ -722,14 +769,19 @@ class CrossOwnerRuntime:
         review_round = int(state.get("cross_review_round", 0))
         refs: dict[str, str] = {}
         inputs: dict[str, CrossOwnerInput] = {}
+        skipped: list[str] = []
         for owner_module_id in REPORT_MODULE_IDS:
+            dossiers = _owner_dossiers(state, self.workspace, owner_module_id)
             contract, ref = _build_owner_input(
                 state=state,
                 modules=modules,
                 metadata=metadata,
                 owner_module_id=owner_module_id,
                 review_round=review_round,
+                dossiers=dossiers,
             )
+            if dossiers is not None and not dossiers:
+                skipped.append(owner_module_id)
             contract = contract.model_copy(update={"report_instruction": report_instruction_from_state(state)})
             if state.get("revision_input_changes"):
                 contract = CrossOwnerInput.model_validate({
@@ -741,6 +793,7 @@ class CrossOwnerRuntime:
             inputs[owner_module_id] = contract
         state["cross_owner_input_refs"] = refs
         state["cross_owner_inputs"] = inputs
+        state["cross_owner_without_dossiers"] = skipped
         state["cross_review_round"] = review_round
         state["cross_owner_prepared"] = True
         return state
@@ -769,6 +822,16 @@ class CrossOwnerRuntime:
             f"cross-owner-findings-r{review_round}-{owner_module_id}.json"
         )
         existing_path = self.workspace / result_ref
+        if not existing_path.is_file() and owner_module_id in state.get(
+            "cross_owner_without_dossiers", []
+        ):
+            # No object of this module needs a joint look: record an empty review.
+            self.store.write_json(result_ref, CrossOwnerFindingSubmission(
+                owner_module_id=owner_module_id,
+                coverage=CrossReviewCoverageEntry(
+                    module_id=owner_module_id, checked_dimensions=["facts"],
+                ),
+            ).model_dump(mode="json"))
         if existing_path.is_file():
             existing = CrossOwnerFindingSubmission.model_validate_json(
                 existing_path.read_text(encoding="utf-8")
@@ -1725,15 +1788,20 @@ class CrossOwnerRuntime:
         owner_subject_ref = (
             subject_ref.ref if hasattr(subject_ref, "ref") else str(subject_ref)
         )
-        frozen_input = initial_preparation.owner_input.model_copy(
+        initial_input = initial_preparation.owner_input
+        recheck_scope = (
+            set(initial_input.owner_scope_submodule_ids) if initial_input.joint_dossiers else None
+        )
+        recheck_view = module_content_view(lane.module, recheck_scope)
+        frozen_input = initial_input.model_copy(
             deep=True,
             update={
                 "phase": "recheck",
                 "review_round": revision.review_round,
                 "owner_subject_ref": owner_subject_ref,
                 "owner_subject_revision": lane.module.revision,
-                "owner_subject": module_content_view(lane.module),
-                "owner_scope_submodule_ids": list(lane.module.submodule_narratives),
+                "owner_subject": recheck_view,
+                "owner_scope_submodule_ids": list(recheck_view.submodule_narratives),
                 "required_findings": required_findings,
                 "revision_responses": list(lane.responses),
                 "prior_synthesis_inputs": list(initial.result.synthesis_inputs),
@@ -1941,7 +2009,8 @@ class CrossOwnerRuntime:
     ) -> DeclarativeCrossOwnerPipelineOutcome:
         context = _model(value, DeclarativeCrossOwnerRuntimeContext)
         acceptance = context.acceptance
-        if context.status != "initial_accepted" or acceptance is None:
+        # A persisted initial result (same-run resume) carries its acceptance.
+        if context.status not in {"initial_accepted", "initial_resumed"} or acceptance is None:
             raise ValueError("Cross owner pipeline cannot complete before initial acceptance")
         if any(f.impact == "blocking" for f in acceptance.result.findings):
             raise ValueError("Cross owner findings require the revision/recheck lifecycle")

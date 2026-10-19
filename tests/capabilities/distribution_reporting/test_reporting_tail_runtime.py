@@ -283,7 +283,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_consolidation_tool(
     assert "distribution-cross-joint-review" not in root_plan.subworkflow_plans
     assert "prepare-render-delivery" in tools
     assert "complete-delivery" in tools
-    assert "prepare-cross-owner-cohort" not in tools
+    assert "distribution-cross-owner-cohort" in root_plan.subworkflow_plans
 
     run_id = "public-full-tail-boundary"
     state = WorkflowState.for_plan(
@@ -293,7 +293,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_consolidation_tool(
     )
     host = WorkflowRuntimeHost(runtime.executors, store, events)
 
-    with pytest.raises(RuntimeError, match="missing tool adapter: consolidate-observation-ledger"):
+    with pytest.raises(RuntimeError, match="missing tool adapter: build-joint-dossiers"):
         await host.execute(
             tail_plan,
             state,
@@ -310,7 +310,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_consolidation_tool(
     assert persisted.status is WorkflowStatus.FAILED
     action = persisted.actions["run-observation-consolidation"]
     assert action.status.value == "failed"
-    assert "missing tool adapter: consolidate-observation-ledger" in (action.error or "")
+    assert "missing tool adapter: build-joint-dossiers" in (action.error or "")
 
 
 def test_cross_owner_runtime_uses_current_run_module_refs_without_digest_metadata(
@@ -740,10 +740,10 @@ async def test_cross_owner_agent_invoker_recovers_in_same_session(
 
 
 @pytest.mark.asyncio
-async def test_full_report_tail_host_consolidates_without_a_model_and_stops_at_chief(
+async def test_full_report_tail_skips_the_joint_review_model_without_dossiers(
     tmp_path: Path,
 ) -> None:
-    """The compiled tail reaches Chief through program consolidation, no Cross model."""
+    """With no object needing a joint look, the tail reaches Chief without a Cross model."""
 
     from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
         CrossOwnerRuntime,
@@ -872,7 +872,13 @@ async def test_full_report_tail_host_consolidates_without_a_model_and_stops_at_c
         bus.shutdown()
         await bus_task
 
-    assert loops == []  # no Cross model session is opened any more
+    assert loops == []  # no dossier, so no Cross owner opens a model session
+    dossiers = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/reviews/joint-dossiers.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert dossiers["dossiers"] == []
     ledger = json.loads(
         (tmp_path / f"Work/runs/{run_id}/reviews/observation-ledger.json").read_text(
             encoding="utf-8"
@@ -884,7 +890,48 @@ async def test_full_report_tail_host_consolidates_without_a_model_and_stops_at_c
             encoding="utf-8"
         )
     )
-    assert completion["reviewer_agent_id"] == "observation-ledger"
-    assert completion["finding_refs"] == []
+    assert completion["reviewer_agent_id"] == "cross-module-reviewer"
+    assert completion["resolved_finding_ids"] == []
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json").is_file()
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-decision-pack.json").is_file()
+
+
+def test_cross_owner_lanes_review_only_their_dossiers(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
+        CrossOwnerRuntime,
+    )
+
+    state = _cross_state("dossier-run")
+    ref = "Work/runs/dossier-run/reviews/joint-dossiers.json"
+    path = tmp_path / ref
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"dossiers": [{
+        "dossier_id": "D-001",
+        "subject": "1#配电房/G5",
+        "reasons": ["modules_disagree"],
+        "module_ids": ["2.1", "2.4"],
+        "submodules": [
+            {"module_id": "2.1", "submodule_id": "2.1.1"},
+            {"module_id": "2.4", "submodule_id": "2.4.1.1"},
+        ],
+        "facts": [],
+        "judgments": [],
+    }]}, ensure_ascii=False), encoding="utf-8")
+    state["joint_dossiers_ref"] = ref
+
+    runtime = CrossOwnerRuntime(tmp_path)
+    prepared = runtime.prepare(state)
+    owner = prepared["cross_owner_inputs"]["2.1"]
+    assert owner.owner_scope_submodule_ids == ["2.1.1"]
+    assert [d["dossier_id"] for d in owner.joint_dossiers] == ["D-001"]
+    assert sorted(prepared["cross_owner_without_dossiers"]) == ["2.2", "2.3", "2.5"]
+
+    reviewed = runtime.prepare_initial({"state": prepared, "owner_module_id": "2.1"})
+    assert reviewed.preparation.mode == "invoke_agent"
+    assert any("joint_dossiers" in item for item in reviewed.preparation.envelope.constraints)
+
+    skipped = runtime.prepare_initial({"state": prepared, "owner_module_id": "2.5"})
+    assert skipped.preparation.mode == "continue_existing"
+    assert not runtime.initial_has_findings(skipped)
+    outcome = runtime.complete_owner_without_findings(skipped)
+    assert outcome.status == "completed"

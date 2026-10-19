@@ -63,16 +63,16 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
             ],
         },
         {
-            "stage": "observation-consolidation",
+            "stage": "joint-review",
             "producer": "five independently reviewed module pipelines",
-            "consumer": "consolidate-observation-ledger (program)",
-            "input": "five exact ModuleSubmission artifacts and the shared-observation ledger",
-            "output": "observation-ledger.json: ledger, program checks, Chapter 3 relation context",
+            "consumer": "build-joint-dossiers (program), per-owner cross-module-reviewer, consolidate-observation-ledger (program)",
+            "input": "five exact ModuleSubmission artifacts, the shared-observation ledger and per-object joint dossiers",
+            "output": "per-owner Cross findings/corrections, then observation-ledger.json: ledger, program checks, Chapter 3 relation context",
             "content_checks": [
-                "each shared source observation is judged once, by its owner route",
-                "owner-unjudged, reference-judged and conflicting judgments are reported, not gated",
+                "several modules may judge one observed object from their own angles; the owner decides same-angle conflicts",
+                "the joint review reads per-object dossiers (facts, judgments, prose excerpts), not five module texts",
+                "corrections go only to the module the finding names, followed by its local review and recheck",
                 "module findings left open at the round limit are carried to Chief and Final",
-                "no model reads all five module texts",
             ],
         },
         {

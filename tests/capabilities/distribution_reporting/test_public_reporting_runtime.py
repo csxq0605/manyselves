@@ -86,6 +86,7 @@ from manyselves.capabilities.distribution_reporting.runtime.source_ledger import
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.interfaces.types import AgentResultMessage, UserMessage
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow.compiler import CompilerError
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
@@ -1920,7 +1921,7 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     assert review_route.then == "prepare-current-module-revision"
 
 
-def test_full_report_tail_no_longer_needs_cross_owner_specializations(
+def test_full_report_tail_needs_the_generated_cross_owner_pipelines(
     tmp_path: Path,
 ) -> None:
     runtime = PublicReportingWorkflowRuntime(
@@ -1934,8 +1935,7 @@ def test_full_report_tail_no_longer_needs_cross_owner_specializations(
         instruction="compile the full report root",
     )
 
-    # The tail used to stop at the generated Cross owner repair lanes; program
-    # consolidation needs no generated lane.
-    _definitions, _contracts, plan = runtime.compile_plan(request)
-    assert "distribution-observation-consolidation" in plan.subworkflow_plans
-    assert not any("cross-owner" in key for key in plan.subworkflow_plans)
+    # The joint review runs the per-owner Cross lanes over per-object dossiers,
+    # so the tail compiles only with the generated owner pipelines.
+    with pytest.raises(CompilerError, match="distribution-cross-owner-2.1-pipeline"):
+        runtime.compile_plan(request)

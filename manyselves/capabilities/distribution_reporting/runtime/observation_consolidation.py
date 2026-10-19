@@ -1,15 +1,13 @@
-"""Program consolidation of module judgments; replaces the full-text Cross pass.
+"""Program steps around the joint (Cross) review.
 
-Each shared observation is judged once (see ``observation_ledger``), so
-cross-module agreement is checked by comparing judgment records instead of
-asking one model to read all five modules.  The step writes:
-
-* ``reviews/observation-ledger.json``: ledger, program checks and the
-  Chapter 3 relation context;
-* the existing Cross completion and decision-pack artifacts, with no
-  model findings or synthesis, so Chief/Final/Delivery contracts stay intact.
-  Their "cross" names are debt to rename once the old per-owner Cross path in
-  ``revise-report`` is migrated.
+* ``build-joint-dossiers`` runs before the joint review: per observed object,
+  the facts and every module's judgments with prose excerpts
+  (``reviews/joint-dossiers.json``).  The per-owner Cross lanes read these
+  dossiers instead of the other modules' full text.
+* ``consolidate-observation-ledger`` runs after it: ledger, program checks and
+  the Chapter 3 relation context (``reviews/observation-ledger.json``) for
+  Chief/Final.  When no joint review ran, it also writes an empty Cross
+  completion/decision pack so Chief/Final/Delivery contracts stay intact.
 """
 
 from __future__ import annotations
@@ -26,6 +24,7 @@ from .cross_owner_runtime import (
     _module_submissions,
     _state_from,
 )
+from .joint_dossiers import build_joint_dossiers, dossiers_by_module
 from .models.agentic import CrossDecisionPack
 from .models.inputs import ReviewCompletionRecord
 from .observation_ledger import build_observation_ledger, check_ledger, observation_relations
@@ -33,6 +32,23 @@ from .research.project_evidence import ProjectEvidenceIndex
 from .storage import ReportingStore
 
 LEDGER_REVIEWER_ID = "observation-ledger"
+
+
+def build_dossiers(runtime, value: Any) -> dict:
+    state = _state_from(value)
+    run_id = state["run_id"]
+    dossiers = build_joint_dossiers(runtime.store.workspace, run_id, _module_submissions(state))
+    ref = f"Work/runs/{run_id}/reviews/joint-dossiers.json"
+    runtime.store.write_json(ref, {
+        "kind": "joint_dossiers",
+        "run_id": run_id,
+        "dossiers": dossiers,
+    })
+    state.update(
+        joint_dossiers_ref=ref,
+        joint_dossier_modules=dossiers_by_module(dossiers),
+    )
+    return state
 
 
 def consolidate(runtime, value: Any) -> dict:
@@ -59,6 +75,9 @@ def consolidate(runtime, value: Any) -> dict:
     }
     ledger_ref = f"Work/runs/{run_id}/reviews/observation-ledger.json"
     runtime.store.write_json(ledger_ref, payload)
+    state["observation_ledger_ref"] = ledger_ref
+    if state.get("cross_review_completion_ref"):
+        return state  # The joint review already wrote its completion and synthesis.
 
     completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
     completion = ReviewCompletionRecord(
@@ -88,7 +107,6 @@ def consolidate(runtime, value: Any) -> dict:
         cross_review_completion_ref=completion_ref,
         cross_decision_pack_ref=pack_ref,
         cross_synthesis_inputs=[],
-        observation_ledger_ref=ledger_ref,
     )
     return state
 
@@ -146,7 +164,10 @@ def ledger_source_context(
     return context
 
 
-PORTS = {"consolidate-observation-ledger": consolidate}
+PORTS = {
+    "build-joint-dossiers": build_dossiers,
+    "consolidate-observation-ledger": consolidate,
+}
 
 
 def build_observation_consolidation_tools(runtime) -> dict:
@@ -155,6 +176,7 @@ def build_observation_consolidation_tools(runtime) -> dict:
 
 __all__ = [
     "LEDGER_REVIEWER_ID",
+    "build_dossiers",
     "build_observation_consolidation_tools",
     "consolidate",
     "ledger_source_context",

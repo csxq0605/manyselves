@@ -9,6 +9,9 @@ from manyselves.capabilities.distribution_reporting.runtime.assessment_context i
     normalize_assessments,
     part_assessment,
 )
+from manyselves.capabilities.distribution_reporting.runtime.joint_dossiers import (
+    build_joint_dossiers,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ObservationAssessment,
     PartAssessment,
@@ -84,11 +87,14 @@ def test_every_copy_is_marked_and_each_place_may_judge_its_copy(tmp_path):
     assert normalize_assessments([record], ["E-0001"], set())[0]["evidence_ids"] == ["E-0001"]
 
 
-def _module(part_id: str, records: list[dict]) -> SimpleNamespace:
-    # The checks read only assessments; a full ModuleSubmission adds nothing here.
-    return SimpleNamespace(assessments={part_id: PartAssessment(records=[
-        ObservationAssessment.model_validate(record) for record in records
-    ])})
+def _module(part_id: str, records: list[dict], narrative: str = "") -> SimpleNamespace:
+    # The checks read only assessments and prose; a full ModuleSubmission adds nothing here.
+    return SimpleNamespace(
+        assessments={part_id: PartAssessment(records=[
+            ObservationAssessment.model_validate(record) for record in records
+        ])},
+        submodule_narratives={part_id: narrative},
+    )
 
 
 def test_program_checks_report_unjudged_duplicate_and_conflicting_observations(tmp_path):
@@ -111,3 +117,25 @@ def test_program_checks_report_unjudged_duplicate_and_conflicting_observations(t
         ledger, modules, {item.id: item.subject for item in _items()},
     )
     assert relations and relations[0]["subject"] == "1#配电房/G5"
+
+
+def test_joint_dossiers_keep_objects_whose_module_judgments_differ(tmp_path):
+    _write_facts(tmp_path, _items())
+    modules = {
+        "2.1": _module("2.1.1", [
+            {"evidence_ids": ["E-0002"], "disposition": "concern", "narrative_anchor": "负荷偏高"},
+        ], "G5回路负荷偏高，需复核。"),
+        "2.4": _module("2.4.1.1", [
+            {"evidence_ids": ["E-0001"], "disposition": "undetermined", "narrative_anchor": "无法判断"},
+            {"evidence_ids": ["E-0003"], "disposition": "no_concern", "narrative_anchor": "正常"},
+        ], "G5无法判断负荷率。G6正常。"),
+    }
+    dossiers = build_joint_dossiers(tmp_path, "facts", modules)
+    assert [dossier["subject"] for dossier in dossiers] == ["1#配电房/G5"]
+    dossier = dossiers[0]
+    assert dossier["dossier_id"] == "D-001"
+    assert dossier["module_ids"] == ["2.1", "2.4"]
+    assert set(dossier["reasons"]) == {"modules_disagree", "several_modules_raise_attention"}
+    assert {fact["evidence_id"] for fact in dossier["facts"]} == {"E-0001", "E-0002"}
+    assert any("负荷偏高" in judgment["excerpt"] for judgment in dossier["judgments"])
+    assert all("shared" in fact for fact in dossier["facts"])

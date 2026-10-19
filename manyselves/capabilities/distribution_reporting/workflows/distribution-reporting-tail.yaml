@@ -1,6 +1,6 @@
 id: distribution-reporting-tail
 version: 1.0.0
-description: File-defined ledger consolidation, Chief, Final, Render and Delivery sequence
+description: File-defined joint review, ledger consolidation, Chief, Final, Render and Delivery sequence
 tasks:
 - chief-chapter-edit
 - final-chapter-review

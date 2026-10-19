@@ -1234,6 +1234,15 @@ class CrossOwnerInput(StrictModel):
             "Bounded owner scope for this Cross execution lane, derived from the run taxonomy."
         ),
     )
+    joint_dossiers: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Per-object dossiers this owner takes part in: the object's facts and every "
+            "module's judgments with prose excerpts. When present, review these objects "
+            "only; owner scope and related views are cut to them, and related full text "
+            "stays readable by reference."
+        ),
+    )
     related_module_refs: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
     ] = Field(description="Immutable refs for the other four read-only module subjects.")
