@@ -1920,7 +1920,7 @@ def test_initial_review_finding_persists_and_routes_to_revision_gap(
     assert review_route.then == "prepare-current-module-revision"
 
 
-def test_full_report_stops_at_existing_tail_specialization_boundary(
+def test_full_report_tail_no_longer_needs_cross_owner_specializations(
     tmp_path: Path,
 ) -> None:
     runtime = PublicReportingWorkflowRuntime(
@@ -1934,8 +1934,8 @@ def test_full_report_stops_at_existing_tail_specialization_boundary(
         instruction="compile the full report root",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="distribution-cross-owner-2.1-repair-lane",
-    ):
-        runtime.compile_plan(request)
+    # The tail used to stop at the generated Cross owner repair lanes; program
+    # consolidation needs no generated lane.
+    _definitions, _contracts, plan = runtime.compile_plan(request)
+    assert "distribution-observation-consolidation" in plan.subworkflow_plans
+    assert not any("cross-owner" in key for key in plan.subworkflow_plans)

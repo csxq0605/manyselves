@@ -689,7 +689,8 @@ class CrossOwnerRuntime:
     @property
     def joint_tools(self):
         from .cross_joint import build_joint_tools
-        return build_joint_tools(self)
+        from .observation_consolidation import build_observation_consolidation_tools
+        return {**build_joint_tools(self), **build_observation_consolidation_tools(self)}
 
     def __init__(
         self,

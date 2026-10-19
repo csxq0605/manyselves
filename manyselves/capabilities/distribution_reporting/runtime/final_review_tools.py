@@ -51,10 +51,10 @@ from .assessment_context import (
     assessment_source_context,
     final_observation_context,
     module_rule_source_refs,
-    source_observation_groups,
 )
 from .chief_sources import materialize_chief_module_sources
 from .delivery_projection import build_delivery_projection
+from .observation_consolidation import ledger_source_context
 from .report_validation import validate_final_report_structure
 from .template_skill_context import read_template_skill, render_template_skill
 
@@ -234,7 +234,15 @@ def _source_projection(
         )
     elif chapter_id == "3":
         source_context = {
-            "cross_synthesis": json.dumps(
+            "module_boundaries": ",".join(
+                f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
+                for module_id, module in sorted(
+                    modules.items(), key=lambda item: float(item[0])
+                )
+            ),
+        }
+        if state.get("cross_synthesis_inputs"):
+            source_context["cross_synthesis"] = json.dumps(
                 [
                     item.model_dump(mode="json")
                     if hasattr(item, "model_dump")
@@ -243,14 +251,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            ),
-            "module_boundaries": ",".join(
-                f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
-                for module_id, module in sorted(
-                    modules.items(), key=lambda item: float(item[0])
-                )
-            ),
-        }
+            )
     else:
         source_context = {
             "special_topic_plan": json.dumps(
@@ -262,8 +263,10 @@ def _source_projection(
         if state.get("special_topic_knowledge_ref"):
             source_refs.append(str(state["special_topic_knowledge_ref"]))
     source_context["module_assessments"] = assessment_source_context(modules)
-    source_context["source_observation_groups"] = json.dumps(
-        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    # One judgment per shared observation: ledger, program checks and, for
+    # Chapter 3, the cross-module relation context (no model-written synthesis).
+    source_context.update(
+        ledger_source_context(dict(state), store, relations=chapter_id == "3")
     )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
@@ -273,6 +276,10 @@ def _source_projection(
         module if isinstance(module, ModuleSubmission) else ModuleSubmission.model_validate(module)
     ))
     return source_context, list(dict.fromkeys(ref for ref in source_refs if ref))
+
+
+def _max_final_rounds(state: Mapping[str, Any]) -> int:
+    return max(1, int(state.get("max_final_review_rounds", 1)))
 
 
 class FinalReviewTools:
@@ -349,15 +356,24 @@ class FinalReviewTools:
 
     @staticmethod
     def needs_round(value: Any) -> bool:
+        """At most ``max_final_review_rounds`` rework rounds (default one).
+
+        Findings still open after the last round are delivered as residual
+        risks instead of failing the whole Run.
+        """
         review = DeclarativeFinalReviewContext.model_validate(value)
-        return bool(review.pending_by_chapter) and not review.already_completed
+        return (
+            bool(review.pending_by_chapter)
+            and not review.already_completed
+            and review.revision_number < _max_final_rounds(review.state)
+        )
 
     @staticmethod
     def advance_round(value: Any) -> DeclarativeFinalReviewContext:
         review = DeclarativeFinalReviewContext.model_validate(value)
         if not review.pending_by_chapter:
             return review
-        maximum = max(1, int(review.state.get("max_final_review_rounds", 3)))
+        maximum = _max_final_rounds(review.state)
         next_round = review.revision_number + 1
         if next_round > maximum:
             raise RuntimeError("final chapter review exceeded the maximum revision rounds")
@@ -853,6 +869,12 @@ class FinalReviewTools:
             return state
         run_id = str(state["run_id"])
         revision = review.revision_number
+        unclosed = [
+            (chapter_id, finding)
+            for chapter_id, findings in sorted(review.pending_by_chapter.items())
+            for finding in findings
+        ]
+        unclosed_ids = {finding.id for _, finding in unclosed}
         state["edited_report"] = review.current
         state["chief_candidate_ref"] = review.subject_ref
         state["final_review_restart_round"] = revision or 1
@@ -865,17 +887,21 @@ class FinalReviewTools:
             finding_refs=list(review.initial_lane_refs.values()),
             verdict_refs=[record.output_ref for record in review.verdict_history],
             resolved_finding_ids=sorted(
-                {
-                    finding.id
-                    for findings in review.findings_by_chapter.values()
-                    for finding in findings
-                }
-                | {
-                    finding.id
-                    for record in review.verdict_history
-                    for finding in record.submission.new_findings
-                }
+                (
+                    {
+                        finding.id
+                        for findings in review.findings_by_chapter.values()
+                        for finding in findings
+                    }
+                    | {
+                        finding.id
+                        for record in review.verdict_history
+                        for finding in record.submission.new_findings
+                    }
+                )
+                - unclosed_ids
             ),
+            deferred_advisory_ids=sorted(unclosed_ids),
         )
         completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))
@@ -919,7 +945,14 @@ class FinalReviewTools:
         self.store.write_json(snapshot_ref, snapshot.model_dump(mode="json"))
         state["final_review_completion_ref"] = completion_ref
         state["final_audit_snapshot_ref"] = snapshot_ref
-        state["final_residual_risks"] = list(review.initial_residual_risks)
+        state["final_residual_risks"] = [
+            *review.initial_residual_risks,
+            *(
+                f"第{chapter_id}章成稿审查未关闭（{finding.id}，{finding.impact}）："
+                f"{finding.observation}"
+                for chapter_id, finding in unclosed
+            ),
+        ]
         state["final_chapter_lane_refs"] = dict(review.initial_lane_refs)
         state["aggregate_refs"] = {
             **dict(state.get("aggregate_refs", {})),

@@ -78,8 +78,8 @@ from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 from .assessment_context import (
     assessment_source_context,
     module_rule_source_refs,
-    source_observation_groups,
 )
+from .observation_consolidation import ledger_source_context
 from .task_context import bind_task_context
 
 SessionFactory = Callable[[str], AgentSessionLoop]
@@ -170,7 +170,15 @@ def _source_projection(
         )
     elif chapter_id == "3":
         source_context = {
-            "cross_synthesis": json.dumps(
+            "module_boundaries": ",".join(
+                f"{module_id}:{','.join(sorted(module.submodule_narratives))}"
+                for module_id, module in sorted(
+                    modules.items(), key=lambda item: float(item[0])
+                )
+            ),
+        }
+        if state.get("cross_synthesis_inputs"):
+            source_context["cross_synthesis"] = json.dumps(
                 [
                     item.model_dump(mode="json")
                     if hasattr(item, "model_dump")
@@ -179,14 +187,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            ),
-            "module_boundaries": ",".join(
-                f"{module_id}:{','.join(sorted(module.submodule_narratives))}"
-                for module_id, module in sorted(
-                    modules.items(), key=lambda item: float(item[0])
-                )
-            ),
-        }
+            )
     else:
         plan = state.get("special_topic_plan")
         if plan is not None and not isinstance(plan, SpecialTopicPlan):
@@ -203,8 +204,10 @@ def _source_projection(
             source_refs.append(str(knowledge_ref))
 
     source_context["module_assessments"] = assessment_source_context(modules)
-    source_context["source_observation_groups"] = json.dumps(
-        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    # One judgment per shared observation: ledger, program checks and, for
+    # Chapter 3, the cross-module relation context (no model-written synthesis).
+    source_context.update(
+        ledger_source_context(dict(state), store, relations=chapter_id == "3")
     )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:

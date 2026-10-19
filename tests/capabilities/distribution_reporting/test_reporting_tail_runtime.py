@@ -1,6 +1,7 @@
 """Characterization for the Capability-owned full-report tail composition."""
 
 import asyncio
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -231,7 +232,7 @@ def test_cross_composition_import_does_not_load_core_reporting() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
+async def test_full_report_tail_host_stops_at_first_unbound_consolidation_tool(
     tmp_path: Path,
 ) -> None:
     from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -278,8 +279,8 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     tail_plan = root_plan.subworkflow_plans["distribution-reporting-tail"]
     tools = runtime._tools(definitions, contracts, root_plan)
     assert tail_plan.workflow_id == "distribution-reporting-tail"
-    cross_plan = root_plan.subworkflow_plans["distribution-cross-joint-review"]
-    assert "distribution-cross-joint-repairs" in cross_plan.workflow_ids
+    assert "distribution-observation-consolidation" in root_plan.subworkflow_plans
+    assert "distribution-cross-joint-review" not in root_plan.subworkflow_plans
     assert "prepare-render-delivery" in tools
     assert "complete-delivery" in tools
     assert "prepare-cross-owner-cohort" not in tools
@@ -292,7 +293,7 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
     )
     host = WorkflowRuntimeHost(runtime.executors, store, events)
 
-    with pytest.raises(RuntimeError, match="missing tool adapter: prepare-joint-cross-review"):
+    with pytest.raises(RuntimeError, match="missing tool adapter: consolidate-observation-ledger"):
         await host.execute(
             tail_plan,
             state,
@@ -307,10 +308,9 @@ async def test_full_report_tail_host_stops_at_first_unbound_cross_tool(
 
     persisted = store.load(run_id)
     assert persisted.status is WorkflowStatus.FAILED
-    assert persisted.actions["run-cross"].status.value == "failed"
-    assert "missing tool adapter: prepare-joint-cross-review" in (
-        persisted.actions["run-cross"].error or ""
-    )
+    action = persisted.actions["run-observation-consolidation"]
+    assert action.status.value == "failed"
+    assert "missing tool adapter: consolidate-observation-ledger" in (action.error or "")
 
 
 def test_cross_owner_runtime_uses_current_run_module_refs_without_digest_metadata(
@@ -740,10 +740,10 @@ async def test_cross_owner_agent_invoker_recovers_in_same_session(
 
 
 @pytest.mark.asyncio
-async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_boundary(
+async def test_full_report_tail_host_consolidates_without_a_model_and_stops_at_chief(
     tmp_path: Path,
 ) -> None:
-    """The real compiled tail reaches Chief after one joint Cross review."""
+    """The compiled tail reaches Chief through program consolidation, no Cross model."""
 
     from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
         CrossOwnerRuntime,
@@ -768,22 +768,6 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
     )
 
     run_id = "cross-tail-host-run"
-    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-        CROSS_REVIEW_DIMENSIONS,
-        CrossReviewFindingSubmission,
-    )
-    result_ref = f"Work/runs/{run_id}/results/joint.json"
-    result_path = tmp_path / result_ref
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(AgentResult(
-        task_id="cross-joint-r0", run_id=run_id, agent_id="cross-relation-reviewer",
-        session_id="public-reporting:cross-joint", status=AgentRunStatus.COMPLETED,
-        payload=CrossReviewFindingSubmission(
-            coverage=[CrossReviewCoverageEntry(module_id=owner, checked_dimensions=list(CROSS_REVIEW_DIMENSIONS))
-                      for owner in REPORT_TAXONOMY], findings=[], synthesis_inputs=[],
-        ),
-    ).model_dump_json(), encoding="utf-8")
-
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     execution = AgentExecutionService(bus, timeout=2)
@@ -805,19 +789,8 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
 
         async def start(self) -> None:
             async def respond(message: UserMessage) -> None:
-                if message.agent_type != self.runtime_id:
-                    return
-                await bus.publish(
-                        AgentResultMessage(
-                            sender="cross-relation-reviewer",
-                            workflow_id=message.workflow_id,
-                            task_id="cross-joint-r0",
-                            run_id=message.run_id,
-                            result_path=result_ref,
-                            task_attempt_id="",
-                        session_id=message.session_id,
-                    )
-                )
+                # Any model dispatch in this tail is a regression.
+                raise AssertionError(f"unexpected Agent dispatch: {message.agent_type}")
 
             self.callback = respond
             bus.subscribe(UserMessage, respond)
@@ -899,6 +872,19 @@ async def test_full_report_tail_host_drains_cross_and_stops_at_real_chief_bounda
         bus.shutdown()
         await bus_task
 
-    assert len(loops) == 1
+    assert loops == []  # no Cross model session is opened any more
+    ledger = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/reviews/observation-ledger.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert ledger["kind"] == "observation_ledger_consolidation"
+    completion = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert completion["reviewer_agent_id"] == "observation-ledger"
+    assert completion["finding_refs"] == []
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json").is_file()
     assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-decision-pack.json").is_file()

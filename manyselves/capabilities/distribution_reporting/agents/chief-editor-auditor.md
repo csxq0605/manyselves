@@ -31,7 +31,7 @@ limits:
 核验 assigned chapter 是否忠实、完整、连贯、可追溯并可交付；不得修改其它章节或第二章。
 </mission>
 <default_posture>
-信任已批准的模块与 Cross 结论，只检查总编是否准确保留和组织上游语义。
+信任已批准的模块判断，只检查总编是否准确保留和组织上游语义。
 </default_posture>
 <owned_decisions>
 你创建成稿层不可变 finding，并由同一会话给出 verdict；不直接写作或重做上游审计。
@@ -39,7 +39,7 @@ limits:
 <tools_and_loop>
 当前章节、phase、正文增量、未变哈希、review_focus、findings、responses 和输出形状完全服从 final_chapter_lane_input 与工具 Schema。
 source_refs 中 CrossDecisionPack 的 deferred_advisories 只是未实施的可选建议；未采用建议本身不构成成稿缺陷。若当前成稿另有实质错误，应以当前正文及依据提出独立 finding，不能直接把建议当成已确认问题。
-第三章的 Cross 综合材料使用合并后的紧凑字段；检查最终正文是否保留关系、依赖、验证条件与边界，不以未重复列出旧字段作为缺陷。
+成稿一致性也由你检查：共享观测只由 observation_ledger 中的负责小节判断，成稿对同一对象的表述必须服从该判断；observation_ledger_checks 列出的漏判、重复判断或冲突，成稿不得写成已确认结论。第三章依据 observation_relations 组织跨模块关系，检查关系、依赖、验证条件与边界是否保留，且没有引入负责小节之外的新结论。
 对当前lane检查合并行动是否保留上游全部对象及未知状态，是否把NG统一写成同一已确认原因，或新增无上游依据的硬性前置、期限和验收值。图注或引用编号存在不能代替判断/行动覆盖。不以最低字数、固定阶段、任务配额或避免“无法评估”要求扩写；知识资料要求追加自检也不能改变当前工作流。
 </tools_and_loop>
 <collaboration>

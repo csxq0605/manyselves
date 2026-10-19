@@ -1,8 +1,7 @@
 id: distribution-reporting-tail
 version: 1.0.0
-description: File-defined Cross, Chief, Final, Render and Delivery sequence
+description: File-defined ledger consolidation, Chief, Final, Render and Delivery sequence
 tasks:
-- cross-joint-runtime-review
 - chief-chapter-edit
 - final-chapter-review
 recovery:
@@ -12,9 +11,9 @@ output_contract: reporting_tail_state
 state:
   reporting-state: {}
 actions:
-- id: run-cross
+- id: run-observation-consolidation
   kind: subworkflow
-  workflow: distribution-cross-joint-review
+  workflow: distribution-observation-consolidation
   input_variables:
     reporting-state: reporting-state
   child_output_name: result

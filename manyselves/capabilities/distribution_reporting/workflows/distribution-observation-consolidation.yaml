@@ -1,0 +1,20 @@
+id: distribution-observation-consolidation
+version: 1.0.0
+description: Program consolidation of module judgments (one judgment per shared observation)
+tasks: []
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+actions:
+- id: consolidate-observation-ledger
+  kind: invoke_tool
+  tool: consolidate-observation-ledger
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: finish-observation-consolidation
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result

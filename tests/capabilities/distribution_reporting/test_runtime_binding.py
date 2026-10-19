@@ -143,11 +143,10 @@ def test_full_report_binding_composes_the_complete_capability_tail(
     tools = runtime._tools(definitions, contracts, plan)
     agents = runtime._agent_invokers()
 
-    assert "distribution-cross-owner-local-2.4-module-review-lane" in (
-        plan.subworkflow_plans
-    )
+    assert "distribution-observation-consolidation" in plan.subworkflow_plans
+    assert "distribution-cross-joint-review" not in plan.subworkflow_plans
     assert {
-        "prepare-cross-owner-cohort",
+        "consolidate-observation-ledger",
         "prepare-chief-chapter-cohort",
         "prepare-final-chapter-cohort",
         "prepare-render-delivery",
@@ -156,7 +155,6 @@ def test_full_report_binding_composes_the_complete_capability_tail(
     assert {
         "module-2.4-specialist",
         "evidence-auditor",
-        "cross-module-reviewer",
         "chief-editor",
         "chief-editor-auditor",
     } <= agents.keys()
