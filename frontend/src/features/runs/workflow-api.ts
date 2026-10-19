@@ -21,6 +21,7 @@ export type WorkflowRunStartRequest = Omit<GeneratedWorkflowRunStartRequest, "in
 };
 
 export interface WorkflowApi {
+  cancel(runId: string): Promise<WorkflowRunResponse>;
   cost(runId: string): Promise<WorkflowCostResponse>;
   events?(runId: string): Promise<WorkflowEventsResponse>;
   get(runId: string): Promise<WorkflowRunResponse>;
@@ -55,6 +56,10 @@ function mutationOptions(idempotencyKey: string, json: unknown) {
 
 export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRunFeedApi {
   return {
+    cancel: (runId) => gateway.requestJson(
+      `/api/v1/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST", requireLease: true },
+    ),
     cost: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/cost`,
     ),

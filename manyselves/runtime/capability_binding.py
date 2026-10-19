@@ -1,5 +1,6 @@
 """Runtime bindings selected by file-defined Capability ownership."""
 
+from collections.abc import Awaitable
 from importlib import import_module
 from inspect import isawaitable
 from pathlib import Path
@@ -61,6 +62,8 @@ class CapabilityRuntimeBinding(Protocol):
         input_id: str | None,
         values: Any,
     ) -> dict[str, Any]: ...
+
+    def cancel(self, run_id: str) -> Awaitable[Any] | None: ...
 
     def get_run(self, run_id: str) -> dict[str, Any]: ...
 

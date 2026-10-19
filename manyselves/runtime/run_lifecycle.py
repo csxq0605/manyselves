@@ -11,8 +11,10 @@ from uuid import UUID
 from manyselves.kernel.workflow import WorkflowState
 
 from .state_store import FileWorkflowStateStore
+from .workflow_host import RUN_CANCEL_REQUESTED
 
 StartedCallback = Callable[[WorkflowState], None]
+_CANCEL_REPEAT_SECONDS = 1.0
 
 
 class DetachedRuntime(Protocol):
@@ -117,6 +119,29 @@ class DetachedRunTaskOwner:
             started_waiter.cancel()
             if not started.is_set():
                 state_store.unregister_started(run_id)
+
+    def cancel(self, run_id: str) -> Awaitable[Any] | None:
+        """Request a labelled cancel of this process's execution of one Run.
+
+        Returns an awaitable that settles once the Runtime Host has recorded
+        the FAILED Run, or None when this process owns no live task.  Callers
+        holding a mutation lock await it after releasing the lock.
+        """
+
+        task = self._tasks_by_run.get(run_id)
+        if task is None or task.done():
+            return None
+        task.cancel(RUN_CANCEL_REQUESTED)
+        return self._settle_cancel(task)
+
+    @staticmethod
+    async def _settle_cancel(task: asyncio.Task[Any]) -> None:
+        # Some lane code converts BaseException into a failed lane result and
+        # keeps going; repeat the labelled cancel until the Host itself stops.
+        while not task.done():
+            await asyncio.wait({task}, timeout=_CANCEL_REPEAT_SECONDS)
+            if not task.done():
+                task.cancel(RUN_CANCEL_REQUESTED)
 
     def _discard_task(self, run_id: str, task: asyncio.Task[Any]) -> None:
         self._tasks.discard(task)

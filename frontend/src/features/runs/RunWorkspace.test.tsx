@@ -10,6 +10,7 @@ import type { WorkflowApi } from "./workflow-api";
 describe("RunWorkspace", () => {
   it("starts a generic workflow and reads Run, Output, and Cost projections", async () => {
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "run-1",
         usage: { totals: { estimated_cost: 1.25, pricing_status: "configured", total_tokens: 15 } },
@@ -116,6 +117,7 @@ describe("RunWorkspace", () => {
 
   it("selects and displays value output from the second neutral capability", async () => {
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "parameter-adjustment-command-2",
         usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
@@ -230,6 +232,7 @@ describe("RunWorkspace", () => {
       workflowId: "primitive-workflow",
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({ runId: "primitive-run", usage: { totals: {} } }),
       get: vi.fn().mockResolvedValue({
         run: {
@@ -287,6 +290,7 @@ describe("RunWorkspace", () => {
 
   it("renders common schema controls and submits typed values", async () => {
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "run-schema-controls",
         usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
@@ -372,6 +376,7 @@ describe("RunWorkspace", () => {
 
   it("renders mixed report schemas with nullable, array, and JSON fields", async () => {
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "run-report-schema",
         usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
@@ -578,6 +583,7 @@ describe("RunWorkspace", () => {
       workflowId: "distribution-reporting",
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "report-declarative-waiting",
         usage: { totals: { estimated_cost: 1, total_tokens: 20 } },
@@ -699,6 +705,7 @@ describe("RunWorkspace", () => {
       workflowId: "parameter-adjustment",
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "primitive-waiting",
         usage: { totals: { pricing_status: "unconfigured", total_tokens: 0 } },
@@ -775,6 +782,7 @@ describe("RunWorkspace", () => {
       rejectCost = reject;
     }));
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost,
       get: vi.fn().mockResolvedValue({
         run: {
@@ -874,6 +882,7 @@ describe("RunWorkspace", () => {
         runId: "report-declarative-polling",
       });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "report-declarative-polling",
         usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
@@ -990,6 +999,7 @@ describe("RunWorkspace", () => {
       workflowId: "neutral-workflow",
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "persisted-running",
         usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
@@ -1052,6 +1062,7 @@ describe("RunWorkspace", () => {
       waitingInput: [],
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({
         runId: "existing-run",
         usage: { totals: { total_tokens: 3 } },
@@ -1116,6 +1127,7 @@ describe("RunWorkspace", () => {
       waitingInput: [],
     });
     const api: WorkflowApi = {
+      cancel: vi.fn(),
       cost: vi.fn().mockResolvedValue({ runId: "persisted-run", usage: { totals: {} } }),
       events: vi.fn().mockResolvedValue({ events: [], runId: "persisted-run" }),
       get,

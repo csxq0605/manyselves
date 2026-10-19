@@ -22,13 +22,23 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 Q07: KU inline delivery measured on the uploaded library; all-or-nothing section selection replaced by longest-fitting section prefix`
+- Current slice: `Real run 2026-10-19 follow-up: context-budget exhaustion stops recovery; user Run cancel (API + chat/run buttons)`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：离线可答部分已全部处置。等待用户确定模型/route后，按“最后一次真实运行口径”执行一次真实运行并回填表中“待测”。S03、模型测量及官方状态核验暂缓。
+- Next automatic action: 真实运行（2026-10-19，Mac，deepseek-flash）在 Cross 联合审查处卡死，已修复为明确失败并新增取消入口。下一步：让 Cross 首次输入回到预算内（当前约20万字符固定输入，超过128k窗口减max_tokens），之后再做一次真实运行补测 Chief/Final/DOCX。同时按评估结论在角色 Skill 中补回分级、期限、验收的写作范例（需用户确认范围）。
+
+### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
+
+- Run `full-report-7b81a3ee9fbf42e3bf7ff5bf28e3f26d`，PR #7 @`697b1ee`，项目副本由 `prepare_reporting_references.py` 生成；14:14 开始，15:05 强制结束服务进程。现场、usage 账本与结果文件保存在用户本机 `runs/real-run-20261019*`，不入仓库。
+- 模块阶段：五模块 r1 定稿；首轮 9 条 blocking 复审全部解决；作者 189 请求 18.4 分钟，审查 111 请求 21.4 分钟，缓存命中约 82–83%；终稿未判断 5/6/2/26/9。知识送达 2.1 5/5、2.2 7/7、2.3 3/3、2.4 13/14（KU-2.4-14 被运行头部挤出，离线为 14/14）、2.5 9/9；作者 `open_reference` 2 次。
+- Cross：`cross-joint-r0` 首次请求约 20.4 万字符（4 条消息）+ 1.0 万字符工具定义，超过 `128k − max_tokens(8192)` 预算；`context_budget_exhausted` 被解释为“自然语言未提交”，纠正回合无上限，拦截 20,778 次、压缩 114 次，输入约 438 万 token、0 产出。Chief/Final/DOCX 未运行。
+- 产品层：无取消 Run 入口；`DetachedRunTaskOwner.close()` 关停时等待全部任务，导致 SIGINT/SIGTERM 无法退出。网页保存的 `max_tokens=8192`（示例 16384）。
+- 已修复（本分支）：通用 Recovery 在收到 `context_budget_exhausted` 时以明确原因停止（不再纠正重发），标记不再写入会话历史；新增 `POST /api/v1/runs/{run_id}/cancel`，Runtime Host 把带标签的取消记为 FAILED（`run cancelled by user`），无标签取消（进程关停）仍保留 RUNNING 供 Same-run 恢复；取消会重复发出直到 Host 停下（部分 Reporting lane 代码捕获 BaseException）；聊天状态栏与运行页新增“停止运行”。
+- 未修复：Cross 首次输入超预算本身（需裁剪或分片，Cross 仍会失败，只是不再空转）；关停时等待任务的行为；lane 代码捕获 BaseException 吞掉取消。
+- 模块定稿评估（对比 9 月 9 日 mimo-v2.5 完整运行 `full-report-8c70828`，模型与 Skill 版本均不同）：内容 4/3、一致性 3/2、范例模仿 2/4、知识配合 3/2、时间成本 4/3；本次约 ¥23.8（DeepSeek 官方价，10 月 19 日读取），其中 Cross 空转约 ¥9.1。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 

@@ -1,7 +1,7 @@
 """Generic Capability, Workflow, Run, Output, Cost, and Event projections."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -224,6 +224,12 @@ class WorkflowProjectionFacade:
             current["capability_id"],
             current["workflow_id"],
         )
+
+    def request_cancel(self, run_id: str) -> Awaitable[Any] | None:
+        """Request a stop of one Run's live execution; None when it is idle."""
+
+        binding, _projection = self._locate_run(run_id)
+        return binding.cancel(run_id)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         _binding, projection = self._locate_run(run_id)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -317,6 +318,12 @@ class DistributionReportingRuntimeBinding:
             state_store=store,
             operation=runtime.resume(command_id, run_id),
         )
+
+    def cancel(self, run_id: str) -> Awaitable[Any] | None:
+        """Request a stop of this process's in-flight execution of one Run."""
+
+        self._runtime_for_run(run_id)
+        return self._detached_runs.cancel(run_id)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         projection = self._runtime_for_run(run_id).get_run(run_id)

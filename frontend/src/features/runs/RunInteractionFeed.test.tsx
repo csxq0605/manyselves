@@ -72,3 +72,28 @@ it("offers recovery for the current failed run and reports a failed resume", asy
   await waitFor(() => expect(screen.getByText("恢复失败：服务暂时不可用")).toBeVisible());
   expect(api.resume).toHaveBeenCalledWith("interrupted", expect.any(String));
 });
+
+it("stops the active run from the chat status bar after confirmation", async () => {
+  let active = true;
+  const api = {
+    listRuns: vi.fn(async () => ({ runs: [{
+      run: { runId: "looping", workflowId: "full-report", status: active ? "running" : "failed", active },
+      state: active ? {} : { error: "run cancelled by user" }, waitingInput: [],
+    }] })),
+    cancel: vi.fn(async () => {
+      active = false;
+      return { run: { runId: "looping", workflowId: "full-report", status: "failed", active: false }, state: {}, waitingInput: [] };
+    }),
+  } as unknown as WorkflowApi & WorkflowRunFeedApi;
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <RunInteractionFeed api={api} conversationId="owner-1" projectId="test" />
+  </QueryClientProvider>);
+  const stop = await screen.findByRole("button", { name: "停止运行" });
+  await userEvent.click(stop);
+  expect(api.cancel).not.toHaveBeenCalled();
+  await userEvent.click(stop);
+  await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("looping"));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "停止运行" })).not.toBeInTheDocument());
+  confirm.mockRestore();
+});
