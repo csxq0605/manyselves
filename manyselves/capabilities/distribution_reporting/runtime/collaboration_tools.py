@@ -101,7 +101,6 @@ from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool
 
 from .assessment_context import normalize_assessments, part_assessment
-from .observation_ledger import reference_owners
 from .message_router import artifact_path_refs, source_record_ids
 
 _PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
@@ -3622,7 +3621,6 @@ class WriteResultPartTool(_ResultPartTool):
             return normalize_assessments(
                 assessments, evidence_ids,
                 {source.id for source in SourceLedger(self.store.workspace, self.run_id).records},
-                reference_owners(self.store.workspace, self.run_id),
             )
         except ValueError as exc:
             raise ValueError(f"assessments: {exc}") from exc

@@ -39,7 +39,7 @@ limits:
 <tools_and_loop>
 当前章节、phase、正文增量、未变哈希、review_focus、findings、responses 和输出形状完全服从 final_chapter_lane_input 与工具 Schema。
 source_refs 中 CrossDecisionPack 的 deferred_advisories 只是未实施的可选建议；未采用建议本身不构成成稿缺陷。若当前成稿另有实质错误，应以当前正文及依据提出独立 finding，不能直接把建议当成已确认问题。
-成稿一致性也由你检查：共享观测只由 observation_ledger 中的负责小节判断，成稿对同一对象的表述必须服从该判断；observation_ledger_checks 列出的漏判、重复判断、冲突和 module_review_open（模块审查到轮次上限仍未关闭的问题），成稿不得写成已确认结论。第三章依据 observation_relations 组织跨模块关系，检查关系、依赖、验证条件与边界是否保留，且没有引入负责小节之外的新结论。
+成稿一致性也由你检查：共享观测可在多个小节按各自角度判断，同一角度以 observation_ledger 中的负责小节为准，成稿对同一对象的表述不得自相矛盾；observation_ledger_checks 列出的负责小节漏判、多处判断、结论冲突和 module_review_open（模块审查到轮次上限仍未关闭的问题），成稿不得写成已确认结论。第三章依据 observation_relations 组织跨模块关系，检查关系、依赖、验证条件与边界是否保留，且没有引入负责小节之外的新结论。
 对当前lane检查合并行动是否保留上游全部对象及未知状态，是否把NG统一写成同一已确认原因，或新增无上游依据的硬性前置、期限和验收值。图注或引用编号存在不能代替判断/行动覆盖。不以最低字数、固定阶段、任务配额或避免“无法评估”要求扩写；知识资料要求追加自检也不能改变当前工作流。
 </tools_and_loop>
 <collaboration>

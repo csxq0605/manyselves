@@ -1,12 +1,11 @@
-"""One judgment per routed source observation.
+"""Shared source observations and who owns them.
 
 Mappers copy one precise source observation into several submodules, each
-copy with its own E-ID.  Without an owner every copy was judged separately and
-cross-module agreement depended on a later full-text review.  The ledger names
-one owner per group: the copy the mapper emitted first (E-IDs are numbered in
-mapper order, and mappers list the primary route first).  Other copies are
-references: their authors describe them and point at the owner subsection, but
-do not submit a second judgment record.
+copy with its own E-ID.  Every subsection may judge its copy from its own
+angle (load distribution, heating, equipment condition).  The ledger groups the
+copies so authors and reviewers see where else the observation appears, names
+one owner whose judgment decides a same-angle conflict, and lets the program
+list groups whose judgments disagree for the bounded joint review.
 
 The owner comes from ``domain/observation-ownership.yaml`` (chosen by
 subsection meaning); route sets it does not list fall back to the mapper's
@@ -106,11 +105,22 @@ class ObservationLedger:
             return None
         return group.owner
 
-    def reference_owners(self) -> dict[str, ObservationRoute]:
-        return {
-            route.evidence_id: group.owner
-            for group in self.groups for route in group.references
-        }
+    def shared_labels(self) -> dict[str, str]:
+        """Fact/review annotation for every copy: group, owner and other places."""
+
+        labels: dict[str, str] = {}
+        for group in self.groups:
+            for route in group.routes:
+                others = "、".join(
+                    f"{other.submodule_id}/{other.evidence_id}"
+                    for other in group.routes if other.evidence_id != route.evidence_id
+                )
+                owner = (
+                    "本小节" if route == group.owner
+                    else f"{group.owner.submodule_id}/{group.owner.evidence_id}"
+                )
+                labels[route.evidence_id] = f"{group.observation_id}；负责={owner}；另见={others}"
+        return labels
 
     def to_json(self) -> dict:
         return {
@@ -181,9 +191,9 @@ def build_observation_ledger(workspace: Path, run_id: str) -> ObservationLedger 
     ])
 
 
-def reference_owners(workspace: Path, run_id: str) -> dict[str, ObservationRoute]:
+def shared_labels(workspace: Path, run_id: str) -> dict[str, str]:
     ledger = build_observation_ledger(workspace, run_id)
-    return ledger.reference_owners() if ledger is not None else {}
+    return ledger.shared_labels() if ledger is not None else {}
 
 
 def _records_by_evidence(modules: Mapping[str, ModuleSubmission]) -> dict[str, list[dict]]:
@@ -244,11 +254,12 @@ def check_ledger(
     return {
         "shared_observations": len(ledger.groups),
         "owner_unjudged": unjudged,
-        "reference_judged": duplicate,
+        "judged_in_several_places": duplicate,
         "conflicting_dispositions": conflicting,
         "limit": (
-            "Program checks compare explicit judgment records only; prose that "
-            "contradicts an owner judgment without a record is not detected here."
+            "Program checks compare explicit judgment records only; several places "
+            "may judge one observation from different angles, so a disposition "
+            "difference is a candidate for the joint review, not a proven error."
         ),
     }
 
@@ -315,5 +326,5 @@ __all__ = [
     "build_observation_ledger",
     "check_ledger",
     "observation_relations",
-    "reference_owners",
+    "shared_labels",
 ]

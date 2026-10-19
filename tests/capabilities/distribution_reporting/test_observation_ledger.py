@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from manyselves.capabilities.distribution_reporting.runtime.assessment_context import (
     normalize_assessments,
     part_assessment,
@@ -72,34 +70,18 @@ def test_unlisted_route_sets_fall_back_to_the_first_mapper_route(tmp_path):
     assert ledger.groups[0].owner.evidence_id == "E-0001"
 
 
-def test_reference_copies_are_marked_in_facts_and_left_out_of_expected_judgments(tmp_path):
+def test_every_copy_is_marked_and_each_place_may_judge_its_copy(tmp_path):
     _write_facts(tmp_path, _items())
     owner_packet = prepare_module_fact_context(tmp_path, "facts", "2.1").inline_context
-    reference_packet = prepare_module_fact_context(tmp_path, "facts", "2.4").inline_context
-    assert '"judged_by":"2.1.1/E-0002"' in reference_packet
-    assert '"judged_by":"2.1.1/E-0004"' in reference_packet
-    assert "judged_by=负责小节" in reference_packet
-    assert '"judged_by"' not in owner_packet
+    other_packet = prepare_module_fact_context(tmp_path, "facts", "2.4").inline_context
+    assert '"shared":"O-0001；负责=本小节；另见=2.4.1.1/E-0001"' in owner_packet
+    assert '"shared":"O-0001；负责=2.1.1/E-0002；另见=2.1.1/E-0002"' in other_packet
+    assert "按本小节的角度判断" in other_packet
 
     expected = part_assessment(tmp_path, "facts", "2.4", "2.4.1.1", {}).expected_evidence_ids
-    assert expected is not None and not {"E-0001", "E-0003"} & set(expected)
-    owner_expected = part_assessment(
-        tmp_path, "facts", "2.1", "2.1.1", {},
-    ).expected_evidence_ids
-    assert {"E-0002", "E-0004"} <= set(owner_expected)
-
-
-def test_second_judgment_on_a_reference_is_corrected_with_the_owner_named(tmp_path):
-    _write_facts(tmp_path, _items())
-    owners = build_observation_ledger(tmp_path, "facts").reference_owners()
-    record = {"evidence_ids": ["E-0001"], "disposition": "concern",
-              "narrative_anchor": "负荷"}
-    with pytest.raises(ValueError, match=r"E-0001.*2\.1\.1.*E-0002"):
-        normalize_assessments([record], ["E-0001"], set(), owners)
-    owned = {**record, "evidence_ids": ["E-0002"]}
-    assert normalize_assessments([owned], ["E-0002"], set(), owners)[0]["evidence_ids"] == [
-        "E-0002"
-    ]
+    assert {"E-0001", "E-0003"} <= set(expected)
+    record = {"evidence_ids": ["E-0001"], "disposition": "concern", "narrative_anchor": "负荷"}
+    assert normalize_assessments([record], ["E-0001"], set())[0]["evidence_ids"] == ["E-0001"]
 
 
 def _module(part_id: str, records: list[dict]) -> SimpleNamespace:
@@ -122,7 +104,7 @@ def test_program_checks_report_unjudged_duplicate_and_conflicting_observations(t
     }
     report = check_ledger(ledger, modules)
     assert [item["observation_id"] for item in report["owner_unjudged"]] == ["O-0002"]
-    assert [item["observation_id"] for item in report["reference_judged"]] == ["O-0001"]
+    assert [item["observation_id"] for item in report["judged_in_several_places"]] == ["O-0001"]
     assert report["conflicting_dispositions"][0]["dispositions"] == ["concern", "no_concern"]
 
     relations = observation_relations(

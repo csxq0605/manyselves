@@ -128,12 +128,13 @@ class ReviewEvidenceExcerpt(StrictModel):
             "does not prove the observation was judged or has a corresponding action."
         ),
     )
-    judged_by: str | None = Field(
+    shared: str | None = Field(
         default=None,
         description=(
-            "Set when this E ID is a reference copy of a shared observation: "
-            "'<owner submodule>/<owner E ID>' judges it. The reviewed module "
-            "describes it without a second judgment record."
+            "Set when this E ID is one copy of a source observation routed to "
+            "several subsections: '<observation>；负责=<owner>；另见=<other copies>'. "
+            "Each place may judge from its own angle; the owner decides same-angle "
+            "conflicts, and facts' calculation limits hold everywhere."
         ),
     )
     title: str = Field(min_length=1, description="Source title from the current-run ledger.")
