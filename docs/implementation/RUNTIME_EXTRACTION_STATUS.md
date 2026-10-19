@@ -22,13 +22,21 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `Real run 2026-10-19 follow-up: context-budget exhaustion stops recovery; user Run cancel (API + chat/run buttons)`
+- Current slice: `Real run 2026-10-19 follow-up: Cross first request was blocked by the estimate, not the window; whitespace runs counted once, Cross prompt JSON compact`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 真实运行（2026-10-19，Mac，deepseek-flash）在 Cross 联合审查处卡死，已修复为明确失败并新增取消入口。下一步：让 Cross 首次输入回到预算内（当前约20万字符固定输入，超过128k窗口减max_tokens），之后再做一次真实运行补测 Chief/Final/DOCX。同时按评估结论在角色 Skill 中补回分级、期限、验收的写作范例（需用户确认范围）。
+- Next automatic action: 真实运行（2026-10-19，Mac，deepseek-flash）在 Cross 联合审查处卡死，已修复为明确失败并新增取消入口。Cross 首次输入被估算误拦（缩进空白按字符计），已修正估算并改用紧凑JSON，重建载荷估算12.5万→9.3万（预算11.98万）。下一步：再做一次真实运行补测 Cross/Chief/Final/DOCX。同时按评估结论在角色 Skill 中补回分级、期限、验收的写作范例（需用户确认范围）。
+
+### 2026-10-19 — Cross 首次请求是估算误拦
+
+- **根因：** Cross提示按`indent=2`序列化五模块快照；S04估算把每个缩进空格按0.5 token计，BPE实际把空白串并成约1个token。用归档正文、S06紧凑记录和归档证据重建的载荷估算125,350，超过119,808预算；三个分词器实测94,571–101,838，本可发送。
+- **改动：** 通用`_estimate_text_tokens`把连续两个及以上的ASCII空白计为1个token；Cross `_prompt`改用紧凑JSON。无新门禁或字段。
+- **效果：** 重建载荷估算125,350→92,919，DeepSeek实测94,571→84,071。S04各类内容比值不变（Python源码1.42→1.11，缩进JSON 1.23→0.97）。见`scripts/benchmarks/cross_request_size.py`与[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#真实运行后cross-首次请求被估算误拦)。
+- **验证：** Ruff（仅既有N818）；compaction/task projection/recovery turn/Cross provider·joint·recheck·round·host·revision等定向测试通过，改一处断言为紧凑格式；未新增测试。
+- **待真实运行：** 真实五模块的实际余量、Chief/Final/DOCX。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 
@@ -37,7 +45,7 @@
 - Cross：`cross-joint-r0` 首次请求约 20.4 万字符（4 条消息）+ 1.0 万字符工具定义，超过 `128k − max_tokens(8192)` 预算；`context_budget_exhausted` 被解释为“自然语言未提交”，纠正回合无上限，拦截 20,778 次、压缩 114 次，输入约 438 万 token、0 产出。Chief/Final/DOCX 未运行。
 - 产品层：无取消 Run 入口；`DetachedRunTaskOwner.close()` 关停时等待全部任务，导致 SIGINT/SIGTERM 无法退出。网页保存的 `max_tokens=8192`（示例 16384）。
 - 已修复（本分支）：通用 Recovery 在收到 `context_budget_exhausted` 时以明确原因停止（不再纠正重发），标记不再写入会话历史；新增 `POST /api/v1/runs/{run_id}/cancel`，Runtime Host 把带标签的取消记为 FAILED（`run cancelled by user`），无标签取消（进程关停）仍保留 RUNNING 供 Same-run 恢复；取消会重复发出直到 Host 停下（部分 Reporting lane 代码捕获 BaseException）；聊天状态栏与运行页新增“停止运行”。
-- 未修复：Cross 首次输入超预算本身（需裁剪或分片，Cross 仍会失败，只是不再空转）；关停时等待任务的行为；lane 代码捕获 BaseException 吞掉取消。
+- 未修复：Cross 首次输入超预算本身（需裁剪或分片，Cross 仍会失败，只是不再空转；后查明是估算误拦，见下条）；关停时等待任务的行为；lane 代码捕获 BaseException 吞掉取消。
 - 模块定稿评估（对比 9 月 9 日 mimo-v2.5 完整运行 `full-report-8c70828`，模型与 Skill 版本均不同）：内容 4/3、一致性 3/2、范例模仿 2/4、知识配合 3/2、时间成本 4/3；本次约 ¥23.8（DeepSeek 官方价，10 月 19 日读取），其中 Cross 空转约 ¥9.1。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
@@ -49,7 +57,7 @@
 | S01 | advisory留档、不自动返工；blocking复审保留 | F01逐阶段核对：复审、修复轮、Final轮均只由blocking触发；历史逐finding成本不可恢复 | 关闭；有重复任务证据才查派发 | — ／ 误报率与返工收益 |
 | S02 | Cross 15→10字段；Chief/Final消费及恢复接通 | F01：Cross是第三章跨模块关系的唯一产出者 | 关闭，不重做已闭合交接 | — ／ 专业质量、输出token |
 | S03 | 审查直接结构化提交指引已接入 | 未定位到重复输出的具体Schema/终止协议差异 | 暂缓（用户已定）；真实运行出现重复可见输出再定位 | — ／ 重复输出是否减少 |
-| S04 | 按字符类别估算token；工具Schema计入裁剪预算与Provider准入；压缩阈值72000 | E4复现：固定0.3系数低估中文，Schema未计入 | 关闭；usage明显偏差再校准 | 三个公开分词器，中文内容比值0.92–1.12 ／ 估算对Provider usage |
+| S04 | 按字符类别估算token，空白串计一次；工具Schema计入裁剪预算与Provider准入；压缩阈值72000 | E4复现：固定0.3系数低估中文，Schema未计入；真实运行：缩进JSON逐空格计导致Cross被误拦 | 关闭；usage明显偏差再校准 | 三个公开分词器，中文内容比值0.92–1.12，缩进JSON 1.23→0.97 ／ 估算对Provider usage |
 | S05 | 稳定前缀→只追加历史→可变状态；滚动缓存断点≤4 | 13请求回放：可变状态位于历史之前，阻断复用 | 关闭 | 离线可复用份额：兼容60.6%→79.8%，Anthropic 52.5%→71.8% ／ 实际cached比例 |
 | S06 | 作者紧凑提交；`scope`/`basis`可选；Final对象身份由运行时补（Q07） | 合成下限：判断记录复写E-*对象/时点和正文推理；Q07：Final读不到E-* | 关闭；F01不合并模块（单会话事实×2.4–3.6），拆2.4无瓶颈证据 | 作者判断输出29.1k→15.6k（下限）；Final判断上下文31.1k→22.7k ／ 实际输出与续写次数 |
 | Q01 | 范围内全部事实可审（标未绑定）；未判断列表；Cross同源链接；审计逐E-ID核对合并记录 | 三处缺陷回放：测温末两行改前审查者不可见（送达缺口），E-0071/SPD改前已送达 | 关闭机制部分；作者合并不同观测时只剩审查者比对 | 当前三处缺陷均到达审查者，测温行另有未判断信号和Cross链接 ／ 遗漏率、审查发现率 |

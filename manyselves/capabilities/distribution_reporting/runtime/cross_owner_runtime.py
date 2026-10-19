@@ -629,11 +629,8 @@ class CrossOwnerAgentInvoker:
         sections = [
             agent.instructions,
             f"Task: {task.objective}",
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                indent=2,
-            ),
+            # Compact: indentation of the five-module snapshot cost ~11% tokens.
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
             f"Output contract: {task.output_contract}",
         ]
