@@ -2286,7 +2286,8 @@ class AgentLoop:
                 if (
                     accumulated_content
                     and not accumulated_tool_calls
-                    and response.stop_reason not in {"max_tokens", "length"}
+                    and response.stop_reason
+                    not in {"max_tokens", "length", CONTEXT_BUDGET_EXHAUSTED}
                 ):
                     self._conversation_history.append(
                         LLMMessage(role="assistant", content=accumulated_content)

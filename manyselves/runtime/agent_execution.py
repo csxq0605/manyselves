@@ -164,6 +164,18 @@ class AgentRecoveryExecutionError(RuntimeError):
     """A declared recovery action cannot be executed for the observed event."""
 
 
+def _is_context_budget_exhaustion(outcome: "AgentTurnOutcome") -> bool:
+    # Lazy: agent_loop imports this module through provider_agent_session.
+    from .loops.agent_loop import CONTEXT_BUDGET_EXHAUSTED
+
+    message = outcome.message
+    return (
+        outcome.kind == "response"
+        and isinstance(message, AgentResponse)
+        and message.content == CONTEXT_BUDGET_EXHAUSTED
+    )
+
+
 class AgentExecutionService:
     """Own AgentLoop sessions and dispatch exactly one correlated turn at a time.
 
@@ -395,6 +407,20 @@ class AgentExecutionService:
             else:
                 outcome = observed_outcome
                 observed_outcome = None
+            if _is_context_budget_exhaustion(outcome):
+                # The mandatory typed context already exceeds the Provider
+                # window; another correction turn rebuilds the same request.
+                return await stop(
+                    outcome,
+                    AgentRecoveryDirective(
+                        event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                        action=RecoveryActionKind.STOP,
+                        reason=(
+                            f"{outcome.message.content}: mandatory context exceeds "
+                            "the Provider window; a correction turn cannot shrink it"
+                        ),
+                    ),
+                )
             observation = await interpret(outcome, request)
             if isinstance(observation, AgentRecoveryCompleted):
                 return observation.result
