@@ -267,3 +267,17 @@ def test_public_root_compile_boundary_is_existing_child_specialization(
             workflow,
             load_distribution_reporting_capability()[1],
         )
+
+
+@pytest.mark.parametrize("workflow_id", ("full-report", "module-report", "revise-report"))
+def test_public_root_plans_survive_a_serialization_round_trip(workflow_id: str) -> None:
+    """A persisted plan is validated again on start; every action must re-load."""
+
+    from manyselves.kernel.workflow import ResolvedPlan
+
+    registry = _registry_with_existing_workflow_specializers()
+    workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+    assert ResolvedPlan.model_validate(plan.model_dump(mode="json")) == plan
+    assert ResolvedPlan.model_validate_json(plan.model_dump_json()) == plan
