@@ -6,7 +6,7 @@
 
 后续取证：[全清单首轮证据与实施依据](../research/decisions/REPORTING_PR6_EVIDENCE_AUDIT.md)已对下表基线补充核查，包括S04摘要范围与实验评分版本的更正；实现进度仍见唯一状态文件。[后续生产链核查](../research/decisions/REPORTING_PR6_RULES_AND_BINDINGS.md)进一步更正S06：内部ModuleSubmission包含Claims，不表示当前模型重复提交Claims；当前作者已使用紧凑提交，运行时生成整段来源绑定。
 
-本文固定本 PR 的完整工作范围、条目编号和验收口径；实施顺序按文内根因复核修订，当前以2026-10-19复核为准。动态进度、当前切片、验证结果与下一步统一记录在 [RUNTIME_EXTRACTION_STATUS.md](RUNTIME_EXTRACTION_STATUS.md)，引用本清单编号；不另建一份会逐渐分叉的状态账本。架构边界继续遵循 [AGENTS.md](../../AGENTS.md) 和[最终架构方案](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)。
+本文固定本 PR 的完整工作范围、条目编号和验收口径；实施顺序按文内根因复核修订，当前以2026-10-19再次复核后的有界工作项为准。动态进度、当前切片、验证结果与下一步统一记录在 [RUNTIME_EXTRACTION_STATUS.md](RUNTIME_EXTRACTION_STATUS.md)，引用本清单编号；不另建一份会逐渐分叉的状态账本。架构边界继续遵循 [AGENTS.md](../../AGENTS.md) 和[最终架构方案](../architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)。
 
 初版指导提交仅修改文档；下方927aef5基线表保持历史快照。后续实现及本次计划复核不能据此被视为整体已验收。
 
@@ -46,7 +46,9 @@
 
 ## 2026-10-19 根因与分层复核（当前执行依据）
 
-复核基线：`6e25dda`。用户要求重新检查是否将通用执行层缺陷当成报告任务问题；本次保留S01–S06、Q01–Q07、F01–F04全部目标，修订归因、顺序与证据要求，不扩为无边界的平台重写。代码位于Capability目录只能说明当前所有者，不能证明根因天然属于该领域；同样，逻辑看起来通用也不足以证明必须迁入Kernel。
+首次复核基线：`6e25dda`；本次再核基线：`35cf858`。保留S01–S06、Q01–Q07、F01–F04全部目标。首次复核补充了通用层盲区，但把过多条目串成了“先排除全部核心问题”的前置链；本次改为按已证实缺口和实际依赖推进。代码位于Capability目录不能证明根因属于领域；确定性中立能力也不能证明模型循环正确。这两点都不构成重新审计整个平台的理由。
+
+原始讨论还明确提出比较“一位主笔＋资料工具＋一次来源审查”“专题分析并行＋一位主笔”“章节并行＋共享事实和判断”（[原会话](../../run.md)，搜索“重新构思报告流程”）。F01/F02必须交付这三种方案的职责、依赖与代价比较，不能仅保留现有角色并一直标记待真实模型。实现位置服从根因；改动应适用于合同允许的输入，不依据项目名、特定E-ID、样例数量或某份成稿选分支。
 
 ### 复核结论与源码依据
 
@@ -54,51 +56,55 @@
 | --- | --- | --- |
 | E1 共用工作流骨架 | [应用入口](../../manyselves/application/workflow_projection.py)、[Binding目录](../../manyselves/runtime/capability_binding.py)、[Compiler](../../manyselves/kernel/workflow/compiler.py)、[InvokeAgentExecutor](../../manyselves/kernel/executors/base.py)、[Host](../../manyselves/runtime/workflow_host.py)按定义和端口连接；Host调用Kernel.transition后委派Executor，Agent端口允许Capability提供Invoker。 | 已定位共同执行骨架；本次未发现能解释报告缺陷的Kernel状态转换反例。源码连接与历史验收不足以排除Compiler、并行/Join或恢复缺陷。出现版本/结果/路由错配时应回到这些层定位。 |
 | E2 中立能力的验证盲区 | [parameter-adjustment工作流](../../manyselves/capabilities/parameter_adjustment/workflows/parameter-adjustment.yaml)确有invoke_agent，但其[适配器](../../manyselves/capabilities/parameter_adjustment/adapters/runtime.py)中_ParameterAdjuster.invoke直接返回value=10，build_runtime_binding丢弃services。 | 证明共用Compiler/Host/Agent端口和确定性工具，不经过Provider、AgentLoop、模型工具循环或上下文重建。不能再以该能力运行成功证明“另一领域也验证了通用LLM执行”。这不是要求把确定性参数功能强改成模型调用。 |
-| E3 工具策略分歧 | [Module组合](../../manyselves/capabilities/distribution_reporting/runtime/module_provider.py)先编译工件能力再保留通用读取器；[Chief](../../manyselves/capabilities/distribution_reporting/runtime/chief_provider.py)、[Cross](../../manyselves/capabilities/distribution_reporting/runtime/cross_provider.py)、[Final](../../manyselves/capabilities/distribution_reporting/runtime/final_provider.py)、[Aggregate](../../manyselves/capabilities/distribution_reporting/runtime/aggregate_provider.py)仍直接使用[compile_agent_access](../../manyselves/capabilities/distribution_reporting/runtime/artifact_access.py)过滤。 | 相同中立envelope（一个显式可读reference，allowed_tools仅submit_result）直接回放：五条组合均有readable ref，只有Module暴露open_artifact。证明策略不统一，不证明另外四个角色在其实际Task/envelope下必然缺工具。必须先明确Task/Agent/显式工件能力的权威关系；最近局部修复不能算通用协议已收束。 |
+| E3 工具策略分歧及实际任务反证 | [Module组合](../../manyselves/capabilities/distribution_reporting/runtime/module_provider.py)保留按引用派生的读取器，其余组合仍经[compile_agent_access](../../manyselves/capabilities/distribution_reporting/runtime/artifact_access.py)过滤。相同简化envelope回放只有Module暴露open_artifact；但实际[Chief任务](../../manyselves/capabilities/distribution_reporting/tasks/chief-chapter-edit.yaml)和[联合Cross任务](../../manyselves/capabilities/distribution_reporting/tasks/cross-joint-runtime-review.yaml)均已声明open_artifact/search_text。[Final准备](../../manyselves/capabilities/distribution_reporting/runtime/final_delivery_binding.py)则明确将章正文和source_context内联，Task/envelope均只声明submit_result。 | 已证明组合策略分歧，尚未证明Chief/Cross生产任务缺读取器。Final/Aggregate是否需额外读取取决于其职责与实际交付材料。先列出实际Task→envelope→注册工具及需要读取的引用；只修可定位的不可达资料或定义/执行不一致，不把五条路径工具数量相同作为目标。 |
 | E4 通用预算边界 | [AgentLoop](../../manyselves/runtime/loops/agent_loop.py)的_estimate_tokens用固定0.3字符系数；_chat_with_retries拿到tool_definitions后，_trim_typed_context_to_budget仍只传messages、context_window与max_output，未纳入工具Schema。 | 已确认预算核对不覆盖完整Provider请求。中文/结构化内容与实际模型token差异、Schema遗漏是否导致过历史超窗或语义遗漏尚未测量；不能直接归因所有历史摘要/遗漏。应先修整请求预算口径，不能先通过追加领域字段扩大请求。 |
-| E5 冻结合同与模型Schema间仍有边界待核 | [reporting_tool_input](../../manyselves/capabilities/distribution_reporting/contracts/reporting_tool_input.yaml)是空Schema；Compiler会冻结定义依赖，但模型所见工具参数来自[ToolRegistry反射](../../manyselves/runtime/tools/registry.py)及Module等组合中的_schema_cache替换。 | “定义被编译/冻结”不等于“实际发送的工具参数Schema已被同样验证”。需追到实际Schema、调用参数、执行校验和结果，不预先断言Compiler已经丢字段；也不一律禁止Capability按任务投影Schema。 |
-| E6 会话与上下文路径 | [AgentExecutionService](../../manyselves/runtime/agent_execution.py)管理稳定会话，[ProviderAgentSessionFactory](../../manyselves/runtime/provider_agent_session.py)负责构造/重配；[TaskContextRebuilder](../../manyselves/runtime/loops/context_rebase.py)是可选hook，多个Reporting bridge分别绑定。AgentLoop还识别write_result_part(s)及历史draft标记。 | 需要核对所有入口是否在会话复用、摘要、continuation和恢复后采用相同的当前输入与工具定义。不能把某个bridge接线成功推为通用服务默认成立；硬编码工具协议的所有权也须核实。现有Hook已能表达的机制不另起框架。 |
-| E7 新领域协议的证明边界 | [判断投影](../../manyselves/capabilities/distribution_reporting/runtime/assessment_context.py)核对显式记录集合和字符串锚点；assessments、observation_links允许缺省，规则verified仍为作者声明；来源同坐标仅作为同源比较依据。 | 可以暴露未记录/未定位信息，不证明选对规则、同条件一致或行动正确；可选记录也不能保证作者实际逐项判断。新增字段是设计选择，尚未证明最小必要、优于既有合同或净成本有收益，需在E3–E6核清后决定保留、简化或调整。不能把它当统一成功机制。 |
+| E5 Schema来源已部分核实，冻结边界仍待定位 | [reporting_tool_input](../../manyselves/capabilities/distribution_reporting/contracts/reporting_tool_input.yaml)为空；[ToolRegistry](../../manyselves/runtime/tools/registry.py)反射后有任务级替换。实际submit_result的Schema由[submission_schema](../../manyselves/capabilities/distribution_reporting/runtime/contracts/submissions.py)从结果模型生成，同时传入[提交工具](../../manyselves/capabilities/distribution_reporting/runtime/collaboration_tools.py)；模块及Chief紧凑提交另经model_validate后装配。新增assessments也使用模型Schema与[normalize_assessments](../../manyselves/capabilities/distribution_reporting/runtime/assessment_context.py)。 | 不是“空文件Schema所以模型提交没有合同”。当前有Schema来源、处理与校验；尚未证明定义冻结、传输转换、恢复后使用的版本完全一致。只沿具体字段/版本差异补证或修复，不预设需要新Schema框架、统一注册重写或Compiler改造。 |
+| E6 会话与上下文路径 | [AgentExecutionService](../../manyselves/runtime/agent_execution.py)管理稳定会话，[ProviderAgentSessionFactory](../../manyselves/runtime/provider_agent_session.py)负责构造/重配；[TaskContextRebuilder](../../manyselves/runtime/loops/context_rebase.py)是可选hook，多个Reporting bridge分别绑定。AgentLoop还识别write_result_part(s)及历史draft标记。 | 需在受影响入口核对会话复用、摘要、continuation和恢复后的当前输入与工具定义；发现具体差异再扩大核查范围。不能把某个bridge接线成功推为通用服务默认成立；硬编码工具协议的所有权也须核实。现有Hook已能表达的机制不另起框架。 |
+| E7 新领域协议的证明边界 | [判断投影](../../manyselves/capabilities/distribution_reporting/runtime/assessment_context.py)核对显式记录集合和字符串锚点；assessments、observation_links允许缺省，规则verified仍为作者声明；来源同坐标仅作为同源比较依据。 | 可以暴露未记录/未定位信息，不证明选对规则、同条件一致或行动正确；可选记录也不能保证作者实际逐项判断。新增字段是设计选择，尚未证明最小必要、优于既有合同或净成本有收益，应核清与这些记录相关的实际输入/工具差异，再决定保留、简化或调整；不依赖E3–E6全面审计。不能把它当统一成功机制。 |
 | E8 检索和输入仍有独立领域问题 | Excel固定电压补算/缓存等已定位在Reporting映射；[知识上下文](../../manyselves/capabilities/distribution_reporting/runtime/research/knowledge_context.py)的候选选择及[词片段匹配](../../manyselves/capabilities/distribution_reporting/runtime/research/reference_matching.py)当前只有Reporting消费者。 | 已有明确数据/规则缺陷应保留修复；通用词法不等于已服务多个Capability。候选变多不证明语义召回正确；无第二个真实消费者证据时不为“看起来通用”迁移目录。 |
 
-E3回放未调用模型、未增加测试文件，仅比较现有生产组合函数在同一输入下的输出；不是端到端故障复现。E4是当前源码确认的预算边界缺失，不是已测得的Provider拒绝或丢事实。E1–E8共同替代“报告报错，所以先补报告字段”的默认归因。
+E3回放未调用模型，仅比较组合函数；本次真实Task定义核查限制了其外推范围。E4是已确认、可直接实施的预算缺口；E2是证据覆盖不足；E1/E5/E6主要是按症状定位的检查方向。不能将这几类都列为已证实故障，也不能把完成它们的全面审计设为所有质量和流程工作的共同前置条件。当前预算裁剪还受context_rebuilder是否绑定影响，实施时须明确覆盖入口，保留必需任务状态和工具调用/结果配对。
 
-### 17项重新归因与处置顺序
+### 17项的责任边界与剩余交付
 
-| 编号 | 必查的通用机制／组合边界 | 领域侧职责与本次决策 |
+下表规定交付范围，不另记实时进度；已实施行为、提交和实测状态仍以唯一状态文件为准。检查方向只有出现与本条相关的差异才升级为修复，不能自动变成全平台前置任务。
+
+| 编号 | 责任边界与剩余交付 | 收束条件 |
 | --- | --- | --- |
-| S01 | 结果状态、已完成结果复用、恢复是否重复派发/重试；之后核对finding驱动路由。 | advisory/blocking的业务含义留在Reporting；现有非自动返工修复保留。不能把重复调用全归为审查意见。 |
-| S02 | Join后快照、交接输入与版本是否正确/重复，Cross输出是否被下游完整使用。 | Cross关系分析与Chief叙事的分工留在定义；已精简字段保留待评估，先排除交接故障再删阶段/字段。 |
-| S03 | 结构化工具Schema是否准确、提交能否触发正确终止、流式工具结果是否被当作普通回答而续写。 | 直接结构化提交提示可保留，但不能据此认定双份输出只由提示造成。 |
-| S04 | 当前状态/历史分离、投影与摘要顺序、预算E4、工具配对、会话重绑和恢复E6。 | Reporting提供准确事实/草稿投影，通用Runtime拥有压缩与原子协议。不能只改领域包大小或提高阈值。 |
-| S05 | system/稳定输入/动态状态到原生与兼容Provider的实际序列化、模型窗口及缓存参数。 | 已有AgentLoop布局修复属通用层；仍须验证其它入口和净收益，不迁入领域重复实现。 |
-| S06 | E3工具暴露、E5模型Schema、结果提交/成功回执、单轮调度与续写。 | 正文分段和引用账本留在Reporting；在工具协议一致前不继续加字段、拆2.4或提高并发。 |
-| Q01 | 从规范化快照到实际Provider消息逐边界确认是否丢失/换版/不可读；定位第一次损失。 | 区分解析/路由遗漏与模型未使用；仅前者已定位于映射/DTO时改领域代码，不能用更多字段补偿执行层丢失。 |
-| Q02 | 通用工件读取器/解析器是否已损坏输入，以及底层工作簿读取边界。 | S2/S4专表坐标、公式缓存和物理意义属于映射；保留已证实修复，其他格式/OCR不扩为无依据的全格式重写。 |
-| Q03 | 量、单位、工况、规则条件是否在工具/JSON/摘要/恢复中完整到达；计算工具实际输入输出一致。 | 选规则、工程比较与风险判断仍属领域/模型；撤销固定电压补算保留。通用机制核清后才决定是否需更强判断合同。 |
-| Q04 | 两章拿到的快照、版本、会话上下文及共享结果是否一致。 | 同对象/条件/规则下的专业一致性由领域审查；同源表不能保证同一设备或正确结论，不把专业裁决塞进Kernel。 |
-| Q05 | 审查者实际输入和工具可见性是否足以查漏，当前结果和链接是否在修订/交付丢失。 | 对象预期集合与正文/行动处置留在Reporting；新锚点只作定位，必要性、可选缺失和成本需复核，不能当语义通过门禁。 |
-| Q06 | 原文、来源身份和归档版本是否真实可读，引用在恢复/新Run是否指向正确字节。 | 标准现行性、适用条件、条款蕴含需要可信来源和专业判断；ID/日期字段不是证明。规则读取局部修复先纳入E3整体检查。 |
-| Q07 | 实际Provider/model/route及Schema、工具/上下文是否一致，检索结果是否真的送达。 | Skill与知识选择是领域配置；通用词片段回退是候选机制，不等于语义召回。不能先换模型解释所有错误。 |
-| F01 | 先量化真正执行的任务、重试、恢复和交接，排除框架重复派发。 | 再判断写审/Cross/Chief/Final各自新增价值，决定最小阶段组织，不能仅按角色名合并。 |
-| F02 | 对比输入保真、工具可用、会话状态相同的路径，防止协议故障污染判断实验。 | “先判断再写”是设计假设；不能因增加记录字段而认定已验证，应与更小的既有parts/引用接口比较负担与效果。 |
-| F03 | 请求去向、实际Schema/输入输出、摘要、缓存及关键路径的完整计量口径。 | 历史样例只作诊断；最终一次代表性实测比较当前实现，新增元数据的成本也纳入，不用字符量/活跃时间求和代替费用/墙钟。 |
-| F04 | E1–E6的生产边界证据和跨入口复核；未经过Provider的中立能力不作LLM通用性证据。 | 实现、样例人工编辑、模型实际结果分别记录；不以文件位置、Schema通过、测试数量或多个角色同意代替根因/质量证据。 |
+| S01 | Reporting保留advisory/blocking含义；整理实际返工触发、被修改范围和审查职责。重复派发只在出现相同任务/版本重复执行证据时追到Runtime。 | 已实现的非自动返工不重复开发；缺历史逐finding数据明确不可恢复，实际误报/返工收益留待实测。 |
+| S02 | 复用已贯通的Cross 15→10字段及Chief/Final交接；逐字段列出新增分析与已有正文的重复，纳入F01职责比较。 | 对保留/合并字段给出消费者与信息理由；没有丢失证据不重新打开整套Join审计。 |
+| S03 | 核对真实提交协议是否造成重复续写，并保留直接结构化提交指引。Schema检查追实际发送、处理和结果，不从内部模型推导作者输出。 | 协议故障有首次差异及修复；模型是否仍先输出整份审查解释另作遵循率问题，不靠截断隐藏。 |
+| S04 | 通用AgentLoop修工具Schema未纳入预算的缺口；明确消息、工具、输出预留、窗口来源及估算误差，并检查绑定/未绑定重建器路径。 | 必需事实/当前状态及完整工具单元保留；装不下时用既有耗尽结果报告，不能静默裁掉事实。短任务摘要策略与真实摘要收益仍待比较。 |
+| S05 | 保留稳定前缀、动态状态分离和Provider缓存布局；预算改动只复核受影响的序列化、状态更新与恢复。 | 不因真实命中率未测重复重构已验证布局；缓存和费用改善只有Provider数据才能结项。 |
+| S06 | 核对实际Task/envelope/工具注册及引用可达性；统计写入、列举、提交各自职责，评估新增assessments的输入输出负担。 | 修实际合同不一致；已紧凑提交和无需固定列举不重复实现。拆2.4、提高并发/工具上限须有瓶颈及合并代价依据，否则明确不采纳。 |
+| Q01 | 用已有输入跟踪原始对象→解析→路由→实际请求/读取→成稿的首次差异；保留完整事实与未引用事实可审路径。 | 已送达但未采用不再归为解析修复；遗漏对象处置包含判断、行动或明确未知，不能用来源ID命中替代。 |
+| Q02 | 保留dimension、合并环境条件、公式缓存及缺值修复；按已知格式缺陷核实读取入口。 | 已修缺陷维持关闭；没有新增复现不扩成全格式/OCR或Excel重算工程。缓存新鲜度、大表内存记录为具体限制。 |
+| Q03 | 核对量、单位、对象、工况及规则条件；保留撤销固定电压补算。比较现有事实/计算/parts合同与新增判断记录各自承担的内容。 | 输出“已知、可计算、缺条件、未选规则、无适用规则”的处理依据；专业判断与模型选择规则不被字段校验冒充。只在传输有差异时修通用层。 |
+| Q04 | 在共同快照上核对同对象同条件矛盾和不同条件合理差异，检查跨章传递。 | 同源坐标/路由副本不当设备身份或统一结论；若版本不一致再追Join/恢复，不能预先全面排查。 |
+| Q05 | 复核预期集合、assessments与observation_links的消费者、缺省语义、修订失效及额外负担；与已有正文/来源绑定比较。 | 对每组字段作保留/简化/替代决定并给依据；定位能力和专业覆盖分别验收，不新增语义通过门禁。 |
+| Q06 | 检查规则原文、归档版本及状态来源在实际审查/修订任务中可达；继续按可信来源核现行性、适用性和引用蕴含。 | 作者声明不等于核验；网络阻塞仅挂起对应标准状态核验，不挂起资料传递与合同修复。 |
+| Q07 | 保留已改的蒸馏条件约束、Skill消费边界及来源候选机制；核对身份/Task/Skill/知识的指令冲突与检索遗漏，不只检查模型route。 | 手工修改14份材料不算蒸馏机制成功；无精确命中时词片段回退不算语义召回成功。角色选模和新蒸馏实际效果待Provider可用。 |
+| F01 | 列出模块写审、Cross、局部回归、Chief、Final的输入、独立产出、重复推导、返工触发和串行依赖，完成三种写作组织方案比较。 | 对每个阶段明确保留/合并/取消/条件触发的依据及责任承接；不能只有现有流程图或“待模型”。不需先排除所有Runtime假设。 |
+| F02 | 比较直接写、写后审、先判断再写如何复用同一事实/规则和保存未知；结合Q03/Q05决定最小判断交接。 | 判断优先仍是候选，新增可选记录不等于模型按顺序完成推理；无需为比较实现三套生产流水线。 |
+| F03 | 复用历史525请求和现有Trace，区分已删重复、必要工作、新增负担与未知；列出当前关键路径和最后实测口径。 | 不能恢复的数据明确缺失；字符/估算token不冒充费用，并行耗时不求和当墙钟；对新增字段计净负担。 |
+| F04 | 每项分别记录机制状态、根因证据、候选决策、效果验收；保留修复及反证，只有受影响变化才补定向验证。 | 不按测试数量、目录归属或固定值中立Invoker结项；未通过Provider的证据明确限定到调用边界。 |
 
-### 修订后的实施顺序
+### 实施顺序、交付与停止扩张条件
 
-1. **先固定共同问题的责任边界（S03–S06、F03/F04）。** 从同一Task/Agent定义和显式工件引用出发，对照Module/Chief/Cross/Final/Aggregate的实际工具集、模型Schema与调用校验；明确Task是否为工具上限、工件读取器如何声明/派生、Runtime和Capability各负责什么。追到Compiler冻结依赖和Executor端口；若定义到调用不一致，修首次偏离处，不在每个角色另加补丁。
-2. **核清通用请求、上下文及恢复（S04/S05、Q01、E2/E4/E6）。** 把工具Schema、消息、Provider序列化开销和模型窗口纳入同一预算核对；区分准确计数、估算与未知，不硬改字符系数当作真实token。用现有会话/续写/工件接口回放当前事实、版本、工具调用结果配对以及same-run恢复。复用现有通用AgentLoop/Provider适配捕获没有报告字段的请求，不能再让固定返回10的Invoker替代该边界；不为制造第二消费者复制业务框架或新增一套测试能力。
-3. **重新评估最近六组实现的必要性和归属（Q01–Q07、S02/S06）。** 原始读取和已证实的机制修复保留。对assessments、observation_links、重复输入投影与检索回退逐项回答：缺口是否仍在、现有合同为何不足、是否只是定位/诊断、能否简化、恢复是否保留、增加多少输入/输出。没有证据时标为候选，不继续扩张新字段/阶段，不盲目撤销已提交内容，也不将迁目录当作修复。
-4. **再补领域质量并决定阶段（Q03–Q07、F01/F02）。** 在实际输入/工具/版本可靠后核对量纲、工况、规则选择、对象身份、正文/行动处置和专业审查职责。某些字段、规则或角色确需领域实现时明确保留；只有业务中立且有真实共享消费者的机制才上移。不得增加配电Kernel Action、通用“专业正确性证明器”或额外审批链。
-5. **收束到原验收（S01–S06、Q01–Q07、F03/F04）。** 用已有输入/Run定位并复核通用缺口，不要求重跑完整报告才能分析。仅真实遵循、语义质量、Provider token/缓存和墙钟等剩余效果放到最后一次代表性运行；官方标准状态核验仍需可信来源。用户已暂缓模型配置，不重复索要，也不能将尚存机制缺陷归为“等模型验收”。
+1. **完成有界的机制修复（S03–S06、Q01/Q06）。** 优先修E4已确认的完整请求预算缺口；同步沿实际作者、审计、Cross、Chief、Final、Aggregate任务形成工具/引用/Schema对照。E3/E5只修实际不一致，恢复检查限定在变更涉及的会话重绑、工具结果与same-run路径。交付为可定位的前后差异和受影响入口的完整行为；找不到差异的检查项记录“本边界未发现”，继续下一项，不扩成全Kernel/Compiler/Join审计。通用层修复不要求人为制造第二个Capability；领域代码上移仍遵循真实共享消费者约束。
+2. **完成判断交接和知识使用的设计处置（Q01、Q03–Q07、S06/F02）。** 对事实、计算、专业判断、正文引用和行动分别确认已有所有者；逐项评估assessments、observation_links、候选检索及Skill指令冲突。交付为现有合同不足的具体依据、字段保留/简化/替代决定及新增负担。已证实读取修复保持关闭，未知保留未知；不会因一个已送达样例仍写错而继续叠字段。此项的静态核查不依赖步骤1全部结束，只将受具体缺陷影响的部分挂起。
+3. **完成流程组织取舍（S01–S03、F01/F02）。** 基于已有阶段依赖和历史轨迹，比较一位主笔、专题分析并行＋主笔、章节并行＋共享判断三种方案的最少模型阶段、重复输入/输出、串行等待、修订范围及审查责任。先交付可审阅的比较和选择理由，再按证据实施必要的定义/交接改动；已知不可离线判定的质量胜负留到实测。不能要求先实现三套流程，也不能以缺模型为由不做职责比较。该工作可与步骤1/2独立部分并行推进，只有改变判断交接的方案依赖步骤2的合同决定。
+4. **收束剩余验收（F03/F04与各项效果）。** 所有实现缺口和设计选项必须有明确处置后，准备最后一次代表性真实运行的输入、版本、模型、关键路径、token/缓存及对象质量口径。已有历史数据用于定位，不伪装同版本对照；没有可比基线时只报告当前绝对结果。用户已暂缓模型配置，不重复索要；官方来源受限和真实模型测量分别挂起。发现失败保留现场，不自动反复完整重跑。
+
+这四项是原17项的工作组织，不是新增范围或四道串行门槛。机制修复可复用，领域规则按合同适用；“通用”不承诺所有模型在所有专业任务上都判断正确。新的检查或改动必须能指回原条目、具体缺陷或待决设计，不能单凭“可能还有核心问题”无限扩展。
 
 ### 本次修订的验收边界
 
-- 每个问题记录“原始输入 → 已编译定义/Task → Provider可见消息/工具Schema → 工具执行 → 提交/恢复 → 下游消费”的首次差异、责任层及反证；没有差异证据时不预先指定改Kernel或加领域字段。
-- 同一逻辑分别经过相关角色/入口；单Module成功不能代表其余Provider。相同问题能在无报告字段的真实AgentLoop/适配器调用边界出现，才作为通用机制证据；确定性Agent端口成功只证明端口。
-- 对正确性至少区分未送达、不可读、已送达但未使用、已使用但选错规则/推理错误、汇总/恢复丢失；对成本同时记录删减与新增负担。结构化记录、锚点和检索命中不作为专业正确率。
-- 继续只维护本指导和唯一状态文件；使用已有Trace和受影响检查验证真实缺口，不扩充只镜像实现的合成用例，不运行全量回归，不合并PR。本次计划复核本身不修改生产代码，不把审计发现写成已经修复。
+- 对已知故障沿“原始输入 → 已编译定义/Task → Provider可见消息/工具Schema → 工具执行 → 提交/恢复 → 下游消费”定位首次差异；追到足以决定责任层即止，不要求每项重复检查整条链。
+- 复核真实相关角色/入口及其不同合同。相同输入不代表相同职责；不追求所有角色暴露相同工具。业务中立的调用边界可证明通用缺陷，无需先建另一个模型Capability。
+- 对正确性区分未送达、不可读、已送达但未使用、选错规则/推理错误、汇总/恢复丢失；对象集合及锚点只作诊断，不自动升级专业判断保证。
+- 已修机制、已接线待评价的设计、未实施缺口和待外部证据分别记录。保留已完成的结构性工作，既不把所有未测效果标为未实现，也不把所有剩余工作归为等模型。
+- 继续只维护本指导和唯一状态文件；使用已有Trace及受影响检查，不扩充只镜像实现的用例，不运行全量回归、不合并PR。本轮只复核计划，不把静态发现写成已修。
 
 ## 对原分析需要修正的结论
 
