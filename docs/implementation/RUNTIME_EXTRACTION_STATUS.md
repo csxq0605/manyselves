@@ -34,10 +34,14 @@
 
 PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通，下列问题未解决前不建议合并。
 
-- **取消没有停下模型会话（已修，本地）**：取消只取消了 Host 等待任务，AgentLoop 继续运行，取消后还会执行工具写文件。替身 Provider 离线复现后修复：`AgentExecutionService.dispatch_turn` 被取消时调用会话的 `cancel_current()` 并等待该轮结束（最多 30 秒），再让取消继续传播；`tests/runtime/test_agent_turn_cancellation.py`。lane 代码吞掉 BaseException 的问题仍在，靠 `_settle_cancel` 重复取消兜底。
+- **取消没有停下模型会话（已修，本地）**：取消只取消了 Host 等待任务，AgentLoop 继续运行，取消后还会执行工具写文件。替身 Provider 离线复现后修复：`AgentExecutionService.dispatch_turn` 被取消时调用会话的 `cancel_current()` 并等待该轮结束（最多 30 秒），再让取消继续传播；`tests/runtime/test_agent_turn_cancellation.py`。后续（本地）：吞掉 BaseException 的只有 `state/parallel.py` 的 `AllReadySupervisor.run`/`retry_lanes`，二者不在生产调用链（无调用方，属待删除债务），已改为先重新抛出 `CancelledError`；生产并行走 `WorkflowRuntimeHost._execute_parallel`。新增从入口到底的测试：`DetachedRunTaskOwner.cancel` → Host → 两个并行分支 → `invoke_agent` → 真实 AgentLoop，一次取消即记 FAILED 且两个分支都不再写文件（去掉 `dispatch_turn` 修复则失败）。`_settle_cancel` 的重复取消保留为保险。
 - **流程比较不成立（F01 重新打开）**：`writing_organizations.py` 把“一位主笔”算成旧流程全部作者、审查、修订耗时之和再加尾段，保留了应重新评估的重复工作，264 对 110 分钟不能支持“现有组织更好”。需要按工作量（事实量、正文量、审查对象数）而不是旧会话耗时重建模型后再下结论。
+  - **按工作量重建（本地）**：`scripts/benchmarks/writing_organizations.py` 改为固定工作量（事实、正文、判断及各角色输出 token），各组织自行切分会话，逐请求按 Agent loop 的压缩规则累计；请求耗时用归档运行 44 个会话的 usage 拟合（R²=0.983，每千输出 token 约 23.5 秒，主导耗时）。结果（12 组参数，[JSON](../research/experiments/2026-10-19-f01-workload-organizations.json)）：章节并行墙钟 51–59 分钟、提供方总时长 191–225 分钟；一位主笔逐模块写 166–194 / 166–194；专题并行＋主笔 112–133 / 159–187；主笔一次持有全部事实时必需输入 11.3–13.8 万 token，超过保留输入预算（4.3 万），每次请求都压缩，374–501 分钟。结论：现有组织墙钟约快 2–3 倍，代价是总工作量多约 15–20%（多出的是分开的审查会话与联合审查）；这只比较耗时和上下文可行性，没有比较成稿质量和一致性，输出量相同是假设，不能据此说“现有组织更好”。
 - **压缩阈值不是等价换算（已更正注释）**：36K（0.3 token/字）→72K（按字符类估算）只对报告样本近似；中文和数字表格提前到约 0.83 倍字符数压缩，英文推迟到约 2.2 倍，JSON 约 1.3 倍。72K 约为 128k 窗口的 56%；适用范围已写进 `config/schema.py`。
 - **完整报告仍未跑通**：本机实跑 Cross 首次输入约 20.4 万字符超预算，Chief/Final/DOCX 未执行。本地分支已把 Cross 输入改为按设备卷宗（离线约 1.6 万字符），但尚未经真实运行验证。
+  - **发送前预算检查与分批（本地）**：新增通用 `runtime/context_budget.py`：保留输入预算 = min(窗口 − max_tokens − 工具 − 余量, working_memory_tokens × 压缩目标比例)，默认 43,200 token。超过压缩目标的必需输入会让每个请求都压缩（真实运行里压缩 114 次的形态）。Cross 每个 owner 准备时估算输入，超出就按卷宗顺序分批（同一对象的事实和判断不拆开），文件定义的 owner 流程用 `for_each` 每批一轮、同一会话，合并结果（重复 ID 加批次后缀）后再进入修订；复核只带产生待复核问题的批次。每批有独立任务 ID 和结果文件，Same-run 只补跑未完成的批次。单个卷宗本身超预算时仍单独发送，由通用运行时以 `context_budget_exhausted` 停止。Compiler 现在把 `for_each` 视为循环的显式出口（它在开始时冻结列表，必然结束）。测试 `tests/capabilities/distribution_reporting/test_cross_owner_input_batches.py`（含通用 Host 跑通分批）。未做：预算未计入系统提示和工具定义（按输入合同估算）；修订、复核输入未分批。
+
+- **已有的测试失败（本轮之前就存在，未处理）**：`tests/webapi/test_lifecycle.py` 5 项（FakeRuntimeHost 缺 bus）；`test_cross_reduction.py::...closed_by_owner_recheck[True]`、`test_domain_module_ownership.py::test_pure_domain_representative_outputs_remain_exact`、`test_task_context.py::test_fact_scope_is_complete_including_unassigned_and_last_anomaly`，均已在未改动的代码上复现。
 
 ### 2026-10-19 流程重构：判断台账 + 程序汇总 + 有界返工（本地分支 `claude/project-thread-k64k3v`）
 
@@ -90,7 +94,7 @@ PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通�
 | Q05 | 显式判断、正文/行动锚点、最终章observation_links | S06逐字段净负担测量 | 关闭（observation_links保留，scope/basis可选） | Chief/Final module_assessments 31.1k→16.7k（Final另加对象身份6.0k） ／ 定位列表是否有用 |
 | Q06 | 来源归档/定位、规则状态依据传递、Module读取、修订影响 | E3：Task→envelope→工具对照；只有Final无读取器，Q07按职责补身份而非工具 | 关闭可离线部分；不给所有角色加读取器 | — ／ 官方现行性（403阻挡） |
 | Q07 | Skill/知识方法边界、候选回退、完整来源目录；Final `observation_identities`；按小节前缀退让的知识内联 | Final可定位对象记录208→0（S06）→208；三处缺陷规则KU均被所在小节检索命中；上传库38/38本模块KU完整内联，2.4余量约80字，改前超出89字即14→0 | 关闭可离线部分 | 同左；超出目标时2.4为13/14（+89字）、7/14（+4k字） ／ 角色选模、蒸馏遵循、语义召回、`open_reference`调用次数 |
-| F01 | 重新打开（2026-10-19 审计）：原结论“章节并行拓扑保留”不成立 | 活跃时间下限：章节并行110.4分钟，主笔264.0，专题＋主笔156.7–179.6；Cross保本点60.4–167.7分钟，历史最大14.1 | 关闭；不以“只改措辞”跳过局部审查（需新门禁） | 旧编排归档下限 ／ 墙钟、成稿质量 |
+| F01 | 重新打开（2026-10-19 审计）：原结论“章节并行拓扑保留”不成立；已按工作量重建，只证明墙钟快 2–3 倍、总工作量多 15–20%，质量未比较 | 活跃时间下限：章节并行110.4分钟，主笔264.0，专题＋主笔156.7–179.6；Cross保本点60.4–167.7分钟，历史最大14.1 | 关闭；不以“只改措辞”跳过局部审查（需新门禁） | 旧编排归档下限 ／ 墙钟、成稿质量 |
 | F02 | 作者同会话随正文提交紧凑判断记录，无独立判断阶段 | 2026-10-15实验：先判断把缺环境温度误判为缺规则 | 关闭 | — ／ 模型是否先判断 |
 | F03 | `run_metrics.py`按阶段统计请求/token/缓存/压缩/活跃并集/等待链；`reporting_critical_path.py`给出结构关键路径 | 历史525请求与分角色活跃时间 | 关闭；最后真实运行按下节口径测量 | 结构串行深度12–14（首读通过为5） ／ 各阶段实际耗时 |
 | F04 | 本表四列分列；中立固定值Invoker不作通用模型证据，测试数量不作完成率 | 原表把实现、证据与效果混写，测试通过曾被当作整项完成 | 关闭；后续变化只改对应格，未测项不得写入“已测” | 17项均有决策；离线可答部分已测 ／ 下节真实运行 |
