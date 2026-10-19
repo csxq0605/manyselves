@@ -22,13 +22,25 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `Real run 2026-10-19 follow-up: context-budget exhaustion stops recovery; user Run cancel (API + chat/run buttons)`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
+- Current slice: `Flow refactor 2026-10-19 (user chose "直接重构"): one judgment per shared observation; program consolidation replaces the full-text joint Cross; bounded module/Final rework`
+- Current branch: `claude/project-thread-k64k3v` (local, based on PR #7 head `76c5637`; not pushed — push and PR only on user request)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 真实运行（2026-10-19，Mac，deepseek-flash）在 Cross 联合审查处卡死，已修复为明确失败并新增取消入口。下一步：让 Cross 首次输入回到预算内（当前约20万字符固定输入，超过128k窗口减max_tokens），之后再做一次真实运行补测 Chief/Final/DOCX。同时按评估结论在角色 Skill 中补回分级、期限、验收的写作范例（需用户确认范围）。
+- Next automatic action: 流程重构四个切片已在本地分支提交（见下节）。下一步需要用户：①决定是否推送/开 PR；②同意费用后在 Mac 上真实运行一次完整报告，验证台账汇总、第三章关系上下文、Chief/Final/DOCX 首次真实跑通，并回填效果。未做：revise-report 仍走旧的分模块 Cross；角色 Skill 写作范例（分级、期限、验收）未补回；未关闭问题未写入 DOCX。
+
+### 2026-10-19 流程重构：判断台账 + 程序汇总 + 有界返工（本地分支 `claude/project-thread-k64k3v`）
+
+用户看过复盘（/mnt/project-files/handoff/review-flow-and-interaction-20261019.md）后选择“直接重构”，推翻 F01 的“保留现有拓扑”。设计见 /mnt/project-files/handoff/flow-refactor-design-20261019.md。
+
+- **根因（已核对源码）**：映射器把同一原始观测按路由复制成多个 E-ID（运行电流 `s4_4.py:112,117`，测温 `:633-651`），每个模块各自判断；一致性只靠 Cross 读完五章全文（`CrossReviewInput.modules`），输入随正文增长，真实运行约 20.4 万字符超窗口；Cross 修复、模块复审都没有轮次上限，Final 默认 3 轮且超出即 `RuntimeError`。
+- **切片1 `43924c6`**：`runtime/observation_ledger.py` 按精确来源分组，组内编号最小的 E-ID（映射器主路由）为负责小节。事实包和审查证据给引用副本标 `judged_by`；`expected_evidence_ids` 不含引用副本；`write_result_part` 对引用副本的判断记录返回结构化纠正并点名负责小节。程序检查报告负责漏判、引用重复判断、结论冲突，不阻断。
+- **切片2 `2fe5613`**：尾段第一步改为 `distribution-observation-consolidation`（Python Tool `consolidate-observation-ledger`），写 `reviews/observation-ledger.json`（台账、检查、第三章关系上下文），并写零发现的 `cross-completion.json`/`cross-decision-pack.json` 以保持 Chief/Final/Delivery 合同（“cross”命名是待改名债务）。Chief 第三章读 `observation_relations`；Chief/Final 读 `observation_ledger` 与 `observation_ledger_checks`；Final 审计员同时负责成稿一致性。Final 返工默认 1 轮，超出后未关闭发现写入 `open_at_round_limit_ids` 和 `final_residual_risks`，不再使运行失败。
+- **切片3 `e8fbb3f`**：模块“修订→复审”最多 `max_module_recheck_rounds`（默认 2）轮，仍未关闭的发现记入模块完成记录 `open_at_round_limit_ids`，台账汇总把它们列为 `module_review_open` 交给 Chief/Final。完成记录校验要求 resolved ∪ deferred ∪ open 覆盖全部发现。
+- **清理**：删除不再在生产图中的联合 Cross 工作流、修复队列、repair-lane 模板、`cross-relation-reviewer` Agent 及其 Task/Tool/Contract、`cross_joint.py` 和对应测试（-1641 行）。`revise-report` 的分模块 Cross 管线未动，仍是待迁移债务。
+- **取舍**：第二章各模块正文之间的语义矛盾不再由模型通读五章查找，改为从源头只判断一次，并由程序比对判断记录；没有判断记录、只在正文里写出的相反结论，程序查不到，只在 Final 对第 1/3/4 章的审查中部分覆盖。五模块仍并行写作，非负责模块写作时看不到负责模块的结论，只能指向负责小节。
+- **验证**：Ruff；新增/改写定向测试（台账与纠正 4 项、尾段无模型汇总、编译图、Final 有界返工、模块有界复审），受影响的模块、Cross（revise-report）、Chief/Final/交付、定义加载测试分批运行全部通过；`test_cross_reduction owner_recheck[True]` 为既有失败。没有真实 Provider 运行，效果全部待测。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 
