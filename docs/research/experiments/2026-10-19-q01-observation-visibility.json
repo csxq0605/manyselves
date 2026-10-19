@@ -1,0 +1,277 @@
+{
+  "provider_calls": 0,
+  "defects": {
+    "residual_current_E-0071": [
+      {
+        "evidence_id": "E-0071",
+        "part": "2.4.3.1",
+        "cited_in_section": true,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": true,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": false,
+            "recorded_as": "no_concern"
+          },
+          "cross_route_link": []
+        }
+      }
+    ],
+    "spd_four_NG": [
+      {
+        "evidence_id": "E-0088",
+        "part": "2.3.3",
+        "cited_in_section": true,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": true,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": false,
+            "recorded_as": "no_concern"
+          },
+          "cross_route_link": []
+        }
+      },
+      {
+        "evidence_id": "E-0115",
+        "part": "2.3.3",
+        "cited_in_section": true,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": true,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": false,
+            "recorded_as": "no_concern"
+          },
+          "cross_route_link": []
+        }
+      },
+      {
+        "evidence_id": "E-0133",
+        "part": "2.3.3",
+        "cited_in_section": true,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": true,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": false,
+            "recorded_as": "no_concern"
+          },
+          "cross_route_link": []
+        }
+      },
+      {
+        "evidence_id": "E-0142",
+        "part": "2.3.3",
+        "cited_in_section": true,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": true,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": false,
+            "unassessed_signal": false,
+            "recorded_as": "no_concern"
+          },
+          "cross_route_link": []
+        }
+      }
+    ],
+    "thermal_last_two_rows": [
+      {
+        "evidence_id": "E-0230",
+        "part": "2.4.4",
+        "cited_in_section": false,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": false,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "cross_route_link": [
+            {
+              "routes": [
+                "E-0230@2.4.4",
+                "E-0231@2.2.2.1"
+              ],
+              "exact_routed_copy": true
+            }
+          ]
+        }
+      },
+      {
+        "evidence_id": "E-0231",
+        "part": "2.2.2.1",
+        "cited_in_section": false,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": false,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "cross_route_link": [
+            {
+              "routes": [
+                "E-0230@2.4.4",
+                "E-0231@2.2.2.1"
+              ],
+              "exact_routed_copy": true
+            }
+          ]
+        }
+      },
+      {
+        "evidence_id": "E-0232",
+        "part": "2.4.4",
+        "cited_in_section": false,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": false,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "cross_route_link": [
+            {
+              "routes": [
+                "E-0232@2.4.4",
+                "E-0233@2.2.2.1"
+              ],
+              "exact_routed_copy": true
+            }
+          ]
+        }
+      },
+      {
+        "evidence_id": "E-0233",
+        "part": "2.2.2.1",
+        "cited_in_section": false,
+        "discussed_in_narrative": false,
+        "before": {
+          "in_reviewer_evidence": false,
+          "omission_signal": false,
+          "cross_route_link": false
+        },
+        "now": {
+          "narrative": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "grouped": {
+            "in_reviewer_evidence": true,
+            "reviewer_sees_unbound": true,
+            "unassessed_signal": true,
+            "recorded_as": null
+          },
+          "cross_route_link": [
+            {
+              "routes": [
+                "E-0232@2.4.4",
+                "E-0233@2.2.2.1"
+              ],
+              "exact_routed_copy": true
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
