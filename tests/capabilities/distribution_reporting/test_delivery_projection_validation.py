@@ -431,5 +431,5 @@ def test_final_rework_is_bounded_and_open_findings_become_residual_risks(
         completion_ref=completed["final_review_completion_ref"], lifecycle="final",
         reviewer_agent_id="chief-editor-auditor", reviewer_session_key="final-chapter-wave",
     )
-    assert completion.deferred_advisory_ids == ["F-3-001"]
+    assert completion.open_at_round_limit_ids == ["F-3-001"]
     assert completion.resolved_finding_ids == []

@@ -45,7 +45,7 @@ limits:
 phase=initial 时必须先用 open_artifact/search_text 查阅 source_refs 中与拟写事实相关的来源；source_context 中只有标识符或摘要时，不得把它扩写为未经来源支持的地点、设备、数量、负载率或风险事实。
 phase=revision 时 Chapter 1/3 只重写被 finding 指定的目标小节，并用 write_result_part 保存完整修订后正文；未命中的小节不得写入 part_refs。Chapter 4 仍以一个完整 special_topic_analysis part 保留计划内全部 4.x 小节。增加或调整事实前必须先用 open_artifact/search_text 查阅 source_refs 中的第二章批准正文或证据，不得自行补造地点、设备、数字和风险事实。
 source_refs 中 CrossDecisionPack 的 deferred_advisories 是未实施的可选建议，不是批准事实、风险或强制写作要求。仅在当前章节有用且已由材料支持时采用，不为消除建议而新增事实或重写第二章。
-第三章依据 observation_relations 与已批准模块来源写跨模块关系。observation_relations 由程序按对象汇总各模块“关注/未判断”的判断记录，共享观测只有负责小节的一份判断（observation_ledger 的 owner），referenced_by 是引用它的模块。你负责把同一对象在不同模块的现象、原因、传播、行动依赖和验证条件组织成一次叙事；结论服从负责小节的判断，不另下与之不同的结论，不扩写没有依据的机制、阈值或行动。observation_ledger_checks 中列出的漏判或冲突是未闭合的事实状态，正文如实写为待确认，不替模块补判断。旧运行若仍带 cross_synthesis，按其 causal_chain、decision_implication、verification_method 使用。
+第三章依据 observation_relations 与已批准模块来源写跨模块关系。observation_relations 由程序按对象汇总各模块“关注/未判断”的判断记录，共享观测只有负责小节的一份判断（observation_ledger 的 owner），referenced_by 是引用它的模块。你负责把同一对象在不同模块的现象、原因、传播、行动依赖和验证条件组织成一次叙事；结论服从负责小节的判断，不另下与之不同的结论，不扩写没有依据的机制、阈值或行动。observation_ledger_checks 中列出的漏判、冲突以及模块审查到轮次上限仍未关闭的问题（module_review_open）是未闭合的事实状态，正文如实写为待确认，不替模块补判断。旧运行若仍带 cross_synthesis，按其 causal_chain、decision_implication、verification_method 使用。
 第三章合并行动时保留上游全部异常及待核查对象和各自状态，不只采用汇总表中已有详细建议的部分对象。原表NG、已确认原因与待核实原因分别表达；图注出现不等于正文已有处置。硬性前置与可选协调分开，不能将管理制度完善、同一计划或相关风险自动变成技术处置的先决条件；时限、数量与验收值只用有来源支持的内容。未知条件保留为待核实，不用固定阶段和任务配额补齐。
 </tools_and_loop>
 <collaboration>

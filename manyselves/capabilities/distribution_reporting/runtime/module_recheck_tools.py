@@ -410,6 +410,7 @@ def _completion(
     finding_refs: list[str],
     verdict_refs: list[str],
     resolved_ids: set[str],
+    open_ids: set[str] = frozenset(),
 ) -> str:
     completion = ReviewCompletionRecord(
         review_protocol_version=preparation.review_protocol_version,
@@ -429,10 +430,12 @@ def _completion(
                     (store.workspace / ref).read_text(encoding="utf-8")
                 )["findings"]
                 if finding["impact"] == "advisory" and finding["id"] not in resolved_ids
+                and finding["id"] not in open_ids
             )
             if preparation.review_protocol_version >= 3
             else []
         ),
+        open_at_round_limit_ids=sorted(open_ids),
     )
     ref = (
         f"{preparation.review_root}/completion-r{preparation.current.revision}.json"
@@ -443,6 +446,16 @@ def _completion(
         preparation.current.markdown,
     )
     return ref
+
+
+DEFAULT_MAX_MODULE_RECHECK_ROUNDS = 2
+
+
+def _max_recheck_rounds(context: DeclarativeModuleRuntimeLaneContext) -> int:
+    value = context.reporting_state.get(
+        "max_module_recheck_rounds", DEFAULT_MAX_MODULE_RECHECK_ROUNDS,
+    )
+    return max(1, int(value))
 
 
 def accept_current_module_recheck(
@@ -505,6 +518,12 @@ def accept_current_module_recheck(
             finding.id: finding for finding in submission.new_findings
             if preparation.review_protocol_version < 3 or finding.impact == "blocking"
         })
+    open_at_limit: set[str] = set()
+    if next_pending and preparation.review_round >= _max_recheck_rounds(context):
+        # Bounded rework: stop revising, close the lane with the findings
+        # recorded as open instead of looping until a model gives in.
+        open_at_limit = set(next_pending)
+        next_pending = {}
     if next_pending:
         _save_progress(
             store,
@@ -550,6 +569,7 @@ def accept_current_module_recheck(
         finding_refs=finding_refs,
         verdict_refs=verdict_refs,
         resolved_ids=resolved_ids,
+        open_ids=open_at_limit,
     )
     _save_progress(
         store,

@@ -901,7 +901,7 @@ class FinalReviewTools:
                 )
                 - unclosed_ids
             ),
-            deferred_advisory_ids=sorted(unclosed_ids),
+            open_at_round_limit_ids=sorted(unclosed_ids),
         )
         completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         self.store.write_json(completion_ref, completion.model_dump(mode="json"))

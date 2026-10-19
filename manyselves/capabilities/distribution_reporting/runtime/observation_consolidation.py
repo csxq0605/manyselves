@@ -47,12 +47,14 @@ def consolidate(runtime, value: Any) -> dict:
     ledger = build_observation_ledger(workspace, run_id)
     index = ProjectEvidenceIndex(workspace, run_id)
     subjects = {item.id: item.subject for item in index.items()} if index.path.is_file() else {}
+    checks = check_ledger(ledger, modules) if ledger is not None else {}
+    checks["module_review_open"] = _module_review_open(runtime.store, state)
     payload = {
         "kind": "observation_ledger_consolidation",
         "run_id": run_id,
         "subject_refs": subject_refs,
         "ledger": ledger.to_json() if ledger is not None else None,
-        "checks": check_ledger(ledger, modules) if ledger is not None else None,
+        "checks": checks,
         "relations": observation_relations(ledger, modules, subjects),
     }
     ledger_ref = f"Work/runs/{run_id}/reviews/observation-ledger.json"
@@ -89,6 +91,33 @@ def consolidate(runtime, value: Any) -> dict:
         observation_ledger_ref=ledger_ref,
     )
     return state
+
+
+def _module_review_open(store: ReportingStore, state: dict) -> list[dict]:
+    """Module findings left open by the bounded rework, for Chief/Final."""
+
+    found: list[dict] = []
+    for module_id, ref in sorted(dict(state.get("module_review_completion_refs", {})).items()):
+        path = store.workspace / str(ref)
+        if not path.is_file():
+            continue
+        completion = ReviewCompletionRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        open_ids = set(completion.open_at_round_limit_ids)
+        if not open_ids:
+            continue
+        for finding_ref in completion.finding_refs:
+            finding_path = store.workspace / finding_ref
+            if not finding_path.is_file():
+                continue
+            for finding in json.loads(finding_path.read_text(encoding="utf-8")).get("findings", []):
+                if finding.get("id") in open_ids:
+                    found.append({
+                        "module_id": module_id,
+                        "finding_id": finding["id"],
+                        "target_submodule_id": finding.get("target_submodule_id"),
+                        "observation": finding.get("observation"),
+                    })
+    return found
 
 
 def ledger_source_context(

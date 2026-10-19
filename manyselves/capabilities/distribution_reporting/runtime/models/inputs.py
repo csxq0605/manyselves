@@ -2045,6 +2045,13 @@ class ReviewCompletionRecord(StrictModel):
         default_factory=list,
         description="Module/Cross v3 optional advice retained without revision or a resolved verdict.",
     )
+    open_at_round_limit_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Corrective findings still open when the bounded rework rounds ran out. "
+            "They are carried downstream as open issues, never reported as resolved."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
