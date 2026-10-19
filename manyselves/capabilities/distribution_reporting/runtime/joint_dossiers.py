@@ -3,13 +3,20 @@
 One observed object (a cabinet, a circuit, a transformer) is often used by
 several modules, each from its own angle.  Instead of handing the joint
 review the full text of five modules, the program gathers, per object, the
-facts and every module's judgments with a short prose excerpt.  Only objects
-whose judgments could disagree are kept; the joint review reads these and
-sends corrections to the named modules.
+facts and every module's judgments with a short prose excerpt, and sends the
+joint review only the objects that need a joint look.
+
+Everything here follows the fixed input structure, not one run's data: the
+object is the room/cabinet identity the mappers read from fixed columns
+(normalized so spelling variants align), a quantity is a mapper-declared
+measurement, and the keep rules carry no tuned thresholds.  Missing objects
+are never merged; when in doubt a dossier is kept rather than dropped.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +27,22 @@ from .research.project_evidence import ProjectEvidenceIndex
 
 EXCERPT_CHARS = 240
 ATTENTION = {"concern", "undetermined"}
+UNIDENTIFIED_PREFIXES = ("未注明",)
+
+
+def object_key(subject: str) -> str:
+    """Normalized object identity; spelling variants of one cabinet align.
+
+    Width, spaces and "1号"/"1#" are unified.  A subject without a stated room
+    keeps its raw text, so unidentified objects are never merged together.
+    """
+
+    text = unicodedata.normalize("NFKC", subject).strip()
+    if text.startswith(UNIDENTIFIED_PREFIXES):
+        return f"raw:{subject}"
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"(\d)号", r"\1#", text)
+    return text.lower()
 
 
 @dataclass
@@ -27,6 +50,23 @@ class _Dossier:
     subject: str
     facts: dict[str, dict] = field(default_factory=dict)
     judgments: list[dict] = field(default_factory=list)
+    subjects: set[str] = field(default_factory=set)
+    quantities: dict[tuple[str, str], dict[str, set[float]]] = field(default_factory=dict)
+
+
+def _differing_quantities(found: _Dossier) -> list[dict]:
+    """Same quantity read from two sheets with different values: state the basis."""
+
+    differing = []
+    for (quantity, unit), by_sheet in sorted(found.quantities.items()):
+        values = {value for sheet_values in by_sheet.values() for value in sheet_values}
+        if len(by_sheet) >= 2 and len(values) >= 2:
+            differing.append({
+                "quantity": quantity,
+                "unit": unit,
+                "values_by_sheet": {sheet: sorted(vals) for sheet, vals in sorted(by_sheet.items())},
+            })
+    return differing
 
 
 def _excerpt(narrative: str, anchor: str) -> str:
@@ -46,11 +86,10 @@ def build_joint_dossiers(
 ) -> list[dict]:
     """Objects used by two or more modules whose judgments need a joint look.
 
-    Kept when the judgments from different modules differ, or when two or more
+    Kept when the judgments from different modules differ, when two or more
     modules raise a concern or leave the object undetermined (their actions and
-    explanations must fit together).  Objects are matched by the normalized
-    evidence subject; the same equipment named differently in two tables is
-    not merged here.
+    explanations must fit together), or when one quantity is read with
+    different values from two sheets (the report must state each basis).
     """
 
     index = ProjectEvidenceIndex(workspace, run_id)
@@ -65,8 +104,15 @@ def build_joint_dossiers(
         item = items.get(evidence_id)
         if item is None:
             return None
-        found = dossiers.setdefault(item.subject, _Dossier(item.subject))
+        found = dossiers.setdefault(object_key(item.subject), _Dossier(item.subject))
+        found.subjects.add(item.subject)
         if evidence_id not in found.facts:
+            sheet = item.source.sheet or item.source.path.as_posix()
+            for measurement in item.measurements:
+                if measurement.value is not None:
+                    found.quantities.setdefault(
+                        (measurement.quantity, measurement.unit), {},
+                    ).setdefault(sheet, set()).add(measurement.value)
             fact = {
                 "evidence_id": evidence_id,
                 "module_id": item.module_id,
@@ -78,6 +124,7 @@ def build_joint_dossiers(
                 fact["unit"] = item.unit
             if item.observed_at:
                 fact["observed_at"] = item.observed_at
+            fact["sheet"] = sheet
             if evidence_id in labels:
                 fact["shared"] = labels[evidence_id]
             found.facts[evidence_id] = fact
@@ -111,32 +158,43 @@ def build_joint_dossiers(
                     found.judgments.append(judgment)
 
     selected: list[dict] = []
-    for subject, found in sorted(dossiers.items()):
+    for _key, found in sorted(dossiers.items()):
         fact_modules = {fact["module_id"] for fact in found.facts.values() if fact["module_id"]}
         judged_modules = {judgment["module_id"] for judgment in found.judgments}
-        if len(fact_modules | judged_modules) < 2 or len(judged_modules) < 2:
-            continue
         reasons = []
         by_module: dict[str, set[str]] = {}
         for judgment in found.judgments:
             by_module.setdefault(judgment["module_id"], set()).add(judgment["disposition"])
-        if len({frozenset(values) for values in by_module.values()}) > 1:
+        if len(by_module) >= 2 and len({frozenset(values) for values in by_module.values()}) > 1:
             reasons.append("modules_disagree")
         if sum(1 for values in by_module.values() if values & ATTENTION) >= 2:
             reasons.append("several_modules_raise_attention")
+        differing = _differing_quantities(found)
+        if differing:
+            reasons.append("same_quantity_differs")
         if not reasons:
             continue
-        submodules = sorted({
+        submodules = {
             (judgment["module_id"], judgment["submodule_id"]) for judgment in found.judgments
-        })
-        selected.append({
-            "subject": subject,
+        }
+        if differing:
+            submodules |= {
+                (fact["module_id"], fact["submodule_id"]) for fact in found.facts.values()
+                if fact["module_id"] and fact["submodule_id"]
+            }
+        dossier = {
+            "subject": found.subject,
             "reasons": reasons,
-            "module_ids": sorted(judged_modules),
-            "submodules": [{"module_id": m, "submodule_id": s} for m, s in submodules],
+            "module_ids": sorted(judged_modules | (fact_modules if differing else set())),
+            "submodules": [{"module_id": m, "submodule_id": s} for m, s in sorted(submodules)],
             "facts": sorted(found.facts.values(), key=lambda fact: fact["evidence_id"]),
             "judgments": found.judgments,
-        })
+        }
+        if len(found.subjects) > 1:
+            dossier["subject_spellings"] = sorted(found.subjects)
+        if differing:
+            dossier["differing_quantities"] = differing
+        selected.append(dossier)
     for number, dossier in enumerate(selected, start=1):
         dossier["dossier_id"] = f"D-{number:03d}"
     return selected
@@ -150,4 +208,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["build_joint_dossiers", "dossiers_by_module"]
+__all__ = ["build_joint_dossiers", "dossiers_by_module", "object_key"]

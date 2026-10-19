@@ -47,6 +47,7 @@
 - **用户纠正后的联合审查（覆盖上面“联合 Cross 由程序汇总替代”的取舍）：** 用户指出一个点会出现在多个地方，所以联合审查必须保留，判断错了靠审查纠正。
   - `365aedd`：任何位置都可以按自己的方面判断共享观测。事实和审查证据带 `shared` 标注；负责规则 `domain/observation-ownership.yaml` 只决定同一方面的冲突以谁为准；审查员要报告违反事实计算限制的判断。
   - 本切片：尾段改为 `build-joint-dossiers` → 分 owner 的 Cross cohort → `consolidate-observation-ledger`。程序按对象整理卷宗（事实、各模块判断、正文摘录），只保留跨模块判断不同或多个模块都提出关注的对象。每个 owner 只审查与自己相关的卷宗，正文范围和其他模块的视图都裁到卷宗涉及的部分；没有卷宗的 owner 不调用模型。纠正仍走原有的 owner 修订 → 局部审查 → 复审链。`revise-report` 没有卷宗时行为不变。
+  - 固定结构稳健性：卷宗按规范化的配电房/柜号对齐设备（全半角、空格、“#/号”），“未注明”对象不合并；同一设备同一测量量（类型与单位相同）在两张表数值不同即进卷宗，不设阈值。S4-4 负荷行补测量量，总配电缺容量时写明不能计算负荷率，红外测点缺读数记 `missing_thermal_reading` 缺口。新增 `scripts/benchmarks/fixed_structure_variants.py`（清空容量/环境温度/红外读数、注入负荷矛盾、改设备写法），合成表格全部通过；真实资料尚未跑。
   - 设计与离线模拟见 /mnt/project-files/handoff/orchestration-scheduling-design-20261019.md §8–9。用户 Mac 上起草了方面相关表（v0），还没纳入代码。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）

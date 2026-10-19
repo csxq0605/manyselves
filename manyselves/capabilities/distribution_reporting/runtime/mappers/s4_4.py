@@ -103,12 +103,22 @@ def _map_low_voltage(
             value = float(current)
             unit = "A"
             fact = f"运行电流={current:g}A"
+            measurements = [EvidenceMeasurement(
+                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
+            )]
             if isinstance(capacity, (int, float)) and capacity:
                 fact += f"；变压器容量={capacity:g}kVA"
+                measurements.append(EvidenceMeasurement(
+                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
+                    source_cell=f"D{row}",
+                ))
                 reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
+                    measurements.append(EvidenceMeasurement(
+                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    ))
                 routes = (("2.4", "2.4.1.1"), ("2.1", "2.1.1"))
                 needs_confirmation = True
             else:
@@ -131,6 +141,7 @@ def _map_low_voltage(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        measurements=measurements,
                         needs_confirmation=needs_confirmation,
                     )
                 )
@@ -299,12 +310,24 @@ def _map_total_distribution(
             value = float(current)
             unit = "A"
             fact = f"运行电流={current:g}A"
+            measurements = [EvidenceMeasurement(
+                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
+            )]
             if isinstance(capacity, (int, float)) and capacity:
                 fact += f"；变压器容量={capacity:g}kVA"
+                measurements.append(EvidenceMeasurement(
+                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
+                    source_cell=f"D{row}",
+                ))
                 reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
+                    measurements.append(EvidenceMeasurement(
+                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    ))
+            else:
+                fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
             for module_id, submodule_id in (
                 ("2.4", "2.4.1.1"),
                 ("2.1", "2.1.1"),
@@ -323,6 +346,7 @@ def _map_total_distribution(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        measurements=measurements,
                         needs_confirmation=True,
                     )
                 )
@@ -587,6 +611,13 @@ def _map_thermal(
         position = _text(sheet.cell(row, 6).value)
         measured = _numeric_value(sheet, value_sheet, row, 7)
         if not isinstance(measured, (int, float)):
+            if position:
+                # A listed checkpoint without a reading is missing content, not "no defect".
+                gaps.append(MappingGap(
+                    code="missing_thermal_reading",
+                    message=f"红外测点缺少实测温度：第 {row} 行（{position}）",
+                    sheet=sheet.title, cell=f"G{row}",
+                ))
             continue
         rise = (
             float(Decimal(str(measured)) - Decimal(str(current_environment)))
@@ -614,6 +645,10 @@ def _map_thermal(
         load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
+            measurements.append(EvidenceMeasurement(
+                quantity="load_rate", value=round(float(load_rate) * 100, 4), unit="%",
+                source_cell=f"E{load_row}",
+            ))
         if current_environment is not None:
             fact_parts.append(f"环境温度={current_environment:g}℃")
             fact_parts.append(f"相对环境温升={rise:.1f}K")
