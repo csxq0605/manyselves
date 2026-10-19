@@ -28,6 +28,29 @@ def dispimg_refs(*values: Any) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
+def unbound_photo_gaps(workbook: Workbook, evidence: list[EvidenceItem]) -> list[MappingGap]:
+    """Every in-cell photo either rides on a mapped record or becomes a gap.
+
+    A photo whose row or checkpoint the mapper could not read must not vanish
+    silently; the gap names its cell so the report can state it.
+    """
+
+    bound = {photo_id for item in evidence for photo_id in item.photo_refs}
+    gaps: list[MappingGap] = []
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                unbound = [ref for ref in dispimg_refs(cell.value) if ref not in bound]
+                if unbound:
+                    gaps.append(MappingGap(
+                        code="photo_without_record",
+                        message=f"图片未对应到可读取的检查记录：{sheet.title}!{cell.coordinate}",
+                        sheet=sheet.title,
+                        cell=cell.coordinate,
+                    ))
+    return gaps
+
+
 @contextmanager
 def cached_formula_workbook(path: Path) -> Iterator[tuple[Workbook, list[MappingGap]]]:
     """Resolve saved scalar results in memory, retaining DISPIMG for photo binding.

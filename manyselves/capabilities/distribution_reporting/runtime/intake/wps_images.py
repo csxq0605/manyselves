@@ -91,6 +91,23 @@ def extract_wps_images(
         return assets
 
 
+def _primary_evidence_id(
+    evidence_ids: list[str], submodule_by_evidence: dict[str, str | None],
+) -> str:
+    from ..observation_ledger import ownership_rules
+
+    routes = frozenset(
+        submodule for evidence_id in evidence_ids
+        if (submodule := submodule_by_evidence.get(evidence_id))
+    )
+    owner = ownership_rules().get(routes)
+    if owner is not None:
+        for evidence_id in evidence_ids:
+            if submodule_by_evidence.get(evidence_id) == owner:
+                return evidence_id
+    return evidence_ids[0]
+
+
 def canonicalize_photo_bindings(
     evidence: list[EvidenceItem],
     assets: dict[str, PhotoAsset],
@@ -112,6 +129,7 @@ def canonicalize_photo_bindings(
     if unknown:
         raise ValueError(f"evidence references unextractable workbook photos: {unknown}")
     evidence_by_photo: dict[str, list[str]] = {}
+    submodule_by_evidence = {item.id: item.submodule_id for item in evidence}
     for item in evidence:
         for photo_id in item.photo_refs:
             evidence_by_photo.setdefault(photo_id, []).append(item.id)
@@ -153,10 +171,13 @@ def canonicalize_photo_bindings(
                     "id": canonical_id,
                     "path": canonical_path,
                     "source_image_id": raw_id,
-                    # Mapper output follows source-table row/column order. Keep
-                    # every association, but make the first source occurrence
-                    # the explicit and persisted caption/placement owner.
-                    "primary_evidence_id": evidence_by_photo[raw_id][0],
+                    # Keep every association. The photo sits with the submodule
+                    # that owns the shared observation, so the image and the
+                    # owning judgment land together; without a rule, the first
+                    # source occurrence places it.
+                    "primary_evidence_id": _primary_evidence_id(
+                        evidence_by_photo[raw_id], submodule_by_evidence,
+                    ),
                 }
             )
         )

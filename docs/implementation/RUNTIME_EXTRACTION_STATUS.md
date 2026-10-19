@@ -48,6 +48,7 @@
   - `365aedd`：任何位置都可以按自己的方面判断共享观测。事实和审查证据带 `shared` 标注；负责规则 `domain/observation-ownership.yaml` 只决定同一方面的冲突以谁为准；审查员要报告违反事实计算限制的判断。
   - 本切片：尾段改为 `build-joint-dossiers` → 分 owner 的 Cross cohort → `consolidate-observation-ledger`。程序按对象整理卷宗（事实、各模块判断、正文摘录），只保留跨模块判断不同或多个模块都提出关注的对象。每个 owner 只审查与自己相关的卷宗，正文范围和其他模块的视图都裁到卷宗涉及的部分；没有卷宗的 owner 不调用模型。纠正仍走原有的 owner 修订 → 局部审查 → 复审链。`revise-report` 没有卷宗时行为不变。
   - 固定结构稳健性：卷宗按规范化的配电房/柜号对齐设备（全半角、空格、“#/号”），“未注明”对象不合并；同一设备同一测量量（类型与单位相同）在两张表数值不同即进卷宗，不设阈值。S4-4 负荷行补测量量，总配电缺容量时写明不能计算负荷率，红外测点缺读数记 `missing_thermal_reading` 缺口。新增 `scripts/benchmarks/fixed_structure_variants.py`（清空容量/环境温度/红外读数、注入负荷矛盾、改设备写法），合成表格全部通过；真实资料尚未跑。
+  - 图片稳健性：共享观测的图片主证据跟随负责规则（红外图归 2.2.2.1，与负责判断同节）；表中引用但文件取不到的图记 `photo_media_missing`，记录保留，整表不再失败；状态格为空或红外缺读数但同行有图时保留“未填写（原表仅有图片，需复核）”记录；任何未落到记录的内嵌图记 `photo_without_record`；卷宗事实带 `photo_ids`。变体检查改走生产准备 worker，新增清空图旁状态、删除图片媒体两种变体和“每张图有着落”“共享图跟负责小节”检查，合成表格全部通过。模型仍未收到图片内容（通用 Message 只有文本），读图步骤待实现。
   - 设计与离线模拟见 /mnt/project-files/handoff/orchestration-scheduling-design-20261019.md §8–9。用户 Mac 上起草了方面相关表（v0），还没纳入代码。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）

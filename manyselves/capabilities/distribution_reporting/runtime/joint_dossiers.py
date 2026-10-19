@@ -125,6 +125,8 @@ def build_joint_dossiers(
             if item.observed_at:
                 fact["observed_at"] = item.observed_at
             fact["sheet"] = sheet
+            if item.photo_refs:
+                fact["photo_ids"] = list(item.photo_refs)
             if evidence_id in labels:
                 fact["shared"] = labels[evidence_id]
             found.facts[evidence_id] = fact
