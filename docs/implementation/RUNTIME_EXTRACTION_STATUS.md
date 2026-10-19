@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 S04+S05 implemented with before/after experiments: character-class token estimate + tool Schema in budget; append-only history before mutable task state with rolling cache breakpoint`
+- Current slice: `PR #6 F03 measurement tools: per-stage run metrics with union time and request-level waiting chain; structural critical path of the production workflow YAML`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：F03按Run事件/usage账本输出分阶段请求、token、缓存与串行关键路径；S06/Q05测量assessments/observation_links的Schema与必填输出负担后决定保留/简化/Runtime生成；F01/F02离线模拟三种写作组织的LLM阶段数、串行深度和输入/输出，再在YAML实施选定拓扑（不因结构预检通过而跳过语义审查，需新门禁先问用户）。模型测量及官方状态核验暂缓。
+- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：S06/Q05测量assessments/observation_links的Schema与必填输出负担后决定保留/简化/Runtime生成；F01/F02离线模拟三种写作组织的LLM阶段数、串行深度和输入/输出，再在YAML实施选定拓扑（不因结构预检通过而跳过语义审查，需新门禁先问用户）。模型测量及官方状态核验暂缓。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 
@@ -51,8 +51,15 @@
 | Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理 | 继续核指令冲突、候选遗漏与交付；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
 | F01 | 现有阶段职责与依赖已有记录，主要写审/Cross/Chief/Final流程保留 | 三种写作组织的明确比较与阶段保留/合并/取消/条件触发决定未完成 | 不以角色名相近删阶段；收益尚未测量 |
 | F02 | 判断优先实验有已知边界；生产已有随正文写入的可选判断记录 | 与直接写/写后审比较最小交接，不预设判断优先胜出 | 新字段不证明模型先判断，候选效果仍未验收 |
-| F03 | 历史525请求、分阶段及当前请求构造已有取证 | 补当前关键路径、已删/新增负担及最后实测口径 | 历史不可恢复项标明；当前墙钟/token/费用待代表性运行 |
+| F03 | 历史525请求、分阶段及当前请求构造已有取证；`run_metrics.py`按阶段输出请求/token/缓存/压缩/活跃并集与请求级等待链，`reporting_critical_path.py`按生产YAML给出结构关键路径 | 最后一次真实运行用run_metrics测量；F01用critical_path对比拓扑 | 当前常见场景串行LLM深度12–14（首读通过为5），三处审查循环占主要；每阶段真实耗时待实测 |
 | F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+
+### 2026-10-19 — F03 运行指标与结构关键路径
+
+- **交付：** `scripts/benchmarks/run_metrics.py`（usage账本→阶段请求/token/缓存/压缩、活跃并集、请求级等待链；`--sessions`读旧会话窗口）与`reporting_critical_path.py`（按生产YAML和命名场景计算串行LLM深度/会话数）。Provider调用0，未改生产代码。
+- **改前口径：** 账本`summarize`只求和，历史活跃时间求和340分钟，而并集108、跨度118分钟。
+- **结果：** 历史旧编排中模块审查循环窗口7.5–75.4分钟、压缩请求23%。当前full-report首读即通过为5个串行阶段/17会话；每处返工一轮为12–14/44–54，Cross每轮占4–6个串行阶段。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#f03-运行指标与当前关键路径)。
+- **边界：** 结构计数不是耗时预测；联合Cross须等五模块Join。下一项S06/Q05，然后F01用同一工具比较拓扑。
 
 ### 2026-10-19 — S04/S05 逐项实施与改前/改后实验
 
