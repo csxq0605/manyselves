@@ -77,7 +77,9 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 200
     max_tool_calls_per_round: int = Field(default=4, ge=1)
     max_tool_result_chars: int = Field(default=6000, ge=512)
-    working_memory_tokens: int = Field(default=36000, ge=4096)
+    # Same compaction point as the earlier 36000 under the flat 0.3 tokens/char
+    # estimate, re-expressed in the calibrated character-class estimate.
+    working_memory_tokens: int = Field(default=72000, ge=4096)
     working_memory_compaction_target_ratio: float = Field(default=0.6, gt=0, lt=1)
     context_compaction_strategy: Literal["model_summary", "structured_handoff"] = "model_summary"
     context_compaction_model: str | None = None  # Inherit provider/credentials; None uses the task model.

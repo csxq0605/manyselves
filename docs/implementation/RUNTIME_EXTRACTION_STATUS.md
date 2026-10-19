@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 plan rechecked at 35cf858: confirmed budget defect separated from audit hypotheses; actual Task tools and submission Schema traced; original 17 objectives and three workflow alternatives retained`
+- Current slice: `PR #6 S04+S05 implemented with before/after experiments: character-class token estimate + tool Schema in budget; append-only history before mutable task state with rolling cache breakpoint`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按指导的有界工作项先修S04完整请求预算（含工具Schema，明确重建器绑定/未绑定入口），同时将S06/Q06工具核对收束为真实Task→envelope→注册工具→所需引用的差异。随后完成Q03/Q05新增判断/行动字段的必要性与净负担处置，并交付F01/F02三种写作组织的职责/依赖比较；独立分析不等核心全面审计。S01非自动返工、S02紧凑交接、S05稳定前缀、Q02已复现读取修复不重复开发。模型测量及官方状态核验分别暂缓，不挂起其余工作。
+- Next automatic action: 逐项实施并做改前/改后对照实验（记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)）：F03按Run事件/usage账本输出分阶段请求、token、缓存与串行关键路径；S06/Q05测量assessments/observation_links的Schema与必填输出负担后决定保留/简化/Runtime生成；F01/F02离线模拟三种写作组织的LLM阶段数、串行深度和输入/输出，再在YAML实施选定拓扑（不因结构预检通过而跳过语义审查，需新门禁先问用户）。模型测量及官方状态核验暂缓。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 
@@ -39,8 +39,8 @@
 | S01 | advisory留档、不自动返工，blocking路径保留 | 完成F01中的返工触发/职责分析；有重复任务证据才查派发 | 历史逐finding成本不可恢复，当前误报/返工收益未测 |
 | S02 | Cross 15→10字段；Chief/Final消费及恢复已接通 | 将字段与阶段新增价值纳入F01，不重做已闭合交接 | 专业质量与实际输出/token收益未测 |
 | S03 | 审查直接结构化提交指引已接入 | 以真实Schema/终止协议定位重复输出；未见差异时不增改造 | 模型遵循和重复可见输出减少未测 |
-| S04 | 当前事实/草稿重建，历史精确去重后压缩 | 工具Schema未计入预算仍未修；明确实际窗口、请求开销及适用入口 | 真实摘要量、token估算偏差和净成本未测 |
-| S05 | 稳定前缀/动态状态分离，原生/兼容序列化已离线核验 | 预算改动时复核受影响状态/缓存路径；已有布局不重复重构 | 缓存命中和费用收益未测 |
+| S04 | 当前事实/草稿重建，历史精确去重后压缩；按字符类别估算token，工具Schema计入裁剪预算与Provider准入；压缩阈值按真实token等价换算72000 | 已关闭；真实usage出现明显偏差时再校准系数 | 三个公开分词器离线校准（中文内容0.92–1.12）；Provider实测usage未对照 |
+| S05 | 稳定前缀→只追加历史→可变状态末尾；滚动缓存断点（≤4），Anthropic tool_use/tool_result块携带断点 | 已关闭；剩余不可复用主要是每轮重发的草稿全文，归S06/F01 | 13请求离线会话可复用份额：兼容60.6%→79.8%、Anthropic 52.5%→71.8%；真实计费未测 |
 | S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复 | 真实Task工具/引用差异、判断记录净负担尚待收束；拆章/并发需明确取舍 | 简化输入下组合分歧不是所有角色生产缺工具；实际往返减少未测 |
 | Q01 | 完整已解析事实/未引用事实可审；预期集合与显式记录对照 | 沿对象到请求/正文定位首次遗漏，结合Q03/Q05决定最小交接 | 已送达不等于使用，来源命中不等于判断/行动覆盖 |
 | Q02 | dimension、合并环境范围、公式缓存/缺值及错误读取缺陷已修 | 保持已修项关闭；新格式问题须有复现再纳入 | 缓存新鲜度、其他格式/OCR和大表内存仍有限制，不等于须全面重写 |
@@ -53,6 +53,14 @@
 | F02 | 判断优先实验有已知边界；生产已有随正文写入的可选判断记录 | 与直接写/写后审比较最小交接，不预设判断优先胜出 | 新字段不证明模型先判断，候选效果仍未验收 |
 | F03 | 历史525请求、分阶段及当前请求构造已有取证 | 补当前关键路径、已删/新增负担及最后实测口径 | 历史不可恢复项标明；当前墙钟/token/费用待代表性运行 |
 | F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+
+### 2026-10-19 — S04/S05 逐项实施与改前/改后实验
+
+- **用户要求：** 重新参考计划逐一完成，每项做实验对比。实验统一记录在[PR6逐项实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)，脚本在`scripts/benchmarks/request_token_estimate.py`、`request_cache_prefix.py`，Provider调用0。
+- **S04：** 固定0.3/字符把中文内容低估约一半（0.43–0.55），128k窗口检查实际约250k真实token才触发；工具Schema（2.4作者17个工具约3.5k token）不进预算。改为四类字符系数并把工具定义计入`_trim_typed_context_to_budget`与Provider准入；`working_memory_tokens`换算为72000使真实压缩触发点不变。组合2.4请求估算覆盖率50%→99%。
+- **S05：** `<current_task_state>`/`<runtime_task_state>`每轮变化却排在历史前，导致历史每轮全价。改为稳定前缀→历史→可变状态，并在最后一条历史上加滚动断点；裁剪始终保留最新交互组。离线13请求会话可复用份额60.6%→79.8%（兼容自动前缀）、52.5%→71.8%（Anthropic断点）。
+- **验证：** 受影响的agent_loop/providers/compaction/runtime/task_context测试通过；`test_task_context.py`两项位置断言改为新顺序（检查内容不变）。reporting/application/webapi其余35项失败/错误在基线`846b965`上同样存在（PyQt/libEGL缺失、webapi fixture、旧字符串及过时阶段名），与本切片无关。
+- **未覆盖：** 真实缓存计费、Provider usage对照、模型是否因状态移到末尾改变行为。
 
 ### 2026-10-19 — 再核计划的依赖、反证与具体交付
 

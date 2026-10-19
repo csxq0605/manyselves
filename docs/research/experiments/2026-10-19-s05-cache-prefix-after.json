@@ -1,0 +1,19 @@
+{
+  "tokenizer": "mimo_v25pro.json",
+  "anthropic_native": {
+    "requests": 13,
+    "input_tokens": 326357,
+    "auto_prefix_cacheable": 251844,
+    "auto_prefix_share": 0.772,
+    "anthropic_breakpoint_cacheable": 234270,
+    "anthropic_breakpoint_share": 0.718
+  },
+  "openai_compatible": {
+    "requests": 13,
+    "input_tokens": 325372,
+    "auto_prefix_cacheable": 259612,
+    "auto_prefix_share": 0.798,
+    "anthropic_breakpoint_cacheable": 0,
+    "anthropic_breakpoint_share": 0.0
+  }
+}

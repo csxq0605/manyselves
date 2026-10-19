@@ -9,7 +9,7 @@ import inspect
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Sequence
@@ -67,9 +67,18 @@ from ..tools.registry import ToolRegistry
 from ..usage_ledger import UsageLedger
 from .bus import MessageBus
 
-# Tokens per char heuristic (cl100k_base averages ~0.25 tokens/char for code, ~0.3 for text)
-_TOKENS_PER_CHAR = 0.3
-_SAFETY_BUFFER = 1024  # Extra buffer for tool definitions and overhead
+# Character-class token heuristic.  A flat 0.3 tokens/char undercounted
+# Chinese report prose, fact tables and evidence JSON by about 2x against
+# MiMo-V2.5-Pro, Qwen3 and DeepSeek-V3 BPE vocabularies; see
+# scripts/benchmarks/request_token_estimate.py.  These coefficients keep that
+# content within about 10% and err high on ASCII schemas and code.
+_TOKENS_PER_NON_ASCII_CHAR = 0.72
+_TOKENS_PER_ASCII_DIGIT = 1.0
+_TOKENS_PER_ASCII_LETTER = 0.22
+_TOKENS_PER_ASCII_OTHER = 0.5
+_ASCII_DIGITS = b"0123456789"
+_ASCII_LETTERS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_SAFETY_BUFFER = 1024  # Per-request framing overhead not covered by estimates
 _MAX_PROVIDER_RETRIES = 2
 _RESULT_PART_TOOLS = frozenset({"write_result_part", "write_result_parts"})
 _RESULT_PART_COMPACTION_THRESHOLD = 256
@@ -481,21 +490,54 @@ class _ProviderRequestError(RuntimeError):
         )
 
 
+def _estimate_text_tokens(text: str) -> int:
+    """Estimate BPE tokens for mixed Chinese/ASCII text by character class."""
+
+    if not text:
+        return 0
+    ascii_bytes = text.encode("ascii", "ignore")
+    non_ascii = len(text) - len(ascii_bytes)
+    digits = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_DIGITS))
+    letters = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_LETTERS))
+    other = len(ascii_bytes) - digits - letters
+    return int(
+        non_ascii * _TOKENS_PER_NON_ASCII_CHAR
+        + digits * _TOKENS_PER_ASCII_DIGIT
+        + letters * _TOKENS_PER_ASCII_LETTER
+        + other * _TOKENS_PER_ASCII_OTHER
+    )
+
+
 def _estimate_tokens(messages: list[LLMMessage]) -> int:
-    """Rough token count — ~4 chars per token, plus per-message overhead."""
+    """Estimated message tokens, plus per-message and per-call overhead."""
     total = 0
     for m in messages:
         total += 4  # Per-message overhead
         if m.content:
-            total += int(len(m.content) * _TOKENS_PER_CHAR)
+            total += _estimate_text_tokens(str(m.content))
         if getattr(m, "tool_calls", None):
             for tc in m.tool_calls:
                 total += 20  # Tool call overhead
                 if hasattr(tc, "arguments") and tc.arguments:
-                    total += int(len(str(tc.arguments)) * _TOKENS_PER_CHAR)
+                    total += _estimate_text_tokens(str(tc.arguments))
         if getattr(m, "thinking", None) and m.thinking:
-            total += int(len(m.thinking) * _TOKENS_PER_CHAR)
+            total += _estimate_text_tokens(m.thinking)
     return total
+
+
+def _estimate_tool_definition_tokens(tool_definitions: Sequence[Mapping[str, Any]] | None) -> int:
+    """Estimated tokens for the tool schemas sent beside the messages."""
+
+    if not tool_definitions:
+        return 0
+    serialized = json.dumps(
+        list(tool_definitions),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return _estimate_text_tokens(serialized) + 10 * len(tool_definitions)
 
 
 def _sanitize_provider_visible_text(value: str) -> str:
@@ -730,7 +772,7 @@ def _estimate_response_tokens(response: Any) -> int:
         if tool_calls
         else ""
     )
-    return int((len(content) + len(thinking) + len(structured)) * _TOKENS_PER_CHAR)
+    return _estimate_text_tokens(content + thinking + structured)
 
 
 def _trim_messages_to_budget(
@@ -795,11 +837,36 @@ class _TypedContextTrimResult:
     reason: str | None = None
 
 
+_MUTABLE_STATE_PREFIXES = ("<current_task_state>", "<runtime_task_state>")
+_MAX_CACHE_BREAKPOINTS = 4  # Anthropic's per-request limit
+
+
+def _with_rolling_cache_breakpoint(messages: list[LLMMessage]) -> list[LLMMessage]:
+    """Mark the last history message before trailing mutable state as cacheable.
+
+    The stable prefix already carries its own breakpoints; this one lets the
+    next request reuse the append-only history too.  Providers without
+    explicit cache control ignore the flag.
+    """
+
+    index = len(messages) - 1
+    while index > 0 and str(messages[index].content or "").startswith(_MUTABLE_STATE_PREFIXES):
+        index -= 1
+    if index <= 0 or messages[index].cache_control:
+        return messages
+    if sum(1 for message in messages if message.cache_control) >= _MAX_CACHE_BREAKPOINTS:
+        return messages
+    marked = list(messages)
+    marked[index] = replace(messages[index], cache_control=True)
+    return marked
+
+
 def _trim_typed_context_to_budget(
     messages: list[LLMMessage],
     *,
     context_window: int = 128000,
     max_output: int = 4096,
+    tool_tokens: int = 0,
 ) -> _TypedContextTrimResult:
     """Trim a rebased typed context without splitting typed units.
 
@@ -811,7 +878,11 @@ def _trim_typed_context_to_budget(
 
     if not messages:
         return _TypedContextTrimResult(messages=[])
-    budget = max(0, int(context_window) - int(max_output) - _SAFETY_BUFFER)
+    # Tool schemas travel in the same Provider request and consume the window.
+    budget = max(
+        0,
+        int(context_window) - int(max_output) - int(tool_tokens) - _SAFETY_BUFFER,
+    )
     if _estimate_tokens(messages) <= budget:
         return _TypedContextTrimResult(messages=messages)
 
@@ -843,6 +914,14 @@ def _trim_typed_context_to_budget(
                 mandatory_indices.add(index)
             if message is rest[-1] and message.role == "user" and not message.is_tool_result:
                 mandatory_indices.add(index)
+    # Mutable state now trails history; the latest exchange before it stays.
+    for index in reversed(range(len(units))):
+        if not all(
+            str(message.content or "").startswith(_MUTABLE_STATE_PREFIXES)
+            for message in units[index]
+        ):
+            mandatory_indices.add(index)
+            break
 
     mandatory_units = [units[index] for index in sorted(mandatory_indices)]
     mandatory = [system] + [item for unit in mandatory_units for item in unit]
@@ -2453,6 +2532,7 @@ class AgentLoop:
     async def _acquire_provider_request_lease(
         self,
         messages: list[LLMMessage],
+        tool_definitions: list[dict] | None = None,
     ) -> Any | None:
         """Reserve one physical request, if the runner installed admission.
 
@@ -2473,8 +2553,10 @@ class AgentLoop:
         )
         task_id = str(self.usage_task_id or getattr(self._current_message, "task_id", "") or "")
         identity_key = self.provider_admission_identity_key
-        estimated_tokens = _estimate_tokens(messages) + max(
-            0, int(getattr(self.config, "max_tokens", 0) or 0)
+        estimated_tokens = (
+            _estimate_tokens(messages)
+            + _estimate_tool_definition_tokens(tool_definitions)
+            + max(0, int(getattr(self.config, "max_tokens", 0) or 0))
         )
         return await controller.acquire(
             provider,
@@ -2493,7 +2575,7 @@ class AgentLoop:
     ):
         """Yield one adapter stream while holding exactly one request lease."""
 
-        lease = await self._acquire_provider_request_lease(messages)
+        lease = await self._acquire_provider_request_lease(messages, tool_definitions)
         try:
             stream_kwargs: dict[str, Any] = {}
             if stream_idle_timeout_seconds is not None:
@@ -2529,7 +2611,7 @@ class AgentLoop:
     ) -> Any:
         """Fallback non-streaming adapter call with its own request lease."""
 
-        lease = await self._acquire_provider_request_lease(messages)
+        lease = await self._acquire_provider_request_lease(messages, tool_definitions)
         try:
             chat_kwargs: dict[str, Any] = {}
             if reasoning_enabled is not None:
@@ -2865,6 +2947,7 @@ class AgentLoop:
                 list(messages),
                 context_window=self._context_window_for_request(),
                 max_output=self.config.max_tokens,
+                tool_tokens=_estimate_tool_definition_tokens(tool_definitions),
             )
             messages = trim.messages
             if trim.exhausted:
@@ -2880,9 +2963,10 @@ class AgentLoop:
                     tool_calls=[],
                     stop_reason=CONTEXT_BUDGET_EXHAUSTED,
                 )
-        provider_messages = _sanitize_provider_messages(
-            _provider_working_messages(messages)
-        )
+        provider_messages = _provider_working_messages(messages)
+        if phase != "context_compaction":
+            provider_messages = _with_rolling_cache_breakpoint(provider_messages)
+        provider_messages = _sanitize_provider_messages(provider_messages)
         provider_tool_definitions = _sanitize_provider_visible_value(
             tool_definitions
         )
@@ -4470,25 +4554,19 @@ class AgentLoop:
         return await self._get_cached_system_prompt()
 
     def _with_live_task_state(self, messages: list[LLMMessage]) -> list[LLMMessage]:
-        """Keep current board state after the stable prefix and outside history.
+        """Append current board state after history, outside the persisted log.
 
         Called once per logical request after context rebuilding and before
         budget accounting. Retries reuse the same payload; the next request
-        reads fresh state. Never append to the persisted conversation.
+        reads fresh state. Keeping mutable state last leaves the stable prefix
+        and append-only history reusable by Provider prefix caches.
         """
         state = self._build_task_state_section()
         if not state or not messages:
             return messages
-        position = 1
-        while position < len(messages):
-            message = messages[position]
-            if message.role != "user" or message.is_tool_result or not message.cache_control:
-                break
-            position += 1
         return [
-            *messages[:position],
+            *messages,
             LLMMessage(role="user", content="<runtime_task_state>\n" + state + "\n</runtime_task_state>"),
-            *messages[position:],
         ]
 
     async def _build_messages(self) -> list[LLMMessage]:

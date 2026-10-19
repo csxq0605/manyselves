@@ -50,7 +50,9 @@ async def test_successful_current_draft_write_is_not_resent_but_trace_is_unchang
     assert sum(prose in (m.content or "") for m in projected.messages) == 1
     assert not any(m.tool_calls for m in projected.messages)
     assert history == original and history[2].tool_calls[0].arguments["content"] == prose
-    assert projected.messages[-1] == history[-1]
+    # Append-only history precedes the mutable current-state block.
+    assert projected.messages[-2] == history[-1]
+    assert projected.messages[-1].content.startswith("<current_task_state>")
     # A fresh binding/restart reaches the same projection from the complete trace.
     restored = bind_task_context(loop, tmp_path, task, output_contract="module_submission", render_prompt=lambda: "facts")
     assert (await restored.rebuild(history, loop=loop)).messages == projected.messages
@@ -82,7 +84,8 @@ async def test_draft_projection_preserves_nonredundant_tool_exchanges(tmp_path, 
     history = [Message(role="system", content="instructions"), Message(role="user", content=projection.initial_message()),
                Message(role="assistant", content="retain decision rationale" if mode == "reasoning" else "", tool_calls=calls), *results]
     projected = await projection.rebuild(history, loop=loop)
-    assert projected.messages[3:] == history[2:]
+    assert projected.messages[2:-1] == history[2:]
+    assert projected.messages[-1].content.startswith("<current_task_state>")
 
 
 def test_fact_scope_is_complete_including_unassigned_and_last_anomaly(tmp_path):
