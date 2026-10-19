@@ -28,7 +28,7 @@
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 流程重构四个切片已在本地分支提交（见下节）。下一步需要用户：①决定是否推送/开 PR；②同意费用后在 Mac 上真实运行一次完整报告，验证台账汇总、第三章关系上下文、Chief/Final/DOCX 首次真实跑通，并回填效果。未做：revise-report 仍走旧的分模块 Cross；角色 Skill 写作范例（分级、期限、验收）未补回；未关闭问题未写入 DOCX。
+- Next automatic action: 流程重构四个切片已在本地分支提交（见下节）。下一步需要用户：①决定是否推送/开 PR；②同意费用后在 Mac 上真实运行一次完整报告，验证台账汇总、第三章关系上下文、Chief/Final/DOCX 首次真实跑通，并回填效果。未做：revise-report 仍走旧的分模块 Cross；角色 Skill 写作范例已补回（见本节末）；Cross 结构取舍（保持删除 / 精简版 / 恢复全文）待用户决定；未关闭问题未写入 DOCX。
 
 ### 2026-10-19 流程重构：判断台账 + 程序汇总 + 有界返工（本地分支 `claude/project-thread-k64k3v`）
 
@@ -41,6 +41,8 @@
 - **清理**：删除不再在生产图中的联合 Cross 工作流、修复队列、repair-lane 模板、`cross-relation-reviewer` Agent 及其 Task/Tool/Contract、`cross_joint.py` 和对应测试（-1641 行）。`revise-report` 的分模块 Cross 管线未动，仍是待迁移债务。
 - **取舍**：第二章各模块正文之间的语义矛盾不再由模型通读五章查找，改为从源头只判断一次，并由程序比对判断记录；没有判断记录、只在正文里写出的相反结论，程序查不到，只在 Final 对第 1/3/4 章的审查中部分覆盖。五模块仍并行写作，非负责模块写作时看不到负责模块的结论，只能指向负责小节。
 - **验证**：Ruff；新增/改写定向测试（台账与纠正 4 项、尾段无模型汇总、编译图、Final 有界返工、模块有界复审），受影响的模块、Cross（revise-report）、Chief/Final/交付、定义加载测试分批运行全部通过；`test_cross_reduction owner_recheck[True]` 为既有失败。没有真实 Provider 运行，效果全部待测。
+
+- **角色 Skill 写作范例（用户选“先补 Skill 范例”）：** `templates/reporting/reviewed-role-skills` 14份方法末尾各加非强制范例，按专家版写法给出逐对象问题表、优先级三档与建议时限（写明理由，理由不足写待定）、复核与验收、第一章三张表、第三章速查表；作者与审查对“分级/时限须独立依据”的禁止改为“须写理由”。14份合计 24,260→约39,500 字节。仅 Inputs 采用新副本的项目生效；真实提示遵循未验证。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 
