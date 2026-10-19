@@ -22,7 +22,7 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 F04: 17-item table split into mechanism / root-cause evidence / decision / measured-vs-pending effect; final real-run measurement protocol recorded; Q07 baseline numbers corrected`
+- Current slice: `PR #6 Q07: KU inline delivery measured on the uploaded library; all-or-nothing section selection replaced by longest-fitting section prefix`
 - Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
@@ -48,7 +48,7 @@
 | Q04 | Cross共同快照；同源坐标与路由副本对照 | 回放：测温两行的2.2/2.4路由副本在同一链接 | 关闭；矛盾由Cross按链接判断，不自动判定 | 两侧未判断同时可见 ／ 同对象是否一致表述 |
 | Q05 | 显式判断、正文/行动锚点、最终章observation_links | S06逐字段净负担测量 | 关闭（observation_links保留，scope/basis可选） | Chief/Final module_assessments 31.1k→16.7k（Final另加对象身份6.0k） ／ 定位列表是否有用 |
 | Q06 | 来源归档/定位、规则状态依据传递、Module读取、修订影响 | E3：Task→envelope→工具对照；只有Final无读取器，Q07按职责补身份而非工具 | 关闭可离线部分；不给所有角色加读取器 | — ／ 官方现行性（403阻挡） |
-| Q07 | Skill/知识方法边界、候选回退、完整来源目录；Final `observation_identities` | Final可定位对象记录208→0（S06）→208；三处缺陷规则KU均被所在小节检索命中；提示镜像一致 | 关闭可离线部分 | 同左 ／ 角色选模、蒸馏遵循、语义召回、KU内联或未展开 |
+| Q07 | Skill/知识方法边界、候选回退、完整来源目录；Final `observation_identities`；按小节前缀退让的知识内联 | Final可定位对象记录208→0（S06）→208；三处缺陷规则KU均被所在小节检索命中；上传库38/38本模块KU完整内联，2.4余量约80字，改前超出89字即14→0 | 关闭可离线部分 | 同左；超出目标时2.4为13/14（+89字）、7/14（+4k字） ／ 角色选模、蒸馏遵循、语义召回、`open_reference`调用次数 |
 | F01 | 章节并行拓扑保留 | 活跃时间下限：章节并行110.4分钟，主笔264.0，专题＋主笔156.7–179.6；Cross保本点60.4–167.7分钟，历史最大14.1 | 关闭；不以“只改措辞”跳过局部审查（需新门禁） | 旧编排归档下限 ／ 墙钟、成稿质量 |
 | F02 | 作者同会话随正文提交紧凑判断记录，无独立判断阶段 | 2026-10-15实验：先判断把缺环境温度误判为缺规则 | 关闭 | — ／ 模型是否先判断 |
 | F03 | `run_metrics.py`按阶段统计请求/token/缓存/压缩/活跃并集/等待链；`reporting_critical_path.py`给出结构关键路径 | 历史525请求与分角色活跃时间 | 关闭；最后真实运行按下节口径测量 | 结构串行深度12–14（首读通过为5） ／ 各阶段实际耗时 |
@@ -65,8 +65,16 @@
    - 各模块终稿未判断列表大小、审查blocking/advisory数量。
    - 三处历史缺陷（E-0071、SPD四处NG、测温末两行）在模块正文、Cross、Chief、Final中的表述。只作观察，不据此调提示拟合样例。
    - Final发现是否指名对象。
-5. **知识送达。** 各模块`context/module-*-knowledge.md`中每份来源是完整内联、按小节选取还是“原文未展开”，以及作者`open_reference`调用次数（Q07遗留）。
+5. **知识送达。** 内联状态已用上传库离线测得（Q07）；真实运行只核对`context/module-*-knowledge.md`与离线结果一致，并记录作者`open_reference`调用次数。
 6. **暂缓项。** 本次不包括S03改造和官方标准现行性核验；出现重复可见输出时，按S03记录现场。
+
+### 2026-10-19 — Q07 KU内联实测与按小节前缀退让
+
+- **实测：** 用上传库经`prepare_reporting_references.py`生成副本，`scripts/benchmarks/ku_inline.py`构建2.1–2.5：本模块KU 5/5、7/7、3/3、14/14、9/9完整内联，38个KU都带依据状态与检索主题行；2.4为13,921字，距14k目标约80字。原文不入仓库，[JSON](../research/experiments/2026-10-19-q07-ku-inline.json)只含计数与KU编号。
+- **问题：** 按小节选取是全有或全无。目标调低89字，2.4从14/14变为0/14；调低4k字，2.1、2.5也降为0。
+- **改动：** `KnowledgeContextBuilder._assemble`在整份放不下时，取能放下的最长小节前缀（仍是完整小节），并点名被省略的小节检索词，保留`open_reference`。全部放得下时输出不变：当前库五个模块和质量上下文逐字节一致。内联目标、字段、门禁不变。
+- **效果：** 超出89字/1k/2k/4k时2.4分别为13/12/10/7个KU；4k时2.1、2.5为4/5、8/9（改前均为0）。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q07-指令冲突检索遗漏与final对象身份)。
+- **验证：** Ruff；知识上下文与research ownership定向测试14项通过；未新增测试。
 
 ### 2026-10-19 — F04 逐项收束与真实运行口径
 
@@ -80,7 +88,7 @@
 - **改动：** `final_observation_context`新增运行时派生的`observation_identities`（每个已判断E-ID的subject/observed_at），Final初审、复审和Final修订三处调用传入workspace/run_id；Final审计提示补用途说明。不是模型字段，不含判断，无新门禁。
 - **实验：** `scripts/benchmarks/final_identity.py`（S06合成记录，MiMo分词器）：Final可定位对象的记录208→0（S06）→208；判断相关上下文16.7k→22.7k token，仍低于S06改前实测的31.1k（同批记录按当前序列化补回scope为29.7k）。定位串/事实文字和仅覆盖concern的方案已对比并放弃，理由见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q07-指令冲突检索遗漏与final对象身份)。
 - **核对未发现：** Skill/知识/审查指令优先级一致；生产提示与模板镜像除空行外一致；KU准备脚本给每个KU加本小节检索主题，三处已知缺陷的规则KU都被所在小节命中，不是检索漏召。
-- **待真实运行：** 同一KU文件超过14k字内联目标时整份退为未展开，上传库不在仓库，无法离线测量。
+- **待真实运行：** 同一KU文件超过14k字内联目标时整份退为未展开，上传库不在仓库，无法离线测量（后已用上传库实测并修复，见上一条）。
 - **验证：** Ruff；Final provider/投影/入口/合同/Skill权威相关定向测试40项通过；未新增测试。
 
 ### 2026-10-19 — Q01/Q03/Q04 已知遗漏的首次可见位置
