@@ -71,7 +71,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     WorkflowDecisionSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.cross_owner import (
-    DeclarativeCrossJointAgentResult,
     DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRecheckAgentResult,
@@ -647,10 +646,6 @@ class CrossOwnerAgentInvoker:
 
     @staticmethod
     def _decode_payload(payload: Any, *, output_contract: str) -> dict[str, Any]:
-        if output_contract == "declarative_cross_joint_agent_result":
-            return DeclarativeCrossJointAgentResult(
-                status="completed", submission=payload,
-            ).model_dump(mode="json")
         if output_contract == "declarative_module_review_agent_result":
             return DeclarativeModuleReviewAgentResult(
                 status="completed",
@@ -688,9 +683,9 @@ class CrossOwnerRuntime:
 
     @property
     def joint_tools(self):
-        from .cross_joint import build_joint_tools
+        # The full-text joint Cross pass was replaced by program consolidation.
         from .observation_consolidation import build_observation_consolidation_tools
-        return {**build_joint_tools(self), **build_observation_consolidation_tools(self)}
+        return build_observation_consolidation_tools(self)
 
     def __init__(
         self,
@@ -715,7 +710,6 @@ class CrossOwnerRuntime:
             )
             self.agent_invokers: Mapping[str, Any] = {
                 "cross-module-reviewer": invoker,
-                "cross-relation-reviewer": invoker,
                 "main-agent": invoker,
             }
         else:
