@@ -16,6 +16,7 @@ from .models.agentic import (
     ObservationAssessment,
     PartAssessment,
 )
+from .observation_ledger import ObservationRoute, reference_owners
 from .research.project_evidence import ProjectEvidenceIndex
 from .source_ledger import SourceLedger
 
@@ -24,9 +25,12 @@ def part_assessment(
     workspace: Path, run_id: str, module_id: str, part_id: str, binding: dict,
 ) -> PartAssessment:
     index = ProjectEvidenceIndex(workspace, run_id)
+    # Reference copies of a shared observation are judged by their owner only.
+    references = reference_owners(workspace, run_id)
     part = PartAssessment(
         expected_evidence_ids=(
-            [item.id for item in index.module_items(module_id, {part_id})]
+            [item.id for item in index.module_items(module_id, {part_id})
+             if item.id not in references]
             if index.path.is_file() else None
         ),
         records=binding.get("assessments"),
@@ -198,8 +202,13 @@ def final_observation_context(
 
 def normalize_assessments(
     value: list[dict] | None, evidence_ids: list[str] | None, known_sources: set[str],
+    owners: dict[str, ObservationRoute] | None = None,
 ) -> list[dict] | None:
-    """Use the existing tool's schema/source correction boundary only."""
+    """Use the existing tool's schema/source correction boundary only.
+
+    ``owners`` maps reference copies to the route that judges the shared
+    observation; a second judgment record for a reference is corrected.
+    """
     if value is None:
         return None
     if not isinstance(value, list):
@@ -208,6 +217,15 @@ def normalize_assessments(
     for record in records:
         if set(record.evidence_ids) - set(evidence_ids or []):
             raise ValueError("assessments.evidence_ids must be bound by this part's evidence_ids")
+        for evidence_id in record.evidence_ids:
+            owner = (owners or {}).get(evidence_id)
+            if owner is not None:
+                raise ValueError(
+                    f"assessments.evidence_ids: {evidence_id} 是共享观测的引用副本，"
+                    f"由 {owner.module_id} 的 {owner.submodule_id}（{owner.evidence_id}）负责判断。"
+                    "不要为它提交判断记录；正文可以描述并指向负责小节，但不另下结论。"
+                    "其余记录照常提交。"
+                )
         for rule in record.rules:
             refs = {rule.source_id, rule.status_source_id} - {None}
             if refs - known_sources:

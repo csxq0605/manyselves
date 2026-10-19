@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..models.agentic import SourceKind
 from ..models.reporting import EvidenceItem
+from ..observation_ledger import ObservationRoute, reference_owners
 from ..source_ledger import SourceLedger
 from ..storage import ReportingStore
 from .project_evidence import ProjectEvidenceIndex, project_evidence_locator
@@ -28,6 +30,7 @@ def register_fact_sources(workspace: Path, run_id: str, items: list[EvidenceItem
 
 def render_fact_packet(
     items: list[EvidenceItem], module_id: str, *, submodule_ids: set[str] | None = None,
+    owners: Mapping[str, ObservationRoute] | None = None,
 ) -> str:
     """Share source headers; preserve every record, qualifier and coordinate."""
     groups: dict[tuple[str, str, str | None], list[EvidenceItem]] = {}
@@ -55,6 +58,13 @@ def render_fact_packet(
         "也不能因某条原评语存在便证明其所有延伸推断。不同对象/部位/时点的OK与NG不直接抵消；"
         "同一对象在多模块的记录不重复计作多台设备。",
     ]
+    owners = owners or {}
+    if any(item.id in owners for item in items):
+        lines.append(
+            "附加字段 judged_by=负责小节/负责证据ID：该记录是共享观测的引用副本，由负责小节唯一判断。"
+            "本模块可以描述它并写明“判断见负责小节”，但不另下结论，也不为它提交 assessments 记录；"
+            "未带 judged_by 的记录由本模块负责判断。"
+        )
     if any(item.measurements for item in items):
         lines.append(
             "measurements 按 quantity 区分物理量：measured_temperature=测点温度，ambient_temperature=环境温度，"
@@ -76,6 +86,8 @@ def render_fact_packet(
             })
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id
+            if (owner := owners.get(item.id)) is not None:
+                extra["judged_by"] = f"{owner.submodule_id or owner.module_id}/{owner.evidence_id}"
             lines.append(json.dumps(
                 [item.id, item.submodule_id, item.subject, item.fact, coordinates, extra],
                 ensure_ascii=False, separators=(",", ":"),
@@ -93,7 +105,7 @@ def prepare_module_fact_context(workspace: Path, run_id: str, module_id: str) ->
     index = ProjectEvidenceIndex(workspace, run_id)
     items = index.module_items(module_id)
     register_fact_sources(workspace, run_id, items)
-    text = render_fact_packet(items, module_id)
+    text = render_fact_packet(items, module_id, owners=reference_owners(workspace, run_id))
     if not index.path.is_file():
         text = "规范化证据快照不可用；不能据此认定客户未提供资料。\n" + text
     ref = f"Work/runs/{run_id}/context/module-{module_id}-facts.md"

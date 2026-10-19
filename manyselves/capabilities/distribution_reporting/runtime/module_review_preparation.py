@@ -70,6 +70,7 @@ from manyselves.capabilities.distribution_reporting.runtime.user_supplements imp
 )
 
 from .assessment_context import module_rule_source_refs
+from .observation_ledger import reference_owners
 
 
 def _structure_report(
@@ -169,6 +170,7 @@ def _review_evidence_by_ids(
 ) -> list[ReviewEvidenceExcerpt]:
     ledger = SourceLedger(workspace, run_id)
     records = {record.id: record for record in ledger.records}
+    owners = reference_owners(workspace, run_id)
     packet: list[ReviewEvidenceExcerpt] = []
     for evidence_id in sorted(selected_ids):
         record = records.get(evidence_id)
@@ -184,6 +186,10 @@ def _review_evidence_by_ids(
                     claim.submodule_id for claim in current_claims
                     if evidence_id in claim.source_ids
                 }) if current_claims is not None else None),
+                judged_by=(
+                    f"{owner.submodule_id or owner.module_id}/{owner.evidence_id}"
+                    if (owner := owners.get(evidence_id)) is not None else None
+                ),
                 title=record.title,
                 locator=record.locator,
                 content=(workspace / content_ref).read_text(encoding="utf-8"),
