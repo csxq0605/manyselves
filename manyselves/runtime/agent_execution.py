@@ -67,6 +67,27 @@ class AgentExecutionSession:
     created: bool
 
 
+TURN_STOP_GRACE_SECONDS = 30.0
+
+
+async def _stop_session_turn(loop: Any) -> None:
+    """Cancel a session's in-flight turn and wait briefly for it to settle."""
+
+    cancel_current = getattr(loop, "cancel_current", None)
+    if not callable(cancel_current):
+        return
+    cancel_current()
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(loop.wait_until_turn_complete()),
+            timeout=TURN_STOP_GRACE_SECONDS,
+        )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        # A repeated cancel or a slow Provider must not hold the caller; the
+        # cancel flag already keeps the turn from starting further tools.
+        pass
+
+
 @dataclass(frozen=True)
 class AgentTurnRequest:
     """Generic correlation and content for one AgentLoop turn."""
@@ -359,6 +380,11 @@ class AgentExecutionService:
                 session_id=session.session_id,
                 runtime_id=session.runtime_id,
             )
+        except asyncio.CancelledError:
+            # Nobody will consume this turn any more: stop its model and tool
+            # work before the caller records the cancellation.
+            await _stop_session_turn(session.loop)
+            raise
         finally:
             for _kind, waiter in waiters:
                 if not waiter.done():
