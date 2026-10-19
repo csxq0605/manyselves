@@ -16,6 +16,7 @@ from .base import (
     ProviderRequestDisposition,
     annotate_provider_request_failure,
     build_provider_request_metrics,
+    image_base64,
     infer_provider_request_disposition,
 )
 
@@ -283,6 +284,21 @@ class AnthropicProvider(LLMProvider):
             if msg.cache_control and self._supports_cache_control() and msg.content:
                 content = [{"type": "text", "text": self._safe_text(msg.content),
                             "cache_control": {"type": "ephemeral"}}]
+            if msg.images and msg.role == "user":
+                content = [
+                    *(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image_base64(image),
+                            },
+                        }
+                        for image in msg.images
+                    ),
+                    *self._content_to_blocks(content),
+                ]
             anthropic_messages.append({
                 "role": msg.role,
                 "content": content,

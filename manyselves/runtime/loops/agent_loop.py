@@ -49,6 +49,7 @@ from ..providers.base import (
     LLMProvider,
     LLMToolCall,
     ProviderRequestDisposition,
+    image_inputs,
     provider_request_disposition,
 )
 from ..providers.base import Message as LLMMessage
@@ -508,6 +509,10 @@ def _estimate_text_tokens(text: str) -> int:
     )
 
 
+# Conservative per-image budget estimate; providers bill images after resizing.
+IMAGE_TOKEN_ESTIMATE = 1600
+
+
 def _estimate_tokens(messages: list[LLMMessage]) -> int:
     """Estimated message tokens, plus per-message and per-call overhead."""
     total = 0
@@ -522,6 +527,7 @@ def _estimate_tokens(messages: list[LLMMessage]) -> int:
                     total += _estimate_text_tokens(str(tc.arguments))
         if getattr(m, "thinking", None) and m.thinking:
             total += _estimate_text_tokens(m.thinking)
+        total += IMAGE_TOKEN_ESTIMATE * len(getattr(m, "images", ()) or ())
     return total
 
 
@@ -1675,6 +1681,7 @@ class AgentLoop:
                         else None
                     ),
                     cache_control=bool(value.get("cache_control", False)),
+                    images=image_inputs(value.get("images")),
                 )
             )
         self._conversation_history = restored
@@ -2237,7 +2244,10 @@ class AgentLoop:
                 )
 
             # Add user message to conversation history
-            self._conversation_history.append(LLMMessage(role="user", content=content))
+            self._conversation_history.append(LLMMessage(
+                role="user", content=content,
+                images=image_inputs(getattr(message, "images", ())),
+            ))
 
             # Build messages — system prompt always first, conversation history follows
             context_started = time.perf_counter()
@@ -4087,6 +4097,7 @@ class AgentLoop:
             {
                 "role": message.role,
                 "content": message.content or "",
+                "images": [image.to_json() for image in getattr(message, "images", ())],
                 "tool_call_id": message.tool_call_id,
                 "is_tool_result": bool(message.is_tool_result),
                 "tool_calls": [

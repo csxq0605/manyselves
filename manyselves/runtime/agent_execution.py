@@ -78,6 +78,8 @@ class AgentTurnRequest:
     task_id: str
     task_attempt_id: str
     source: str = "workflow"
+    # Images sent before the text, as {"path": absolute path, "media_type": ...}.
+    images: tuple[dict[str, str], ...] = ()
     internal: bool = False
     provider_stream_idle_timeout_seconds: float | None = None
     turn_kind: Literal[
@@ -333,6 +335,7 @@ class AgentExecutionService:
                     source=request.source,
                     message_id=request.message_id,
                     content=request.content,
+                    images=[dict(image) for image in request.images],
                     internal=request.internal,
                     provider_stream_idle_timeout_seconds=(
                         request.provider_stream_idle_timeout_seconds
