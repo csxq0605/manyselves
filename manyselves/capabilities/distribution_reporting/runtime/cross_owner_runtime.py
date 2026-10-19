@@ -282,7 +282,7 @@ def _input_tokens(contract: CrossOwnerInput) -> int:
     """Estimated tokens of the inline owner input as the reviewer receives it."""
 
     return estimate_text_tokens(
-        json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2)
+        json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
     )
 
 
@@ -808,11 +808,8 @@ class CrossOwnerAgentInvoker:
         sections = [
             agent.instructions,
             f"Task: {task.objective}",
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                indent=2,
-            ),
+            # Compact: indentation of the five-module snapshot cost ~11% tokens.
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
             f"Output contract: {task.output_contract}",
         ]

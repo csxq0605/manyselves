@@ -72,13 +72,18 @@ from .bus import MessageBus
 # Chinese report prose, fact tables and evidence JSON by about 2x against
 # MiMo-V2.5-Pro, Qwen3 and DeepSeek-V3 BPE vocabularies; see
 # scripts/benchmarks/request_token_estimate.py.  These coefficients keep that
-# content within about 10% and err high on ASCII schemas and code.
+# content within about 10% and err high on ASCII schemas and code.  BPE
+# merges a run of whitespace (indentation, blank lines) into about one token,
+# so a run counts once instead of per character; per-character counting made
+# indented JSON about 1.23x its real size.
 _TOKENS_PER_NON_ASCII_CHAR = 0.72
 _TOKENS_PER_ASCII_DIGIT = 1.0
 _TOKENS_PER_ASCII_LETTER = 0.22
 _TOKENS_PER_ASCII_OTHER = 0.5
 _ASCII_DIGITS = b"0123456789"
 _ASCII_LETTERS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_TOKENS_PER_WHITESPACE_RUN = 1.0
+_WHITESPACE_RUN = re.compile(r"[ \t\r\n]{2,}")
 _SAFETY_BUFFER = 1024  # Per-request framing overhead not covered by estimates
 _MAX_PROVIDER_RETRIES = 2
 _RESULT_PART_TOOLS = frozenset({"write_result_part", "write_result_parts"})
@@ -500,12 +505,14 @@ def _estimate_text_tokens(text: str) -> int:
     non_ascii = len(text) - len(ascii_bytes)
     digits = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_DIGITS))
     letters = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_LETTERS))
-    other = len(ascii_bytes) - digits - letters
+    runs = _WHITESPACE_RUN.findall(text)
+    other = len(ascii_bytes) - digits - letters - sum(len(run) for run in runs)
     return int(
         non_ascii * _TOKENS_PER_NON_ASCII_CHAR
         + digits * _TOKENS_PER_ASCII_DIGIT
         + letters * _TOKENS_PER_ASCII_LETTER
         + other * _TOKENS_PER_ASCII_OTHER
+        + len(runs) * _TOKENS_PER_WHITESPACE_RUN
     )
 
 

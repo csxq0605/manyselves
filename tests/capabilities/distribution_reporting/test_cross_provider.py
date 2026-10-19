@@ -982,7 +982,7 @@ async def test_cross_provider_recheck_rebinds_tools_and_terminal_on_same_session
     assert len(built) == 1
     assert len(loops[0].received) == 2
     assert loops[0].received[0].session_id == loops[0].received[1].session_id
-    assert '"phase": "recheck"' in loops[0].contents[1]
+    assert '"phase":"recheck"' in loops[0].contents[1]
     assert loops[0].terminal_task_ids == [
         "cross-owner-2.1-r0-initial",
         "cross-owner-2.1-r1-recheck",
