@@ -177,3 +177,74 @@ actions:
         ToolDefinition,
     )
     assert len(registry.all()) == 8
+
+
+def test_load_capability_adds_shared_library_definitions(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "library/contracts/shared-value.yaml",
+        """\
+id: shared-value
+version: 1.0.0
+description: A shared value
+adapter: json_schema
+schema: {type: object}
+""",
+    )
+    _write(
+        tmp_path,
+        "library/recovery/shared-recovery.yaml",
+        """\
+id: shared-recovery
+version: 1.0.0
+description: Shared recovery
+rules:
+  no_progress: {action: stop}
+""",
+    )
+    _write(
+        tmp_path,
+        "cap/capability.yaml",
+        """\
+id: example
+version: 1.0.0
+description: Uses a library
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+libraries:
+- ../library
+""",
+    )
+    for directory in ("agents", "workflows", "tasks", "contracts", "tools"):
+        (tmp_path / "cap" / directory).mkdir()
+
+    _capability, registry = load_capability(tmp_path / "cap/capability.yaml")
+
+    assert registry.get(DefinitionKind.CONTRACT, "shared-value").id == "shared-value"
+    assert registry.get(DefinitionKind.RECOVERY, "shared-recovery").id == "shared-recovery"
+
+
+def test_load_capability_rejects_a_missing_library(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "capability.yaml",
+        """\
+id: example
+version: 1.0.0
+description: Missing library
+agents: ./a
+workflows: ./a
+tasks: ./a
+contracts: ./a
+tools: ./a
+libraries:
+- ./nowhere
+""",
+    )
+    (tmp_path / "a").mkdir()
+
+    with pytest.raises(ValueError, match="definition library does not exist"):
+        load_capability(tmp_path / "capability.yaml")

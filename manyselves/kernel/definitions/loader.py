@@ -105,8 +105,26 @@ _CAPABILITY_LOCATIONS: tuple[tuple[str, DefinitionKind], ...] = (
 _SUPPORTED_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 
 
+def _definition_paths(location: Path, source: Path) -> list[Path]:
+    if location.is_dir():
+        return sorted(
+            child
+            for child in location.iterdir()
+            if child.is_file() and child.suffix.lower() in _SUPPORTED_SUFFIXES
+        )
+    if location.is_file():
+        return [location]
+    raise DefinitionLoadError(f"{source}: definition location does not exist: {location}")
+
+
 def load_capability(path: Path) -> tuple[CapabilityDefinition, DefinitionRegistry]:
-    """Load a capability entry file and all definition locations it indexes."""
+    """Load a capability entry file and all definition locations it indexes.
+
+    ``libraries`` name shared definition directories, relative to the
+    capability file.  Each library keeps the same kind subdirectories
+    (``contracts/``, ``recovery/``...) and its definitions join the
+    capability registry as if they were the capability's own.
+    """
 
     source = Path(path)
     loaded = load_definition(source, expected_kind=DefinitionKind.CAPABILITY)
@@ -119,20 +137,19 @@ def load_capability(path: Path) -> tuple[CapabilityDefinition, DefinitionRegistr
         configured_location = getattr(loaded, field_name)
         if configured_location is None:
             continue
-        location = root / configured_location
-        if location.is_dir():
-            definition_paths = sorted(
-                child
-                for child in location.iterdir()
-                if child.is_file() and child.suffix.lower() in _SUPPORTED_SUFFIXES
-            )
-        elif location.is_file():
-            definition_paths = [location]
-        else:
-            raise DefinitionLoadError(
-                f"{source}: definition location does not exist: {location}"
-            )
-        for definition_path in definition_paths:
+        for definition_path in _definition_paths(root / configured_location, source):
             registry.register(load_definition(definition_path, expected_kind=kind))
+    for library in loaded.libraries:
+        library_root = (root / library).resolve()
+        if not library_root.is_dir():
+            raise DefinitionLoadError(
+                f"{source}: definition library does not exist: {library_root}"
+            )
+        for directory, kind in _CAPABILITY_LOCATIONS:
+            location = library_root / directory
+            if not location.is_dir():
+                continue
+            for definition_path in _definition_paths(location, source):
+                registry.register(load_definition(definition_path, expected_kind=kind))
     registry.validate_references()
     return loaded, registry

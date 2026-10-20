@@ -8,4 +8,4 @@ output_contract: parameter-input
 constraints:
 - 只改 value 字段，不新增字段。
 tools: []
-recovery: parameter-adjustment-recovery
+recovery: typed-turn-recovery

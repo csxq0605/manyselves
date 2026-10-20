@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.kernel.contracts import build_contract_catalog
+from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import ToolDefinition
 from manyselves.kernel.executors import ActionResult, ExecutorRegistry, RuntimeContext
 from manyselves.kernel.ports import WorkflowStateStore
@@ -457,6 +458,7 @@ class WorkflowRuntimeHost:
                     child_state = WorkflowState.model_validate(saved)
                 else:
                     child_state = WorkflowState.for_plan(state.run_id, child_plan)
+                    child_state.conversations = deepcopy(state.conversations)
                     child_state.variables.update(
                         {
                             child_variable: deepcopy(state.variables[parent_variable])
@@ -499,6 +501,10 @@ class WorkflowRuntimeHost:
         )
         results: dict[str, Any] = {}
         errors: dict[str, str] = {}
+        known_conversations = {
+            _conversation_id(value) for value in state.conversations.values()
+        }
+        conversation_updates: dict[str, ConversationRecord] = {}
         for (key, _item), outcome in zip(items, outcomes, strict=True):
             if isinstance(outcome, asyncio.CancelledError):
                 raise outcome
@@ -515,6 +521,14 @@ class WorkflowRuntimeHost:
                 )
                 continue
             results[key] = deepcopy(outcome.outputs[action.child_output_name])
+            for variable, value in outcome.conversations.items():
+                record = (
+                    value
+                    if isinstance(value, ConversationRecord)
+                    else ConversationRecord.model_validate(value)
+                )
+                if record.conversation_id not in known_conversations:
+                    conversation_updates[f"{action.id}[{key}].{variable}"] = record
             self._emit(
                 "map.item.completed",
                 state,
@@ -533,6 +547,7 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output={"completed": list(results), "failed": list(errors)},
             variable_updates=variable_updates,
+            conversation_updates=conversation_updates,
             map_state_updates={action.id: {}},
         )
 
@@ -750,6 +765,12 @@ class WorkflowRuntimeHost:
                 action_id=event.action_id,
                 data=event.data,
             )
+
+
+def _conversation_id(value: Any) -> str:
+    if isinstance(value, ConversationRecord):
+        return value.conversation_id
+    return ConversationRecord.model_validate(value).conversation_id
 
 
 def _completed_nested_state_snapshot(

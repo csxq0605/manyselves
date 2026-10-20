@@ -8,4 +8,4 @@ output_contract: reading
 constraints:
 - 只概括文件里写了的内容。
 tools: []
-recovery: checklist-review-recovery
+recovery: typed-turn-recovery

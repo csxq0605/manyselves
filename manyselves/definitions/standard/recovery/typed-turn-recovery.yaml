@@ -1,6 +1,6 @@
-id: checklist-review-recovery
+id: typed-turn-recovery
 version: 1.0.0
-description: Correct and continue typed review turns
+description: Default recovery for typed Agent turns (correct, continue, reuse, stop on no progress)
 rules:
   natural_language_without_submission:
     action: correct

@@ -6,8 +6,9 @@ workflows: ./workflows
 tasks: ./tasks
 contracts: ./contracts
 tools: ./tools
-recovery: ./recovery
 outputs: ./outputs
+libraries:
+- ../../definitions/standard
 entrypoints:
 - checklist-review
 runtime: manyselves.capabilities.checklist_review.adapters.runtime:build_runtime_binding

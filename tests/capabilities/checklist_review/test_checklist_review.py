@@ -75,6 +75,41 @@ def _answer(message):
                 }
             ],
         )
+    if '<task id="review-findings">' in content:
+        table = _input_of(content)
+        assert set(table) == {"c1", "c2"}
+        return (
+            "submit",
+            [
+                {
+                    "findings": {
+                        "c1": {
+                            "problem": "依据只写了记录温度，没有引用周期。",
+                            "severity": "blocking",
+                            "suggestion": "引用“每月巡检一次”。",
+                        },
+                        "c2": {
+                            "problem": "说明可以更具体。",
+                            "severity": "minor",
+                            "suggestion": "写明缺的是库存数量。",
+                        },
+                    }
+                }
+            ],
+        )
+    if '<task id="revise-finding">' in content:
+        assert _input_of(content)["severity"] == "blocking"
+        return (
+            "submit",
+            [
+                {
+                    "item_id": "c1",
+                    "verdict": "met",
+                    "evidence": ["每月巡检一次"],
+                    "note": "按复核意见改为引用巡检周期。",
+                }
+            ],
+        )
     return ("say", "still talking")
 
 
@@ -86,7 +121,7 @@ def test_definitions_are_neutral() -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_reads_once_forks_per_item_and_keeps_a_finding_table(
+async def test_review_reads_once_forks_per_item_reviews_and_reworks_in_place(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "docs").mkdir()
@@ -135,15 +170,43 @@ async def test_review_reads_once_forks_per_item_and_keeps_a_finding_table(
     assert [item["verdict"] for item in report["items"]] == ["met", "insufficient", "failed"]
     assert report["items"][2]["note"]
     assert outputs["result"] == report
+    first, second, _third = report["items"]
+    assert first["evidence"] == ["每月巡检一次"]
+    assert first["review"]["reworked"] is True
+    assert second["review"] == {
+        "problem": "说明可以更具体。",
+        "severity": "minor",
+        "suggestion": "写明缺的是库存数量。",
+        "reworked": False,
+    }
 
     reading_loop = loops[0]
     assert len(reading_loop.received) == 1
     assert "停电时由值班人员负责切换备用电源。" in reading_loop.received[0].content
-    item_loops = loops[1:]
-    assert len(item_loops) == 3
-    for loop in item_loops:
-        # Each item conversation starts from the reading conversation.
+    item_loops = loops[1:4]
+    review_loop = loops[4]
+    assert len(loops) == 5
+    for loop in [*item_loops, review_loop]:
+        # Item and review conversations all start from the reading conversation.
         assert loop.restored[0][0].content == reading_loop.received[0].content
+    c1_loop = next(
+        loop for loop in item_loops if _input_of(loop.received[0].content)["id"] == "c1"
+    )
+    # The blocking finding is reworked in the conversation that judged c1.
+    assert ['<task id="revise-finding">' in message.content for message in c1_loop.received] == [
+        False,
+        True,
+    ]
+    for loop in item_loops:
+        if loop is not c1_loop:
+            assert all(
+                '<task id="revise-finding">' not in message.content
+                for message in loop.received
+            )
     state = run["state"]
     assert set(state["variables"]["findings"]) == {"c1", "c2"}
     assert set(state["variables"]["item_errors"]) == {"c3"}
+    assert set(state["variables"]["revised_findings"]) == {"c1"}
+    assert state["variables"]["rework_errors"] == {}
+    # Map children's conversations are kept in the parent state for resume.
+    assert any(name.startswith("check-all[c1].") for name in state["conversations"])

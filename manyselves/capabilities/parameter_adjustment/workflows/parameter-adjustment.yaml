@@ -4,7 +4,7 @@ description: Normalize and raise an integer parameter to at least 10
 tasks:
 - adjust-parameter
 recovery:
-- parameter-adjustment-recovery
+- typed-turn-recovery
 input_contract: parameter-input
 input_variable: parameters
 output_contract: parameter-value

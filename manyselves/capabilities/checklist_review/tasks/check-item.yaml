@@ -12,4 +12,4 @@ constraints:
 - 需要核对原文时可以调用 search-document 按关键词查找。
 tools:
 - search-document
-recovery: checklist-review-recovery
+recovery: typed-turn-recovery

@@ -3,8 +3,9 @@ version: 1.0.0
 description: Read a document once, judge every checklist item, keep a finding table
 tasks:
 - read-document
+- review-findings
 recovery:
-- checklist-review-recovery
+- typed-turn-recovery
 outputs:
 - review-report
 input_contract: review-request
@@ -12,6 +13,7 @@ input_variable: request
 output_contract: review-report
 state:
   findings: {}
+  review_items: {}
 actions:
 - id: load
   kind: invoke_tool
@@ -52,6 +54,46 @@ actions:
   table_variable: findings
   records_variable: item_findings
   record_contract: finding
+- id: open-review
+  kind: fork_conversation
+  source_variable: reading_conversation
+  conversation_key: review
+  mode: run
+  output_variable: review_conversation
+- id: review
+  kind: invoke_agent
+  agent: document-reviewer
+  task: review-findings
+  conversation_variable: review_conversation
+  input_variable: findings
+  output_variable: review
+- id: review-list
+  kind: set_variable
+  variable: review_list
+  value_variable: review
+  field: findings
+- id: record-review
+  kind: upsert_records
+  table_variable: review_items
+  records_variable: review_list
+  record_contract: review-finding
+- id: rework
+  kind: map
+  items_variable: review_items
+  where:
+  - field: severity
+    operator: eq
+    value: blocking
+  workflow: rework-item
+  key_input_variable: item_key
+  output_variable: revised_findings
+  errors_variable: rework_errors
+  max_concurrency: 5
+- id: record-revisions
+  kind: upsert_records
+  table_variable: findings
+  records_variable: revised_findings
+  record_contract: finding
 - id: open-items
   kind: select_records
   table_variable: findings
@@ -69,6 +111,8 @@ actions:
     errors: item_errors
     checklist: checklist
     open_items: open_items
+    review: review_items
+    rework_errors: rework_errors
   output_variable: report
 - id: publish
   kind: publish_result

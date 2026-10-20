@@ -1,8 +1,9 @@
 """Python Tools and runtime binding for the checklist-review Capability.
 
 The Tools are deterministic: read a project text file, search it, and tally
-the findings.  Reading and judging are Agent tasks; ordering, fan-out and the
-finding table are declared in the workflow files.
+the findings.  Reading, judging, review and rework are Agent tasks; ordering,
+fan-out, the finding table and the targeted rework are declared in the
+workflow files.
 """
 
 from __future__ import annotations
@@ -44,6 +45,13 @@ def _read_text(workspace: Path, relative: str) -> str:
     return text
 
 
+def _review_row(finding: dict[str, Any], rework_error: str | None) -> dict[str, Any]:
+    row = {**finding, "reworked": finding["severity"] == "blocking" and not rework_error}
+    if rework_error:
+        row["rework_error"] = rework_error
+    return row
+
+
 def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
     """Bind the Capability Tools to one project workspace."""
 
@@ -64,6 +72,8 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
     def summarize_findings(values: dict[str, Any]) -> dict[str, Any]:
         findings = values["findings"]
         errors = values["errors"]
+        review = values["review"]
+        rework_errors = values["rework_errors"]
         counts = {"met": 0, "not_met": 0, "insufficient": 0, "failed": 0}
         items = []
         for entry in values["checklist"]:
@@ -82,15 +92,18 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
                 )
                 continue
             counts[finding["verdict"]] += 1
-            items.append(
-                {
-                    "item_id": item_id,
-                    "question": entry["question"],
-                    "verdict": finding["verdict"],
-                    "evidence": finding["evidence"],
-                    "note": finding["note"],
-                }
-            )
+            row = {
+                "item_id": item_id,
+                "question": entry["question"],
+                "verdict": finding["verdict"],
+                "evidence": finding["evidence"],
+                "note": finding["note"],
+            }
+            if item_id in review:
+                row["review"] = _review_row(
+                    review[item_id], rework_errors.get(item_id)
+                )
+            items.append(row)
         return {"counts": counts, "open_items": values["open_items"], "items": items}
 
     return {

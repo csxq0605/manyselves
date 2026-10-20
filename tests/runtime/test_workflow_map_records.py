@@ -447,3 +447,124 @@ async def test_set_variable_copies_a_field_of_another_variable(tmp_path: Path) -
     )
 
     assert completed.outputs["result"] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_map_keeps_child_conversations_so_a_later_map_resolves_them(
+    tmp_path: Path,
+) -> None:
+    """Forks made inside a Map survive into the parent state.
+
+    A later Map, run with a fresh conversation registry as after a restart,
+    resolves each item's own conversation by key.
+    """
+
+    registry, contracts = _registry()
+    registry.register(
+        WorkflowDefinition(
+            id="fork-item",
+            version="1.0.0",
+            description="Fork one conversation per item",
+            state={"item": None, "item_key": None, "shared": None},
+            actions=[
+                {
+                    "id": "fork",
+                    "kind": "fork_conversation",
+                    "source_variable": "shared",
+                    "conversation_key": "item-reader",
+                    "key_variable": "item_key",
+                    "output_variable": "conversation",
+                },
+                {"id": "finish", "kind": "end_workflow", "output_variable": "conversation"},
+            ],
+        )
+    )
+    registry.register(
+        WorkflowDefinition(
+            id="resolve-item",
+            version="1.0.0",
+            description="Resolve the item's own conversation",
+            state={"item": None, "item_key": None},
+            actions=[
+                {
+                    "id": "resolve",
+                    "kind": "resolve_conversation",
+                    "agent": "reader",
+                    "conversation_key": "item-reader",
+                    "key_variable": "item_key",
+                    "output_variable": "conversation",
+                },
+                {"id": "finish", "kind": "end_workflow", "output_variable": "conversation"},
+            ],
+        )
+    )
+    first = _compile(
+        registry,
+        WorkflowDefinition(
+            id="fork-parent",
+            version="1.0.0",
+            description="Fork one conversation per item",
+            state={"items": {"p": {"n": 1}, "q": {"n": 2}}},
+            actions=[
+                {
+                    "id": "shared",
+                    "kind": "create_conversation",
+                    "agent": "reader",
+                    "conversation_key": "shared-context",
+                    "output_variable": "shared",
+                },
+                {
+                    "id": "fan-out",
+                    "kind": "map",
+                    "items_variable": "items",
+                    "workflow": "fork-item",
+                    "key_input_variable": "item_key",
+                    "input_variables": {"shared": "shared"},
+                    "output_variable": "forks",
+                },
+                {"id": "finish", "kind": "end_workflow", "output_variable": "forks"},
+            ],
+        ),
+    )
+    host, _store = _host(tmp_path)
+    forked = await host.execute(
+        first,
+        WorkflowState.for_plan("resume-run", first),
+        RuntimeContext(contracts=contracts, definitions=registry),
+    )
+    assert {"fan-out[p].conversation", "fan-out[q].conversation"} <= set(
+        forked.conversations
+    )
+
+    second = _compile(
+        registry,
+        WorkflowDefinition(
+            id="resolve-parent",
+            version="1.0.0",
+            description="Resolve each item's conversation",
+            state={"items": {"p": {"n": 1}, "q": {"n": 2}}},
+            actions=[
+                {
+                    "id": "fan-in",
+                    "kind": "map",
+                    "items_variable": "items",
+                    "workflow": "resolve-item",
+                    "key_input_variable": "item_key",
+                    "output_variable": "resolved",
+                },
+                {"id": "finish", "kind": "end_workflow", "output_variable": "resolved"},
+            ],
+        ),
+    )
+    state = WorkflowState.for_plan("resume-run", second)
+    state.conversations = forked.conversations
+    restarted_host, _restarted_store = _host(tmp_path / "restarted")
+    resolved = await restarted_host.execute(
+        second,
+        state,
+        RuntimeContext(contracts=contracts, definitions=registry),
+    )
+
+    assert {
+        key: value["conversation_id"] for key, value in resolved.outputs["result"].items()
+    } == {key: value["conversation_id"] for key, value in forked.outputs["result"].items()}

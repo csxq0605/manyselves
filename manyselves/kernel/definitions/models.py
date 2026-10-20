@@ -39,9 +39,10 @@ class CapabilityDefinition(DefinitionBase):
     tasks: str
     contracts: str
     tools: str
-    recovery: str
+    recovery: str | None = None
     interactions: str | None = None
     outputs: str | None = None
+    libraries: list[str] = Field(default_factory=list)
     entrypoints: list[str] = Field(default_factory=list)
     runtime: str | None = Field(default=None, min_length=1)
 

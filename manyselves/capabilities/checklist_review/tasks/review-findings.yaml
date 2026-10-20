@@ -1,0 +1,16 @@
+id: review-findings
+version: 1.0.0
+description: Review the whole finding table against the document already read
+agent: document-reviewer
+objective: 下面是逐条核对得到的全部结论。对照前面读过的文件，找出判断有误、依据不对或说明不清的条目。
+input_contract: finding-table
+output_contract: review-findings
+constraints:
+- findings 的键必须是输入里已有的条目 id，每个条目最多写一条意见，同一条目的多个问题合并写。
+- severity 为 blocking 表示结论或依据错了、必须返修；minor 表示表述可以更好但结论不变。
+- problem 写清错在哪，并引用文件原文；suggestion 写应当怎样改。
+- 没有问题的条目不要写；全部没有问题时提交空对象。
+- 需要核对原文时可以调用 search-document 按关键词查找。
+tools:
+- search-document
+recovery: typed-turn-recovery

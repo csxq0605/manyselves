@@ -4,7 +4,7 @@ description: Judge one checklist item in a conversation forked from the reading
 tasks:
 - check-item
 recovery:
-- checklist-review-recovery
+- typed-turn-recovery
 output_contract: finding
 state:
   item: null

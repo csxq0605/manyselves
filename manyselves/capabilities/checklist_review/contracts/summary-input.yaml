@@ -1,12 +1,14 @@
 id: summary-input
 version: 1.0.0
-description: The finding table, item failures and the checklist
+description: The finding table, item failures, review findings and the checklist
 adapter: json_schema
 schema:
   type: object
-  required: [findings, errors, checklist, open_items]
+  required: [findings, errors, checklist, open_items, review, rework_errors]
   properties:
     findings: {type: object}
     errors: {type: object}
     checklist: {type: array}
     open_items: {type: array, items: {type: string}}
+    review: {type: object}
+    rework_errors: {type: object}
