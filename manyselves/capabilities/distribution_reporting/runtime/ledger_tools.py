@@ -25,7 +25,7 @@ from typing import Any
 
 import yaml
 
-from ..domain.calculations import compute, render_calculations
+from ..domain.calculations import compute, render_calculations, render_statistics, statistics
 from ..domain.judgment_ledger import (
     PROBLEM_TABLE_MARKER,
     ChiefAction,
@@ -244,6 +244,7 @@ class LedgerTools:
                 self.workspace, run_id, global_root=self.global_knowledge_root
             )
             calculations, calculation_gaps = compute(items)
+            counted, statistic_lines = statistics(items, start=len(calculations) + 1)
             roles = yaml.safe_load(_ROLES_FILE.read_text(encoding="utf-8"))
             fact_blocks: list[str] = []
             knowledge_blocks: list[str] = []
@@ -298,6 +299,7 @@ class LedgerTools:
                     "# 委托与报告结构\n" + "\n".join(requirements) + "\n\n## 第二章固定小节\n" + structure,
                     *fact_blocks,
                     render_calculations(calculations, calculation_gaps),
+                    render_statistics(statistic_lines),
                     *knowledge_blocks,
                     "# 写作方法与专家版范例\n"
                     + "\n\n".join(
@@ -317,7 +319,16 @@ class LedgerTools:
             for measurement in item.measurements:
                 if measurement.value is not None:
                     known_values.append((float(measurement.value), measurement.unit))
+        calculations = [*calculations, *counted]
         known_values.extend((calc.value, calc.unit) for calc in calculations)
+        subject_values: dict[str, list[tuple[float, str]]] = {}
+        for item in items:
+            pairs = subject_values.setdefault(item.subject, [])
+            if isinstance(item.value, (int, float)) and item.unit:
+                pairs.append((float(item.value), item.unit))
+            pairs.extend(
+                (float(m.value), m.unit) for m in item.measurements if m.value is not None
+            )
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/reference-values.json",
             {
@@ -331,8 +342,12 @@ class LedgerTools:
                     asset["id"]: {"path": asset["path"], "media_type": asset["media_type"]}
                     for asset in (_plain(a) for a in state.get("photo_assets", []))
                 },
+                "evidence_subjects": {item.id: item.subject for item in items},
                 "evidence_photos": {item.id: item.photo_refs for item in items if item.photo_refs},
                 "known_values": sorted({(round(v, 6), u) for v, u in known_values}),
+                "subject_values": {
+                    subject: sorted(set(pairs)) for subject, pairs in subject_values.items() if pairs
+                },
             },
         )
         return {
@@ -369,6 +384,7 @@ class LedgerTools:
                 known_evidence_ids=reference["evidence_ids"],
                 known_photo_ids=reference["photo_ids"],
                 known_calculation_ids=reference["calculation_ids"],
+                evidence_subjects=reference.get("evidence_subjects"),
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         readings = load_photo_readings(self.workspace, run_id)
@@ -558,7 +574,10 @@ class LedgerTools:
                     "owner": module_id,
                     "sections": texts,
                     "program_findings": report_check_findings(
-                        sections=texts, rows_by_submodule=by_submodule, known_values=known
+                        sections=texts,
+                        rows_by_submodule=by_submodule,
+                        known_values=known,
+                        subject_values=reference.get("subject_values"),
                     ),
                 }
             )
@@ -567,12 +586,30 @@ class LedgerTools:
             section_id: chief["chapter1" if section_id.startswith("1.") else "chapter3"][field]
             for section_id, field in CHIEF_SECTIONS.items()
         }
+        # Chapter 1 and 3 count across the whole ledger and their own actions.
+        all_rows = [row for rows in ledger.values() for row in rows]
+        actions = chief["chapter3"].get("actions") or []
+        counts = {
+            float(len(actions)),
+            float(len(chief["chapter1"].get("key_risks") or [])),
+            *(
+                float(len([a for a in actions if a.get("priority") == p]))
+                for p in {a.get("priority") for a in actions}
+            ),
+        }
+        for scope in [all_rows, *ledger.values()]:
+            for disposition in ("concern", "undetermined"):
+                picked = [row for row in scope if row.disposition == disposition]
+                counts.update({float(len(picked)), float(len({row.object for row in picked}))})
         items.append(
             {
                 "owner": CHIEF_OWNER,
                 "sections": chief_texts,
                 "program_findings": report_check_findings(
-                    sections=chief_texts, rows_by_submodule={}, known_values=known
+                    sections=chief_texts,
+                    rows_by_submodule={},
+                    known_values=[*known, *((count, "个") for count in counts)],
+                    subject_values=reference.get("subject_values"),
                 ),
             }
         )

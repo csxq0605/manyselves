@@ -113,8 +113,13 @@ def ledger_findings(
     known_evidence_ids: Iterable[str],
     known_photo_ids: Iterable[str],
     known_calculation_ids: Iterable[str] = (),
+    evidence_subjects: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Return program findings keyed by row id or by the uncovered fact id."""
+    """Return program findings keyed by row id or by the uncovered fact id.
+
+    A concern or undetermined row covers one object: when its facts name
+    several objects it must be split, so counts and groups stay per object.
+    """
 
     submodules = set(submodule_ids)
     evidence = set(known_evidence_ids)
@@ -138,10 +143,18 @@ def ledger_findings(
             problems.append("计算编号不存在：" + "、".join(unknown))
         if not row.evidence_ids and row.disposition != "undetermined":
             problems.append("没有引用任何事实；只有资料缺失的不能判定行可以不引用事实")
+        objects = sorted({
+            evidence_subjects[e] for e in row.evidence_ids if e in (evidence_subjects or {})
+        })
+        if row.disposition in {"concern", "undetermined"} and len(objects) > 1:
+            problems.append(
+                "一行判断写了多个对象（" + "、".join(objects) + "），关注项和不能判定项要一行一个对象"
+            )
         covered.update(row.evidence_ids)
         if problems:
             findings[row.id] = _finding(
-                "；".join(problems), "按事实清单改正编号或小节归属，保持判断本身不变。"
+                "；".join(problems),
+                "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行，判断本身不变。",
             )
     for evidence_id in sorted(set(module_evidence_ids) - covered):
         findings[evidence_id] = _finding(
@@ -393,15 +406,20 @@ def chief_findings(
 
 
 _NUMBER_WITH_UNIT = re.compile(
-    r"(?<![\w.])(\d+(?:\.\d+)?)\s*(kVA|kW|kV|V|A|K|℃|°C|%|Ω|MΩ|mA|Hz)(?![A-Za-z])"
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s*"
+    r"(kVA|kW|kV|V|A|K|℃|°C|%|Ω|MΩ|mA|Hz|倍|×|个|处|台|面|组|只)(?![A-Za-z月小天年周])"
 )
+_UNIT_ALIASES = {"°C": "℃", "×": "倍", "处": "个", "台": "个", "面": "个", "组": "个", "只": "个"}
 
 
 def numbers_with_units(text: str) -> set[tuple[str, str]]:
-    """Numbers written with a unit, as written (so the precision is kept)."""
+    """Numbers written with a unit, as written (so the precision is kept).
+
+    Counts written with 个/处/台/面/组/只 share the unit 个; × is 倍.
+    """
 
     return {
-        (value, "℃" if unit == "°C" else unit)
+        (value, _UNIT_ALIASES.get(unit, unit))
         for value, unit in _NUMBER_WITH_UNIT.findall(text)
     }
 
@@ -421,29 +439,87 @@ def known_values_from_text(texts: Iterable[str]) -> list[tuple[float, str]]:
     ]
 
 
+_SENTENCE = re.compile(r"[^。；;\n]+")
+
+
+def _object_names(subject: str) -> list[str]:
+    parts = [part.strip() for part in subject.split("/") if part.strip()]
+    return list(dict.fromkeys([subject, *parts[1:]]))
+
+
+def _mispaired(
+    text: str, subject_values: Mapping[str, Iterable[tuple[float, str]]]
+) -> list[str]:
+    """Values written next to one object that belong to a different object."""
+
+    values = {
+        subject: {(_UNIT_ALIASES.get(unit, unit), float(value)) for value, unit in pairs}
+        for subject, pairs in subject_values.items()
+    }
+    owners: dict[tuple[str, float], set[str]] = {}
+    for subject, pairs in values.items():
+        for pair in pairs:
+            owners.setdefault(pair, set()).add(subject)
+    problems: list[str] = []
+    for sentence in _SENTENCE.findall(text):
+        named = {
+            subject
+            for subject in values
+            if any(name in sentence for name in _object_names(subject))
+        }
+        if len(named) != 1:
+            continue
+        (subject,) = named
+        written_values = numbers_with_units(sentence)
+        for written, unit in written_values:
+            if sum(1 for _, other in written_values if other == unit) > 1:
+                continue  # a comparison between objects
+            if (unit, float(written)) in values[subject]:
+                continue
+            others = owners.get((unit, float(written)), set())
+            if others and any(u == unit for u, _ in values[subject]):
+                problems.append(
+                    f"{subject} 旁写的 {written}{unit} 是 " + "、".join(sorted(others)) + " 的值"
+                )
+    return problems
+
+
 def report_check_findings(
     *,
     sections: Mapping[str, str],
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
     known_values: Iterable[tuple[float, str]],
+    subject_values: Mapping[str, Iterable[tuple[float, str]]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Program check of the written sections against the ledger and facts.
 
     A number written with a unit must be a fact or calculation value at the
-    written precision (blocking).  A concern row whose object the section
+    written precision; a count (个/处/台…) must be a program count or a count
+    of this section's rows; in a sentence naming exactly one known object, a
+    value must be that object's own value (all blocking).  A concern row whose object the section
     never names is reported as minor, because wording may differ.
     """
 
     known: dict[str, set[float]] = {}
     for value, unit in known_values:
-        known.setdefault("℃" if unit == "°C" else unit, set()).add(float(value))
+        known.setdefault(_UNIT_ALIASES.get(unit, unit), set()).add(float(value))
     findings: dict[str, dict[str, str]] = {}
     for section_id, text in sections.items():
+        rows = rows_by_submodule.get(section_id, ())
+        local = {unit: set(values) for unit, values in known.items()}
+        # A count of this section's own rows is also a known count.
+        counts = local.setdefault("个", set())
+        for disposition in ("concern", "undetermined", "no_concern", "not_applicable"):
+            counts.add(float(len({r.object for r in rows if r.disposition == disposition})))
+        counts.add(float(len({r.object for r in rows})))
         unknown = sorted(
             f"{value}{unit}"
             for value, unit in numbers_with_units(text)
-            if not _matches_known(value, unit, known)
+            if not _matches_known(value, unit, local)
         )
+        mispaired = _mispaired(text, subject_values or {})
+        if mispaired:
+            unknown.extend(mispaired)
         missing = [
             row.id
             for row in rows_by_submodule.get(section_id, ())
@@ -451,8 +527,8 @@ def report_check_findings(
         ]
         if unknown:
             findings[section_id] = _finding(
-                "正文中的数值在事实和计算结果里找不到：" + "、".join(unknown),
-                "数值改为事实或计算结果里的值，或删去没有依据的数值。",
+                "正文中的数值或数量对不上事实、程序统计或本节判断行：" + "、".join(unknown),
+                "数值、数量和对象—数值配对改为事实或程序统计里的值，或删去没有依据的数值。",
             )
         elif missing:
             findings[section_id] = _finding(
