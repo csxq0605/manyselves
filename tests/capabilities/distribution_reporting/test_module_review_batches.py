@@ -487,3 +487,30 @@ def test_revision_prompt_carries_only_target_submodules(tmp_path: Path) -> None:
     assert context.revision.prepared.subject_ref in prompt
     for untouched in order[1:]:
         assert f"NARRATIVE-{untouched}" not in prompt
+
+
+def test_bound_module_runtime_owns_the_review_and_recheck_tools(tmp_path: Path) -> None:
+    """The production tool map must use the module runtime's budget-aware tools."""
+    class _ModuleRuntime:
+        def prepare_review_lane(self, value):  # pragma: no cover - identity only
+            return value
+
+        def prepare_recheck_lane(self, value):  # pragma: no cover - identity only
+            return value
+
+        def list_review_batches(self, value):  # pragma: no cover - identity only
+            return value
+
+    module_runtime = _ModuleRuntime()
+    runtime = PublicReportingWorkflowRuntime(
+        tmp_path, input_snapshot=None, snapshot_content=None, runtime_photo_ids=None,
+        module_runtime=module_runtime,
+    )
+    implementations = runtime._tool_implementations(ReportingStore(tmp_path))
+
+    assert implementations["prepare-current-module-review"] == module_runtime.prepare_review_lane
+    assert implementations["prepare-current-module-recheck"] == module_runtime.prepare_recheck_lane
+    assert (
+        implementations["list-current-module-review-batches"]
+        == module_runtime.list_review_batches
+    )

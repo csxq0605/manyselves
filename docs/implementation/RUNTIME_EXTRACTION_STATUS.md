@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-20 请求上限改由模型声明决定（窗口、输出、压缩点、分批触发；账本记录思考量）`
+- Current slice: `2026-10-20 第 6 次真跑后的交付文件修复（A 组）与审查分批接线（C1）`
 - Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 本地已提交，待用户同意后推送。用户在 Mac 配置中为 DeepSeek 声明 `context_window`/`max_output_tokens`，并删掉网页保存的 `max_tokens: 8192` 和 `working_memory_tokens: 72000`，然后真跑一次完整报告，用账本的思考字段核对第 5 次的推断。未做：revise-report 仍走旧的分模块 Cross；Cross 结构取舍待用户决定；未关闭问题未写入 DOCX；设置页尚无上限表单。
+- Next automatic action: A 组与 C1 本地已提交，待用户同意后推送。B/C 组（审查与 Cross 的组织方式、报告长度）先写设计稿给用户确认，确认后再改代码，然后合并做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+
+### 2026-10-20 第 6 次真跑（Mac，@`b12843c`）与 A 组/C1 修复
+
+- 第 6 次全链路跑通：83.6 分钟、584 次请求、约 ¥35.4；写满输出 0 次、压缩 0 次。复盘见项目文件 `handoff/run6-review-20261020.md`。
+- Word 报"无法读取的内容"的原因：静态目录化后残留孤立的域结束标记；无扩展名照片被 python-docx 存成 `imageN.`（非法部件名）。"是否更新域"提示来自 `updateFields`。另有未引用的模板图片留在包内。
+- 修复（`v2_docx_renderer.py`）：目录区去掉全部域标记，条目只按正文实际的 1–3 级标题生成、不带页码（第 4 章只在输入有专项问题分析时出现）；不再写 `updateFields`；删除未引用的图片关系；无扩展名照片以内存流嵌入以得到正确扩展名，压缩失败写日志。测试 `test_report_docx_package.py`。
+- C1：`public_reporting._tools` 先注册仅存储版的模块 lane 工具，再由绑定的模块运行时覆盖，使审查/复核分批使用请求预算（原先顺序相反，预算退回 128k，2.4 仍分 2 批）。测试 `test_bound_module_runtime_owns_the_review_and_recheck_tools`，旧顺序下失败。
 
 ### 2026-10-19 PR #7 审计更正（用户审计 `76c5637`）
 

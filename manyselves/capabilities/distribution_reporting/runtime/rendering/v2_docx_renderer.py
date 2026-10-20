@@ -12,10 +12,12 @@ from typing import Any
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT, WD_TAB_LEADER
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
+from docx.text.paragraph import Paragraph
+from loguru import logger
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 
@@ -180,50 +182,6 @@ EXPANDABLE_LABELS = (
     "建议",
     "后续建议",
 )
-TOC_PAGE_HINTS = {
-    "1": "4",
-    "1.1": "4",
-    "1.2": "4",
-    "1.3": "5",
-    "2": "6",
-    "2.1": "6",
-    "2.1.1": "6",
-    "2.1.2": "8",
-    "2.1.3": "9",
-    "2.1.4": "10",
-    "2.1.5": "10",
-    "2.2": "11",
-    "2.2.1": "11",
-    "2.2.2": "14",
-    "2.3": "20",
-    "2.3.1": "20",
-    "2.3.2": "21",
-    "2.3.3": "22",
-    "2.4": "24",
-    "2.4.1": "24",
-    "2.4.2": "25",
-    "2.4.3": "29",
-    "2.4.4": "32",
-    "2.5": "33",
-    "2.5.1": "33",
-    "2.5.2": "33",
-    "2.5.3": "33",
-    "2.5.4": "38",
-    "2.5.5": "38",
-    "2.5.6": "39",
-    "2.5.7": "39",
-    "3": "40",
-    "3.1": "40",
-    "3.1.1": "40",
-    "3.1.2": "40",
-    "3.1.3": "41",
-    "3.2": "42",
-    "4": "43",
-    "4.1": "43",
-    "4.2": "45",
-    "4.3": "47",
-    "4.4": "49",
-}
 
 
 def parse_json_object(value: Any) -> dict[str, Any]:
@@ -362,7 +320,7 @@ def render_report_docx(
             normalize_static_toc(document)
             enforce_all_table_styles(document)
             compact_report_flow(document)
-            mark_fields_for_update(document)
+            drop_unreferenced_images(document)
         else:
             document = Document()
             configure_styles(document)
@@ -1069,8 +1027,64 @@ def remove_unused_template_paragraphs(paragraphs: list) -> None:
             parent.remove(element)
 
 
+def drop_unreferenced_images(document: Document) -> None:
+    """Remove template images the generated body no longer shows.
+
+    The body is rewritten from the template, but the template's image
+    relationships stay on the document part, and the package keeps every
+    part a relationship points to.
+    """
+
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    part = document.part
+    referenced = {
+        str(value)
+        for value in part.element.xpath("//@r:embed | //@r:link | //@r:id")
+    }
+    for r_id, relationship in list(part.rels.items()):
+        if relationship.reltype == RT.IMAGE and r_id not in referenced:
+            del part.rels[r_id]
+
+
+def body_toc_entries(document: Document) -> list[tuple[str, str, int]]:
+    """Numbered headings (level 1-3) the generated body actually contains."""
+
+    content_start = find_content_start_paragraph_index(document)
+    if content_start is None:
+        return []
+    entries: list[tuple[str, str, int]] = []
+    for paragraph in document.paragraphs[content_start:]:
+        style_name = paragraph.style.name if paragraph.style is not None else ""
+        match = re.match(r"^Heading ([1-3])$", style_name)
+        if match is None:
+            continue
+        heading = re.match(r"^(\d+(?:\.\d+)*)\.?\s*(.+?)\s*$", clean_inline_marks(paragraph.text))
+        if heading is None:
+            continue
+        entries.append((heading.group(1), heading.group(2), int(match.group(1))))
+    return entries
+
+
+def _remove_field_runs(paragraph) -> None:
+    """Drop field markers and instructions so no field is left half-open."""
+
+    element = paragraph._element
+    for node in list(element.iter(qn("w:fldChar"), qn("w:instrText"))):
+        run = node.getparent()
+        if run is not None and run.getparent() is not None:
+            run.getparent().remove(run)
+
+
 def normalize_static_toc(document: Document) -> None:
-    """Rewrite the visible TOC lines to match the generated fixed report outline."""
+    """Rewrite the template TOC as plain lines for the headings the body has.
+
+    The template TOC is one Word field spanning many paragraphs.  Its lines
+    are replaced by static text, so every field marker in the TOC region is
+    removed; a leftover begin or end makes Word report unreadable content.
+    The template's page numbers are not kept: they belong to the exemplar,
+    not to this report.
+    """
     title_index = next(
         (
             index
@@ -1079,6 +1093,7 @@ def normalize_static_toc(document: Document) -> None:
         ),
         -1,
     )
+    content_start = find_content_start_paragraph_index(document)
     if title_index >= 0:
         title_paragraph = document.paragraphs[title_index]
         title_paragraph.style = "Normal"
@@ -1088,25 +1103,27 @@ def normalize_static_toc(document: Document) -> None:
         for run in title_paragraph.runs:
             run.bold = True
             run.font.size = Pt(14)
+    region_end = content_start if content_start is not None else len(document.paragraphs)
+    for paragraph in document.paragraphs[title_index + 1:region_end]:
+        _remove_field_runs(paragraph)
     toc_paragraphs = [
         paragraph
         for index, paragraph in enumerate(document.paragraphs)
         if index > title_index
+        and index < region_end
         and paragraph.style is not None
         and paragraph.style.name.startswith("toc ")
         and normalize_heading_title(paragraph.text)
     ]
-    entries = [
-        (number, title, level)
-        for number, title, level in HEADINGS
-        if level <= 3
-    ]
-    if len(toc_paragraphs) < len(entries):
-        content_start = find_content_start_paragraph_index(document)
-        if content_start is not None:
-            anchor = document.paragraphs[content_start]
-            for _ in range(len(entries) - len(toc_paragraphs)):
-                toc_paragraphs.append(anchor.insert_paragraph_before())
+    entries = body_toc_entries(document)
+    if toc_paragraphs:
+        # New lines go right after the last template line, before the
+        # page break that ends the TOC page.
+        while len(toc_paragraphs) < len(entries):
+            anchor = toc_paragraphs[-1]
+            new_element = OxmlElement("w:p")
+            anchor._element.addnext(new_element)
+            toc_paragraphs.append(Paragraph(new_element, anchor._parent))
     for paragraph, (number, title, level) in zip(toc_paragraphs, entries):
         paragraph.clear()
         paragraph.style = "Normal"
@@ -1118,19 +1135,13 @@ def normalize_static_toc(document: Document) -> None:
         pf.first_line_indent = None
         pf.space_after = Pt(2)
         pf.line_spacing = 1.1
-        try:
-            pf.tab_stops.clear_all()
-            pf.tab_stops.add_tab_stop(Cm(15.2), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
-        except Exception:
-            pass
         paragraph.add_run(f"{number}. {title}")
-        paragraph.add_run().add_tab()
-        paragraph.add_run(TOC_PAGE_HINTS.get(number, ""))
     for paragraph in toc_paragraphs[len(entries):]:
         element = paragraph._element
         parent = element.getparent()
         if parent is not None:
             parent.remove(element)
+
 
 
 def paragraph_has_section_properties(paragraph) -> bool:
@@ -1890,6 +1901,7 @@ def mark_report_photo_inserted() -> None:
 
 def compressed_photo_path(path: Path) -> Path:
     if Image is None or ImageOps is None:
+        logger.warning("Pillow is unavailable; report photos are embedded uncompressed")
         return path
     try:
         stat = path.stat()
@@ -1923,9 +1935,25 @@ def compressed_photo_path(path: Path) -> Path:
             elif image.mode != "RGB":
                 image = image.convert("RGB")
             image.save(cached, format="JPEG", quality=PHOTO_JPEG_QUALITY, optimize=True)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Report photo was not compressed and is embedded as-is: {}: {}", path.name, exc)
         return path
     return cached if cached.exists() and cached.stat().st_size > 0 else path
+
+
+def photo_source(path: Path) -> str | io.BytesIO:
+    """The photo to embed, always under a part name with its real extension.
+
+    Photos extracted from workbooks are often stored without an extension.
+    python-docx names the image part after the file's extension, so such a
+    file would become ``image7.``, which Word rejects.  A stream makes
+    python-docx name the part from the detected image format instead.
+    """
+
+    source = compressed_photo_path(path)
+    if source.suffix:
+        return str(source)
+    return io.BytesIO(source.read_bytes())
 
 
 def write_photo_cell(cell, payload: dict[str, Any]) -> None:
@@ -1957,7 +1985,7 @@ def write_photo_cell(cell, payload: dict[str, Any]) -> None:
             if cell_width:
                 width_cm = min(width_cm, max(cell_width - 0.2, 0.8))
             run.add_picture(
-                str(compressed_photo_path(path)),
+                photo_source(path),
                 **photo_fit_dimensions(path, width_cm, height_cm),
             )
             inserted = True
@@ -2448,15 +2476,6 @@ def remove_body_tables_after_start(document: Document, start_paragraph_index: in
     for table in list(document.tables):
         if list(body).index(table._element) > start_body_index:
             table._element.getparent().remove(table._element)
-
-
-def mark_fields_for_update(document: Document) -> None:
-    settings = document.settings._element
-    update_fields = settings.find(qn("w:updateFields"))
-    if update_fields is None:
-        update_fields = OxmlElement("w:updateFields")
-        settings.append(update_fields)
-    update_fields.set(qn("w:val"), "true")
 
 
 def compact_report_flow(document: Document) -> None:
