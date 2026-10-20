@@ -1,0 +1,11 @@
+id: search-document
+version: 1.0.0
+description: Find the lines of a project document that contain a keyword
+instructions: path 填文件路径（与输入里的 path 相同），query 填要找的关键词。返回含关键词的行号和原文。
+implementation: capability:checklist-review:search-document
+input_contract: search-query
+output_contract: search-matches
+side_effect: pure_read
+parallel_safe: true
+reuse_result: true
+model_visible: true

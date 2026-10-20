@@ -1,0 +1,31 @@
+id: check-item
+version: 1.0.0
+description: Judge one checklist item in a conversation forked from the reading
+tasks:
+- check-item
+recovery:
+- checklist-review-recovery
+output_contract: finding
+state:
+  item: null
+  item_key: null
+  reading_conversation: null
+actions:
+- id: fork-reading
+  kind: fork_conversation
+  source_variable: reading_conversation
+  conversation_key: check
+  key_variable: item_key
+  mode: run
+  output_variable: check_conversation
+- id: judge
+  kind: invoke_agent
+  agent: document-reviewer
+  task: check-item
+  conversation_variable: check_conversation
+  input_variable: item
+  output_variable: finding
+- id: finish
+  kind: end_workflow
+  output_variable: finding
+  output_name: result

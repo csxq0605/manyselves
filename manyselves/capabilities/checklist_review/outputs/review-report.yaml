@@ -1,0 +1,6 @@
+id: review-report
+version: 1.0.0
+description: Checklist review result
+output_type: value
+contract: review-report
+label: Checklist review

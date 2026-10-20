@@ -1,0 +1,502 @@
+"""Generic Agent invoker driven only by file definitions.
+
+One invoker serves every Agent of one Run.  It turns an ``invoke_agent``
+action into one typed turn on a Provider-backed AgentLoop:
+
+- the Agent definition supplies the system prompt; the Task supplies the
+  objective, constraints, model-visible Tools and output contract;
+- ``submit_result`` validates the result against the output contract and asks
+  for a correction in the same conversation when it does not match;
+- declared recovery covers natural language without a submission, max-token
+  and tool-slice continuations, and no-progress stops;
+- a completed result for the same conversation, task and input is reused on a
+  Same-run resume, and Capability Tool results are reused per their definition;
+- each conversation keeps one live session, its full history is saved after
+  every invocation, and a forked conversation starts from its source's history.
+
+Nothing here knows a Capability, a role, or a domain field.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any, Literal
+
+from manyselves.kernel.contracts import ContractAdapter
+from manyselves.kernel.conversations import ConversationRecord
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    DefinitionKind,
+    DefinitionRegistry,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+    ToolDefinition,
+)
+from manyselves.kernel.ports import AgentInvocationOutcome
+from manyselves.kernel.recovery import RecoveryEventKind
+
+from .agent_execution import (
+    AgentExecutionService,
+    AgentSessionLoop,
+    AgentSessionRestore,
+    AgentTurnRequest,
+)
+from .agent_recovery import AgentRecoveryDriver
+from .agent_results import FileAgentResultStore
+from .conversation_history import FileConversationHistoryStore
+from .provider_agent_session import ProviderAgentSessionFactory
+from .tools.definition_tool import DefinitionTool
+from .tools.registry import ToolRegistry
+from .tools.submit_result import SubmitResultTool
+from .typed_agent_turn import TypedAgentTurn
+from .typed_recovery import build_tool_recovery_callback, execute_typed_recovery
+
+LoopBuilder = Callable[..., AgentSessionLoop]
+ToolAdapterFactory = Callable[[ToolDefinition], Any]
+
+_CORRECTION_TAG = "submission_correction"
+_MAX_TOKENS_TAG = "max_tokens_continuation"
+_TOOL_SLICE_TAG = "tool_slice_continuation"
+_INTERNAL_TAGS = (_CORRECTION_TAG, _MAX_TOKENS_TAG, _TOOL_SLICE_TAG)
+
+
+def _default_loop_builder(**kwargs: Any) -> AgentSessionLoop:
+    from .loops.agent_loop import AgentLoop
+
+    return AgentLoop(**kwargs)
+
+
+class DefinitionAgentInvoker:
+    """Invoke any file-defined Agent task through one Provider-backed session."""
+
+    def __init__(
+        self,
+        services: Any,
+        *,
+        workflow_id: str,
+        run_id: str,
+        definitions: DefinitionRegistry,
+        contracts: Mapping[str, ContractAdapter],
+        tool_factory: ToolAdapterFactory | None = None,
+        execution: AgentExecutionService | None = None,
+        loop_builder: LoopBuilder = _default_loop_builder,
+    ) -> None:
+        if services.workspace is None:
+            raise ValueError("the Agent invoker requires a workspace")
+        self.services = services
+        self.workspace = Path(services.workspace).resolve()
+        self.workflow_id = workflow_id
+        self.run_id = run_id
+        self.definitions = definitions
+        self.contracts = contracts
+        self.tool_factory = tool_factory
+        self.execution = execution or AgentExecutionService(services.bus)
+        self.loop_builder = loop_builder
+        self.results = FileAgentResultStore(self.workspace, run_id)
+        self.histories = FileConversationHistoryStore(self.workspace, run_id)
+
+    async def close(self) -> None:
+        await self.execution.close_workflow(self.workflow_id)
+
+    async def invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent, task, value, conversation, task_id=task_id, recovery_policy=None
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        input_value = _json_value(value)
+        output_contract = self.contracts[task.output_contract]
+        recovery = (
+            AgentRecoveryDriver(recovery_policy) if recovery_policy is not None else None
+        )
+        conversation_id = conversation.conversation_id
+        completed = self.results.completed_for(
+            conversation_id=conversation_id,
+            task_id=task_id,
+            input_value=input_value,
+        )
+        if completed is not None:
+            return await self._reuse(
+                completed, output_contract, task, recovery, conversation
+            )
+
+        runtime_id = f"{self.workflow_id}:{agent.id}:{conversation_id}"
+        session_id = conversation.external_session_id or (
+            f"{self.workflow_id}:{conversation_id}"
+        )
+        attempt_id = f"{task_id}@{conversation_id}"
+        tools = self._tools(
+            agent=agent,
+            task=task,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            runtime_id=runtime_id,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            input_value=input_value,
+            output_contract=output_contract,
+            recovery=recovery,
+        )
+        factory = ProviderAgentSessionFactory(
+            loop_builder=self.loop_builder,
+            loop_kwargs={
+                "agent_type": runtime_id,
+                "workspace": self.workspace,
+                "tools": tools,
+                "bus": self.services.bus,
+                "config": self.services.agent_defaults,
+                "llm_provider": self.services.active_provider,
+                "system_prompt": agent.instructions,
+                "usage_run_id": self.run_id,
+                "usage_task_id": f"{task.id}:{conversation.key.value}",
+            },
+            persist_handoff_summary=False,
+        )
+        existing = self.execution.session(self.workflow_id, conversation_id)
+        restore = None
+        if existing is not None:
+            factory.reconfigure(existing.loop)
+        else:
+            restore = self._restore(conversation)
+        turn = TypedAgentTurn(
+            execution=self.execution,
+            workflow_id=self.workflow_id,
+            conversation_key=conversation_id,
+            runtime_id=runtime_id,
+            session_id=session_id,
+            session_factory=factory,
+        )
+        try:
+            session = await turn.start_or_restore(restore=restore)
+        except Exception as exc:
+            return AgentInvocationOutcome(
+                status="failed",
+                session_id=conversation.external_session_id,
+                error=str(exc),
+            )
+        conversation.external_session_id = session.session_id
+        begin_typed_task = getattr(session.loop, "begin_typed_task", None)
+        if callable(begin_typed_task):
+            begin_typed_task(
+                {
+                    "task_id": f"{task_id}:{task.id}",
+                    "run_id": self.run_id,
+                    "input_contract": task.input_contract,
+                    "output_contract": task.output_contract,
+                }
+            )
+        request = AgentTurnRequest(
+            content=self._prompt(task, input_value, tools),
+            message_id=f"{attempt_id}:initial",
+            workflow_id=self.workflow_id,
+            run_id=self.run_id,
+            task_id=task_id,
+            task_attempt_id=attempt_id,
+            turn_kind="task_initial",
+        )
+        terminal = turn.result_terminal(
+            run_id=self.run_id,
+            task_id=task_id,
+            task_attempt_id=attempt_id,
+            session_id=session.session_id,
+        )
+
+        def decode(result_ref: str) -> Any:
+            return self._decode(result_ref, output_contract)
+
+        try:
+            if recovery_policy is None:
+                outcome = await turn.dispatch(session, request, terminals=(terminal,))
+                mapped = TypedAgentTurn.map_outcome(
+                    outcome, session_id=session.session_id, decode_result=decode
+                )
+            else:
+                recovered = await execute_typed_recovery(
+                    self.execution,
+                    session,
+                    request,
+                    recovery_policy=recovery_policy,
+                    terminals=(terminal,),
+                    prompt_builder=lambda event: self._recovery_prompt(
+                        event, agent, task
+                    ),
+                    result_decoder=decode,
+                    recovery=recovery,
+                    progress_observer=_ProgressObserver(session.loop),
+                )
+                mapped = (
+                    recovered
+                    if isinstance(recovered, AgentInvocationOutcome)
+                    else AgentInvocationOutcome(
+                        status="ok", result=recovered, session_id=session.session_id
+                    )
+                )
+        finally:
+            self._save_history(conversation_id, session.loop)
+        if mapped.status != "ok":
+            reason = self._failure_reason(conversation_id, task_id)
+            if reason:
+                mapped = mapped.model_copy(update={"error": reason})
+        return mapped
+
+    async def _reuse(
+        self,
+        completed: Mapping[str, Any],
+        output_contract: ContractAdapter,
+        task: TaskDefinition,
+        recovery: AgentRecoveryDriver | None,
+        conversation: ConversationRecord,
+    ) -> AgentInvocationOutcome:
+        result = _json_value(output_contract.validate(completed["result"]))
+
+        async def reuse(_directive: Any) -> AgentInvocationOutcome:
+            return AgentInvocationOutcome(
+                status="ok",
+                result=result,
+                session_id=conversation.external_session_id,
+            )
+
+        async def stop(directive: Any) -> AgentInvocationOutcome:
+            return AgentInvocationOutcome(
+                status="incomplete",
+                session_id=conversation.external_session_id,
+                error=getattr(directive, "reason", None)
+                or "completed result recovery stopped",
+            )
+
+        if recovery is None:
+            return await reuse(None)
+        return await self.execution.recover_completed_result(
+            recovery=recovery,
+            detail={"task_id": task.id, "source": "persisted_result"},
+            reuse_result=reuse,
+            stop=stop,
+        )
+
+    def _tools(
+        self,
+        *,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        task_id: str,
+        attempt_id: str,
+        runtime_id: str,
+        session_id: str,
+        conversation_id: str,
+        input_value: Any,
+        output_contract: ContractAdapter,
+        recovery: AgentRecoveryDriver | None,
+    ) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register(
+            SubmitResultTool(
+                sender=runtime_id,
+                workflow_id=self.workflow_id,
+                run_id=self.run_id,
+                task_id=task_id,
+                task_attempt_id=attempt_id,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                agent_id=agent.id,
+                input_value=input_value,
+                output_contract_id=task.output_contract,
+                output_contract=output_contract,
+                store=self.results,
+                bus=self.services.bus,
+                recovery_callback=(
+                    build_tool_recovery_callback(recovery) if recovery is not None else None
+                ),
+            )
+        )
+        for tool_id in task.tools:
+            definition = self.definitions.require(DefinitionKind.TOOL, tool_id)
+            if not isinstance(definition, ToolDefinition):
+                raise TypeError(f"definition is not a tool: {tool_id}")
+            if self.tool_factory is None:
+                raise ValueError(f"no tool implementations are bound for {tool_id}")
+            registry.register(
+                DefinitionTool(
+                    definition,
+                    self.tool_factory(definition),
+                    task_id=f"{task_id}@{conversation_id}",
+                )
+            )
+        return registry
+
+    def _restore(self, conversation: ConversationRecord) -> AgentSessionRestore | None:
+        own = self.histories.load(conversation.conversation_id)
+        if own is not None:
+            return AgentSessionRestore(messages=own)
+        source_id = conversation.forked_from
+        if source_id is None:
+            return None
+        source = self.execution.session(self.workflow_id, source_id)
+        messages = getattr(source.loop, "conversation_messages", None) if source else None
+        if callable(messages):
+            return AgentSessionRestore(messages=messages())
+        persisted = self.histories.load(source_id)
+        if persisted is not None:
+            return AgentSessionRestore(messages=persisted)
+        return None
+
+    def _save_history(self, conversation_id: str, loop: AgentSessionLoop) -> None:
+        messages = getattr(loop, "conversation_messages", None)
+        if callable(messages):
+            self.histories.save(conversation_id, messages())
+
+    def _decode(self, result_ref: str, output_contract: ContractAdapter) -> Any:
+        payload = self.results.load(result_ref)
+        if payload.get("status") != "completed":
+            raise ValueError(payload.get("reason") or "Agent result is not completed")
+        return _json_value(output_contract.validate(payload.get("result")))
+
+    def _failure_reason(self, conversation_id: str, task_id: str) -> str | None:
+        path = self.results.path(conversation_id, task_id)
+        if not path.is_file():
+            return None
+        try:
+            payload = self.results.load(str(path))
+        except (OSError, ValueError):
+            return None
+        if payload.get("status") == "completed":
+            return None
+        return payload.get("reason")
+
+    @staticmethod
+    def _prompt(task: TaskDefinition, input_value: Any, tools: ToolRegistry) -> str:
+        parts = [f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>"]
+        if task.constraints:
+            parts.append(
+                "<constraints>\n"
+                + "\n".join(f"- {item}" for item in task.constraints)
+                + "\n</constraints>"
+            )
+        parts.append(
+            f"<input contract=\"{task.input_contract}\">\n"
+            + json.dumps(input_value, ensure_ascii=False, indent=2)
+            + "\n</input>"
+        )
+        other_tools = [name for name in tools.get_all() if name != "submit_result"]
+        if other_tools:
+            parts.append("可用工具：" + "、".join(other_tools) + "。")
+        parts.append(
+            f"完成后调用 submit_result 提交 {task.output_contract}；"
+            "参数直接按 schema 填写。资料不足时如实写明，不要编造。"
+        )
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _recovery_prompt(
+        event: RecoveryEventKind,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+    ) -> str:
+        if event is RecoveryEventKind.MAX_TOKENS:
+            tag = _MAX_TOKENS_TAG
+            body = (
+                "上一轮输出达到单次输出上限，任务尚未完成。继续使用当前会话，"
+                "不要从头重复已经完成的内容。"
+            )
+        elif event is RecoveryEventKind.TOOL_SLICE_BOUNDARY:
+            tag = _TOOL_SLICE_TAG
+            body = (
+                "上一轮达到工具执行片段边界，已完成的工具结果都已保留。"
+                "只继续尚未完成的部分，不要重跑已完成的工具。"
+            )
+        else:
+            tag = _CORRECTION_TAG
+            body = "上一轮只返回了自然语言，没有提交结构化结果。不要重复已经完成的分析。"
+        return (
+            f"<{tag}>\n{body}\n你仍是 {agent.id}，当前任务是 {task.id}。"
+            f"完成后立即调用 submit_result 提交 {task.output_contract}。\n</{tag}>"
+        )
+
+
+class _ProgressObserver:
+    """Report progress when the conversation gained new model or tool events."""
+
+    def __init__(self, loop: AgentSessionLoop) -> None:
+        self._seen = _event_digests(loop)
+
+    async def __call__(
+        self,
+        loop: AgentSessionLoop,
+        _event_kind: RecoveryEventKind,
+        _detail: dict[str, Any],
+    ) -> Literal["progressed", "no_progress"]:
+        current = _event_digests(loop)
+        progressed = bool(current - self._seen)
+        self._seen |= current
+        return "progressed" if progressed else "no_progress"
+
+
+def _event_digests(loop: AgentSessionLoop) -> set[str]:
+    messages = getattr(loop, "conversation_messages", None)
+    digests: set[str] = set()
+    for message in messages() if callable(messages) else ():
+        content = str(getattr(message, "content", "") or "")
+        if getattr(message, "role", "") == "user" and any(
+            f"<{tag}>" in content for tag in _INTERNAL_TAGS
+        ):
+            continue
+        calls = [
+            {"name": call.name, "arguments": call.arguments}
+            for call in getattr(message, "tool_calls", None) or ()
+        ]
+        if not content.strip() and not calls:
+            continue
+        event = json.dumps(
+            {"role": getattr(message, "role", ""), "content": content, "calls": calls},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        digests.add(event)
+    return digests
+
+
+def _json_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+__all__ = ["DefinitionAgentInvoker"]

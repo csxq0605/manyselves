@@ -1644,6 +1644,11 @@ class AgentLoop:
         )
         return summary
 
+    def conversation_messages(self) -> list[LLMMessage]:
+        """Return a copy of the retained conversation, without the system prompt."""
+
+        return list(self._conversation_history)
+
     def restore_conversation(
         self,
         messages: Sequence[Mapping[str, Any] | LLMMessage],

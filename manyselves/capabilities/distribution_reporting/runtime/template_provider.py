@@ -15,9 +15,6 @@ from typing import Any
 from manyselves.capabilities.distribution_reporting.runtime.agent_bridge import (
     TemplateDistillationAgentBridge,
 )
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    build_tool_recovery_callback,
-)
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
     ProviderTaskAttempt,
     reporting_identity_key,
@@ -53,6 +50,9 @@ from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 from manyselves.runtime.services import RuntimeServicesView
+from manyselves.runtime.typed_recovery import (
+    build_tool_recovery_callback,
+)
 
 LoopBuilder = Callable[..., AgentSessionLoop]
 

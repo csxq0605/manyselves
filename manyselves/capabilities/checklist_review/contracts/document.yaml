@@ -1,0 +1,11 @@
+id: document
+version: 1.0.0
+description: The text of one project document
+adapter: json_schema
+schema:
+  type: object
+  required: [path, text]
+  properties:
+    path: {type: string}
+    text: {type: string}
+    chars: {type: integer}

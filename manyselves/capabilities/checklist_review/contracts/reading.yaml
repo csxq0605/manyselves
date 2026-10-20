@@ -1,0 +1,21 @@
+id: reading
+version: 1.0.0
+description: A reader's overview of one document
+adapter: json_schema
+schema:
+  type: object
+  required: [summary, sections]
+  additionalProperties: false
+  properties:
+    summary: {type: string}
+    sections:
+      type: array
+      items:
+        type: object
+        required: [title, points]
+        additionalProperties: false
+        properties:
+          title: {type: string}
+          points:
+            type: array
+            items: {type: string}

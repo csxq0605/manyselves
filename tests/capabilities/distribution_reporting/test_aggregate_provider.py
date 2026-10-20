@@ -109,7 +109,7 @@ async def test_aggregate_provider_shares_declared_tool_and_agent_recovery(
     monkeypatch.setattr(aggregate_provider, "build_module_provider_tools", capture_tools)
     monkeypatch.setattr(
         aggregate_agent_bridge,
-        "execute_reporting_recovery",
+        "execute_typed_recovery",
         capture_recovery,
         raising=False,
     )

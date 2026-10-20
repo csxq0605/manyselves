@@ -56,8 +56,7 @@ from manyselves.runtime.loops.agent_loop import (
     AGENT_TURN_CONTINUATION_REQUIRED,
 )
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
-
-from .agent_recovery_turn import ProgressObserver
+from manyselves.runtime.typed_recovery import ProgressObserver
 
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[

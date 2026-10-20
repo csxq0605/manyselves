@@ -7,9 +7,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    execute_reporting_recovery,
-)
 from manyselves.interfaces.types import AgentResponse
 from manyselves.kernel.definitions import RecoveryPolicyDefinition, RecoveryRule
 from manyselves.kernel.recovery import RecoveryEventKind
@@ -19,6 +16,9 @@ from manyselves.runtime.agent_execution import (
     AgentRecoveryProgress,
     AgentTurnOutcome,
     AgentTurnRequest,
+)
+from manyselves.runtime.typed_recovery import (
+    execute_typed_recovery,
 )
 
 
@@ -77,7 +77,7 @@ async def test_reporting_recovery_observes_progress_before_tool_slice_decision()
             assert observation.kind == "no_progress"
             return observation
 
-    result = await execute_reporting_recovery(
+    result = await execute_typed_recovery(
         CapturingExecution(),  # type: ignore[arg-type]
         session,
         request,
@@ -134,7 +134,7 @@ async def test_no_progress_stop_preserves_the_actual_continuation_boundary(
     ))
     execution.dispatch_turn = dispatch
     observe_progress = AsyncMock(return_value="no_progress")
-    result = await execute_reporting_recovery(
+    result = await execute_typed_recovery(
         execution, session, request,
         recovery_policy=RecoveryPolicyDefinition(
             id="recovery", version="1.0.0", description="stop without progress",
@@ -177,7 +177,7 @@ async def test_context_budget_exhaustion_stops_instead_of_requesting_correction(
     )
     dispatch = AsyncMock(side_effect=[exhausted, exhausted, exhausted])
     execution.dispatch_turn = dispatch
-    result = await execute_reporting_recovery(
+    result = await execute_typed_recovery(
         execution, session, request,
         recovery_policy=RecoveryPolicyDefinition(
             id="recovery", version="1.0.0", description="current policy",

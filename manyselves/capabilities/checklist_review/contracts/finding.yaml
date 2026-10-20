@@ -1,0 +1,17 @@
+id: finding
+version: 1.0.0
+description: One judgement of a checklist item with its source evidence
+adapter: json_schema
+schema:
+  type: object
+  required: [item_id, verdict, evidence, note]
+  additionalProperties: false
+  properties:
+    item_id: {type: string, minLength: 1}
+    verdict:
+      type: string
+      enum: [met, not_met, insufficient]
+    evidence:
+      type: array
+      items: {type: string, minLength: 1}
+    note: {type: string}

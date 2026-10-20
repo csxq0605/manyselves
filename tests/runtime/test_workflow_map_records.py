@@ -416,3 +416,34 @@ def test_map_child_plan_is_frozen_into_the_parent_plan() -> None:
     assert "score-item" in plan.workflow_ids
     assert "score-item" in plan.subworkflow_plans
     assert "workflow:score-item" in plan.definition_snapshots
+
+
+@pytest.mark.asyncio
+async def test_set_variable_copies_a_field_of_another_variable(tmp_path: Path) -> None:
+    registry, contracts = _registry()
+    workflow = WorkflowDefinition(
+        id="copy-field",
+        version="1.0.0",
+        description="Copy one field",
+        state={"request": {"inner": {"items": [1, 2]}}},
+        actions=[
+            {
+                "id": "copy",
+                "kind": "set_variable",
+                "variable": "items",
+                "value_variable": "request",
+                "field": "inner.items",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "items"},
+        ],
+    )
+    plan = _compile(registry, workflow)
+    host, _store = _host(tmp_path)
+
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("copy-run", plan),
+        RuntimeContext(contracts=contracts, definitions=registry),
+    )
+
+    assert completed.outputs["result"] == [1, 2]

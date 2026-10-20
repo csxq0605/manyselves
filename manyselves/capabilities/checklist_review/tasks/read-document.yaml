@@ -1,0 +1,11 @@
+id: read-document
+version: 1.0.0
+description: Read the whole document once and note its structure
+agent: document-reviewer
+objective: 通读下面这份文件，概括它讲了什么，并列出各部分的标题和要点，供后续逐条核对时引用。
+input_contract: document
+output_contract: reading
+constraints:
+- 只概括文件里写了的内容。
+tools: []
+recovery: checklist-review-recovery

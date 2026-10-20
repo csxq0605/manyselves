@@ -1,0 +1,17 @@
+id: checklist-review-recovery
+version: 1.0.0
+description: Correct and continue typed review turns
+rules:
+  natural_language_without_submission:
+    action: correct
+    max_attempts: 2
+  invalid_structured_output:
+    action: correct
+  max_tokens:
+    action: continue
+  tool_slice_boundary:
+    action: continue
+  no_progress:
+    action: stop
+  completed_tool_result:
+    action: reuse_result

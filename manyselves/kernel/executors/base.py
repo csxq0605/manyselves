@@ -149,9 +149,14 @@ class SetVariableExecutor:
         context: RuntimeContext,
     ) -> ActionResult:
         resolved = cast(SetVariableAction, action)
+        value = resolved.value
+        if resolved.value_variable is not None:
+            value = deepcopy(state.variables[resolved.value_variable])
+            if resolved.field is not None:
+                value = _required_field(value, resolved.field, resolved.id)
         return ActionResult(
-            output=resolved.value,
-            variable_updates={resolved.variable: resolved.value},
+            output=value,
+            variable_updates={resolved.variable: value},
         )
 
 
@@ -723,6 +728,15 @@ class EndWorkflowExecutor:
             output_updates={resolved.output_name: output},
             workflow_status=WorkflowStatus.COMPLETED,
         )
+
+
+def _required_field(value: Any, field: str, owner: str) -> Any:
+    current = value
+    for part in field.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            raise RuntimeExecutionError(f"action {owner} reads missing field: {field}")
+        current = current[part]
+    return current
 
 
 def _conversation_key_value(

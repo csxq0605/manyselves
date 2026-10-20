@@ -1,0 +1,11 @@
+id: search-query
+version: 1.0.0
+description: A keyword search in one project document
+adapter: json_schema
+schema:
+  type: object
+  required: [path, query]
+  additionalProperties: false
+  properties:
+    path: {type: string, minLength: 1}
+    query: {type: string, minLength: 1}

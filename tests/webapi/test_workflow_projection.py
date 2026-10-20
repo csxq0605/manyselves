@@ -390,10 +390,11 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
     schema = facade.input_schema("full-report")
 
     assert [item["id"] for item in capabilities] == [
+        "checklist-review",
         "distribution-reporting",
         "parameter-adjustment",
     ]
-    reporting = capabilities[0]
+    reporting = capabilities[1]
     assert reporting["version"] == "1.0.0"
     assert reporting["description"] == "Declarative distribution reporting capability"
     assert {
@@ -403,7 +404,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "distribution-reporting-tail",
         "distribution-report-delivery",
     } <= set(reporting["workflow_ids"])
-    assert capabilities[1] == {
+    assert capabilities[2] == {
         "id": "parameter-adjustment",
         "version": "1.0.0",
         "description": "Neutral declarative parameter adjustment capability",
