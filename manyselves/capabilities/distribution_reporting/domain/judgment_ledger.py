@@ -28,6 +28,12 @@ from .action_table import ACTION_PRIORITY_GROUPS, ACTION_TABLE_HEADERS
 Disposition = Literal["concern", "no_concern", "undetermined", "not_applicable"]
 Priority = Literal["重要，紧急", "重要，不紧急", "一般"]
 RiskLevel = Literal["高", "中", "低"]
+EvidenceStatus = Literal["现场确认", "来源作者意见", "资料未提供", "照片待核", "推断"]
+EVIDENCE_STATUS_HELP = (
+    "现场确认=表格或照片直接记录了该情况；来源作者意见=原表评语、既有评估等他人结论；"
+    "资料未提供=缺资料，不能说明有或没有；照片待核=只靠照片且照片读数有疑问；"
+    "推断=由其他事实推出，现场没有直接记录。"
+)
 
 DISPOSITION_LABELS = {
     "concern": "关注",
@@ -62,6 +68,7 @@ class JudgmentRow(_Model):
     object: str = Field(min_length=1)
     checkpoint: str = Field(min_length=1)
     disposition: Disposition
+    evidence_status: EvidenceStatus = Field(description=EVIDENCE_STATUS_HELP)
     evidence_ids: list[str] = Field(default_factory=list)
     calculation_ids: list[str] = Field(default_factory=list)
     basis: str = Field(min_length=1)
@@ -231,6 +238,8 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
             problem = f"不能判定：{row.gap.missing if row.gap else row.basis}"
             level = "待定"
             measure = f"补充{row.gap.requested_input}" if row.gap else ""
+        if row.evidence_status != "现场确认":
+            problem = f"（{row.evidence_status}）{problem}"
         values = [row.object, row.checkpoint, problem, level, measure]
         if has_photos:
             values.append("、".join(row.photo_ids))
@@ -311,8 +320,25 @@ class SectionSet(_Model):
     sections: dict[str, str] = Field(description="Section id to its complete revised text")
 
 
-def action_table_markdown(lead: str, actions: Sequence[ChiefAction]) -> str:
-    """3.2: a lead sentence, then one five-column table per priority group."""
+def _status_note(row_ids: Sequence[str], row_status: Mapping[str, str] | None) -> str:
+    statuses = [
+        status
+        for status in dict.fromkeys((row_status or {}).get(row_id) for row_id in row_ids)
+        if status and status != "现场确认"
+    ]
+    return "依据：" + "、".join(statuses) if statuses else ""
+
+
+def action_table_markdown(
+    lead: str,
+    actions: Sequence[ChiefAction],
+    row_status: Mapping[str, str] | None = None,
+) -> str:
+    """3.2: a lead sentence, then one five-column table per priority group.
+
+    The note column carries the evidence status of the cited rows when any
+    of them is not confirmed on site.
+    """
 
     blocks = [lead.strip()]
     for group in ACTION_PRIORITY_GROUPS:
@@ -324,7 +350,15 @@ def action_table_markdown(lead: str, actions: Sequence[ChiefAction]) -> str:
             _table(
                 ACTION_TABLE_HEADERS,
                 (
-                    [a.content, a.problem, a.hazard, a.solution, a.note]
+                    [
+                        a.content,
+                        a.problem,
+                        a.hazard,
+                        a.solution,
+                        "；".join(
+                            text for text in (a.note, _status_note(a.row_ids, row_status)) if text
+                        ),
+                    ]
                     for a in members
                 ),
             )
@@ -338,8 +372,12 @@ def findings_overview_markdown(
     risks: Sequence[KeyRisk],
     phases: Sequence[Phase],
     module_titles: Mapping[str, str],
+    row_status: Mapping[str, str] | None = None,
 ) -> str:
-    """1.2: the overall assessment followed by the three expert-version tables."""
+    """1.2: the overall assessment followed by the three expert-version tables.
+
+    A key risk whose cited rows are not all confirmed on site says so.
+    """
 
     blocks = [assessment.strip()]
     blocks.append(
@@ -355,7 +393,16 @@ def findings_overview_markdown(
         blocks.append(
             _table(
                 ("优先级", "风险描述", "危害", "行动建议"),
-                ([str(index), r.description, r.hazard, r.action] for index, r in enumerate(risks, 1)),
+                (
+                    [
+                        str(index),
+                        r.description
+                        + (f"（{note}）" if (note := _status_note(r.row_ids, row_status)) else ""),
+                        r.hazard,
+                        r.action,
+                    ]
+                    for index, r in enumerate(risks, 1)
+                ),
             )
         )
     if phases:
@@ -547,6 +594,8 @@ __all__ = [
     "ChiefChapter3",
     "ChiefChapter1",
     "DISPOSITION_LABELS",
+    "EVIDENCE_STATUS_HELP",
+    "EvidenceStatus",
     "PROBLEM_TABLE_MARKER",
     "ChiefAction",
     "DimensionHealth",

@@ -48,7 +48,7 @@ def test_counts_and_object_value_pairs_in_prose_must_match() -> None:
     rows = [
         JudgmentRow.model_validate(
             {"id": f"J-2.4-{n}", "submodule_id": "2.4.1", "object": obj, "checkpoint": "SPD",
-             "disposition": "concern", "evidence_ids": [f"E-{n}"], "basis": "NG",
+             "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": [f"E-{n}"], "basis": "NG",
              "risk_level": "中", "hazard": "h",
              "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
         )
@@ -73,10 +73,10 @@ def test_a_concern_row_covers_one_object() -> None:
     judgment = JudgmentSet.model_validate(
         {"module_id": "2.4", "rows": [
             {"id": "J-2.4-1", "submodule_id": "2.4.1", "object": "两台柜", "checkpoint": "SPD",
-             "disposition": "undetermined", "evidence_ids": ["E-1", "E-2"], "basis": "b",
+             "disposition": "undetermined", "evidence_status": "资料未提供", "evidence_ids": ["E-1", "E-2"], "basis": "b",
              "gap": {"missing": "m", "impact": "i", "requested_input": "n"}},
             {"id": "J-2.4-2", "submodule_id": "2.4.1", "object": "其余", "checkpoint": "SPD",
-             "disposition": "no_concern", "evidence_ids": ["E-3", "E-4"], "basis": "b"},
+             "disposition": "no_concern", "evidence_status": "现场确认", "evidence_ids": ["E-3", "E-4"], "basis": "b"},
         ]}
     )
     findings = ledger_findings(
@@ -86,3 +86,22 @@ def test_a_concern_row_covers_one_object() -> None:
     )
     assert set(findings) == {"J-2.4-1"}
     assert "一行一个对象" in findings["J-2.4-1"]["problem"]
+
+
+def test_evidence_status_reaches_the_problem_and_action_tables() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        ChiefAction,
+        action_table_markdown,
+        problem_table,
+    )
+
+    row = JudgmentRow.model_validate(
+        {"id": "J-2.5-1", "submodule_id": "2.5.1", "object": "运维单位", "checkpoint": "资质",
+         "disposition": "undetermined", "evidence_status": "资料未提供", "evidence_ids": [],
+         "basis": "未取得资质文件",
+         "gap": {"missing": "资质证书", "impact": "不能判断", "requested_input": "资质证书"}}
+    )
+    assert "（资料未提供）不能判定：资质证书" in problem_table([row])
+    action = ChiefAction(priority="一般", content="补资料", problem="资质未提供", hazard="待定",
+                         solution="提供资质证书", row_ids=["J-2.5-1"])
+    assert "依据：资料未提供" in action_table_markdown("措施如下。", [action], {"J-2.5-1": "资料未提供"})

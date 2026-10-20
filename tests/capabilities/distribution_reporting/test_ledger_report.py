@@ -75,6 +75,7 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
         "object": f"设备{number}",
         "checkpoint": "外观",
         "disposition": "no_concern",
+        "evidence_status": "现场确认",
         "evidence_ids": [f"E-{number:04d}"],
         "basis": "记录完整。",
     }
@@ -335,7 +336,7 @@ def test_review_gets_the_original_images_only_for_doubtful_readings() -> None:
     rows = [
         JudgmentRow.model_validate(
             {"id": "J-2.4-1", "submodule_id": "2.4.1", "object": "14#柜", "checkpoint": "剩余电流",
-             "disposition": "no_concern", "evidence_ids": ["E-1"], "basis": "记录 11.3A。"}
+             "disposition": "no_concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"], "basis": "记录 11.3A。"}
         )
     ]
     reference = {

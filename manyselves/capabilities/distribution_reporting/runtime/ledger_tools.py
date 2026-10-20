@@ -601,10 +601,29 @@ class LedgerTools:
             for disposition in ("concern", "undetermined"):
                 picked = [row for row in scope if row.disposition == disposition]
                 counts.update({float(len(picked)), float(len({row.object for row in picked}))})
+        cited = {
+            row_id
+            for entry in [*actions, *(chief["chapter1"].get("key_risks") or [])]
+            for row_id in entry.get("row_ids") or []
+        }
         items.append(
             {
                 "owner": CHIEF_OWNER,
                 "sections": chief_texts,
+                "cited_rows": [
+                    {
+                        "id": row.id,
+                        "object": row.object,
+                        "checkpoint": row.checkpoint,
+                        "disposition": row.disposition,
+                        "evidence_status": row.evidence_status,
+                        "risk_level": row.risk_level,
+                        "basis": row.basis,
+                        "hazard": row.hazard,
+                    }
+                    for row in all_rows
+                    if row.id in cited
+                ],
                 "program_findings": report_check_findings(
                     sections=chief_texts,
                     rows_by_submodule={},
@@ -645,6 +664,9 @@ class LedgerTools:
             chapter1 = chief["chapter1"]
             chapter3 = chief["chapter3"]
             titles = {m: REPORT_TAXONOMY[m].title for m in ledger}
+            row_status = {
+                row.id: row.evidence_status for rows in ledger.values() for row in rows
+            }
             edited = EditedReportSubmission(
                 title=REPORT_TITLE,
                 assessment_background=chief_texts["1.1"],
@@ -654,6 +676,7 @@ class LedgerTools:
                     [KeyRisk.model_validate(r) for r in chapter1.get("key_risks", [])],
                     [Phase.model_validate(p) for p in chapter1.get("phases", [])],
                     titles,
+                    row_status,
                 ),
                 regional_executive_summary=chief_texts["1.3"],
                 module_narratives={m: s.markdown for m, s in submissions.items()},
@@ -661,6 +684,7 @@ class LedgerTools:
                 improvement_action_plan=action_table_markdown(
                     chapter3["action_lead"],
                     [ChiefAction.model_validate(a) for a in chapter3["actions"]],
+                    row_status,
                 ),
                 special_topic_plan=(
                     SpecialTopicPlan.model_validate(state["special_topic_plan"])
