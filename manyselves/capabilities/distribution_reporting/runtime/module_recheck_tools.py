@@ -41,6 +41,19 @@ from manyselves.capabilities.distribution_reporting.runtime.module_preflight_rev
 from manyselves.capabilities.distribution_reporting.runtime.module_review_acceptance import (
     _write_immutable_json,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_review_batches import (
+    InputBudget,
+    batch_index_from,
+    batch_items,
+    batch_ref,
+    current_batch_needs_agent,
+    mark_done,
+    merge_verdict_results,
+    plan_batches,
+    restore_full,
+    select_batch,
+    write_batch_result,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_review_delta import (
     build_module_recheck_delta,
 )
@@ -88,6 +101,7 @@ def prepare_current_module_recheck(
     value: DeclarativeModuleRuntimeLaneContext,
     *,
     store: ReportingStore,
+    input_budget: InputBudget = None,
 ) -> DeclarativeModuleRuntimeLaneContext:
     """Prepare the same Auditor identity for a typed recheck turn."""
 
@@ -208,54 +222,84 @@ def prepare_current_module_recheck(
                 "error": None,
             },
         )
-    active_evidence_ids = set(delta["relevant_evidence_ids"])
-    active_evidence_ids.update(
-        evidence_ref
-        for finding in pending
-        for evidence_ref in finding.evidence_refs
-        if evidence_ref.startswith("E-")
-    )
-    # Include uncited scope facts as well as old/new/finding references. A
-    # persistent reviewer identity does not guarantee visible earlier messages.
-    scope_evidence = _review_evidence(store.workspace, current, run_id, scope)
-    active_evidence_ids.difference_update(item.evidence_id for item in scope_evidence)
-    knowledge_ref, knowledge_context = _review_knowledge(
-        store.workspace, context.reporting_state, context.module_id, scope,
-    )
-    review_input = ModuleReviewInput(
-        report_instruction=report_instruction_from_state(context.reporting_state),
-        input_changes=context.reporting_state.get("revision_input_changes"),
-        phase="recheck",
-        run_id=run_id,
-        module_id=context.module_id,
-        lifecycle_id=lifecycle_id,
-        review_round=review_round,
-        subject_ref=subject_ref,
-        subject_revision=current.revision,
-        subject=delta["subject"],
-        claim_statements=delta["claim_statements"],
-        prior_claim_statements=delta["prior_claim_statements"],
-        unchanged_submodule_sha256=delta["unchanged_submodule_sha256"],
-        unchanged_statement_sha256=delta["unchanged_statement_sha256"],
-        knowledge_ref=knowledge_ref,
-        knowledge_context=knowledge_context,
-        evidence=scope_evidence + _review_evidence_by_ids(
-            store.workspace,
-            run_id,
-            active_evidence_ids,
-            current_claims=[claim for claim in current.claims if claim.submodule_id in scope],
-        ),
-        required_submodule_ids=sorted(scope),
-        required_findings=pending,
-        revision_responses=list(current.revision_responses),
-        baseline_subject_ref=baseline_ref,
-        revision_diff_ref=diff_ref,
-        revision_diff=revision_diff,
-        validation_report_ref=preflight_ref,
-        validation_report=preflight.report,
-    )
+    def build_input(part: set[str], index: int | None = None) -> ModuleReviewInput:
+        part_delta = (
+            delta if part == scope
+            else build_module_recheck_delta(baseline, current, scope, view=part)
+        )
+        part_pending = [finding for finding in pending if finding.target_submodule_id in part]
+        active_evidence_ids = set(part_delta["relevant_evidence_ids"])
+        active_evidence_ids.update(
+            evidence_ref
+            for finding in part_pending
+            for evidence_ref in finding.evidence_refs
+            if evidence_ref.startswith("E-")
+        )
+        # Include uncited scope facts as well as old/new/finding references. A
+        # persistent reviewer identity does not guarantee visible earlier messages.
+        scope_evidence = _review_evidence(store.workspace, current, run_id, part)
+        active_evidence_ids.difference_update(item.evidence_id for item in scope_evidence)
+        knowledge_ref, knowledge_context = _review_knowledge(
+            store.workspace, context.reporting_state, context.module_id, part,
+        )
+        return ModuleReviewInput(
+            report_instruction=report_instruction_from_state(context.reporting_state),
+            input_changes=context.reporting_state.get("revision_input_changes"),
+            phase="recheck",
+            run_id=run_id,
+            module_id=context.module_id,
+            lifecycle_id=lifecycle_id,
+            review_round=review_round,
+            subject_ref=subject_ref,
+            subject_revision=current.revision,
+            subject=part_delta["subject"],
+            claim_statements=part_delta["claim_statements"],
+            prior_claim_statements=part_delta["prior_claim_statements"],
+            unchanged_submodule_sha256=part_delta["unchanged_submodule_sha256"],
+            unchanged_statement_sha256=part_delta["unchanged_statement_sha256"],
+            knowledge_ref=knowledge_ref,
+            knowledge_context=knowledge_context,
+            evidence=scope_evidence + _review_evidence_by_ids(
+                store.workspace,
+                run_id,
+                active_evidence_ids,
+                current_claims=[claim for claim in current.claims if claim.submodule_id in part],
+            ),
+            required_submodule_ids=sorted(part),
+            required_findings=part_pending,
+            revision_responses=[
+                response for response in current.revision_responses
+                if response.finding_id in {finding.id for finding in part_pending}
+            ],
+            baseline_subject_ref=baseline_ref,
+            revision_diff_ref=diff_ref if index is None else batch_ref(diff_ref, index),
+            revision_diff=part_delta["revision_diff"],
+            validation_report_ref=preflight_ref,
+            validation_report=preflight.report,
+        )
+
+    def write_batch_diff(index: int, part: set[str]) -> None:
+        store.write_json(
+            batch_ref(diff_ref, index),
+            build_module_recheck_delta(
+                baseline, current, scope, view=part,
+            )["revision_diff"].model_dump(mode="json"),
+        )
+
+    review_input = build_input(scope)
     store.write_json(diff_ref, revision_diff.model_dump(mode="json"))
     store.write_json(input_ref, review_input.model_dump(mode="json"))
+    batches = plan_batches(
+        store,
+        module_id=context.module_id,
+        scope=scope,
+        full_input=review_input,
+        build_input=build_input,
+        input_ref=input_ref,
+        result_ref=f"{review_root}/verdicts-r{review_round}.json",
+        budget=input_budget,
+        before_write=write_batch_diff,
+    )
     reviewer_session_key = progress.reviewer_session_key or f"module-auditor-{context.module_id}"
     rule_refs = sorted(set(module_rule_source_refs(current, scope)) | set(module_rule_source_refs(baseline, scope)))
     envelope = TaskEnvelope(
@@ -315,6 +359,7 @@ def prepare_current_module_recheck(
         envelope=envelope,
         progress=progress,
         preflight_progress=current_preflight_progress,
+        batches=batches,
     )
     _save_progress(
         store,
@@ -476,6 +521,123 @@ def accept_current_module_recheck(
         raise ValueError("module recheck result lacks its prepared boundary")
     preparation = context.recheck.prepared
     submission = ModuleReviewVerdictSubmission.model_validate(result.submission)
+    if preparation.batch_index is not None:
+        return _accept_recheck_batch(context, submission, store=store)
+    return _record_recheck(context, submission, store=store)
+
+
+def _accept_recheck_batch(
+    context: DeclarativeModuleRuntimeLaneContext,
+    submission: ModuleReviewVerdictSubmission,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Persist one submodule batch of the recheck."""
+
+    recheck = context.recheck
+    preparation = recheck.prepared
+    index = int(preparation.batch_index)
+    batch = preparation.batches[index]
+    scope = set(batch.submodule_ids)
+    required_ids = {
+        finding.id for finding in preparation.pending if finding.target_submodule_id in scope
+    }
+    _validate_verdicts(submission.verdicts, required_ids)
+    _validate_new_findings(
+        submission.new_findings,
+        module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
+        review_round=preparation.review_round,
+        scope=scope,
+        existing_ids={*(finding.id for finding in preparation.pending), *preparation.resolved_ids},
+    )
+    write_batch_result(store, batch, submission.model_dump(mode="json"))
+    return context.model_copy(
+        deep=True,
+        update={
+            "recheck": recheck.model_copy(update={"prepared": mark_done(preparation, index)}),
+            "error": None,
+        },
+    )
+
+
+def list_current_module_recheck_batches(value: Any) -> list[dict[str, int]]:
+    """Positions the recheck loop visits, in submodule order."""
+
+    context = _context(value)
+    return batch_items(context.recheck.prepared if context.recheck is not None else None)
+
+
+def select_current_module_recheck_batch(
+    value: Mapping[str, Any],
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Point the recheck turn at one submodule batch."""
+
+    context = _context(value["context"])
+    recheck = context.recheck
+    if (
+        recheck is None
+        or not recheck.prepared.batches
+        or recheck.acceptance is not None
+        or context.status == "failed"
+    ):
+        return context
+    prepared = select_batch(
+        store,
+        recheck.prepared,
+        batch_index_from(value),
+        target_submodule_ids=lambda batch: list(batch.submodule_ids),
+    )
+    return context.model_copy(
+        deep=True,
+        update={"recheck": recheck.model_copy(update={"prepared": prepared})},
+    )
+
+
+def merge_current_module_recheck_batches(
+    value: Any,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Record the recheck once every submodule batch has a result."""
+
+    context = _context(value)
+    recheck = context.recheck
+    if (
+        recheck is None
+        or not recheck.prepared.batches
+        or recheck.acceptance is not None
+        or context.status == "failed"
+    ):
+        return context
+    missing = [batch.index + 1 for batch in recheck.prepared.batches if not batch.done]
+    if missing:
+        raise ValueError(f"module recheck batches without a result: {missing}")
+    preparation = restore_full(store, recheck.prepared)
+    merged = merge_verdict_results(
+        store,
+        preparation.batches,
+        prefix=(
+            f"M-{preparation.module_id}-{preparation.lifecycle_id}-r{preparation.review_round}-"
+        ),
+        scope=list(preparation.scope),
+    )
+    restored = context.model_copy(
+        deep=True,
+        update={"recheck": recheck.model_copy(update={"prepared": preparation})},
+    )
+    return _record_recheck(restored, merged, store=store)
+
+
+def _record_recheck(
+    context: DeclarativeModuleRuntimeLaneContext,
+    submission: ModuleReviewVerdictSubmission,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    preparation = context.recheck.prepared
     required_ids = {finding.id for finding in preparation.pending}
     _validate_verdicts(submission.verdicts, required_ids)
     _validate_new_findings(
@@ -619,13 +781,18 @@ def module_recheck_requires_agent(
     context = _context(value)
     return bool(
         context.recheck is not None
+        and context.status != "failed"
         and context.recheck.prepared.mode == "invoke_agent"
         and context.recheck.acceptance is None
+        and current_batch_needs_agent(context.recheck.prepared)
     )
 
 
 __all__ = [
     "accept_current_module_recheck",
+    "list_current_module_recheck_batches",
+    "merge_current_module_recheck_batches",
+    "select_current_module_recheck_batch",
     "module_recheck_requires_agent",
     "prepare_current_module_recheck",
 ]

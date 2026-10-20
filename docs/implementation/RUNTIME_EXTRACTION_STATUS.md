@@ -79,6 +79,9 @@ PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通�
 - `full-report-fddf1504…`：电脑合盖睡眠，读图请求断网，Connection error 重试两次后整个 Run 失败（环境问题）。未改：读图单张请求的网络错误会直接让 Run 失败，没有等网络恢复。
 - `full-report-881d573883fe4ea59b2b968f14dbabb0`：读图 6 个请求的输入只有 1.2–1.3k token，模型对每张照片都 `report_blocked`（“消息中没有图片”）。根因：`AgentLoop._build_messages` 和 `_sanitize_provider_messages` 重建消息时没有复制 `images`，照片从未发给 Provider。已修复，新增测试 `tests/runtime/loops/test_agent_loop_images.py::test_turn_images_reach_the_provider_request`，经 AgentExecutionService 发出一轮带图请求，断言 Provider 收到图片；修复前该测试失败。两次合计花费不到 ¥0.05，模块、Cross、Chief、Final、DOCX 都未开始。
 
+- `full-report-8a17a6c61b354c4e910f026dd4186344`（@`144062c`）：读图 64 请求，63 张照片相符 35、无法判断 26、矛盾 2；五个模块初稿完成（173 请求，输入 1037 万 token，缓存命中 81%）。2.4 审查首个请求约 25 万字符（证据 9.9 万、正文与判断 6.2 万、claims 4.2 万、知识 1.4 万），发送前被 `context_budget_exhausted` 拦下，监控按停止条件取消；花费约 ¥3.85。原因：带写作范例的 Skill 让 2.4 正文与 claims 各涨约一倍，而模块审查一次装下整个模块。
+- **模块审查按小节分批（用户选定）**：`module_review_batches.py`。首次审查和复审在准备时估算输入（与 Cross 同一预算），超出就按固定小节顺序分成连续批次，批次输入写文件；车道定义用 `for_each` 在同一审查会话里每批一轮，结果合并后再走原接受逻辑（首审 finding 跨批重新编号，复审合并 verdict 与新 finding）。复审每批只带本批小节的 finding、作者回应和 diff（`build_module_recheck_delta` 新增 `view`，校验仍按整个复审范围）。批次结果文件存在时 Same-run 跳过该批；全部完成时准备阶段直接合并。测试 `tests/capabilities/distribution_reporting/test_module_review_batches.py`（含通用 Host 跑通首审 14 批、复审 2 批，同一会话）。未做：Cross 触发的 local_regression 未分批；单个小节本身超预算时仍单独发送，由运行时 `context_budget_exhausted` 停止；格式纠正提示仍附整个车道上下文。
+
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 
 - Run `full-report-7b81a3ee9fbf42e3bf7ff5bf28e3f26d`，PR #7 @`697b1ee`，项目副本由 `prepare_reporting_references.py` 生成；14:14 开始，15:05 强制结束服务进程。现场、usage 账本与结果文件保存在用户本机 `runs/real-run-20261019*`，不入仓库。

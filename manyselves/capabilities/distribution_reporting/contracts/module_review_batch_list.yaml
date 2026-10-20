@@ -1,0 +1,13 @@
+id: module_review_batch_list
+version: 1.0.0
+description: Ordered submodule batch positions of one module review or recheck
+adapter: json_schema
+schema:
+  type: array
+  items:
+    type: object
+    required: [batch_index]
+    properties:
+      batch_index:
+        type: integer
+        minimum: 0

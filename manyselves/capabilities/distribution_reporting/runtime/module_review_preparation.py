@@ -70,6 +70,7 @@ from manyselves.capabilities.distribution_reporting.runtime.user_supplements imp
 )
 
 from .assessment_context import module_rule_source_refs
+from .module_review_batches import InputBudget, plan_batches
 from .observation_ledger import shared_labels
 
 
@@ -417,6 +418,7 @@ def prepare_current_module_review(
     value: DeclarativeModuleRuntimeLaneContext,
     *,
     store: ReportingStore,
+    input_budget: InputBudget = None,
 ) -> DeclarativeModuleRuntimeLaneContext:
     """Prepare the exact initial module Auditor boundary from typed state."""
 
@@ -497,31 +499,34 @@ def prepare_current_module_review(
             preflight_progress=preflight_progress,
         )
     else:
-        knowledge_ref, knowledge_context = _review_knowledge(
-            store.workspace,
-            state,
-            module_id,
-            scope,
-        )
-        review_input = ModuleReviewInput(
-            report_instruction=report_instruction_from_state(state),
-            input_changes=state.get("revision_input_changes"),
-            phase="initial",
-            run_id=run_id,
-            module_id=module_id,
-            lifecycle_id="initial",
-            review_round=0,
-            subject_ref=subject_ref,
-            subject_revision=module.revision,
-            subject=module_content_view(module, scope),
-            claim_statements=_claim_statements(module.claims, scope),
-            knowledge_ref=knowledge_ref,
-            knowledge_context=knowledge_context,
-            evidence=_review_evidence(store.workspace, module, run_id, scope),
-            required_submodule_ids=sorted(scope),
-            validation_report_ref=preflight_ref,
-            validation_report=preflight.report,
-        )
+        def build_input(part: set[str], _index: int | None = None) -> ModuleReviewInput:
+            knowledge_ref, knowledge_context = _review_knowledge(
+                store.workspace,
+                state,
+                module_id,
+                part,
+            )
+            return ModuleReviewInput(
+                report_instruction=report_instruction_from_state(state),
+                input_changes=state.get("revision_input_changes"),
+                phase="initial",
+                run_id=run_id,
+                module_id=module_id,
+                lifecycle_id="initial",
+                review_round=0,
+                subject_ref=subject_ref,
+                subject_revision=module.revision,
+                subject=module_content_view(module, part),
+                claim_statements=_claim_statements(module.claims, part),
+                knowledge_ref=knowledge_ref,
+                knowledge_context=knowledge_context,
+                evidence=_review_evidence(store.workspace, module, run_id, part),
+                required_submodule_ids=sorted(part),
+                validation_report_ref=preflight_ref,
+                validation_report=preflight.report,
+            )
+
+        review_input = build_input(scope)
         rule_refs = module_rule_source_refs(module, scope)
         input_ref = f"{review_root}/input-r0.json"
         store.write_json(input_ref, review_input.model_dump(mode="json"))
@@ -579,6 +584,16 @@ def prepare_current_module_review(
             validation_ref=preflight_ref,
             validation_target_submodule_ids=[],
             preflight_progress=preflight_progress,
+            batches=plan_batches(
+                store,
+                module_id=module_id,
+                scope=scope,
+                full_input=review_input,
+                build_input=build_input,
+                input_ref=input_ref,
+                result_ref=f"{review_root}/findings-r0.json",
+                budget=input_budget,
+            ),
         )
 
     review = DeclarativeModuleReviewPreparation(
@@ -586,7 +601,7 @@ def prepare_current_module_review(
         reviewer_session_key=reviewer_session_key,
         prepared=prepared,
     )
-    return context.model_copy(
+    prepared_context = context.model_copy(
         deep=True,
         update={
             "status": (
@@ -598,6 +613,12 @@ def prepare_current_module_review(
             "review": review,
         },
     )
+    if prepared.batches and all(batch.done for batch in prepared.batches):
+        # Same-run resume after every batch was reviewed: record the merge now.
+        from .module_review_acceptance import merge_current_module_review_batches
+
+        return merge_current_module_review_batches(prepared_context, store=store)
+    return prepared_context
 
 
 __all__ = [

@@ -21,6 +21,15 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleInitialReviewPreparation,
     ModuleReviewProgress,
 )
+from manyselves.capabilities.distribution_reporting.runtime.module_review_batches import (
+    batch_index_from,
+    batch_items,
+    mark_done,
+    merge_finding_results,
+    restore_full,
+    select_batch,
+    write_batch_result,
+)
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
 
@@ -257,6 +266,116 @@ def accept_current_module_review(
         raise ValueError("module review result does not belong to the current module")
     if prepared.reviewer_session_key != review.reviewer_session_key:
         raise ValueError("module review reviewer session identity changed")
+    if prepared.batch_index is not None:
+        return _accept_batch(context, submission, store=store)
+    return _record_review(context, submission, store=store)
+
+
+def _accept_batch(
+    context: DeclarativeModuleRuntimeLaneContext,
+    submission: ModuleReviewFindingSubmission,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Persist one submodule batch of the initial review."""
+
+    review = context.review
+    prepared = review.prepared
+    index = int(prepared.batch_index)
+    batch = prepared.batches[index]
+    scope = set(batch.submodule_ids)
+    if not scope.issubset(set(submission.coverage.submodule_ids)):
+        raise ValueError("module review batch coverage omitted assigned submodules")
+    _validate_findings(
+        submission,
+        module_id=prepared.module_id,
+        lifecycle_id=prepared.lifecycle_id,
+        review_round=prepared.review_round,
+        scope=scope,
+    )
+    write_batch_result(store, batch, submission.model_dump(mode="json"))
+    return context.model_copy(
+        deep=True,
+        update={
+            "review": review.model_copy(update={"prepared": mark_done(prepared, index)}),
+            "error": None,
+        },
+    )
+
+
+def list_current_module_review_batches(value: Any) -> list[dict[str, int]]:
+    """Positions the initial review loop visits, in submodule order."""
+
+    context = _context(value)
+    return batch_items(context.review.prepared if context.review is not None else None)
+
+
+def select_current_module_review_batch(
+    value: Mapping[str, Any],
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Point the initial review turn at one submodule batch."""
+
+    context = _context(value["context"])
+    review = context.review
+    if (
+        review is None
+        or not review.prepared.batches
+        or review.acceptance is not None
+        or context.status == "failed"
+    ):
+        return context
+    prepared = select_batch(
+        store,
+        review.prepared,
+        batch_index_from(value),
+        target_submodule_ids=lambda batch: list(batch.submodule_ids),
+    )
+    return context.model_copy(
+        deep=True,
+        update={"review": review.model_copy(update={"prepared": prepared, "envelope": prepared.envelope})},
+    )
+
+
+def merge_current_module_review_batches(
+    value: Any,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    """Record the initial review once every submodule batch has a result."""
+
+    context = _context(value)
+    review = context.review
+    if review is None or not review.prepared.batches or review.acceptance is not None:
+        return context
+    if context.status == "failed":
+        return context
+    missing = [batch.index + 1 for batch in review.prepared.batches if not batch.done]
+    if missing:
+        raise ValueError(f"module review batches without a result: {missing}")
+    prepared = restore_full(store, review.prepared)
+    merged = merge_finding_results(
+        store,
+        prepared.batches,
+        prefix=f"M-{prepared.module_id}-{prepared.lifecycle_id}-r{prepared.review_round}-",
+        scope=list(prepared.scope),
+    )
+    restored = context.model_copy(
+        deep=True,
+        update={"review": review.model_copy(update={"prepared": prepared, "envelope": prepared.envelope})},
+    )
+    return _record_review(restored, merged, store=store)
+
+
+def _record_review(
+    context: DeclarativeModuleRuntimeLaneContext,
+    submission: ModuleReviewFindingSubmission,
+    *,
+    store: ReportingStore,
+) -> DeclarativeModuleRuntimeLaneContext:
+    review = context.review
+    prepared = review.prepared
     acceptance = accept_module_initial_review(
         preparation=prepared,
         submission=submission,
@@ -278,4 +397,10 @@ def accept_current_module_review(
     )
 
 
-__all__ = ["accept_current_module_review", "accept_module_initial_review"]
+__all__ = [
+    "accept_current_module_review",
+    "accept_module_initial_review",
+    "list_current_module_review_batches",
+    "merge_current_module_review_batches",
+    "select_current_module_review_batch",
+]

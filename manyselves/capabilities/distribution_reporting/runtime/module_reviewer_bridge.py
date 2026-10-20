@@ -131,6 +131,10 @@ class ModuleReviewerAgentBridge:
     ) -> AgentInvocationOutcome:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         envelope, review_input, inline_context = self._prepared_turn(context)
+        prepared = context.recheck.prepared if context.recheck is not None else context.review.prepared
+        if prepared.batch_index is not None:
+            # One loop action reviews several submodule batches; each turn keeps its own id.
+            task_id = f"{task_id}:b{prepared.batch_index + 1}"
         workflow_id = context.workflow_id or self.workflow_id
         run_id = envelope.run_id
         if self.completed_result_loader is not None:

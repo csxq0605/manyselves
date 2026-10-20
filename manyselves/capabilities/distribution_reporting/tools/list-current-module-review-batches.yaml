@@ -1,0 +1,10 @@
+id: list-current-module-review-batches
+version: 1.0.0
+description: List the submodule batches one module review visits
+implementation: capability:distribution-reporting:list-current-module-review-batches
+input_contract: declarative_module_runtime_lane_context
+output_contract: module_review_batch_list
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -58,8 +58,13 @@ def build_module_recheck_delta(
     baseline: ModuleSubmission,
     current: ModuleSubmission,
     scope: set[str],
+    view: set[str] | None = None,
 ) -> dict[str, object]:
-    """Keep current finding-scope text self-contained; use the delta for focus."""
+    """Keep current finding-scope text self-contained; use the delta for focus.
+
+    ``scope`` is the whole recheck scope the revision must stay inside.
+    ``view`` narrows what this delta shows to one batch of that scope.
+    """
 
     raw = build_revision_diff(baseline, current)
     changed_narratives = set(raw["changed_submodule_narratives"])
@@ -74,6 +79,7 @@ def build_module_recheck_delta(
     baseline_claims = {claim.id: claim for claim in baseline.claims}
     current_claims = {claim.id: claim for claim in current.claims}
     changed_claim_ids = set(raw["changed_claim_ids"])
+    all_changed_claim_ids = changed_claim_ids
     changed_claim_submodules = {
         claim.submodule_id
         for claim_id in changed_claim_ids
@@ -88,6 +94,18 @@ def build_module_recheck_delta(
             "module recheck revision changed Claims outside reviewer finding "
             f"scope: {sorted(changed_claim_submodules - scope)}"
         )
+    if view is not None:
+        changed_narratives &= view
+        changed_assessments &= view
+        changed_claim_ids = {
+            claim_id
+            for claim_id in changed_claim_ids
+            if any(
+                claim is not None and claim.submodule_id in view
+                for claim in (baseline_claims.get(claim_id), current_claims.get(claim_id))
+            )
+        }
+        scope = set(view)
     current_statements = [
         _review_claim_statement(current_claims[claim_id])
         for claim_id in sorted(current_claims)
@@ -113,7 +131,7 @@ def build_module_recheck_delta(
         for statement in (
             _review_claim_statement(claim)
             for claim in current.claims
-            if claim.submodule_id in scope and claim.id not in changed_claim_ids
+            if claim.submodule_id in scope and claim.id not in all_changed_claim_ids
         )
         if statement.statement_ref not in changed_statement_ids
     }

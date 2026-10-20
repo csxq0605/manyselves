@@ -59,6 +59,20 @@ class ModuleReviewPreflightProgress(StrictModel):
     )
 
 
+class ModuleReviewBatch(StrictModel):
+    """One group of submodules reviewed in its own turn of the same Auditor.
+
+    The batch input and result live in files; the lane context keeps only
+    their refs so it does not grow with the number of batches.
+    """
+
+    index: int = Field(ge=0)
+    submodule_ids: list[str] = Field(min_length=1)
+    input_ref: str
+    result_ref: str
+    done: bool = False
+
+
 class ModuleInitialReviewPreparation(StrictModel):
     """Typed, serializable boundary before one module Auditor turn.
 
@@ -89,6 +103,10 @@ class ModuleInitialReviewPreparation(StrictModel):
     validation_target_submodule_ids: list[str] = Field(default_factory=list)
     preflight_progress: ModuleReviewPreflightProgress | None = None
     regression_context: ModuleLocalRegressionContext | None = None
+    batches: list[ModuleReviewBatch] = Field(default_factory=list)
+    batch_index: int | None = None
+    full_review_input_ref: str | None = None
+    full_envelope: TaskEnvelope | None = None
 
     @property
     def review_protocol_version(self) -> int:
@@ -159,6 +177,10 @@ class ModuleRecheckPreparation(StrictModel):
     validation_ref: str | None = None
     validation_target_submodule_ids: list[str] = Field(default_factory=list)
     preflight_progress: ModuleReviewPreflightProgress | None = None
+    batches: list[ModuleReviewBatch] = Field(default_factory=list)
+    batch_index: int | None = None
+    full_review_input_ref: str | None = None
+    full_envelope: TaskEnvelope | None = None
 
     @property
     def review_protocol_version(self) -> int:

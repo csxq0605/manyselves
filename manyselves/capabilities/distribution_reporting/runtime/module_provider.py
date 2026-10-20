@@ -97,6 +97,7 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
+from manyselves.runtime.context_budget import retained_input_budget_for
 from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
@@ -836,6 +837,9 @@ def build_module_provider_composition(
         agent_session_factory=agent_session_factory,
         agent_invokers=provider.agent_invokers,
         global_root=services.global_knowledge_root,
+        input_budget=lambda: retained_input_budget_for(
+            services.agent_defaults, services.active_provider,
+        ),
     )
     return ModuleProviderComposition(
         provider=provider,
