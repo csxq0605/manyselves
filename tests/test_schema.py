@@ -49,7 +49,9 @@ def test_agent_defaults():
     cfg = AgentDefaults()
     assert cfg.model == "mimo-v2.5-pro"
     assert cfg.provider == "openai"
-    assert cfg.max_tokens == 8192
+    # Output limit and compaction point come from the model's declaration.
+    assert cfg.max_tokens is None
+    assert cfg.working_memory_tokens is None
     assert cfg.temperature == 0.1
     assert cfg.max_tool_iterations == 200
 

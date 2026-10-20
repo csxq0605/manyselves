@@ -1242,7 +1242,7 @@ export interface components {
         /** AgentDefaultsResponse */
         AgentDefaultsResponse: {
             /** Maxtokens */
-            maxTokens: number;
+            maxTokens: number | null;
             /** Model */
             model: string;
             /** Provider */

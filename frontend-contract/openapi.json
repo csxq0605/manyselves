@@ -105,8 +105,15 @@
       "AgentDefaultsResponse": {
         "properties": {
           "maxTokens": {
-            "title": "Maxtokens",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens"
           },
           "model": {
             "title": "Model",

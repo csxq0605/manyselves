@@ -747,6 +747,7 @@ def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_l
 
 
 def test_working_memory_compaction_persists_handoff_summary(agent_loop, workspace):
+    agent_loop.config = AgentDefaults(max_tool_iterations=5, working_memory_tokens=72000)
     messages = [
         LLMMessage(role="system", content="system"),
         LLMMessage(role="user", content="original task" + ("字" * 160000)),

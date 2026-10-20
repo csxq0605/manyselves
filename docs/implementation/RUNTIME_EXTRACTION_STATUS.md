@@ -22,13 +22,13 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #7 audit follow-up 2026-10-19: cancel stops agent turns; Cross owner input batches; F01 rebuilt on workload`
+- Current slice: `2026-10-20 请求上限改由模型声明决定（窗口、输出、压缩点、分批触发；账本记录思考量）`
 - Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 已推送到 PR #7。下一步：用户同意费用后在 Mac 上真实运行一次完整报告，验证台账汇总、第三章关系上下文、Chief/Final/DOCX 首次真实跑通，并回填效果。未做：revise-report 仍走旧的分模块 Cross；角色 Skill 写作范例已补回（见本节末）；Cross 结构取舍（保持删除 / 精简版 / 恢复全文）待用户决定；未关闭问题未写入 DOCX。
+- Next automatic action: 本地已提交，待用户同意后推送。用户在 Mac 配置中为 DeepSeek 声明 `context_window`/`max_output_tokens`，并删掉网页保存的 `max_tokens: 8192` 和 `working_memory_tokens: 72000`，然后真跑一次完整报告，用账本的思考字段核对第 5 次的推断。未做：revise-report 仍走旧的分模块 Cross；Cross 结构取舍待用户决定；未关闭问题未写入 DOCX；设置页尚无上限表单。
 
 ### 2026-10-19 PR #7 审计更正（用户审计 `76c5637`）
 
@@ -83,6 +83,17 @@ PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通�
 - **模块审查按小节分批（用户选定）**：`module_review_batches.py`。首次审查和复审在准备时估算输入（与 Cross 同一预算），超出就按固定小节顺序分成连续批次，批次输入写文件；车道定义用 `for_each` 在同一审查会话里每批一轮，结果合并后再走原接受逻辑（首审 finding 跨批重新编号，复审合并 verdict 与新 finding）。复审每批只带本批小节的 finding、作者回应和 diff（`build_module_recheck_delta` 新增 `view`，校验仍按整个复审范围）。批次结果文件存在时 Same-run 跳过该批；全部完成时准备阶段直接合并。测试 `tests/capabilities/distribution_reporting/test_module_review_batches.py`（含通用 Host 跑通首审 14 批、复审 2 批，同一会话）。未做：Cross 触发的 local_regression 未分批；单个小节本身超预算时仍单独发送，由运行时 `context_budget_exhausted` 停止；格式纠正提示仍附整个车道上下文。
 
 - `full-report-454fecece07849979cce232e588d587d`（@`3314ff4`）：模块审查分批生效（2.1/2.2/2.5 各 2 批，2.3 不分批，2.4 4 批），2.1、2.3 修订并复审完成。2.4 修订首个请求约 26.2 万字符被发送前拦下，监控取消；约 ¥8.88。根因：作者修订提示把整个 `ModuleRevisionPreparation`（含完整模块 `subject`，约 21.2 万字符）原样序列化，而修订输入里已有目标小节视图。已改为不序列化 `subject`（完整模块留在 `subject_ref` 引用）；测试 `test_revision_prompt_carries_only_target_submodules`，修复前失败。修订本身仍是一次整模块目标修订，未分批。
+
+- `full-report-f60fa38e787441328d6ba8e54f26f687`（@`8ebadc8`，用户取消，约 ¥18.14）：审查分批 2.1=2、2.2=2、2.3=1、2.4=3、2.5=2；2.4 修订通过（首个请求 177,789 字符，最大 243,567 字符，无压缩）。全程 46 次写满 `max_tokens=8192`，其中 45 次正文为空，2.2 审查被判 no-progress 失败，2.5 卡住。原因推断：思考与正文共用 8192 额度，DeepSeek 的 Anthropic 接口不支持 `budget_tokens`，续写时思考不回放。
+- **整体复盘（用户确认）**：见项目文件区 `handoff/real-run-retrospective-20261020.md`。10-19 Cross、第 3、4、5 次真跑卡住的都是产品写死的数字：窗口一律按 128k（配置无法声明窗口），输出 8192，工作记忆 72k、保留输入 43,200；deepseek-flash 声明的是 1M 窗口、384K 输出。此前的估算系数、Cross/模块审查分批、修订瘦身、「思考写满就翻倍重发」，是同一类迁就。用户确认的方向是：上限由模型声明决定，分批只在真正装不下时触发；「翻倍重发」丢弃不提交。
+- **模型声明的上限**：
+  - `ApiConfig.context_window` 和 `max_output_tokens` 声明模型能力，经 `ProviderFactory` 写到 Provider 上。
+  - `AgentDefaults.max_tokens` 和 `working_memory_tokens` 默认为空。为空时，每个请求的输出上限用模型声明值；压缩在历史装不进「窗口 − 输出」时触发。显式设置仍可压低上限。
+  - 保留输入预算改为 min(窗口 − 输出 − 缓冲, 工作记忆)，不再乘 0.6，所以两处分批只在输入本身装不下时触发。
+  - 未声明时退回 128k 窗口、8192 输出。
+  - 用量账本每行增加 `stop_reason`、`output_limit`、`response_text_chars`、`response_thinking_chars`、`response_thinking_tokens_estimate`。
+  - 测试：`tests/runtime/test_model_limits.py`。
+  - 未做：设置页还没有这两项的表单，目前只能写在 YAML 里；Cross 的估算空白系数待真跑后再定。
 
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 

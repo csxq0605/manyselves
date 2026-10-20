@@ -40,6 +40,11 @@ class ApiConfig(Base):
     api_base: str | None = None
     enabled: bool = True
     default_model: str | None = None
+    # What the model behind this configuration declares it can handle, in
+    # Provider tokens.  Request sizes and output limits are read from here;
+    # leave empty only when the model publishes no limits.
+    context_window: int | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
     extra_headers: dict[str, str] | None = None
     credential_source: CredentialSource = Field(default="none", exclude=True)
     yaml_api_key: str | None = Field(default=None, exclude=True, repr=False)
@@ -72,16 +77,16 @@ class AgentDefaults(Base):
 
     model: str = "mimo-v2.5-pro"
     provider: str = "openai"
-    max_tokens: int = 8192
+    # Empty: each request may use the model's declared max output.  Set it
+    # only to deliberately cap every Agent below what the model allows.
+    max_tokens: int | None = Field(default=None, gt=0)
     temperature: float = 0.1
     max_tool_iterations: int = 200
     max_tool_calls_per_round: int = Field(default=4, ge=1)
     max_tool_result_chars: int = Field(default=6000, ge=512)
-    # Compaction point in estimated Provider tokens (character-class estimate).
-    # Not equivalent to the earlier 36000 under a flat 0.3 tokens/char: Chinese
-    # and number-heavy text now compact at ~0.83x the old character count,
-    # English prose at ~2.2x, JSON at ~1.3x. 72000 is ~56% of a 128k window.
-    working_memory_tokens: int = Field(default=72000, ge=4096)
+    # Compaction point in estimated Provider tokens.  Empty: compact only when
+    # the history would no longer fit the model's window next to its output.
+    working_memory_tokens: int | None = Field(default=None, ge=4096)
     working_memory_compaction_target_ratio: float = Field(default=0.6, gt=0, lt=1)
     context_compaction_strategy: Literal["model_summary", "structured_handoff"] = "model_summary"
     context_compaction_model: str | None = None  # Inherit provider/credentials; None uses the task model.

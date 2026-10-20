@@ -2605,7 +2605,7 @@ class AgentLoop:
                 messages=messages,
                 tools=tool_definitions if tool_definitions else None,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                max_tokens=self._output_limit_for_request(),
                 **stream_kwargs,
             )
             if not hasattr(stream, "__aiter__"):
@@ -2639,7 +2639,7 @@ class AgentLoop:
                 messages=messages,
                 tools=tool_definitions,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                max_tokens=self._output_limit_for_request(),
                 **chat_kwargs,
             )
         except BaseException as exc:
@@ -2812,11 +2812,25 @@ class AgentLoop:
         return "direct_submit"
 
     def _context_window_for_request(self) -> int:
-        """Read an optional Provider/config context window without changing caps."""
+        """The model's declared context window (config first, then Provider)."""
 
         from manyselves.runtime.context_budget import provider_context_window
 
         return provider_context_window(self.config, self.llm_provider)
+
+    def _output_limit_for_request(self) -> int:
+        """Max output of one request: explicit setting, else the model's own."""
+
+        from manyselves.runtime.context_budget import request_output_limit
+
+        return request_output_limit(self.config, self.llm_provider)
+
+    def _working_memory_limit(self) -> int:
+        """History size that triggers compaction (explicit, else window room)."""
+
+        from manyselves.runtime.context_budget import working_memory_limit
+
+        return working_memory_limit(self.config, self.llm_provider)
 
     def _apply_rebased_usage_metadata(self, rebased: Any) -> None:
         """Copy hash-only rebase metrics into the next ledger row."""
@@ -2957,7 +2971,7 @@ class AgentLoop:
             trim = _trim_typed_context_to_budget(
                 list(messages),
                 context_window=self._context_window_for_request(),
-                max_output=self.config.max_tokens,
+                max_output=self._output_limit_for_request(),
                 tool_tokens=_estimate_tool_definition_tokens(tool_definitions),
             )
             messages = trim.messages
@@ -3770,11 +3784,11 @@ class AgentLoop:
         placed in model-visible context.
         """
 
-        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+        if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
             return messages
         compacted = _compact_messages_for_working_memory(
             messages,
-            target_tokens=int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio),
+            target_tokens=int(self._working_memory_limit() * self.config.working_memory_compaction_target_ratio),
             task_context=self.active_task_identity,
         )
         if compacted is messages:
@@ -3879,7 +3893,7 @@ class AgentLoop:
             ),
         )
         summary_messages = [summary_system, summary_user]
-        input_limit = self._context_window_for_request() - self.config.max_tokens - _SAFETY_BUFFER
+        input_limit = self._context_window_for_request() - self._output_limit_for_request() - _SAFETY_BUFFER
         # Count the serialized arguments and wrapper too. An oversized source
         # is left intact by the caller instead of silently dropping a subset.
         if _estimate_tokens(summary_messages) > input_limit:
@@ -3963,9 +3977,9 @@ class AgentLoop:
     ) -> list[LLMMessage]:
         """Compact evicted units; failed model summaries leave history intact."""
 
-        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+        if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
             return messages
-        target_tokens = int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio)
+        target_tokens = int(self._working_memory_limit() * self.config.working_memory_compaction_target_ratio)
         baseline = _compact_messages_for_working_memory(
             messages,
             target_tokens=target_tokens,
@@ -4026,7 +4040,7 @@ class AgentLoop:
         logger.info(
             "Context compaction for {}: estimated_tokens={} -> {}; trigger={}; target={}; source={}",
             self.agent_type, _estimate_tokens(messages), _estimate_tokens(baseline),
-            self.config.working_memory_tokens, target_tokens, payload["source"],
+            self._working_memory_limit(), target_tokens, payload["source"],
         )
         self._persist_handoff_summary(payload)
         return baseline
@@ -4090,6 +4104,7 @@ class AgentLoop:
 
         self._usage_totals["input_tokens"] += input_tokens
         self._usage_totals["output_tokens"] += output_tokens
+        thinking_text = str(getattr(response, "thinking", "") or "")
         run_id = str(self.usage_run_id or self.agent_type)
         task_id = str(self.usage_task_id or "") or None
         serialization_started = time.perf_counter()
@@ -4317,6 +4332,13 @@ class AgentLoop:
             "response_tool_call_count": len(
                 getattr(response, "tool_calls", None) or []
             ),
+            # Thinking and text share one output limit; recording both shows
+            # whether a reply that hit the limit spent it on thinking.
+            "stop_reason": getattr(response, "stop_reason", None),
+            "output_limit": self._output_limit_for_request(),
+            "response_text_chars": len(str(getattr(response, "content", "") or "")),
+            "response_thinking_chars": len(thinking_text),
+            "response_thinking_tokens_estimate": _estimate_text_tokens(thinking_text),
             "duration_ms": duration_ms,
             "queue_wait_ms": queue_wait_ms,
             "context_build_ms": context_build_ms,

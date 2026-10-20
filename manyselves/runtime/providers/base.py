@@ -279,6 +279,9 @@ class LLMProvider(ABC):
         self.api_key = api_key
         self.api_base = api_base
         self.model = model
+        # The model's declared limits in Provider tokens; None when undeclared.
+        self.context_window: int | None = None
+        self.max_output_tokens: int | None = None
 
     @abstractmethod
     async def chat(

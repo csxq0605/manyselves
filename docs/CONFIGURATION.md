@@ -40,7 +40,6 @@ agents:
     model: openai/example-model
     provider: auto
     temperature: 0.1
-    max_tokens: 16384
     max_tool_iterations: 200
     timezone: Asia/Shanghai
 
@@ -53,10 +52,34 @@ providers:
       api_key: null
       api_base: https://provider.example/v1
       default_model: example-model
+      # What the model declares in its own documentation, in tokens.
+      context_window: 128000
+      max_output_tokens: 16384
       enabled: true
 ```
 
 `providers.active` is the unique configuration ID, not a protocol name or preset ID.
+
+### Model limits
+
+`context_window` and `max_output_tokens` on a provider configuration are the
+limits the configured model declares. Request sizes come from them:
+
+- every Agent request may use `max_output_tokens`. For a thinking model,
+  thinking and text share this limit;
+- history is compacted only when it would no longer fit `context_window`
+  next to that output;
+- a Capability splits a retained task input into independent parts only when
+  that input alone would not fit.
+
+`agents.defaults.max_tokens` and `agents.defaults.working_memory_tokens` are
+empty by default. Set them only to cap every Agent below the model on purpose
+(for example, to limit spend). When a configuration declares no limits, the
+Runtime falls back to a 128,000-token window and 8,192 output tokens.
+Each usage ledger row records `stop_reason`, `output_limit`,
+`response_text_chars`, `response_thinking_chars` and
+`response_thinking_tokens_estimate`, so a reply that hit its limit shows
+whether thinking used it.
 
 Supported provider keys can be supplied through the settings UI or environment variables:
 

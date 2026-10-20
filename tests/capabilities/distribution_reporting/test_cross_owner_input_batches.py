@@ -94,16 +94,17 @@ def _submission(finding_ids: tuple[str, ...] = ()) -> DeclarativeCrossOwnerIniti
     )
 
 
-def test_budget_follows_compaction_target_and_window() -> None:
-    defaults = AgentDefaults()
-    assert retained_input_budget_for(defaults) == int(
-        defaults.working_memory_tokens * defaults.working_memory_compaction_target_ratio
-    )
+def test_budget_is_what_the_window_and_working_memory_hold() -> None:
+    # Undeclared model: the fallback window less the fallback output.
+    assert retained_input_budget_for(AgentDefaults()) == 128_000 - 8_192 - 1_024
+    # An explicit working memory below the window room is the tighter bound.
+    assert retained_input_budget(
+        context_window=1_000_000, max_output=8_192, working_memory_tokens=72_000,
+    ) == 72_000
     # A small window is the tighter bound.
     assert retained_input_budget(
         context_window=32_000, max_output=8_192, working_memory_tokens=72_000,
-        compaction_target_ratio=0.6,
-    ) < 32_000 - 8_192
+    ) == 32_000 - 8_192 - 1_024
 
 
 def test_inputs_within_budget_stay_one_turn(tmp_path: Path) -> None:
