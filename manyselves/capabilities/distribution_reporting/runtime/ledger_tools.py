@@ -66,6 +66,8 @@ from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
 from .storage import ReportingStore
+from .template_lengths import matched_lengths, render_length_reference, template_sections
+from .template_resolver import resolve_report_template
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
 _SKILL_ORDER = (
@@ -84,6 +86,13 @@ CHIEF_SECTIONS = {
     "1.2": "overall_assessment",
     "1.3": "regional_executive_summary",
     "3.1": "risk_overview",
+}
+CHIEF_SECTION_TITLES = {
+    "1.1": "评估背景",
+    "1.2": "待提升问题与建议概览",
+    "1.3": "各区域执行摘要",
+    "3.1": "风险/问题汇总与概览",
+    "3.2": "改善行动列表与优先级",
 }
 REPORT_TITLE = "配电安全专家咨询报告"
 
@@ -300,6 +309,7 @@ class LedgerTools:
                     *fact_blocks,
                     render_calculations(calculations, calculation_gaps),
                     render_statistics(statistic_lines),
+                    self._length_reference(run_id, module_ids),
                     *knowledge_blocks,
                     "# 写作方法与专家版范例\n"
                     + "\n\n".join(
@@ -360,6 +370,15 @@ class LedgerTools:
             "has_special_topic": plan_value is not None,
             "chief_key": CHIEF_OWNER,
         }
+
+    def _length_reference(self, run_id: str, module_ids: Sequence[str]) -> str:
+        template, _source = resolve_report_template(self.workspace, run_id)
+        titles = dict(CHIEF_SECTION_TITLES)
+        for module_id in module_ids:
+            for sub in REPORT_TAXONOMY[module_id].submodules.values():
+                titles[sub.id] = sub.title
+        lengths = matched_lengths(template_sections(template), titles.items())
+        return render_length_reference(lengths, titles)
 
     def _reference(self, run_id: str) -> dict[str, Any]:
         path = self.workspace / f"Work/runs/{run_id}/ledger/reference-values.json"
