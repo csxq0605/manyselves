@@ -37,6 +37,16 @@
 - 报告：`domain/judgment_ledger.py`、`domain/calculations.py`、`runtime/ledger_tools.py`、`runtime/ledger_report.py`，流程 `report-ledger` 及其子流程。证据：`tests/capabilities/distribution_reporting/test_ledger_report.py`（脚本化模型，生成 DOCX）。
 - 设计与进度：项目文件 `handoff/report-architecture-redesign-20261020.md`、`handoff/reporting-option2-implementation.md`。
 
+### 2026-10-20 方案二质量修复（work-arch，本地提交 59e78bd…30eebce）
+
+- 合并：同一目标的程序意见与审阅意见并存，任一阻断即返修。通用层：`TaskImageInput.list_field` 一次发送多张图。
+- 输入：准备阶段读取每张表记录上方的表头和每张图所在单元格（`mappers/common.source_layout`），事实清单按来源表列出表头。
+- 读图：只抄写可见内容；程序比对数值，不一致时以记录为准、标“照片读数待核”；审查附读图有疑问的原图。
+- 统计：`domain/calculations.statistics` 按检查项给出 OK/NG 数量与对象、数值排序和倍数（K- 编号）；关注/不能判定行一行一个对象；成稿核对数量与对象—数值配对。
+- 证据状态：判断行必填 `evidence_status`，带进问题表、行动表和重点风险；总编通读对照所引行。
+- Skill：仓库审订版按方案二角色重排；共享前缀加专家版各节篇幅参考（`runtime/template_lengths.py`，参考不是上限）。需用 prepare_reporting_references 生成新项目才进入运行。
+- 未真跑。交接：项目文件 `handoff/option2-quality-fixes-20261020.md`。
+
 ### 2026-10-20 交付文件缺陷修复（work-arch，本地提交）
 
 - 引用：`[[CITE:n]]` 改为真实 Word 脚注（`word/footnotes.xml`，正文 `w:footnoteReference`），脚注文字为该条引用的来源（编号＋标题＋位置）；交付 MD 同步写成 `[^n]` 与末尾定义，编号按出现顺序。代码 `rendering/report_footnotes.py`、`PdsDocxRenderer._materialize_citations`。
