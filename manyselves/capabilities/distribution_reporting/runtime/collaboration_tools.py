@@ -1342,7 +1342,7 @@ class SubmitResultTool(_ResultTool):
                 {
                     "finding_id": finding_id,
                     "action": "implemented",
-                    "summary": "已按 finding 修订目标小节并保留其余证据边界。",
+                    "summary": "已按 finding 修订目标小节，未涉及的内容保持不变。",
                     "changed_target_ids": target_ids,
                 }
                 for finding_id, target_ids in response_targets

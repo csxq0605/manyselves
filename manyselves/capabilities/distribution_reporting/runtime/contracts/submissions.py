@@ -364,7 +364,7 @@ def _module_revision_example() -> dict[str, Any]:
             {
                 "finding_id": "M-2.1-initial-r0-001",
                 "action": "implemented",
-                "summary": "已在 2.1.1 中统一对象称谓，并核对相关论断的证据边界。",
+                "summary": "已在 2.1.1 中统一对象称谓，并把逐对象重复的论证合并为一张表。",
                 "changed_target_ids": ["2.1.1"],
             }
         ],
@@ -383,7 +383,7 @@ def _template_skill_example() -> dict[str, Any]:
             skill_id: (
                 f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
                 f"# {skill_id} 模板方法\n\n"
-                + "按本职责组织证据边界、分析、行动与可观察质量检查；不提供项目事实。" * 8
+                + "按本职责组织现状、风险分析、建议与依据；不提供项目事实。" * 8
             )
             for skill_id in TEMPLATE_ROLE_SKILL_IDS
         },
@@ -395,7 +395,7 @@ def _edited_report_example() -> dict[str, Any]:
     return {
         "kind": "edited_report_submission",
         "title": "示例配电安全专家咨询报告",
-        "assessment_background": "基于已批准模块说明评估范围、证据边界和适用限制。",
+        "assessment_background": "说明委托方、评估对象、现场工作时间、评估方法和客户提出的话题。",
         "findings_overview": "归纳已批准模块中的主要发现，不改变其事实与风险语义。",
         "regional_executive_summary": "当前证据未定义地理区域，按责任边界归纳优先事项。",
         "module_narratives": modules,
@@ -582,7 +582,7 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "revision_responses": [{
             "finding_id": "F-3-001",
             "action": "implemented",
-            "summary": "已按指定 finding 补充本小节的行动责任、事实边界与核验方法。",
+            "summary": "已按指定 finding 为每项行动写明对象、动作和建议时限。",
             "changed_target_ids": ["3.2"],
         }],
     },
@@ -599,14 +599,14 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
                     {
                         "target_section_id": "1.1",
                         "required_change": (
-                            "补充该结论对应的证据边界，并明确尚待确认的项目事实。"
+                            "按专家版删去重复论证，改为写明对象和数值的一段结论。"
                         ),
                         "reviewer_checks": [
-                            "修改后能够从结论直接追溯到当前运行的证据。"
+                            "修改后结论写明对象和数值，没有逐段重复的论证。"
                         ],
                     }
                 ],
-                "category": "traceability",
+                "category": "duplicate_argument",
                 "impact": "blocking",
                 "observation": (
                     "当前结论没有清楚区分已由证据支持的事实与仍待项目确认的判断。"

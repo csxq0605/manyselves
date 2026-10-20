@@ -334,7 +334,7 @@ class ObservationAssessment(StrictModel):
     disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment for these observations; source OK/NG alone is not a verified judgment.")
     basis: str = Field(default="", description="Only reasoning the prose at narrative_anchor does not state: missing observation, missing condition, unverified rule, inapplicability, or a quantity/unit comparison. Do not restate the E-* fact or the prose.")
     rules: list[AssessmentRuleBasis] = Field(default_factory=list, description="Rules actually considered, with their applicability/status; [] means no rule was selected, not that none exists.")
-    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose; empty means it is not expressed there.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose, such as the object name or measured value as written; the prose carries no E-*/P-* ids. Empty means it is not expressed there.")
     action_anchor: str = Field(default="", description="Short exact substring locating the action or verification step in the same prose; empty means no action is expressed there.")
     no_action_reason: str = Field(default="", description="Reason no action is needed or why action must be deferred; not a substitute for a missing necessary action.")
 
@@ -731,14 +731,16 @@ class ModuleReviewFinding(StrictModel):
     category: str = Field(
         min_length=1,
         description=(
-            "Short stable defect category such as evidence_boundary, factual_accuracy, "
-            "analysis_depth, action_closure, or editorial_quality."
+            "Short stable defect category such as factual_accuracy, analysis_depth, "
+            "action_closure, duplicate_argument, exemplar_structure, or editorial_quality."
         ),
     )
     impact: Literal["blocking", "advisory"] = Field(
         description=(
             "blocking requires correction and recheck for factual, risk, source-support or "
-            "required task/interface defects. advisory is optional improvement only: retained "
+            "required task/interface defects, and for prose that departs from the exemplar "
+            "organisation by repeating the argument object by object or by expounding evidence "
+            "boundaries. advisory is optional improvement only: retained "
             "without automatic author revision or a resolved verdict in module review v3. "
             "On recheck, every required_finding still requires an explicit verdict."
         )

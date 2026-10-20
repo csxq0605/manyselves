@@ -2189,13 +2189,13 @@ def _example_final_finding() -> dict[str, Any]:
         "target_changes": [
             {
                 "target_section_id": "3.2",
-                "required_change": ("在行动计划中补充跨模块责任接口、依赖顺序、验收指标和剩余风险边界。"),
-                "reviewer_checks": ["行动责任、依赖顺序、验收指标和剩余风险均可核对"],
+                "required_change": ("在速查表中为每项行动写明对象、动作和建议时限。"),
+                "reviewer_checks": ["每行都写明对象、动作和建议时限"],
             }
         ],
         "category": "special_topic",
         "impact": "blocking",
-        "observation": "当前行动计划没有清楚说明跨模块责任接口、依赖顺序和联合验收边界。",
+        "observation": "当前速查表多数行动没有写明对象和时限。",
         "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
     }
 
@@ -2208,7 +2208,7 @@ def _example_special_topic_plan() -> dict[str, Any]:
             {
                 "section_id": "4.1",
                 "title": "动态专项问题",
-                "requirement": "结合项目证据说明判断边界、可选方案、实施条件和验证方法。",
+                "requirement": "结合项目事实说明可选方案、实施条件和验证方法。",
             }
         ],
     }
@@ -2218,7 +2218,7 @@ def _example_edited_report() -> dict[str, Any]:
     return {
         "kind": "edited_report_submission",
         "title": "示例报告",
-        "assessment_background": "说明评估范围、证据基础和适用边界。",
+        "assessment_background": "说明委托方、评估对象、时间、方法和客户提出的话题。",
         "findings_overview": "归纳主要发现及其管理含义。",
         "regional_executive_summary": "按真实责任边界归纳行动。",
         "module_narratives": {
@@ -2231,7 +2231,7 @@ def _example_edited_report() -> dict[str, Any]:
         "special_topic_plan": _example_special_topic_plan(),
         "special_topic_analysis": (
             "### 4.1 动态专项问题\n\n"
-            "结合项目证据边界分析可选方案、实施条件和验证方法，并明确通用知识并非客户事实。"
+            "结合项目事实分析可选方案、实施条件和验证方法，并明确通用知识并非客户事实。"
         ),
         "tables": [],
         "photo_ids": [],

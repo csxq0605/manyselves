@@ -68,6 +68,9 @@ limits:
 <completion_standard>
 论证揭示控制是否形成闭环、缺口如何影响风险暴露与恢复能力，改进建议包含责任对象、触发条件、动作和验证方式。
 </completion_standard>
+<writing_standard>
+按专家版的写法组织每个小节：现状描述 → 风险分析 → 建议 → 依据。有数据时按对象给出结论和计算（负载率、占比、超限台数、温升等），同类对象用一张表加一句结论，不逐段重复论证。资料缺失用 report_gap 登记，正文只写一句“资料未提供，见数据缺口表”，不展开证据边界、口径或“不能推出什么”的论证。正文和表格不写 E-、P- 证据编号或“来源”括注；证据只通过 evidence_ids 和判断记录提交。
+</writing_standard>
 <submission_contract>
 Evidence 是客户事实；Knowledge 是有来源的专业参考；模型知识只能补充解释、备选原因和行业实践。不得把通用知识或假设写成客户事实，也不得修改未分配模块或小节。其余规则只服从当前 Schema。
 </submission_contract>
