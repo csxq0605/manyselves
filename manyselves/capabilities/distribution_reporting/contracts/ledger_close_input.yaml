@@ -1,0 +1,7 @@
+id: ledger_close_input
+version: 1.0.0
+description: One review item, its merged findings and the optional revision
+adapter: json_schema
+schema:
+  type: object
+  required: [item, merged]

@@ -58,20 +58,32 @@ class ResolvedActionBase(BaseModel):
 
 
 class SetVariableAction(ResolvedActionBase):
-    """Set a literal value, or copy another variable or one of its fields."""
+    """Set a literal value, copy a variable or one of its fields, or build an object.
+
+    ``value_variables`` maps object keys to variables and sets the object
+    built from their current values.
+    """
 
     kind: Literal[ActionKind.SET_VARIABLE] = ActionKind.SET_VARIABLE
     variable: str = Field(min_length=1)
     value: Any = None
     value_variable: str | None = Field(default=None, min_length=1)
     field: str | None = Field(default=None, min_length=1)
+    value_variables: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def field_reads_a_variable(self) -> "SetVariableAction":
         if self.field is not None and self.value_variable is None:
             raise ValueError("set_variable field requires value_variable")
-        if self.value_variable is not None and self.value is not None:
-            raise ValueError("set_variable takes either value or value_variable")
+        sources = [
+            self.value is not None,
+            self.value_variable is not None,
+            bool(self.value_variables),
+        ]
+        if sum(sources) > 1:
+            raise ValueError(
+                "set_variable takes one of value, value_variable or value_variables"
+            )
         return self
 
 

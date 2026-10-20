@@ -1,0 +1,10 @@
+id: prepare-ledger-context
+version: 1.0.0
+description: Assemble the shared project context and one brief per module
+implementation: capability:distribution-reporting:prepare-ledger-context
+input_contract: reporting_tool_input
+output_contract: ledger_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

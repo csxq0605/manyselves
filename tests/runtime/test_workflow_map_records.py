@@ -568,3 +568,33 @@ async def test_map_keeps_child_conversations_so_a_later_map_resolves_them(
     assert {
         key: value["conversation_id"] for key, value in resolved.outputs["result"].items()
     } == {key: value["conversation_id"] for key, value in forked.outputs["result"].items()}
+
+
+@pytest.mark.asyncio
+async def test_set_variable_builds_an_object_from_variables(tmp_path: Path) -> None:
+    registry, contracts = _registry()
+    workflow = WorkflowDefinition(
+        id="build-object",
+        version="1.0.0",
+        description="Build one object",
+        state={"left": 1, "right": {"n": 2}},
+        actions=[
+            {
+                "id": "build",
+                "kind": "set_variable",
+                "variable": "pair",
+                "value_variables": {"a": "left", "b": "right"},
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "pair"},
+        ],
+    )
+    plan = _compile(registry, workflow)
+    host, _store = _host(tmp_path)
+
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("build-run", plan),
+        RuntimeContext(contracts=contracts, definitions=registry),
+    )
+
+    assert completed.outputs["result"] == {"a": 1, "b": {"n": 2}}

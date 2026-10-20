@@ -1,0 +1,15 @@
+id: chief-chapter-1
+version: 1.0.0
+description: Write chapter 1 from the ledger and the chapter 3 just settled
+agent: report-consultant
+objective: 继续作为总编，写第一章：1.1 评估背景、1.2 健康度总览（总体评价加三张表的结构化行）、1.3 各区域执行摘要。
+input_contract: ledger_chief_input
+output_contract: ledger_chief_chapter_1
+constraints:
+- 按写作方法 chief-editor-chapter-1 的范例组织。
+- dimension_health 每个评估维度（模块）一行；module_id 填模块编号。
+- key_risks 按实际条数，row_ids 写依据的判断行；行动建议与第三章一致。
+- phases 由第三章行动的建议时限归并；没有时限的行动放“时限待定”，不自行补时间。
+- 不能把未知写成良好，不用多数正常覆盖少数异常。
+tools: []
+recovery: typed-turn-recovery

@@ -1,0 +1,48 @@
+id: ledger-module-writing
+version: 1.0.0
+description: The author writes each submodule in the conversation that judged it
+tasks:
+- write-section
+recovery:
+- typed-turn-recovery
+state:
+  item: null
+  item_key: null
+  written: []
+actions:
+- id: resume-author
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: author
+  key_variable: item_key
+  mode: run
+  output_variable: author_conversation
+- id: sections
+  kind: set_variable
+  variable: sections
+  value_variable: item
+  field: sections
+- id: each-section
+  kind: for_each
+  items_variable: sections
+  item_variable: section
+  body: write
+  after: finish
+- id: write
+  kind: invoke_agent
+  agent: report-consultant
+  task: write-section
+  conversation_variable: author_conversation
+  input_variable: section
+  output_variable: section_text
+- id: record
+  kind: append_variable
+  variable: written
+  value_variable: section_text
+- id: next-section
+  kind: goto
+  target: each-section
+- id: finish
+  kind: end_workflow
+  output_variable: written
+  output_name: result

@@ -1,0 +1,10 @@
+id: close-review
+version: 1.0.0
+description: Record one module's review findings and its targeted revision
+implementation: capability:distribution-reporting:close-review
+input_contract: ledger_close_input
+output_contract: ledger_owner_result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

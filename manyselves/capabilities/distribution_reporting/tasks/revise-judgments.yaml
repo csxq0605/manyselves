@@ -1,0 +1,13 @@
+id: revise-judgments
+version: 1.0.0
+description: Revise only the rows a review named, in the conversation that judged them
+agent: report-consultant
+objective: 审查人和程序对你刚才提交的判断行提出了意见。核对后只修改被点名的行。
+input_contract: ledger_revision_input
+output_contract: ledger_judgment_revision
+constraints:
+- findings 必须逐条回应：意见成立就在 rows 里提交改好的完整行（行编号不变）；需要新增的行用新编号；需要删除的行编号放 removed_row_ids；意见不成立就在 responses 里写明理由，键是该意见的编号。
+- minor 意见可以顺手改，也可以不改。
+- 没被点名的行不要重新提交。
+tools: []
+recovery: typed-turn-recovery

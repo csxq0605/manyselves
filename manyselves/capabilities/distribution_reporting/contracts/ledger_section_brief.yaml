@@ -1,0 +1,7 @@
+id: ledger_section_brief
+version: 1.0.0
+description: One submodule and its settled judgment rows
+adapter: json_schema
+schema:
+  type: object
+  required: [submodule_id, title, rows]

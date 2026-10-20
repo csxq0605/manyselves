@@ -150,13 +150,37 @@ class DeliveryTools:
         )
         return state
 
-    def _prepare_context(self, state: dict[str, Any]) -> DeliveryContext:
-        edited, final_audit_snapshot_ref = validated_final_audit_subject(
-            workspace=self.workspace,
-            store=self.store,
-            state=state,
+    def prepare_composed(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Render a report composed from the judgment ledger.
+
+        ``state["edited_report"]`` and ``state["module_submissions"]`` were
+        assembled by the ledger composition; there is no separate final
+        review subject to validate.
+        """
+
+        _restore_delivery_state(state)
+        edited = EditedReportSubmission.model_validate(state["edited_report"])
+        context = self._prepare_context(state, edited=edited)
+        state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
+            mode="json",
+            exclude={"state"},
         )
-        write_handoff_contracts(self.store, state)
+        return state
+
+    def _prepare_context(
+        self,
+        state: dict[str, Any],
+        *,
+        edited: EditedReportSubmission | None = None,
+    ) -> DeliveryContext:
+        final_audit_snapshot_ref = None
+        if edited is None:
+            edited, final_audit_snapshot_ref = validated_final_audit_subject(
+                workspace=self.workspace,
+                store=self.store,
+                state=state,
+            )
+            write_handoff_contracts(self.store, state)
         state["edited_report"] = edited
         claims = [
             claim

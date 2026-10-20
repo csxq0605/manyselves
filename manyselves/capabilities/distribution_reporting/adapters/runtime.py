@@ -41,6 +41,9 @@ from manyselves.capabilities.distribution_reporting.runtime.final_provider impor
 from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
     RunInputSnapshotStore,
 )
+from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
+    build_ledger_report_binding,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     build_module_provider_composition,
 )
@@ -231,8 +234,15 @@ class DistributionReportingRuntimeBinding:
             **final.agent_invokers,
             **final_chief.agent_invokers,
         }
+        ledger_report = build_ledger_report_binding(
+            self.workspace,
+            services,
+            input_snapshot=snapshot_store.load,
+            snapshot_content=partial(snapshot_content, self.workspace, content_store),
+        )
+        self._providers = (*self._providers, ledger_report)
         self._runtimes: dict[str, DetachedRuntime] = {
-            "full-report": public,
+            "full-report": ledger_report,
             "module-report": public,
             "revise-report": public,
             "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
@@ -252,7 +262,7 @@ class DistributionReportingRuntimeBinding:
             ),
         }
         self._start_stores = {
-            "full-report": public_state_store,
+            "full-report": ledger_report.state_store,
             "module-report": public_state_store,
             "revise-report": public_state_store,
             "aggregate-existing": aggregate_state_store,

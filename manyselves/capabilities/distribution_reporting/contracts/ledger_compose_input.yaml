@@ -1,0 +1,7 @@
+id: ledger_compose_input
+version: 1.0.0
+description: Reporting state, ledger, chief outputs and edited sections
+adapter: json_schema
+schema:
+  type: object
+  required: [state, ledger, chief, edits]

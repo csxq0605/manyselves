@@ -1,6 +1,6 @@
-"""Deterministic storage choices for report artifacts.
+"""Deterministic storage choices for run artifacts.
 
-The reporting runtime writes two kinds of files:
+The runtime writes two kinds of files:
 
 * *materialized* files are ordinary, independently readable files.  They are
   written through a temporary file and are hash checked before publication.

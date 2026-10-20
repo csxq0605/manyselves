@@ -476,10 +476,10 @@ class WorkflowCompiler:
         assignable_pairs: set[tuple[str, str]],
     ) -> None:
         if isinstance(action, SetVariableAction):
-            if action.value_variable is not None:
-                self._require_variable(
-                    action.value_variable, defined_variables, action.id
-                )
+            for variable in (
+                [action.value_variable] if action.value_variable is not None else []
+            ) + list(action.value_variables.values()):
+                self._require_variable(variable, defined_variables, action.id)
             defined_variables.add(action.variable)
             variable_contracts.pop(action.variable, None)
             return
@@ -1034,7 +1034,9 @@ def _append_unique(values: list[str], value: str) -> None:
 
 def _read_variables(action: ResolvedAction) -> set[str]:
     if isinstance(action, SetVariableAction):
-        return set() if action.value_variable is None else {action.value_variable}
+        return (
+            set() if action.value_variable is None else {action.value_variable}
+        ) | set(action.value_variables.values())
     if isinstance(action, (AppendVariableAction, MergeVariableAction)):
         return {
             action.variable,

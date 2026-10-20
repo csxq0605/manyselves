@@ -85,7 +85,34 @@ def _excerpt(narrative: str, anchor: str) -> str:
 def build_joint_dossiers(
     workspace: Path, run_id: str, modules: Mapping[str, ModuleSubmission],
 ) -> list[dict]:
+    """Dossiers from module submissions; see ``build_dossiers``."""
+
+    judgments = []
+    for module_id, module in modules.items():
+        for part_id, part in module.assessments.items():
+            narrative = module.submodule_narratives.get(part_id, "")
+            for record in part.records or []:
+                judgment = {
+                    "module_id": module_id,
+                    "submodule_id": part_id,
+                    "evidence_ids": list(record.evidence_ids),
+                    "disposition": record.disposition,
+                    "excerpt": _excerpt(narrative, record.narrative_anchor),
+                }
+                if record.action_anchor:
+                    judgment["action_excerpt"] = _excerpt(narrative, record.action_anchor)
+                judgments.append(judgment)
+    return build_dossiers(workspace, run_id, judgments)
+
+
+def build_dossiers(
+    workspace: Path, run_id: str, judgments: list[dict],
+) -> list[dict]:
     """Objects used by two or more modules whose judgments need a joint look.
+
+    ``judgments`` are per-judgment records with ``module_id``,
+    ``submodule_id``, ``evidence_ids`` and ``disposition``; other keys (an
+    excerpt, a row id) are carried into the dossier as they are.
 
     Kept when the judgments from different modules differ, when two or more
     modules raise a concern or leave the object undetermined (their actions and
@@ -143,29 +170,21 @@ def build_joint_dossiers(
     for item in items.values():
         if item.module_id:
             dossier_for(item.id)
-    for module_id, module in modules.items():
-        for part_id, part in module.assessments.items():
-            narrative = module.submodule_narratives.get(part_id, "")
-            for record in part.records or []:
-                touched = {
-                    id(found): found
-                    for evidence_id in record.evidence_ids
-                    if (found := dossier_for(evidence_id)) is not None
-                }
-                for found in touched.values():
-                    judgment = {
-                        "module_id": module_id,
-                        "submodule_id": part_id,
-                        "evidence_ids": [
-                            evidence_id for evidence_id in record.evidence_ids
-                            if evidence_id in found.facts
-                        ],
-                        "disposition": record.disposition,
-                        "excerpt": _excerpt(narrative, record.narrative_anchor),
-                    }
-                    if record.action_anchor:
-                        judgment["action_excerpt"] = _excerpt(narrative, record.action_anchor)
-                    found.judgments.append(judgment)
+    for record in judgments:
+        touched = {
+            id(found): found
+            for evidence_id in record["evidence_ids"]
+            if (found := dossier_for(evidence_id)) is not None
+        }
+        for found in touched.values():
+            judgment = {
+                **record,
+                "evidence_ids": [
+                    evidence_id for evidence_id in record["evidence_ids"]
+                    if evidence_id in found.facts
+                ],
+            }
+            found.judgments.append(judgment)
 
     selected: list[dict] = []
     for _key, found in sorted(dossiers.items()):
@@ -228,4 +247,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["build_joint_dossiers", "dossiers_by_module", "object_key"]
+__all__ = ["build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]

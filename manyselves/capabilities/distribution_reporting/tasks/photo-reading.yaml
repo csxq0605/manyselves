@@ -5,7 +5,11 @@ agent: photo-reader
 objective: 看这张现场照片，写下图中能看到的内容，并判断它与绑定的表格记录是否相符。
 input_contract: photo_reading_input
 output_contract: photo_reading_submission
-tools:
-- submit_result
-- report_blocked
-recovery: current-reporting-recovery
+image:
+  path_field: photo_path
+  media_type_field: media_type
+constraints:
+- 只写照片里看得到的内容，不推测看不到的部分，不引用标准，不下合格或不合格的结论。
+- 照片看不清或打不开时，record_match 写 cannot_tell，needs_review 写 true，并在 reason 里说明。
+tools: []
+recovery: typed-turn-recovery

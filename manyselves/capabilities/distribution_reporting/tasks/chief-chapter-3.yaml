@@ -1,0 +1,15 @@
+id: chief-chapter-3
+version: 1.0.0
+description: Merge the ledger's actions into the 3.2 quick reference and write 3.1
+agent: report-consultant
+objective: 你现在是总编。依据判断台账（含 changed_rows 里返修后的行）写第三章：3.1 风险/问题汇总与概览，以及 3.2 改善行动速查表的结构化行。
+input_contract: ledger_chief_input
+output_contract: ledger_chief_chapter_3
+constraints:
+- 按写作方法 chief-editor-chapter-3 的范例组织。
+- actions 的每一行把同类行动归并成一条，row_ids 写它覆盖的全部判断行；action_row_ids 里的每一行都要被某条 action 覆盖一次。
+- 优先级和时限沿用判断行给出的结果；合并时“发现问题”列全覆盖对象，不用其中一项代表全部。
+- 3.1 不重写第二章的论证，不写证据边界或口径说明。
+- removed_row_ids 里的行已经删除，不再引用。
+tools: []
+recovery: typed-turn-recovery

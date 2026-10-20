@@ -1,0 +1,7 @@
+id: ledger_revision_input
+version: 1.0.0
+description: Blocking and minor findings an owner must answer
+adapter: json_schema
+schema:
+  type: object
+  required: [findings, minor]

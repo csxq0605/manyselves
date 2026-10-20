@@ -1,0 +1,7 @@
+id: ledger_edit_item
+version: 1.0.0
+description: One owner's finished sections and their program findings
+adapter: json_schema
+schema:
+  type: object
+  required: [owner, sections, program_findings]

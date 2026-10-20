@@ -1,0 +1,7 @@
+id: ledger_chief_outputs
+version: 1.0.0
+description: The chief's chapter outputs
+adapter: json_schema
+schema:
+  type: object
+  required: [chapter1, chapter3]

@@ -1,0 +1,7 @@
+id: ledger_final
+version: 1.0.0
+description: The revised ledger, the writing plan and the chief input
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, ledger, writing_items, chief_input]

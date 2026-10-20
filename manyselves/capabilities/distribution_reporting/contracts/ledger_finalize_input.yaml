@@ -1,0 +1,7 @@
+id: ledger_finalize_input
+version: 1.0.0
+description: Ledger context, ledger and every module's review result
+adapter: json_schema
+schema:
+  type: object
+  required: [context, ledger, reviews]

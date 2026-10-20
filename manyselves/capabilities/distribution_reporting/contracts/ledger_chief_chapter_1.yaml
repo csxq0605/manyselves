@@ -1,0 +1,5 @@
+id: ledger_chief_chapter_1
+version: 1.0.0
+description: Chapter 1 - background, overview tables and regional summary
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:ChiefChapter1

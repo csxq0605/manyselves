@@ -1,0 +1,190 @@
+id: report-ledger
+version: 1.0.0
+description: Judge into a ledger first, review the ledger, write once, then check and deliver
+tasks:
+- read-project
+- read-ledger
+recovery:
+- typed-turn-recovery
+input_contract: reporting_tool_input
+input_variable: state
+output_contract: distribution_reporting_output
+state:
+  context: {}
+  ledger: {}
+  final: {}
+actions:
+- id: prepare
+  kind: invoke_tool
+  tool: prepare-ledger-context
+  input_variable: state
+  output_variable: context
+- id: shared-context
+  kind: set_variable
+  variable: shared
+  value_variable: context
+  field: shared
+- id: open-shared
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: shared
+  mode: run
+  output_variable: shared_conversation
+- id: read-project
+  kind: invoke_agent
+  agent: report-consultant
+  task: read-project
+  conversation_variable: shared_conversation
+  input_variable: shared
+  output_variable: project_reading
+- id: module-briefs
+  kind: set_variable
+  variable: modules
+  value_variable: context
+  field: modules
+- id: judge-modules
+  kind: map
+  items_variable: modules
+  key_field: module_id
+  workflow: ledger-module-judgment
+  key_input_variable: item_key
+  input_variables:
+    shared_conversation: shared_conversation
+  output_variable: judgments
+  max_concurrency: 5
+- id: build-ledger
+  kind: invoke_tool
+  tool: build-judgment-ledger
+  input_variables:
+    context: context
+    judgments: judgments
+  output_variable: ledger
+- id: ledger-snapshot
+  kind: set_variable
+  variable: ledger_snapshot
+  value_variable: ledger
+  field: snapshot
+- id: open-review-base
+  kind: fork_conversation
+  source_variable: shared_conversation
+  conversation_key: review-base
+  mode: run
+  output_variable: review_base
+- id: read-ledger
+  kind: invoke_agent
+  agent: report-consultant
+  task: read-ledger
+  conversation_variable: review_base
+  input_variable: ledger_snapshot
+  output_variable: ledger_reading
+- id: review-items
+  kind: set_variable
+  variable: review_items
+  value_variable: ledger
+  field: review_items
+- id: review-modules
+  kind: map
+  items_variable: review_items
+  key_field: module_id
+  workflow: ledger-module-review
+  key_input_variable: item_key
+  input_variables:
+    review_base: review_base
+  output_variable: reviews
+  max_concurrency: 5
+- id: finalize-ledger
+  kind: invoke_tool
+  tool: finalize-judgment-ledger
+  input_variables:
+    context: context
+    ledger: ledger
+    reviews: reviews
+  output_variable: final
+- id: writing-items
+  kind: set_variable
+  variable: writing_items
+  value_variable: final
+  field: writing_items
+- id: draft
+  kind: parallel
+  branches:
+    writing: write-modules
+    chief: chief-summary
+  join: join-draft
+  max_concurrency: 2
+- id: write-modules
+  kind: map
+  items_variable: writing_items
+  key_field: module_id
+  workflow: ledger-module-writing
+  key_input_variable: item_key
+  output_variable: written
+  max_concurrency: 5
+- id: writing-done
+  kind: goto
+  target: join-draft
+- id: chief-summary
+  kind: subworkflow
+  workflow: ledger-chief
+  input_variables:
+    review_base: review_base
+    final: final
+    context: context
+  output_variable: chief
+- id: chief-done
+  kind: goto
+  target: join-draft
+- id: join-draft
+  kind: join
+  parallel: draft
+  inputs:
+    writing: written
+    chief: chief
+  output_variable: drafts
+- id: written-sections
+  kind: set_variable
+  variable: written_sections
+  value_variable: drafts
+  field: writing
+- id: chief-outputs
+  kind: set_variable
+  variable: chief_outputs
+  value_variable: drafts
+  field: chief
+- id: check-report
+  kind: invoke_tool
+  tool: check-report
+  input_variables:
+    ledger: final
+    written: written_sections
+    chief: chief_outputs
+  output_variable: checked
+- id: edit-items
+  kind: set_variable
+  variable: edit_items
+  value_variable: checked
+  field: edit_items
+- id: edit-pass
+  kind: map
+  items_variable: edit_items
+  key_field: owner
+  workflow: ledger-edit-pass
+  key_input_variable: item_key
+  input_variables:
+    review_base: review_base
+  output_variable: edits
+  max_concurrency: 6
+- id: compose
+  kind: invoke_tool
+  tool: compose-report
+  input_variables:
+    state: state
+    ledger: final
+    chief: chief_outputs
+    edits: edits
+    reviews: reviews
+  output_variable: delivered
+- id: finish
+  kind: end_workflow
+  output_variable: delivered
+  output_name: result

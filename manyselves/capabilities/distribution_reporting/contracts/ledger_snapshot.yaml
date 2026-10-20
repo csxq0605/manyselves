@@ -1,0 +1,7 @@
+id: ledger_snapshot
+version: 1.0.0
+description: The complete judgment ledger as text
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger_text]

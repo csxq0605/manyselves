@@ -1,0 +1,7 @@
+id: ledger_check_input
+version: 1.0.0
+description: Final ledger, written sections and chief outputs
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, written, chief]

@@ -1,0 +1,14 @@
+id: edit-sections
+version: 1.0.0
+description: Editorial pass over one owner's finished sections
+agent: report-consultant
+objective: 你现在是编辑。通读下面这部分成稿，只看组织方式是否与专家版范例一致、有没有重复论证、有没有台账里没有的新结论。
+input_contract: ledger_edit_item
+output_contract: review-findings
+constraints:
+- findings 的键是小节编号；severity：blocking=有台账里没有的新结论、与台账矛盾或组织方式明显偏离范例；minor=措辞或篇幅可以更好。
+- program_findings 是程序核对出的问题，不用重复写。
+- 不要求补写证据边界或口径说明；资料缺口由数据缺口表承载。
+- 没有问题时提交空的 findings。
+tools: []
+recovery: typed-turn-recovery

@@ -1,0 +1,10 @@
+id: check-report
+version: 1.0.0
+description: Check the written sections against the ledger and the facts
+implementation: capability:distribution-reporting:check-report
+input_contract: ledger_check_input
+output_contract: ledger_edit_items
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

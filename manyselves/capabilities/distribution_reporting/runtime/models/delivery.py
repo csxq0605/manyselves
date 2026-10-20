@@ -42,7 +42,7 @@ class DeliveryContext(BaseModel):
     # opaque here preserves the existing in-place completion updates while the
     # delivery artifacts crossing stage boundaries stay typed.
     state: Any
-    final_audit_snapshot_ref: str
+    final_audit_snapshot_ref: str | None = None
     claim_ledger_path: Path
     source_ledger_path: Path
     evidence_snapshot_path: Path

@@ -154,6 +154,11 @@ class SetVariableExecutor:
             value = deepcopy(state.variables[resolved.value_variable])
             if resolved.field is not None:
                 value = _required_field(value, resolved.field, resolved.id)
+        elif resolved.value_variables:
+            value = {
+                key: deepcopy(state.variables[variable])
+                for key, variable in resolved.value_variables.items()
+            }
         return ActionResult(
             output=value,
             variable_updates={resolved.variable: value},

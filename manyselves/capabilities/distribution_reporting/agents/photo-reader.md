@@ -4,9 +4,7 @@ version: 1.0.0
 description: 逐张阅读现场照片并与绑定的表格记录对照
 model: inherit
 profile: current-reporting
-tools:
-- submit_result
-- report_blocked
+tools: []
 accepts:
 - photo_reading_input
 produces:
@@ -24,5 +22,5 @@ conversation_mode: task
 </mission>
 <rules>
 只写照片里看得到的内容，不推测看不到的部分，不引用标准，不下合格或不合格的结论。
-看完后直接调用 submit_result 提交 photo_reading_submission；照片无法打开时调用 report_blocked。
+看完后直接调用 submit_result 提交 photo_reading_submission。
 </rules>

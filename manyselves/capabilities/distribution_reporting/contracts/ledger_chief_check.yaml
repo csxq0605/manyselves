@@ -1,0 +1,7 @@
+id: ledger_chief_check
+version: 1.0.0
+description: Program check findings on the chief's tables
+adapter: json_schema
+schema:
+  type: object
+  required: [findings, blocking]

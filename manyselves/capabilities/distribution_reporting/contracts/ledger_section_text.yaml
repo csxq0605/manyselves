@@ -1,0 +1,5 @@
+id: ledger_section_text
+version: 1.0.0
+description: One submodule's prose
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:SectionText

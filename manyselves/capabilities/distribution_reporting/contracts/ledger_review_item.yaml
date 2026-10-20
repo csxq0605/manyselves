@@ -1,0 +1,7 @@
+id: ledger_review_item
+version: 1.0.0
+description: One module's program findings and joint dossiers for review
+adapter: json_schema
+schema:
+  type: object
+  required: [module_id, program_findings, dossiers]

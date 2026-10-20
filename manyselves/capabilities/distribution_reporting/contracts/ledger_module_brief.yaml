@@ -1,0 +1,7 @@
+id: ledger_module_brief
+version: 1.0.0
+description: One module's role, fixed submodules and own fact ids
+adapter: json_schema
+schema:
+  type: object
+  required: [module_id, title, role, submodules, evidence_ids]

@@ -1,0 +1,5 @@
+id: ledger_judgment_revision
+version: 1.0.0
+description: Targeted revision of judgment rows
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:JudgmentRevision
