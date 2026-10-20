@@ -81,7 +81,7 @@ SUBMISSION = {
 
 def _item(evidence_id: str, submodule_id: str, photo_refs: list[str], row: int = 3) -> EvidenceItem:
     return EvidenceItem(
-        id=evidence_id, subject="A房/柜A", fact="进线端子温度=35℃", value=35,
+        id=evidence_id, subject="A房/柜A", fact="进线端子温度=35℃", value=35, unit="℃",
         module_id=submodule_id.split(".")[0] + "." + submodule_id.split(".")[1],
         submodule_id=submodule_id, photo_refs=photo_refs,
         source=SourceLocation(file_id="s4-4", path=Path("Inputs/S4-4.xlsx"),
@@ -318,7 +318,7 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     packet = prepare_module_fact_context(tmp_path, RUN_ID, "2.2").inline_context
     assert '"photo_reading":"P-0001：柜内进线端子' in packet
     assert "抄写：最高温度=60.2℃，柜号=D1701（看不清）；照片日期：2025-06-12 10:31" in packet
-    assert "以表格记录为准，照片读数待核（记录值 35；照片可见 60.2）；需人工复核" in packet
+    assert "以表格记录为准，照片读数待核（记录值 35℃；照片可见 60.2℃）；需人工复核" in packet
     assert "逐张读图结果" in packet
 
     [dossier] = build_joint_dossiers(tmp_path, RUN_ID, modules)
@@ -337,7 +337,8 @@ def test_program_compares_only_legible_numbers_and_never_names_or_dates() -> Non
         compare_with_records,
     )
 
-    record = [PhotoReadingRecord(evidence_id="E-1", subject="14#柜", fact="11.3A", values=[11.3])]
+    record = [PhotoReadingRecord(evidence_id="E-1", subject="14#柜", fact="11.3A",
+                                 values=[{"value": 11.3, "unit": "A"}])]
 
     def items(*pairs):
         return [{"label": "x", "text": text, "legible": legible} for text, legible in pairs]
@@ -349,5 +350,10 @@ def test_program_compares_only_legible_numbers_and_never_names_or_dates() -> Non
         "cannot_tell"
     )
     assert compare_with_records(record, items(("2.9A", True)))[0] == "conflicts"
+    assert compare_with_records(record, items(("11.3", True)))[0] == "matches"
+    # A watermark temperature and a code beside the screen are not readings.
+    assert compare_with_records(
+        record, items(("23℃", True), ("防伪码 8234 2", True), ("-19.9", False))
+    )[0] == "cannot_tell"
     no_value = [PhotoReadingRecord(evidence_id="E-2", subject="17号楼", fact="NG")]
     assert compare_with_records(no_value, items(("16号楼", True)))[0] == "cannot_tell"

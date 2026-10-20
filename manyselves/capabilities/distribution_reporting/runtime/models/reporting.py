@@ -630,6 +630,10 @@ class EvidenceItem(ReportingModel):
     module_id: str | None = None
     submodule_id: str | None = None
     photo_refs: list[str] = Field(default_factory=list)
+    summary_entry: bool = Field(
+        default=False,
+        description="A row of a summary sheet: the subject names the entry, not an observed object",
+    )
 
     @model_validator(mode="after")
     def submodule_matches_module(self) -> "EvidenceItem":

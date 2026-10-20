@@ -38,9 +38,14 @@ def test_status_counts_name_objects_and_numbers_are_ordered_with_ratios() -> Non
     calculations, lines = statistics(items, start=5)
 
     ng = next(c for c in calculations if c.quantity == "ng_count")
-    assert (ng.id, ng.value, ng.formula) == ("K-0006", 2, "NG 对象：A房/2#、B房/3#")
-    ratio = next(c for c in calculations if c.quantity == "max_to_min_ratio")
-    assert ratio.value == 3.9
+    assert (ng.id, ng.value, ng.formula) == ("K-0008", 2, "NG 对象：A房/2#、B房/3#")
+    by_quantity = {c.quantity: c.value for c in calculations if c.unit != "个" or c.subject}
+    assert by_quantity["max_to_min_ratio"] == 3.9
+    assert by_quantity["max_to_second_ratio"] == 3.6
+    assert by_quantity["median"] == 3.1
+    counts = [(c.quantity, c.value) for c in calculations if c.unit == "个"]
+    assert ("record_count", 3) in counts and ("object_count", 3) in counts
+    assert "K-" in lines[0] and "不写进正文" not in lines[0]
     assert "按数值从大到小 A房/2#=11.3A、B房/3#=3.1A、A房/1#=2.9A" in lines[1]
 
 
@@ -105,3 +110,57 @@ def test_evidence_status_reaches_the_problem_and_action_tables() -> None:
     action = ChiefAction(priority="一般", content="补资料", problem="资质未提供", hazard="待定",
                          solution="提供资质证书", row_ids=["J-2.5-1"])
     assert "依据：资料未提供" in action_table_markdown("措施如下。", [action], {"J-2.5-1": "资料未提供"})
+
+
+def test_humidity_remainders_and_medians_are_known_values() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        known_values_from_text,
+    )
+
+    rows = [
+        JudgmentRow.model_validate(
+            {"id": f"J-2.2-{n}", "submodule_id": "2.2.1", "object": f"{n}#", "checkpoint": "湿度",
+             "disposition": "no_concern", "evidence_status": "现场确认", "evidence_ids": [f"E-{n}"],
+             "basis": "b"}
+            if n > 1 else
+            {"id": "J-2.2-1", "submodule_id": "2.2.1", "object": "1#", "checkpoint": "湿度",
+             "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"],
+             "basis": "偏高", "risk_level": "中", "hazard": "h",
+             "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+        )
+        for n in range(1, 4)
+    ]
+    known = known_values_from_text(["相对湿度=39%RH"]) + [(13, "个"), (0.55, "A")]
+
+    def check(text: str):
+        return report_check_findings(
+            sections={"2.2.1": text}, rows_by_submodule={"2.2.1": rows}, known_values=known,
+        )
+
+    assert check("1# 相对湿度 39%，中位数 0.55A。") == {}
+    assert check("共 13 个回路，1# 偏高，其余 12 个正常。") == {}
+    assert "9个" in check("1# 偏高，其余 9 个正常。")["2.2.1"]["problem"]
+
+
+def test_gap_measure_is_written_once_and_chief_text_holds_no_table() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        chief_findings,
+        problem_table,
+    )
+
+    row = JudgmentRow.model_validate(
+        {"id": "J-2.4-1", "submodule_id": "2.4.1", "object": "18#柜", "checkpoint": "铭牌",
+         "disposition": "undetermined", "evidence_status": "资料未提供", "evidence_ids": [],
+         "basis": "b", "gap": {"missing": "铭牌", "impact": "i", "requested_input": "补充该柜铭牌参数"}}
+    )
+    table = problem_table([row])
+    assert "补充该柜铭牌参数" in table and "补充补充" not in table
+    findings = chief_findings(
+        actions=[], health=[], risks=[], rows_by_module={},
+        texts={"overall_assessment": "总体良好。\n\n| 维度 | 状态 |\n| --- | --- |\n| 环境 | 良 |"},
+    )
+    assert "画了表格" in findings["overall_assessment"]["problem"]
+    assert chief_findings(
+        actions=[], health=[], risks=[], rows_by_module={},
+        texts={"overall_assessment": "总体良好，A｜B 两路供电。"},
+    ) == {}

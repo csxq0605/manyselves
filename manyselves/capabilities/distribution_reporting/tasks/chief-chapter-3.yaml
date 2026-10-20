@@ -6,7 +6,7 @@ objective: 你现在是总编。依据判断台账（含 changed_rows 里返修�
 input_contract: ledger_chief_input
 output_contract: ledger_chief_chapter_3
 constraints:
-- 按写作方法 chief-editor-chapter-3 的范例组织。
+- 按写作方法 chief-editor-chapter-3 的范例组织。文字字段只写文字，不画表；表格由系统按结构化字段生成。
 - actions 的每一行把同类行动归并成一条，row_ids 写它覆盖的全部判断行；action_row_ids 里的每一行都要被某条 action 覆盖一次。
 - 优先级和时限沿用判断行给出的结果；合并时“发现问题”列全覆盖对象，不用其中一项代表全部。
 - 3.1 不重写第二章的论证，不写证据边界或口径说明。

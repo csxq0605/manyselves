@@ -146,9 +146,15 @@ def statistics(
             _, value = _label_and_value(item.fact) or ("", "")
             if match := _STATUS.match(value):
                 by_status[match.group(1).upper()].append(item)
+        objects = list(dict.fromkeys(item.subject for item in members))
+        member_ids = [item.id for item in members]
         if any(by_status.values()):
-            objects = list(dict.fromkeys(item.subject for item in members))
-            parts = [f"{name}：共 {len(members)} 条记录、{len(objects)} 个对象"]
+            records_id = add(name, "record_count", len(members), "个", member_ids, "记录条数")
+            objects_id = add(name, "object_count", len(objects), "个", member_ids, "对象个数")
+            parts = [
+                f"{name}：共 {len(members)} 条记录[{records_id}]、"
+                f"{len(objects)} 个对象[{objects_id}]"
+            ]
             for status, listed in by_status.items():
                 subjects = list(dict.fromkeys(item.subject for item in listed))
                 if not listed:
@@ -174,7 +180,11 @@ def statistics(
             sorted(values)[len(values) // 2 - 1] + sorted(values)[len(values) // 2]
         ) / 2
         table = "、".join(f"{item.subject}={float(item.value):g}{unit}" for item in ordered)
-        line = f"{name}：按数值从大到小 {table}"
+        counted = list(dict.fromkeys(item.subject for item in numeric))
+        objects_id = add(
+            name, "object_count", len(counted), "个", [item.id for item in numeric], "对象个数"
+        )
+        line = f"{name}：{len(counted)} 个对象[{objects_id}]，按数值从大到小 {table}"
         if values[-1] > 0:
             calc_id = add(
                 name, "max_to_min_ratio", round(values[0] / values[-1], 1), "倍",
@@ -182,6 +192,17 @@ def statistics(
                 f"{ordered[0].subject} {values[0]:g}{unit} / {ordered[-1].subject} {values[-1]:g}{unit}",
             )
             line += f"；最大/最小≈{values[0] / values[-1]:.1f} 倍[{calc_id}]"
+        if values[1] > 0:
+            calc_id = add(
+                name, "max_to_second_ratio", round(values[0] / values[1], 1), "倍",
+                [ordered[0].id, ordered[1].id],
+                f"{ordered[0].subject} {values[0]:g}{unit} / {ordered[1].subject} {values[1]:g}{unit}",
+            )
+            line += f"；最大/次大≈{values[0] / values[1]:.1f} 倍[{calc_id}]"
+        median_id = add(
+            name, "median", round(median, 6), unit, [item.id for item in ordered], "中位数"
+        )
+        line += f"；中位数 {median:g}{unit}[{median_id}]"
         if median > 0:
             multiples = []
             for item, value in zip(ordered, values, strict=True):
@@ -190,7 +211,7 @@ def statistics(
                     [item.id], f"{value:g}{unit} / 中位数 {median:g}{unit}",
                 )
                 multiples.append(f"{item.subject}≈{value / median:.1f} 倍[{calc_id}]")
-            line += f"；相对中位数 {median:g}{unit}：" + "、".join(multiples)
+            line += "；相对中位数：" + "、".join(multiples)
         lines.append(line)
     return calculations, lines
 
@@ -200,7 +221,8 @@ def render_statistics(lines: list[str]) -> str:
         [
             "# 程序统计（按检查项）",
             "以下数量、对象名单、排序和倍数由程序从事实逐条算出；正文写数量、分组、"
-            "“几倍”“最高/最低”时只用这里的结果，并引用方括号里的计算编号。",
+            "“几倍”“最高/最低”时只用这里的结果；方括号里的计算编号填进 calculation_ids，"
+            "不写进正文。",
             *(lines or ["（无）"]),
         ]
     ) + "\n"

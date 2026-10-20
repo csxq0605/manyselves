@@ -59,7 +59,10 @@ class JudgmentAction(_Model):
 class JudgmentGap(_Model):
     missing: str = Field(min_length=1)
     impact: str = Field(min_length=1)
-    requested_input: str = Field(min_length=1)
+    requested_input: str = Field(
+        min_length=1,
+        description="The step that closes the gap, written as an action, e.g. 补充该柜铭牌参数",
+    )
 
 
 class JudgmentRow(_Model):
@@ -237,7 +240,7 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
         else:
             problem = f"不能判定：{row.gap.missing if row.gap else row.basis}"
             level = "待定"
-            measure = f"补充{row.gap.requested_input}" if row.gap else ""
+            measure = row.gap.requested_input if row.gap else ""
         if row.evidence_status != "现场确认":
             problem = f"（{row.evidence_status}）{problem}"
         values = [row.object, row.checkpoint, problem, level, measure]
@@ -421,8 +424,12 @@ def chief_findings(
     health: Sequence[DimensionHealth],
     risks: Sequence[KeyRisk],
     rows_by_module: Mapping[str, Sequence[JudgmentRow]],
+    texts: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Every action row is merged into 3.2 once; every dimension has health."""
+    """Every action row is merged into 3.2 once; every dimension has health.
+
+    Text fields hold prose only: the tables come from the structured fields.
+    """
 
     action_rows = {
         row.id
@@ -449,20 +456,34 @@ def chief_findings(
             "健康度表缺少维度：" + "、".join(missing_modules),
             "每个评估维度写一行。",
         )
+    for field, text in (texts or {}).items():
+        if _TABLE_RULE.search(text):
+            findings[field] = _finding(
+                "文字字段里画了表格；本章的表格由程序按结构化字段生成",
+                "删去文字里的表格，只留文字；表里的内容放进对应的结构化字段。",
+            )
     return findings
+
+
+_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", re.M)
 
 
 _NUMBER_WITH_UNIT = re.compile(
     r"(?<![\w.])(\d+(?:\.\d+)?)\s*"
-    r"(kVA|kW|kV|V|A|K|℃|°C|%|Ω|MΩ|mA|Hz|倍|×|个|处|台|面|组|只)(?![A-Za-z月小天年周])"
+    r"(kVA|kW|kV|V|A|K|℃|°C|%RH|%|Ω|MΩ|mA|Hz|倍|×|个|处|台|面|组|只)(?![A-Za-z月小天年周])"
 )
-_UNIT_ALIASES = {"°C": "℃", "×": "倍", "处": "个", "台": "个", "面": "个", "组": "个", "只": "个"}
+_UNIT_ALIASES = {
+    "°C": "℃", "%RH": "%", "×": "倍",
+    "处": "个", "台": "个", "面": "个", "组": "个", "只": "个",
+}
+# "其余 N 个" is a known count less another known count.
+_REMAINDER = re.compile(r"(?:其余|其他|另外|余下|剩余)(?:的)?\s*(\d+)\s*(?:个|处|台|面|组|只)")
 
 
 def numbers_with_units(text: str) -> set[tuple[str, str]]:
     """Numbers written with a unit, as written (so the precision is kept).
 
-    Counts written with 个/处/台/面/组/只 share the unit 个; × is 倍.
+    Counts written with 个/处/台/面/组/只 share the unit 个; × is 倍; %RH is %.
     """
 
     return {
@@ -542,7 +563,8 @@ def report_check_findings(
 
     A number written with a unit must be a fact or calculation value at the
     written precision; a count (个/处/台…) must be a program count or a count
-    of this section's rows; in a sentence naming exactly one known object, a
+    of this section's rows, or "其余 N 个" where N is one known count less
+    another; in a sentence naming exactly one known object, a
     value must be that object's own value (all blocking).  A concern row whose object the section
     never names is reported as minor, because wording may differ.
     """
@@ -559,10 +581,16 @@ def report_check_findings(
         for disposition in ("concern", "undetermined", "no_concern", "not_applicable"):
             counts.add(float(len({r.object for r in rows if r.disposition == disposition})))
         counts.add(float(len({r.object for r in rows})))
+        remainders = {
+            float(number)
+            for number in _REMAINDER.findall(text)
+            if any(a - b == float(number) for a in counts for b in counts)
+        }
         unknown = sorted(
             f"{value}{unit}"
             for value, unit in numbers_with_units(text)
             if not _matches_known(value, unit, local)
+            and not (unit == "个" and float(value) in remainders)
         )
         mispaired = _mispaired(text, subject_values or {})
         if mispaired:

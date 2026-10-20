@@ -1459,9 +1459,8 @@ def write_markdown_table(
         rows.append(cells)
     if not rows:
         return
-    max_rows = policy_int("table_policy", "max_rows_per_table", 30)
-    if max_rows > 0 and len(rows) > max_rows + 1:
-        rows = rows[: max_rows + 1]
+    # Every row of the Markdown is written: the Word file and the Markdown
+    # deliver the same text.
 
     anchor_paragraph.clear()
     anchor_paragraph.style = "Normal"

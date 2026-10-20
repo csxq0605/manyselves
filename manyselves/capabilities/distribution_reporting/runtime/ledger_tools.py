@@ -320,8 +320,14 @@ class LedgerTools:
                 ]
             )
         self.store.write_text(f"Work/runs/{run_id}/ledger/shared-context.md", project)
+        transcribed = [
+            str(entry.get("text", ""))
+            for reading in load_photo_readings(self.workspace, run_id).values()
+            for entry in reading.transcription
+            if entry.get("legible")
+        ]
         known_values = known_values_from_text(
-            [item.fact for item in items] + knowledge_blocks
+            [item.fact for item in items] + knowledge_blocks + transcribed
         )
         for item in items:
             if item.value is not None and item.unit:
@@ -352,7 +358,9 @@ class LedgerTools:
                     asset["id"]: {"path": asset["path"], "media_type": asset["media_type"]}
                     for asset in (_plain(a) for a in state.get("photo_assets", []))
                 },
-                "evidence_subjects": {item.id: item.subject for item in items},
+                "evidence_subjects": {
+                    item.id: item.subject for item in items if not item.summary_entry
+                },
                 "evidence_photos": {item.id: item.photo_refs for item in items if item.photo_refs},
                 "known_values": sorted({(round(v, 6), u) for v, u in known_values}),
                 "subject_values": {
@@ -571,6 +579,12 @@ class LedgerTools:
             health=[DimensionHealth.model_validate(h) for h in chapter1.get("dimension_health", [])],
             risks=[KeyRisk.model_validate(r) for r in chapter1.get("key_risks", [])],
             rows_by_module=ledger,
+            # Each check reviews the chapter just written, which its revision can fix.
+            texts={
+                field: text
+                for field, text in (chapter1 or chapter3).items()
+                if isinstance(text, str)
+            },
         )
         if not chapter1:
             findings.pop("1.2", None)

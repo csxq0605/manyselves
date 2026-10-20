@@ -272,3 +272,17 @@ def test_unverified_render_is_visible_in_the_delivery_result(tmp_path: Path) -> 
         "validation_warnings": ["rendered DOCX may have omitted approved Markdown content"],
         "render_result_ref": "Work/runs/run-1/render-result.json",
     }
+
+
+def test_word_tables_keep_every_markdown_row() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.rendering.v2_docx_renderer import (
+        write_markdown_table,
+    )
+
+    document = Document()
+    lines = ["| 对象 | 问题 |", "| --- | --- |", *(f"| {n}#柜 | 问题{n} |" for n in range(1, 36))]
+    write_markdown_table(document, document.add_paragraph(), lines)
+
+    (table,) = document.tables
+    assert len(table.rows) == 36
+    assert table.rows[-1].cells[0].text == "35#柜"

@@ -175,6 +175,7 @@ def make_evidence(
     measurements: list[EvidenceMeasurement] | None = None,
     confidence: float = 1.0,
     needs_confirmation: bool = False,
+    summary_entry: bool = False,
 ) -> EvidenceItem:
     return EvidenceItem(
         id=evidence_id(file_id, sheet, cell, submodule_id, fact),
@@ -196,4 +197,5 @@ def make_evidence(
         module_id=module_id,
         submodule_id=submodule_id,
         photo_refs=photo_refs or [],
+        summary_entry=summary_entry,
     )

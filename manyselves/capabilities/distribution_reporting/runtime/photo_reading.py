@@ -22,6 +22,7 @@ from .models.photo_reading import (
     PhotoReadingPlan,
     PhotoReadingRecord,
     PhotoReadingSummary,
+    RecordValue,
 )
 from .models.preparation import PreparationContext
 from .storage import ReportingStore
@@ -32,43 +33,71 @@ MATCH_TEXT = {
     "cannot_tell": "程序比对：无可比数值",
 }
 
-_NUMBER = re.compile(r"(?<![A-Za-z\d.])-?\d+(?:\.\d+)?(?![\d.])")
+_UNIT_ALIASES = {"°C": "℃", "°c": "℃"}
+_READING = re.compile(
+    r"(?<![A-Za-z\d.])(-?\d+(?:\.\d+)?)\s*(kVA|kW|kV|mA|MΩ|Ω|Hz|℃|°C|%|V|A|K)?(?![\d.A-Za-z])"
+)
+_BARE = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*$")
 _DATE = re.compile(
     r"\d{4}\s*[-/年]\s*\d{1,2}|\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\s*月\s*\d{1,2}|\d{1,2}\s*:\s*\d{2}"
 )
 
 
-def _numbers(text: str) -> list[float]:
+def _readings(text: str) -> list[tuple[float, str | None]]:
+    """Numbers that read as a measurement: with a unit, or a bare number alone.
+
+    Digits inside codes, names and dates are not readings.
+    """
+
     if _DATE.search(text):
         return []
-    return [float(match.group(0)) for match in _NUMBER.finditer(text)]
+    if _BARE.match(text):
+        return [(float(text), None)]
+    return [
+        (float(number), _UNIT_ALIASES.get(unit, unit))
+        for number, unit in _READING.findall(text)
+        if unit
+    ]
 
 
 def compare_with_records(
     records: list[PhotoReadingRecord], transcription: list[dict[str, Any]]
 ) -> tuple[str, str]:
-    """Compare legible copied numbers with the numbers the records state.
+    """Compare legible copied readings with the values the records state.
 
-    A record number matches when a copied number is within display rounding
-    (0.05 or 2 %).  Only legible items count; names and dates are not compared.
+    Only a reading in the record's own unit (or a bare number shown alone)
+    is compared, so a watermark temperature or a code next to a current
+    reading is not taken for it.  A value matches within display rounding
+    (0.05 or 2 %).  Only legible items count.
     """
 
-    expected = list(dict.fromkeys(value for record in records for value in record.values))
+    expected = list(
+        dict.fromkeys(
+            (value.value, _UNIT_ALIASES.get(value.unit, value.unit))
+            for record in records
+            for value in record.values
+        )
+    )
+    units = {unit for _, unit in expected}
     seen = [
-        number
+        (number, unit)
         for item in transcription
         if item.get("legible")
-        for number in _numbers(str(item.get("text", "")))
+        for number, unit in _readings(str(item.get("text", "")))
+        if unit is None or unit in units
     ]
     if not expected or not seen:
-        missing = "记录没有数值" if not expected else "照片没有看清的数值"
+        missing = "记录没有数值" if not expected else "照片没有看清的同单位读数"
         return "cannot_tell", missing
-    for value in expected:
-        if any(abs(value - number) <= max(0.05, 0.02 * abs(value)) for number in seen):
-            return "matches", f"记录值 {value:g} 在照片中可见"
+    for value, unit in expected:
+        if any(
+            other in (None, unit) and abs(value - number) <= max(0.05, 0.02 * abs(value))
+            for number, other in seen
+        ):
+            return "matches", f"记录值 {value:g}{unit} 在照片中可见"
     return "conflicts", (
-        "记录值 " + "、".join(f"{v:g}" for v in expected)
-        + "；照片可见 " + "、".join(f"{v:g}" for v in seen)
+        "记录值 " + "、".join(f"{v:g}{u}" for v, u in expected)
+        + "；照片可见 " + "、".join(f"{n:g}{u or ''}" for n, u in seen)
     )
 
 
@@ -235,15 +264,15 @@ class PhotoReadingTools:
         ).model_dump(mode="json")
 
 
-def _record_values(item: Any) -> list[float]:
+def _record_values(item: Any) -> list[RecordValue]:
     values = [
-        measurement.value
+        (float(measurement.value), measurement.unit or "")
         for measurement in item.measurements
         if measurement.value is not None
     ]
     if isinstance(item.value, (int, float)) and not isinstance(item.value, bool):
-        values.insert(0, float(item.value))
-    return list(dict.fromkeys(float(value) for value in values))
+        values.insert(0, (float(item.value), item.unit or ""))
+    return [RecordValue(value=v, unit=u) for v, u in dict.fromkeys(values)]
 
 
 def _dumped(value: Any) -> Any:

@@ -11,6 +11,11 @@ from .agentic import StrictModel
 PHOTO_READING_LANES = ("1", "2", "3", "4")
 
 
+class RecordValue(StrictModel):
+    value: float
+    unit: str = ""
+
+
 class PhotoReadingRecord(StrictModel):
     """One table record a photo is bound to; the primary record comes first."""
 
@@ -21,8 +26,8 @@ class PhotoReadingRecord(StrictModel):
     cell: str | None = None
     submodule_id: str | None = None
     primary: bool = False
-    values: list[float] = Field(
-        default_factory=list, description="Numbers the record states, for comparison."
+    values: list[RecordValue] = Field(
+        default_factory=list, description="Numbers the record states, with units."
     )
 
 
@@ -89,5 +94,6 @@ __all__ = [
     "PhotoReadingInput",
     "PhotoReadingPlan",
     "PhotoReadingRecord",
+    "RecordValue",
     "PhotoReadingSummary",
 ]
