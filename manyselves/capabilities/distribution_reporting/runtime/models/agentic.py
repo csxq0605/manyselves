@@ -1031,7 +1031,7 @@ class CrossSynthesisInput(StrictModel):
         min_length=20,
         description="Confidence, missing evidence, and limits on the supported inference.",
     )
-    target_report_section_ids: list[Literal["3.1.1", "3.1.2", "3.2"]] = Field(
+    target_report_section_ids: list[Literal["3.1", "3.2"]] = Field(
         min_length=1,
         description="Final synthesis sections that must account for this input.",
     )
@@ -1389,9 +1389,9 @@ class ChapterScopedFinalReviewTargetChange(StrictModel):
 
     @model_validator(mode="after")
     def target_is_chapter_scoped(self) -> "ChapterScopedFinalReviewTargetChange":
-        if not re.fullmatch(r"(?:1\.[1-3]|3\.(?:1\.[1-3]|2)|4\.[1-9][0-9]*)", self.target_section_id):
+        if not re.fullmatch(r"(?:1\.[1-3]|3\.[12]|4\.[1-9][0-9]*)", self.target_section_id):
             raise ValueError(
-                "chapter lane target must be one of 1.1-1.3, 3.1.1-3.2, or dynamic 4.x"
+                "chapter lane target must be one of 1.1-1.3, 3.1-3.2, or dynamic 4.x"
             )
         return self
 
@@ -1715,9 +1715,7 @@ class EditedReportSubmission(StrictModel):
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str]
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = Field(
         default=None,
@@ -1742,9 +1740,7 @@ class EditedReportSubmission(StrictModel):
                 "assessment_background",
                 "findings_overview",
                 "regional_executive_summary",
-                "risk_panorama",
-                "dimension_risk_analysis",
-                "data_gap_analysis",
+                "risk_summary",
                 "improvement_action_plan",
             ):
                 body = value.get(field)
@@ -1761,9 +1757,7 @@ class EditedReportSubmission(StrictModel):
             "assessment_background",
             "findings_overview",
             "regional_executive_summary",
-            "risk_panorama",
-            "dimension_risk_analysis",
-            "data_gap_analysis",
+            "risk_summary",
             "improvement_action_plan",
         )
         for field in body_fields:
@@ -1860,9 +1854,7 @@ class EditedReportSubmissionInput(StrictModel):
     findings_overview: str | TextArtifactRef
     regional_executive_summary: str | TextArtifactRef
     module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str | TextArtifactRef]
-    risk_panorama: str | TextArtifactRef
-    dimension_risk_analysis: str | TextArtifactRef
-    data_gap_analysis: str | TextArtifactRef
+    risk_summary: str | TextArtifactRef
     improvement_action_plan: str | TextArtifactRef
     special_topic_analysis: str | TextArtifactRef | None = None
     tables: list[TableSubmissionInput] = Field(default_factory=list)

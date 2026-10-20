@@ -52,9 +52,7 @@ _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
     "1.3": "regional_executive_summary",
-    "3.1.1": "risk_panorama",
-    "3.1.2": "dimension_risk_analysis",
-    "3.1.3": "data_gap_analysis",
+    "3.1": "risk_summary",
     "3.2": "improvement_action_plan",
 }
 def _template_skill_context(

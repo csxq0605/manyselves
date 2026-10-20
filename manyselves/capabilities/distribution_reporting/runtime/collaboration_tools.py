@@ -15,6 +15,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.action_table import (
+    ACTION_PRIORITY_GROUPS,
+    ACTION_TABLE_HEADERS,
+    action_table_problems,
+)
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
@@ -913,6 +918,25 @@ class SubmitResultTool(_ResultTool):
                             "own heading; unnumbered internal labels are allowed."
                         ),
                     )
+                if part_id == "improvement_action_plan":
+                    table_problems = action_table_problems(prose)
+                    if table_problems:
+                        raise SubmissionValidationError(
+                            "3.2 must be the grouped five-column action table",
+                            field=f"result_parts.{part_id}.content",
+                            expected=(
+                                "a lead sentence, then for each priority group a bold label "
+                                f"({' / '.join(ACTION_PRIORITY_GROUPS)}, optionally '· 区域') "
+                                "directly followed by a table headed "
+                                + " | ".join(ACTION_TABLE_HEADERS)
+                            ),
+                            received=table_problems,
+                            repair_instruction=(
+                                f"Rewrite only part_id={part_id!r} as that table; keep every "
+                                "action and object, write the object in 发现问题 and the "
+                                "action with its suggested time limit in 解决方案."
+                            ),
+                        )
             submitted_ref = commit.part_refs.get(part_id)
             if submitted_ref != relative:
                 raise SubmissionValidationError(

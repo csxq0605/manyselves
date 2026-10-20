@@ -386,8 +386,8 @@ def test_revision_aggregate_retains_current_module_review_references(tmp_path):
     context = prepare_revision_aggregate(state, store=ReportingStore(tmp_path))
     edited = EditedReportSubmission(
         title="Report", assessment_background="Background", findings_overview="Findings",
-        regional_executive_summary="Summary", risk_panorama="Risk", dimension_risk_analysis="Analysis",
-        data_gap_analysis="Gaps", improvement_action_plan="Actions",
+        regional_executive_summary="Summary", risk_summary="Risk",
+        improvement_action_plan="Actions",
         module_narratives={m: ModuleSubmission.model_validate(v).markdown for m, v in state["module_submissions"].items()},
     )
     tail = project_aggregate_existing_tail_state(AggregateExistingHandoff(context=context, edited_report=edited))

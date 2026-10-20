@@ -303,9 +303,7 @@ class FinalAuditSubjectView(StrictModel):
     assessment_background: str = Field(min_length=1)
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = None
     special_topic_analysis: str | None = Field(default=None, min_length=1)
@@ -2224,9 +2222,7 @@ def _example_edited_report() -> dict[str, Any]:
         "module_narratives": {
             module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
-        "risk_panorama": "归纳当前模块成果支持的主要风险及其判断依据。",
-        "dimension_risk_analysis": "比较五个维度的风险和管理含义。",
-        "data_gap_analysis": "说明缺口、判断影响和补证优先级。",
+        "risk_summary": "几条总体结论，再按五个维度各列几条一句话要点。",
         "improvement_action_plan": "列出责任、依赖、行动、验收和剩余风险。",
         "special_topic_plan": _example_special_topic_plan(),
         "special_topic_analysis": (
@@ -2470,8 +2466,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         },
         "consistency_context": {
             "1.2": _example_final_audit_subject()["findings_overview"],
-            "3.1.1": _example_final_audit_subject()["risk_panorama"],
-            "3.1.3": _example_final_audit_subject()["data_gap_analysis"],
+            "3.1": _example_final_audit_subject()["risk_summary"],
         },
         "revision": 1,
         "target_section_ids": ["3.2"],

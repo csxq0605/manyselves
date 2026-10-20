@@ -55,9 +55,7 @@ def _edited_report() -> EditedReportSubmission:
             )
             for module_id, definition in REPORT_TAXONOMY.items()
         },
-        risk_panorama="panorama",
-        dimension_risk_analysis="risk analysis",
-        data_gap_analysis="gaps",
+        risk_summary="panorama",
         improvement_action_plan="actions",
     )
 

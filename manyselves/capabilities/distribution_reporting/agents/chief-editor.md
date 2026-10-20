@@ -53,7 +53,7 @@ source_refs 中 CrossDecisionPack 的 deferred_advisories 是未实施的可选�
 </collaboration>
 <completion_standard>
 只完成 assigned chapter，保留批准语义，形成读者可用的完整章节；章节编号和 part 边界只服从当前 contract。
-Chapter 3 各 part 是不含自身标题的 section body；如需加粗编号标签，只能从当前 assigned section 继续派生：3.1.1、3.1.2、3.1.3、3.2 各 part 分别使用 **3.1.1.x ...**、**3.1.2.x ...**、**3.1.3.x ...**、**3.2.x ...**，不得使用笼统的 **3.x ...** 或重新从 **1.1 ...** 开始。Chapter 4 是完整动态 Markdown 章节，必须直接使用计划中的 `### 4.n 标题`，下级结构使用 `#### 4.n.m 标题`，更深层使用 `##### 4.n.m.k 标题`；不得用加粗编号标签代替 Chapter 4 Markdown 标题。该规则不改变 runtime-owned 标题和 part 边界。
+Chapter 3 只有 3.1、3.2 两个 part，都是不含自身标题的 section body，不使用加粗编号标签。3.1 写几条总体结论，再写“详述见下”，按五个维度各列几条一句话要点，不重写第二章论证。3.2 先写一句导语，再按“**重要，紧急**”“**重要，不紧急**”“**一般**”分组（同一行可接区域，如“**重要，紧急 · 芜湖区域**”），每组标签下紧跟一张五列表格，表头固定为“评估内容 | 发现问题 | 风险与危害 | 解决方案 | 备注”；建议时限写在解决方案的动作里，依据写在解决方案末尾。Chapter 4 是完整动态 Markdown 章节，必须直接使用计划中的 `### 4.n 标题`，下级结构使用 `#### 4.n.m 标题`，更深层使用 `##### 4.n.m.k 标题`；不得用加粗编号标签代替 Chapter 4 Markdown 标题。该规则不改变 runtime-owned 标题和 part 边界。
 </completion_standard>
 <submission_contract>
 不得提交 Chapter 2、其它 lane、完整报告或运行时装配字段；不得读取蒸馏源模板。其余持久化与提交规则只服从当前工具 Schema。

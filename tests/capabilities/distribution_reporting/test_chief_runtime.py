@@ -72,11 +72,9 @@ def test_chief_submission_normalizes_static_section_keyed_part_refs() -> None:
             "kind": "chief_chapter_lane_submission",
             "run_id": "chief-section-keyed-refs",
             "chapter_id": "3",
-            "section_ids": ["3.1.1", "3.1.2", "3.1.3", "3.2"],
+            "section_ids": ["3.1", "3.2"],
             "part_refs": {
-                "3.1.1": "drafts/risk_panorama.md",
-                "3.1.2": "drafts/dimension_risk_analysis.md",
-                "3.1.3": "drafts/data_gap_analysis.md",
+                "3.1": "drafts/risk_summary.md",
                 "3.2": "drafts/improvement_action_plan.md",
             },
             "revision": 0,
@@ -84,9 +82,7 @@ def test_chief_submission_normalizes_static_section_keyed_part_refs() -> None:
     )
 
     assert submission.part_refs == {
-        "risk_panorama": "drafts/risk_panorama.md",
-        "dimension_risk_analysis": "drafts/dimension_risk_analysis.md",
-        "data_gap_analysis": "drafts/data_gap_analysis.md",
+        "risk_summary": "drafts/risk_summary.md",
         "improvement_action_plan": "drafts/improvement_action_plan.md",
     }
 
@@ -199,7 +195,7 @@ def test_chief_runtime_accepts_lanes_and_reduces_initial_candidate(
     outcomes: dict[str, object] = {}
     for chapter_id, section_ids in {
         "1": ("1.1", "1.2", "1.3"),
-        "3": ("3.1.1", "3.1.2", "3.1.3", "3.2"),
+        "3": ("3.1", "3.2"),
     }.items():
         context = runtime.prepare_lane(
             {"state": runtime.current_state, "chapter_id": chapter_id}
@@ -268,7 +264,7 @@ def test_chief_runtime_accepts_lanes_and_reduces_initial_candidate(
         for chapter_id in ("1", "3")
     }
     assert reduced["edited_report"].assessment_background == "Chief body for 1.1"
-    assert reduced["edited_report"].risk_panorama == "Chief body for 3.1.1"
+    assert reduced["edited_report"].risk_summary == "Chief body for 3.1"
     assert reduced["edited_report"].photo_ids == ["P-CHIEF"]
     assert (tmp_path / reduced["chief_candidate_ref"]).is_file()
 

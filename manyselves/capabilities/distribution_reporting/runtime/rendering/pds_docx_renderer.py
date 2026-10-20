@@ -79,9 +79,7 @@ class ApprovedReport(StrictModel):
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[str, str]
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = None
     special_topic_analysis: str | None = Field(default=None, min_length=1)
@@ -230,9 +228,6 @@ class PdsDocxRenderer:
 
     @staticmethod
     def _compose_markdown(report: ApprovedReport) -> str:
-        unresolved_claims = [
-            claim.text for claim in report.ledger.claims if claim.unresolved
-        ]
         module_narratives: dict[str, str] = {}
         for module_id in REPORT_MODULE_IDS:
             module_photos = [
@@ -257,10 +252,7 @@ class PdsDocxRenderer:
                 findings_overview=report.findings_overview,
                 regional_executive_summary=report.regional_executive_summary,
                 module_narratives=module_narratives,
-                risk_panorama=report.risk_panorama,
-                dimension_risk_analysis=report.dimension_risk_analysis,
-                data_gap_analysis=report.data_gap_analysis
-                or "\n".join(f"- {text}" for text in unresolved_claims),
+                risk_summary=report.risk_summary,
                 improvement_action_plan=report.improvement_action_plan,
                 special_topic_plan=report.special_topic_plan,
                 special_topic_analysis=report.special_topic_analysis,

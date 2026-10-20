@@ -28,9 +28,7 @@ REPORT_FINAL_SECTION_IDS = (
     "2.3",
     "2.4",
     "2.5",
-    "3.1.1",
-    "3.1.2",
-    "3.1.3",
+    "3.1",
     "3.2",
     "4",
 )
@@ -38,9 +36,7 @@ REPORT_FINAL_AUDIT_SECTION_IDS = (
     "1.1",
     "1.2",
     "1.3",
-    "3.1.1",
-    "3.1.2",
-    "3.1.3",
+    "3.1",
     "3.2",
     "4",
 )
@@ -51,18 +47,14 @@ FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS = (
     "1.1",
     "1.2",
     "1.3",
-    "3.1.1",
-    "3.1.2",
-    "3.1.3",
+    "3.1",
     "3.2",
 )
 CHIEF_SECTION_RESULT_PART_IDS = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
     "1.3": "regional_executive_summary",
-    "3.1.1": "risk_panorama",
-    "3.1.2": "dimension_risk_analysis",
-    "3.1.3": "data_gap_analysis",
+    "3.1": "risk_summary",
     "3.2": "improvement_action_plan",
     "4": "special_topic_analysis",
 }
@@ -72,7 +64,7 @@ CHIEF_RESULT_PART_IDS = tuple(CHIEF_SECTION_RESULT_PART_IDS.values())
 # lane-local scopes, not a new report-wide schema: a lane receives only the
 # section bodies belonging to its chapter and the reducer owns assembly.
 CHAPTER1_SECTION_IDS = ("1.1", "1.2", "1.3")
-CHAPTER3_SECTION_IDS = ("3.1.1", "3.1.2", "3.1.3", "3.2")
+CHAPTER3_SECTION_IDS = ("3.1", "3.2")
 CHAPTER_STATIC_SECTION_IDS = {
     "1": CHAPTER1_SECTION_IDS,
     "3": CHAPTER3_SECTION_IDS,

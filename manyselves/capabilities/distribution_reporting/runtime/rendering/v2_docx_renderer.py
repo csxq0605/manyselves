@@ -121,9 +121,6 @@ _MODULE_HEADINGS = [
 _HEADINGS_AFTER_MODULES: list[tuple[str, str, int]] = [
     ("3", "结论与建议", 1),
     ("3.1", "风险/问题汇总与概览", 2),
-    ("3.1.1", "风险全景图", 3),
-    ("3.1.2", "各维度风险分析", 3),
-    ("3.1.3", "数据缺口分析", 3),
     ("3.2", "改善行动速查表", 2),
     ("4", "专项问题分析", 1),
 ]
@@ -3647,7 +3644,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         key=lambda item: v2_priority_rank(item),
     )[:top_risk_count]
     lines = [
-        "#### 3.1.1 风险全景图",
+        "**风险全景**",
         f"本次评估共覆盖{total}个检测项，其中：OK {counts.get('OK', 0)}项、一般 {counts.get('一般', 0)}项、NG {ng_count}项、数据缺失 {counts.get('数据缺失', 0) + counts.get('待核实', 0)}项、数据异常 {counts.get('数据冲突', 0)}项。",
         f"整体判断：{v2_overall_judgement(ng_count)}",
         "",
@@ -3657,7 +3654,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         lines.append(f"{index}. {v2_issue_sentence(issue)}")
     if not urgent:
         lines.append("1. 本次未识别到明确NG项，建议跟踪一般项和数据缺口。")
-    lines.extend(["", "#### 3.1.2 各维度风险分析"])
+    lines.extend(["", "**各维度风险**"])
     for prefix, title in [
         ("2.1", "系统架构"),
         ("2.2", "环境工况"),
@@ -3680,7 +3677,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         lines.append("")
 
     if policy_bool("chapter_3_policy", "include_data_gap_analysis", True):
-        lines.extend(["", "#### 3.1.3 数据缺口分析"])
+        lines.extend(["", "**数据缺口**"])
         missing_items = [item for item in issues if _v2_status(item) in {"数据缺失", "待核实"}]
         if missing_items:
             lines.append("本次评估中以下数据项尚未收到，建议按优先级补充：")
