@@ -1,7 +1,8 @@
 """Effect execution, state persistence, and event logging around the Kernel."""
 
 import asyncio
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -409,6 +410,10 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output=sorted(action.branches),
             next_action_id=action.join,
+            conversation_updates=_new_conversations(
+                state,
+                [(f"{action.id}[{branch_id}]", branch) for branch_id, branch in completed_branches],
+            ),
             parallel_result_updates={action.id: completed_results},
             parallel_state_updates={action.id: branch_states},
         )
@@ -501,10 +506,7 @@ class WorkflowRuntimeHost:
         )
         results: dict[str, Any] = {}
         errors: dict[str, str] = {}
-        known_conversations = {
-            _conversation_id(value) for value in state.conversations.values()
-        }
-        conversation_updates: dict[str, ConversationRecord] = {}
+        completed_items: list[tuple[str, WorkflowState]] = []
         for (key, _item), outcome in zip(items, outcomes, strict=True):
             if isinstance(outcome, asyncio.CancelledError):
                 raise outcome
@@ -521,14 +523,7 @@ class WorkflowRuntimeHost:
                 )
                 continue
             results[key] = deepcopy(outcome.outputs[action.child_output_name])
-            for variable, value in outcome.conversations.items():
-                record = (
-                    value
-                    if isinstance(value, ConversationRecord)
-                    else ConversationRecord.model_validate(value)
-                )
-                if record.conversation_id not in known_conversations:
-                    conversation_updates[f"{action.id}[{key}].{variable}"] = record
+            completed_items.append((f"{action.id}[{key}]", outcome))
             self._emit(
                 "map.item.completed",
                 state,
@@ -547,7 +542,7 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output={"completed": list(results), "failed": list(errors)},
             variable_updates=variable_updates,
-            conversation_updates=conversation_updates,
+            conversation_updates=_new_conversations(state, completed_items),
             map_state_updates={action.id: {}},
         )
 
@@ -575,6 +570,7 @@ class WorkflowRuntimeHost:
         )
         if child_state is None or child_state.status is WorkflowStatus.COMPLETED:
             child_state = WorkflowState.for_plan(state.run_id, child_plan)
+            child_state.conversations = deepcopy(state.conversations)
             if action.input_variable is not None:
                 child_state.variables[action.child_input_variable] = state.variables[
                     action.input_variable
@@ -625,6 +621,7 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output=child_output,
             variable_updates={action.output_variable: child_output},
+            conversation_updates=_new_conversations(state, [(action.id, completed)]),
             subworkflow_state_updates={
                 action.id: _completed_nested_state_snapshot(completed)
             },
@@ -767,10 +764,30 @@ class WorkflowRuntimeHost:
             )
 
 
-def _conversation_id(value: Any) -> str:
-    if isinstance(value, ConversationRecord):
-        return value.conversation_id
-    return ConversationRecord.model_validate(value).conversation_id
+def _new_conversations(
+    parent: WorkflowState,
+    children: Iterable[tuple[str, WorkflowState]],
+) -> dict[str, Any]:
+    """Conversations children opened, keyed ``{prefix}.{variable}`` for the parent.
+
+    Keeping them in the parent state lets a later action resolve a child's
+    conversation by key after a restart.
+    """
+
+    def identity(value: Any) -> str:
+        if isinstance(value, ConversationRecord):
+            return value.conversation_id
+        if isinstance(value, dict) and isinstance(value.get("conversation_id"), str):
+            return value["conversation_id"]
+        return json.dumps(value, sort_keys=True, default=str)
+
+    known = {identity(value) for value in parent.conversations.values()}
+    found: dict[str, Any] = {}
+    for prefix, child in children:
+        for variable, value in child.conversations.items():
+            if identity(value) not in known:
+                found[f"{prefix}.{variable}"] = deepcopy(value)
+    return found
 
 
 def _completed_nested_state_snapshot(
