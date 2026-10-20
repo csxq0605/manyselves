@@ -572,3 +572,42 @@ async def test_image_outside_the_workspace_fails_the_task(tmp_path: Path) -> Non
     outcome = await _run(harness, steps)
 
     assert outcome.status == "failed" and "not a workspace file" in outcome.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("names", [["a.png", "b.jpg"], []])
+async def test_listed_images_are_all_sent_and_an_empty_list_sends_none(
+    tmp_path: Path, names: list[str]
+) -> None:
+    (tmp_path / "photos").mkdir()
+    for name in names:
+        (tmp_path / "photos" / name).write_bytes(b"img")
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = TaskDefinition.model_validate(
+        {
+            **_task().model_dump(),
+            "image": {"list_field": "photos", "path_field": "path", "media_type_field": "media"},
+        }
+    )
+    listed = [{"path": f"photos/{name}", "media": "image/png"} for name in names]
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "photos": listed},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    assert [image["path"] for image in harness.loops[0].received[0].images or []] == [
+        str((tmp_path / "photos" / name).resolve()) for name in names
+    ]

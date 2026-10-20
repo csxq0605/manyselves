@@ -412,14 +412,25 @@ class DefinitionAgentInvoker:
             return ()
         if not isinstance(input_value, Mapping):
             raise ValueError(f"task {task.id} image input requires an object input")
-        relative = input_value.get(task.image.path_field)
-        media_type = input_value.get(task.image.media_type_field)
-        if not isinstance(relative, str) or not isinstance(media_type, str):
-            raise ValueError(f"task {task.id} input has no image path and media type")
-        path = (self.workspace / relative).resolve()
-        if not path.is_relative_to(self.workspace) or not path.is_file():
-            raise ValueError(f"task {task.id} image is not a workspace file: {relative}")
-        return ({"path": str(path), "media_type": media_type},)
+        spec = task.image
+        if spec.list_field is None:
+            entries: list[Any] = [input_value]
+        else:
+            listed = input_value.get(spec.list_field) or []
+            if not isinstance(listed, list):
+                raise ValueError(f"task {task.id} input field {spec.list_field} is not a list")
+            entries = listed
+        images: list[dict[str, str]] = []
+        for entry in entries:
+            relative = entry.get(spec.path_field) if isinstance(entry, Mapping) else None
+            media_type = entry.get(spec.media_type_field) if isinstance(entry, Mapping) else None
+            if not isinstance(relative, str) or not isinstance(media_type, str):
+                raise ValueError(f"task {task.id} input has no image path and media type")
+            path = (self.workspace / relative).resolve()
+            if not path.is_relative_to(self.workspace) or not path.is_file():
+                raise ValueError(f"task {task.id} image is not a workspace file: {relative}")
+            images.append({"path": str(path), "media_type": media_type})
+        return tuple(images)
 
     @staticmethod
     def _prompt(task: TaskDefinition, input_value: Any, tools: ToolRegistry) -> str:

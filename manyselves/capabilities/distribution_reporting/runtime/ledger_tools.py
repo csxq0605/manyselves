@@ -113,6 +113,39 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def column_headers(state: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
+    """(source path, sheet) -> column -> header text, from the preparation results."""
+
+    headers: dict[tuple[str, str], dict[str, str]] = {}
+    for result in state.get("preparation_worker_results") or []:
+        value = _plain(result)
+        path = Path(str(value.get("source_path", ""))).as_posix()
+        for sheet, columns in (value.get("column_headers") or {}).items():
+            headers[(path, sheet)] = dict(columns)
+    return headers
+
+
+def _combined(
+    program: Mapping[str, Any] | None, reviewed: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    if program is None or reviewed is None:
+        return dict(program or reviewed or {})
+    severity = (
+        "blocking"
+        if "blocking" in (program.get("severity"), reviewed.get("severity"))
+        else "minor"
+    )
+    return {
+        "problem": f"程序核对：{program.get('problem', '')}；审阅意见：{reviewed.get('problem', '')}",
+        "severity": severity,
+        "suggestion": "；".join(
+            text
+            for text in (program.get("suggestion"), reviewed.get("suggestion"))
+            if text
+        ),
+    }
+
+
 def _blocking(findings: Mapping[str, Mapping[str, Any]]) -> bool:
     return any(finding.get("severity") == "blocking" for finding in findings.values())
 
@@ -170,6 +203,7 @@ class LedgerTools:
             register_fact_sources(self.workspace, run_id, items)
             shared = shared_labels(self.workspace, run_id)
             readings = photo_reading_labels(self.workspace, run_id)
+            headers = column_headers(state)
             knowledge = KnowledgeContextBuilder(
                 self.workspace, run_id, global_root=self.global_knowledge_root
             )
@@ -183,7 +217,11 @@ class LedgerTools:
                 module_items = index.module_items(module_id)
                 fact_blocks.append(
                     render_fact_packet(
-                        module_items, module_id, shared=shared, photo_readings=readings
+                        module_items,
+                        module_id,
+                        shared=shared,
+                        photo_readings=readings,
+                        column_headers=headers,
                     )
                 )
                 knowledge_blocks.append(knowledge.build_module(module_id).text)
@@ -314,12 +352,19 @@ class LedgerTools:
         }
 
     def merge_findings(self, value: dict[str, Any]) -> dict[str, Any]:
-        """Program findings stand; the reviewer adds its own for other targets."""
+        """Keep program and reviewer findings side by side.
+
+        When both name the same target, the finding carries both problems and
+        is blocking if either one is.
+        """
 
         item = value["item"]
         reviewed = dict((value.get("review") or {}).get("findings") or {})
         program = dict(item.get("program_findings") or {})
-        findings = {**reviewed, **program}
+        findings = {
+            target: _combined(program.get(target), reviewed.get(target))
+            for target in dict.fromkeys([*program, *reviewed])
+        }
         return {
             "findings": findings,
             "blocking": _blocking(findings),

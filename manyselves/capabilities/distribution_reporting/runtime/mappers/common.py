@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import MappingGap
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -49,6 +50,61 @@ def unbound_photo_gaps(workbook: Workbook, evidence: list[EvidenceItem]) -> list
                         cell=cell.coordinate,
                     ))
     return gaps
+
+
+HEADER_ROWS = 3
+
+
+def source_layout(
+    path: Path, evidence: list[EvidenceItem], image_ids: set[str]
+) -> tuple[dict[str, dict[str, str]], dict[str, tuple[str, str]]]:
+    """Read the header text above each sheet's records and where each image sits.
+
+    Header rows are the rows above the first mapped record of a sheet, at most
+    ``HEADER_ROWS`` of them; merged header cells count for every column they
+    span. The image location is the cell holding its DISPIMG formula.
+    """
+
+    first_row: dict[str, int] = {}
+    for item in evidence:
+        sheet, row = item.source.sheet, item.source.row
+        if sheet and row:
+            first_row[sheet] = min(first_row.get(sheet, row), row)
+    headers: dict[str, dict[str, str]] = {}
+    cells: dict[str, tuple[str, str]] = {}
+    workbook = load_workbook(path, read_only=False, data_only=False)
+    try:
+        for sheet in workbook.worksheets:
+            if sheet.title in first_row:
+                top = max(1, first_row[sheet.title] - HEADER_ROWS)
+                rows = range(top, first_row[sheet.title])
+                merged = {}
+                for span in sheet.merged_cells.ranges:
+                    value = sheet.cell(span.min_row, span.min_col).value
+                    for row in range(span.min_row, span.max_row + 1):
+                        for column in range(span.min_col, span.max_col + 1):
+                            merged[(row, column)] = value
+                columns: dict[str, str] = {}
+                for column in range(1, sheet.max_column + 1):
+                    texts: list[str] = []
+                    for row in rows:
+                        value = merged.get((row, column), sheet.cell(row, column).value)
+                        text = str(value).strip() if value not in (None, "") else ""
+                        if text and not dispimg_refs(text) and text not in texts:
+                            texts.append(text)
+                    if texts:
+                        columns[get_column_letter(column)] = " / ".join(texts)
+                if columns:
+                    headers[sheet.title] = columns
+            if image_ids:
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        for ref in dispimg_refs(cell.value):
+                            if ref in image_ids:
+                                cells.setdefault(ref, (sheet.title, cell.coordinate))
+    finally:
+        workbook.close()
+    return headers, cells
 
 
 @contextmanager

@@ -103,12 +103,18 @@ class ContractDefinition(DefinitionBase):
 
 
 class TaskImageInput(BaseModel):
-    """Input fields naming one workspace image sent with the task message."""
+    """Input fields naming workspace images sent with the task message.
+
+    Without ``list_field`` the input itself names one image.  With it, the
+    input field ``list_field`` holds a list of objects, each naming one image
+    with the same two fields; an empty list sends no image.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     path_field: str = Field(min_length=1)
     media_type_field: str = Field(min_length=1)
+    list_field: str | None = Field(default=None, min_length=1)
 
 
 class TaskDefinition(DefinitionBase):

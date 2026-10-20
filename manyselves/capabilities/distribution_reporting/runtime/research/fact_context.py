@@ -33,8 +33,13 @@ def render_fact_packet(
     items: list[EvidenceItem], module_id: str, *, submodule_ids: set[str] | None = None,
     shared: Mapping[str, str] | None = None,
     photo_readings: Mapping[str, str] | None = None,
+    column_headers: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
 ) -> str:
-    """Share source headers; preserve every record, qualifier and coordinate."""
+    """Share source headers; preserve every record, qualifier and coordinate.
+
+    ``column_headers`` maps (source path, sheet) to the header text of each
+    column, so a value is read with its column's own definition and photo rule.
+    """
     groups: dict[tuple[str, str, str | None], list[EvidenceItem]] = {}
     for item in items:
         source = item.source
@@ -85,6 +90,11 @@ def render_fact_packet(
         lines.append("\n来源：" + json.dumps(
             {"file_id": file_id, "path": path, "sheet": sheet}, ensure_ascii=False,
         ))
+        if sheet and (columns := (column_headers or {}).get((path, sheet))):
+            lines.append(
+                "表头（列：原表填写说明，按列读取单元格的含义、单位和附图条件）："
+                + json.dumps(dict(columns), ensure_ascii=False, separators=(",", ":"))
+            )
         for item in records:
             coordinates = item.source.model_dump(mode="json", exclude_none=True)
             for key in ("file_id", "path", "sheet"):

@@ -589,6 +589,8 @@ class PhotoAsset(ReportingModel):
         default=None,
         description="Original workbook DISPIMG/OOXML image key retained for provenance.",
     )
+    source_sheet: str | None = Field(default=None, description="Sheet holding the image.")
+    source_cell: str | None = Field(default=None, description="Cell holding the image.")
     primary_evidence_id: str | None = Field(
         default=None,
         description=(

@@ -292,3 +292,32 @@ def test_full_report_reaches_only_ledger_agents_and_bound_tools() -> None:
     for tool_id in tools:
         definition = registry.require(DefinitionKind.TOOL, tool_id)
         assert definition.implementation.rsplit(":", 1)[-1] in implementations, tool_id
+
+
+def test_program_and_reviewer_findings_on_one_target_are_kept_together(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
+
+    merged = LedgerTools(tmp_path).merge_findings(
+        {
+            "item": {
+                "program_findings": {
+                    "2.5.1": {"problem": "数量不符。", "severity": "minor", "suggestion": "改数量。"},
+                    "2.5.2": {"problem": "缺依据。", "severity": "minor", "suggestion": "补依据。"},
+                }
+            },
+            "review": {
+                "findings": {
+                    "2.5.1": {"problem": "结论过强。", "severity": "blocking", "suggestion": "改措辞。"}
+                }
+            },
+        }
+    )
+
+    assert list(merged["findings"]) == ["2.5.1", "2.5.2"]
+    both = merged["findings"]["2.5.1"]
+    assert both["severity"] == "blocking"
+    assert "数量不符" in both["problem"] and "结论过强" in both["problem"]
+    assert both["suggestion"] == "改数量。；改措辞。"
+    assert merged["blocking"]
+    assert set(merged["revision_input"]["findings"]) == {"2.5.1"}
+    assert set(merged["revision_input"]["minor"]) == {"2.5.2"}
