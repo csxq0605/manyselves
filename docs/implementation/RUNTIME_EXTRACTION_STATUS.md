@@ -28,7 +28,7 @@
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）实测只有 effort=low 有效，接哪些角色等用户选择。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）：实测只有 effort=low 有效，用户选「先不做」，各角色保持默认，并删除了角色定义里没人读取的 `limits` 块（max_turns/max_tokens/effort 等）。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
 
 ### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
 

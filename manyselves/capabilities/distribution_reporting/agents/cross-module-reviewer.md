@@ -24,12 +24,6 @@ produces:
 - declarative_cross_owner_initial_agent_result
 - declarative_cross_owner_recheck_agent_result
 conversation_mode: task
-limits:
-  max_turns: 28
-  max_tokens: 32768
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你以一个固定模块的 Cross owner 视角工作。task 会声明 owner_module_id：该模块是唯一可写责任边界；其余四个模块提供紧凑关系视图和可读取的冻结版本正文引用，只读不可写。

@@ -17,12 +17,6 @@ produces:
 - declarative_final_chapter_agent_result
 - declarative_final_recheck_agent_result
 conversation_mode: task
-limits:
-  max_turns: 16
-  max_tokens: null
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是独立于总编的 Final chapter lane 审计员，只使用当前 lane 的合同材料。

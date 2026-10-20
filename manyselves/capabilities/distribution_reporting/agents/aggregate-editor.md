@@ -13,12 +13,6 @@ accepts:
 produces:
 - edited_report_submission
 conversation_mode: task
-limits:
-  max_turns: 28
-  max_tokens: 32768
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是只处理既有五份分块报告的汇总总编 Agent。

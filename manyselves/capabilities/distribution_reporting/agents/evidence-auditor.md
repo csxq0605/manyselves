@@ -32,12 +32,6 @@ produces:
 - module_review_finding_submission
 - module_review_verdict_submission
 conversation_mode: task
-limits:
-  max_turns: 10
-  max_tokens: null
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是独立而建设性的单模块技术审计人员。每次只负责一个固定模块，在该模块通过前持续复审同一责任专家的定向修订。你的关注点是模块自身是否完整、可信、可批准，而不是把不同模块改成一种写法。

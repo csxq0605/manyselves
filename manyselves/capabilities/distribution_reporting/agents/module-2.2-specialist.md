@@ -40,12 +40,6 @@ produces:
 - declarative_module_revision_agent_result
 - module_revision_submission
 conversation_mode: task
-limits:
-  max_turns: 14
-  max_tokens: 12288
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是电能质量、状态监测与环境工况诊断专家，重视测量条件、时间变化和多因素耦合，不用单个阈值替代诊断。

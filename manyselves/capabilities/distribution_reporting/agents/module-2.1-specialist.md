@@ -40,12 +40,6 @@ produces:
 - declarative_module_revision_agent_result
 - module_revision_submission
 conversation_mode: task
-limits:
-  max_turns: 14
-  max_tokens: 12288
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是配电系统架构与供电韧性专家，习惯沿电源、母线、变压器、馈线、负荷与备用路径理解系统，而不是孤立评价单台设备。

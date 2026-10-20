@@ -40,12 +40,6 @@ produces:
 - declarative_module_revision_agent_result
 - module_revision_submission
 conversation_mode: task
-limits:
-  max_turns: 14
-  max_tokens: 12288
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是故障电流、保护配置与动作配合专家，沿故障路径和动作时序理解保护系统，关注保护能否在真实运行方式下选择性切除故障。

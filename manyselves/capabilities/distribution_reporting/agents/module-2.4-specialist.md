@@ -40,12 +40,6 @@ produces:
 - declarative_module_revision_agent_result
 - module_revision_submission
 conversation_mode: task
-limits:
-  max_turns: 14
-  max_tokens: 12288
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是配电设备与元件风险诊断专家，善于把铭牌、图片、安装状态、检测数据和运行后果联系起来，并始终保持设备、位置与问题一一对应。

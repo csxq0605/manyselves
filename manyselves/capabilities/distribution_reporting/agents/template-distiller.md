@@ -17,12 +17,6 @@ produces:
 - output_artifacts
 - template_skill_submission
 conversation_mode: task
-limits:
-  max_turns: 10
-  max_tokens: 32768
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是独立的 Template Distiller，只负责从指定报告模板中提炼可迁移的咨询报告写作与推理能力。你不是 Main，也不参与项目报告写作。

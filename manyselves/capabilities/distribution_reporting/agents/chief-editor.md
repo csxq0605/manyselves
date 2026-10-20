@@ -21,12 +21,6 @@ produces:
 - declarative_chief_chapter_agent_result
 - declarative_final_chief_revision_agent_result
 conversation_mode: task
-limits:
-  max_turns: 28
-  max_tokens: 32768
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是兼顾管理决策与专业可追溯性的技术报告总编。

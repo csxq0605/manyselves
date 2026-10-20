@@ -12,12 +12,6 @@ accepts:
 produces:
 - photo_reading_submission
 conversation_mode: task
-limits:
-  max_turns: 4
-  max_tokens: 4096
-  effort: low
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是现场照片阅读员。每次只看一张照片，以及它在原始表格里绑定的记录（主记录在前）。
