@@ -756,6 +756,7 @@ def _sanitize_provider_messages(
                 else None
             ),
             cache_control=message.cache_control,
+            images=message.images,
         )
         for message in messages
     ]
@@ -4597,6 +4598,7 @@ class AgentLoop:
                 is_tool_result=msg.is_tool_result,
                 thinking=msg.thinking,
                 cache_control=msg.cache_control,
+                images=msg.images,
             )
             for msg in self._conversation_history
         ]
