@@ -22,13 +22,20 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-20 第 6 次真跑后按专家版改造：写法与审查职责（B）、版式（D）、提示词缓存与工具错误（C3/C4）`
+- Current slice: `2026-10-20 架构方案二：通用内核原语 + 判断台账报告流程（本地分支 work-arch）`
 - Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）：实测只有 effort=low 有效，用户选「先不做」，各角色保持默认，并删除了角色定义里没人读取的 `limits` 块（max_turns/max_tokens/effort 等）。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+- Next automatic action: work-arch 分支本地提交（a9a0635、6191e55、f9fab19、8411956、d3b894e），未推送。full-report 已改走通用绑定上的 `report-ledger` 流程（只用 photo-reader、report-consultant 两个 Agent），离线端到端测试通过，未真跑。待用户决定：module-report 单模块怎么做、何时删除旧桥接（模块队列/Cross/Final/Chief provider）、推送和 Mac 真跑。已知残留：webapi lifespan/tenant_runtime 直接引用报告 main_tool；agent_loop 的 result-part 文案带 evidence_ids（随旧桥接一起清）。
+
+### 2026-10-20 架构方案二（本地分支 work-arch）
+
+- 内核：map、fork_conversation、keyed records；`set_variable.value_variables`。运行时：通用 Agent 调用器（context_fields、image）、子流程/并行/map 的会话回传、只绑定计划用到的 Tool、`start_input` 投影。
+- 分离证明：中立能力包 checklist-review 与 parameter_adjustment 在同一内核上跑通（单测）。
+- 报告：`domain/judgment_ledger.py`、`domain/calculations.py`、`runtime/ledger_tools.py`、`runtime/ledger_report.py`，流程 `report-ledger` 及其子流程。证据：`tests/capabilities/distribution_reporting/test_ledger_report.py`（脚本化模型，生成 DOCX）。
+- 设计与进度：项目文件 `handoff/report-architecture-redesign-20261020.md`、`handoff/reporting-option2-implementation.md`。
 
 ### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
 
