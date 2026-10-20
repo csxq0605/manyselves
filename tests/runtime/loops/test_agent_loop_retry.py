@@ -441,6 +441,42 @@ async def test_tool_round_executes_only_the_configured_batch(tmp_path: Path):
     assert tool.calls == 2
 
 
+class ReadingTool(CountingTool):
+    name = "reading_tool"
+    side_effect = "pure_read"
+    parallel_safe = True
+
+
+@pytest.mark.asyncio
+async def test_read_only_calls_past_the_batch_still_run(tmp_path: Path):
+    provider = EventuallySuccessfulProvider(failures=0)
+    tool = ReadingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=registry,
+        bus=MessageBus(),
+        config=AgentDefaults(max_tool_calls_per_round=2),
+        llm_provider=provider,
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        usage=None,
+        tool_calls=[
+            LLMToolCall(id=f"tool-{index}", name="reading_tool", arguments={"value": index})
+            for index in range(3)
+        ],
+    )
+
+    await loop._handle_tool_calls(response, "message-1")
+
+    assert tool.calls == 3
+    assert "每轮最多发起 2 个工具调用" in await loop._get_system_prompt()
+
+
 @pytest.mark.asyncio
 async def test_repeated_tool_results_inject_replan_into_real_tool_loop(tmp_path: Path):
     provider = RepeatingToolProvider()

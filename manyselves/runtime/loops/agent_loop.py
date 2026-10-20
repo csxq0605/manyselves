@@ -3260,11 +3260,16 @@ class AgentLoop:
                         self._active_tool_task = None
                 parallel_results = dict(enumerate(batch_values))
             for tool_index, tool_call in enumerate(response.tool_calls):
-                if tool_index >= batch_limit:
+                overflow_tool = self.tools.get(tool_call.name)
+                if tool_index >= batch_limit and (
+                    overflow_tool is None or overflow_tool.side_effect != "pure_read"
+                ):
+                    # Read-only calls past the batch run one by one below;
+                    # only calls that change something wait for a new round.
                     result_str = (
                         "Tool call skipped: this round exceeded the maximum batch of "
-                        f"{batch_limit}. Use the results already returned, then request only "
-                        "the next necessary tool calls."
+                        f"{batch_limit} and this tool is not read-only. Use the results "
+                        "already returned, then request this call again in the next round."
                     )
                     await self.bus.publish(
                         ToolResultMsg(
@@ -4461,8 +4466,10 @@ class AgentLoop:
             char if char.isalnum() or char in "-_." else "_"
             for char in str(tool_call_id)
         )
-        opaque_ref = self.artifact_gateway.persist_internal(
-            "tool-result", f"{safe_agent}:{safe_call}", rendered
+        opaque_ref = self.artifact_gateway.short_handle(
+            self.artifact_gateway.persist_internal(
+                "tool-result", f"{safe_agent}:{safe_call}", rendered
+            )
         )
         preview_chars = max(0, max_chars - 1024)
         while True:
@@ -4585,7 +4592,14 @@ class AgentLoop:
 
     async def _get_system_prompt(self) -> str:
         """Return stable instructions; live board data is inserted at dispatch."""
-        return await self._get_cached_system_prompt()
+        prompt = await self._get_cached_system_prompt()
+        if self.tools is None or not self.tools.get_all():
+            return prompt
+        limit = self.config.max_tool_calls_per_round
+        return (
+            f"{prompt}\n\n[工具调用]\n每轮最多发起 {limit} 个工具调用。超出部分里只读的调用"
+            "会依次执行；会改动内容的调用会被跳过，需要在下一轮重新发起。"
+        )
 
     def _with_live_task_state(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         """Append current board state after history, outside the persisted log.

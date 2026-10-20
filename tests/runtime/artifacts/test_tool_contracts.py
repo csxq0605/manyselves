@@ -122,3 +122,18 @@ def test_opaque_ref_signature_identity_and_hash_are_fail_closed(tmp_path: Path) 
     with pytest.raises(ToolContractError) as hash_error:
         owner.describe(ref)
     assert hash_error.value.code == "invalid_reference"
+
+
+def test_short_handle_opens_the_same_result_with_the_same_identity_checks(tmp_path: Path) -> None:
+    grant = ArtifactGrant("wf", "task", "agent", "session")
+    owner = ArtifactGateway(tmp_path, grant, secret=b"x" * 32)
+    handle = owner.short_handle(owner.persist_internal("tool", "call", "payload " * 10))
+
+    assert handle.startswith("TR-") and len(handle) == 15
+    page = owner.open_internal(handle, limit=7)
+    assert (page.ref, page.content) == (handle, "payload")
+    # A restarted gateway resolves the handle from the workspace.
+    restarted = ArtifactGateway(tmp_path, grant, secret=b"x" * 32)
+    assert restarted.open_internal(handle, offset=8, limit=7).content == "payload"
+    with pytest.raises(PermissionError):
+        owner.scoped(ArtifactGrant("wf", "task", "agent", "other")).open_internal(handle)

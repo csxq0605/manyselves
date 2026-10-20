@@ -22,13 +22,25 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-20 第 6 次真跑后的交付文件修复（A 组）与审查分批接线（C1）`
+- Current slice: `2026-10-20 第 6 次真跑后按专家版改造：写法与审查职责（B）、版式（D）、提示词缓存与工具错误（C3/C4）`
 - Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: A 组与 C1 本地已提交，待用户同意后推送。B/C 组（审查与 Cross 的组织方式、报告长度）先写设计稿给用户确认，确认后再改代码，然后合并做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）实测只有 effort=low 有效，接哪些角色等用户选择。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+
+### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
+
+参照物是专家优化版报告（`docs/research/session-records/2026-10-10_to_2026-10-15/audit_manyselves/配电安全专家咨询报告(专家优化版).docx.txt`），完整方案见项目文件 `handoff/run6-plan-20261020.md`。角色和阶段不变，只改职责、合同和渲染。
+
+- B1–B4 `a433b04`：作者 Skill、模块身份和起草策略改成专家写法（现状→风险→建议→依据，按对象计算，同类对象一张表，缺资料一句话指向数据缺口表，正文不写 E- 编号）；审查把“同类对象逐段重复论证”和“汇总层再论证”列为必须修改；修订允许删减。
+- B5 `83999ef`：3.1 不再分三个下级标题（`risk_summary` 取代原三字段）；3.2 速查表固定五列（评估内容｜发现问题｜风险与危害｜解决方案｜备注），按「重要，紧急 / 重要，不紧急 / 一般」加区域分组，`domain/action_table.py` 在 Chief 提交时检查结构。
+- B6 `ca719bf`：《证据与来源索引》增加「判断依据与边界」「数据缺口表」两节，索引 DOCX 支持表格。
+- D1–D4 `f33219c`：渲染器不再覆盖模板的正文、标题、表格2 样式；所有表格走 `apply_report_table_format` 一处定义（Table Grid、0.5 磅单线、无隔行底色、表头 D4F4F1 居中加粗、自动列宽、短字段居中）；整行加粗的分组标签用「小标」；空单元格不再补写占位文字；目录改为 TOC 域（预填条目，页码需在 Word 更新一次）；照片放进问题表「现场图片」列（作者填 P- 编号），不再另起照片表，未进表的照片只在证据索引列出。测试 `test_report_docx_package.py`、`test_report_photo_cells.py`。
+- C3 `170bc2f`：各角色首条 user 消息不再重复 system prompt；固定的任务、工具、输出合同在前；Final 三条 lane 把全运行共享的 source_context 放在最前并解码成 JSON，便于共享缓存前缀。Cross 各 owner 视图按对象裁剪，共享前缀有限。
+- C4：截断工具结果改用短句柄 `TR-xxxxxxxxxxxx`（服务端映射到签名 ref，身份校验不变）；“未按引用交付”改为结构化错误并列出 `readable_refs`；每轮 4 个调用的上限写进系统提示，超出的只读调用依次执行，只跳过会改动内容的调用。
+- effort 实测（Mac，8 次×5 种）：只有 `effort=low` 有效（输出约少 4 成、耗时约 60%）；medium/high 与不设相同；`budget_tokens` 无效。
 
 ### 2026-10-20 第 6 次真跑（Mac，@`b12843c`）与 A 组/C1 修复
 

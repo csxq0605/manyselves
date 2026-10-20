@@ -103,18 +103,18 @@ async def _replay_decision(
     if category == "not_delivered":
         match = re.search(r"'ref': '([^']+)'", line)
         ref = match.group(1) if match else "Work/runs/RUN/unknown.json"
-        try:
-            await denied_tool(ref)
-        except PermissionError as exc:
-            return {
-                "category": category,
-                "code": "capability_denied",
-                "repair_code": "deliver_artifact_reference",
-                "terminal": True,
-                "provider_followup_required": False,
-                "message": str(exc),
-            }
-        raise AssertionError("an empty allowed-ref set must deny every baseline artifact")
+        result = await denied_tool(ref)
+        # The denial names what this task can open, so the model corrects
+        # itself in one round instead of meeting a bare permission error.
+        assert result["status"] == "failed", "an empty allowed-ref set must deny every artifact"
+        assert result["readable_refs"] == []
+        return {
+            "category": category,
+            "code": result["code"],
+            "repair_code": result["repair_code"],
+            "terminal": False,
+            "provider_followup_required": False,
+        }
     if category == "nonopaque_open_tool_result":
         normalized = normalize_tool_call(
             "open_tool_result",
@@ -201,7 +201,7 @@ async def test_every_known_run_135_row_has_one_local_no_followup_decision(
         for item in decisions
     } == {
         ("binary_utf8", "unsupported_operation", "use_format_reader"),
-        ("not_delivered", "capability_denied", "deliver_artifact_reference"),
+        ("not_delivered", "capability_denied", "use_readable_refs"),
         ("nonopaque_open_tool_result", "non_opaque_reference", "use_open_artifact"),
         ("pid_path", "image_scope_unresolved", "resolve_image_scope"),
     }

@@ -144,8 +144,9 @@ async def test_cross_production_tools_can_read_unclaimed_related_prose(tmp_path,
         ref=related_ref, offset=page["next_offset"], limit=128,
     )
     assert next_page["offset"] == 128
-    with pytest.raises(PermissionError):
-        await registry.get("open_artifact")(ref=f"Work/runs/{run_id}/private.txt")
+    denied = await registry.get("open_artifact")(ref=f"Work/runs/{run_id}/private.txt")
+    assert denied["code"] == "capability_denied"
+    assert related_ref in denied["readable_refs"]
 
 
 @pytest.mark.asyncio

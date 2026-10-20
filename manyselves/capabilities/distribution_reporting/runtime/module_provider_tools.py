@@ -65,8 +65,11 @@ class InspectImageTool(Tool):
                 )
             ref = mapped
         if ref not in self.allowed_refs:
-            raise PermissionError(
-                "image was not delivered by reference for this task"
+            raise ToolContractError(
+                "image was not delivered by reference for this task",
+                code="capability_denied",
+                repair_code="use_readable_refs",
+                details={"ref": ref, "readable_refs": sorted(self.allowed_refs)},
             )
         capability = self.capabilities.get(ref)
         if capability is None and self.gateway is not None:
@@ -141,7 +144,9 @@ class _IndexedOpenArtifactTool(OpenArtifactTool):
         ):
             return cached
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
-        if getattr(self, "reuse_result", True):
+        if getattr(self, "reuse_result", True) and not (
+            isinstance(result, dict) and result.get("status") == "failed"
+        ):
             self.result_index.record(
                 self.task_id,
                 self.name,
@@ -190,7 +195,9 @@ class _IndexedSearchTextTool(SearchTextTool):
             max_matches=max_matches,
             context_lines=context_lines,
         )
-        if getattr(self, "reuse_result", True):
+        if getattr(self, "reuse_result", True) and not (
+            isinstance(result, dict) and result.get("status") == "failed"
+        ):
             self.result_index.record(
                 self.task_id,
                 self.name,
@@ -227,7 +234,9 @@ class _IndexedOpenToolResultTool(OpenToolResultTool):
         ):
             return cached
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
-        if getattr(self, "reuse_result", True):
+        if getattr(self, "reuse_result", True) and not (
+            isinstance(result, dict) and result.get("status") == "failed"
+        ):
             self.result_index.record(
                 self.task_id,
                 self.name,
@@ -261,7 +270,9 @@ class _IndexedInspectImageTool(InspectImageTool):
         if existing is not None and existing.get("status") == "completed":
             return existing.get("result")
         result = await super().__call__(path=path, ref=ref)
-        if getattr(self, "reuse_result", True):
+        if getattr(self, "reuse_result", True) and not (
+            isinstance(result, dict) and result.get("status") == "failed"
+        ):
             self.result_index.record(
                 self.task_id,
                 self.name,

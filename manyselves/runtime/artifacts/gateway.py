@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -74,6 +75,9 @@ def contract_error_result(error: ToolContractError, **extra: Any) -> dict[str, A
     payload.update(extra)
     return payload
 
+
+TOOL_RESULT_HANDLE_PREFIX = "TR-"
+TOOL_RESULT_HANDLE_RE = re.compile(r"TR-[0-9a-f]{12}")
 
 @dataclass(frozen=True)
 class ArtifactGrant:
@@ -346,7 +350,46 @@ class ArtifactGateway:
             descriptor,
         )
 
+    def short_handle(self, ref: str) -> str:
+        """Return a short handle for an opaque ref, kept on the server side.
+
+        A model copying a several-hundred-character signed ref by hand
+        corrupts it easily.  The handle maps back to the full ref, so the
+        signature and session identity checks still run on every open.
+        """
+
+        handle = TOOL_RESULT_HANDLE_PREFIX + hashlib.sha256(ref.encode()).hexdigest()[:12]
+        target = self._handle_path(handle)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(ref, encoding="utf-8")
+        return handle
+
+    def _handle_path(self, handle: str) -> Path:
+        return self.workspace / ".manyselves" / "artifacts" / "handles" / f"{handle}.txt"
+
+    def _expand_handle(self, ref: str) -> str:
+        if not TOOL_RESULT_HANDLE_RE.fullmatch(ref):
+            return ref
+        target = self._handle_path(ref)
+        if not target.is_file():
+            raise ToolContractError(
+                "unknown tool result handle",
+                code="invalid_reference",
+                details={"ref": ref},
+            )
+        return target.read_text(encoding="utf-8").strip()
+
     def open_internal(self, ref: str, *, offset: int = 0, limit: int = 4000) -> ArtifactPage:
+        handle = ref if isinstance(ref, str) and TOOL_RESULT_HANDLE_RE.fullmatch(ref) else None
+        if handle is not None:
+            page = self.open(self._expand_handle(handle), offset=offset, limit=limit)
+            descriptor = (
+                replace(page.descriptor, canonical_ref=handle)
+                if page.descriptor is not None
+                else None
+            )
+            return replace(page, ref=handle, descriptor=descriptor)
         if not ref.startswith("artifact:v1:"):
             raise ToolContractError(
                 "open_tool_result requires an opaque artifact reference",
