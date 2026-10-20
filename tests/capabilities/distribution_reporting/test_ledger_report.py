@@ -321,3 +321,38 @@ def test_program_and_reviewer_findings_on_one_target_are_kept_together(tmp_path:
     assert merged["blocking"]
     assert set(merged["revision_input"]["findings"]) == {"2.5.1"}
     assert set(merged["revision_input"]["minor"]) == {"2.5.2"}
+
+
+def test_review_gets_the_original_images_only_for_doubtful_readings() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import JudgmentRow
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import (
+        photos_to_check,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
+        PhotoReading,
+    )
+
+    rows = [
+        JudgmentRow.model_validate(
+            {"id": "J-2.4-1", "submodule_id": "2.4.1", "object": "14#柜", "checkpoint": "剩余电流",
+             "disposition": "no_concern", "evidence_ids": ["E-1"], "basis": "记录 11.3A。"}
+        )
+    ]
+    reference = {
+        "evidence_photos": {"E-1": ["P-1", "P-2"]},
+        "photos": {
+            "P-1": {"path": "Work/a/P-1.png", "media_type": "image/png"},
+            "P-2": {"path": "Work/a/P-2.png", "media_type": "image/png"},
+        },
+    }
+
+    def reading(photo_id: str, match: str) -> PhotoReading:
+        return PhotoReading(photo_id=photo_id, visible="表计", record_match=match,
+                            reason="r", needs_review=match == "conflicts")
+
+    photos = photos_to_check(
+        rows, reference, {"P-1": reading("P-1", "conflicts"), "P-2": reading("P-2", "matches")}
+    )
+    assert [(p["photo_id"], p["row_ids"], p["path"]) for p in photos] == [
+        ("P-1", ["J-2.4-1"], "Work/a/P-1.png")
+    ]

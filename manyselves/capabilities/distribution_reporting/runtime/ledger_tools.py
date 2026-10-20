@@ -61,7 +61,7 @@ from .models.agentic import (
 from .models.reporting import EvidenceItem, PhotoAsset, ReportRequest, SpecialTopicPlan
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import shared_labels
-from .photo_reading import photo_reading_labels
+from .photo_reading import load_photo_readings, photo_reading_labels, reading_label
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
@@ -111,6 +111,42 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     return value
+
+
+def photos_to_check(
+    rows: list[JudgmentRow], reference: Mapping[str, Any], readings: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Original images for the rows whose photo reading is in doubt.
+
+    A photo is sent when the program found its copied numbers differ from the
+    record, or the reader asked for a person to look at it.
+    """
+
+    evidence_photos = reference.get("evidence_photos") or {}
+    assets = reference.get("photos") or {}
+    by_photo: dict[str, list[str]] = {}
+    for row in rows:
+        refs = [*row.photo_ids, *(p for e in row.evidence_ids for p in evidence_photos.get(e, []))]
+        for photo_id in dict.fromkeys(refs):
+            by_photo.setdefault(photo_id, []).append(row.id)
+    photos = []
+    for photo_id, row_ids in by_photo.items():
+        reading = readings.get(photo_id)
+        asset = assets.get(photo_id)
+        if asset is None or reading is None:
+            continue
+        if reading.record_match != "conflicts" and not reading.needs_review:
+            continue
+        photos.append(
+            {
+                "photo_id": photo_id,
+                "path": asset["path"],
+                "media_type": asset["media_type"],
+                "row_ids": row_ids,
+                "reading": reading_label(reading),
+            }
+        )
+    return photos
 
 
 def column_headers(state: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
@@ -291,6 +327,11 @@ class LedgerTools:
                     for asset in state.get("photo_assets", [])
                 ],
                 "calculation_ids": [calc.id for calc in calculations],
+                "photos": {
+                    asset["id"]: {"path": asset["path"], "media_type": asset["media_type"]}
+                    for asset in (_plain(a) for a in state.get("photo_assets", []))
+                },
+                "evidence_photos": {item.id: item.photo_refs for item in items if item.photo_refs},
                 "known_values": sorted({(round(v, 6), u) for v, u in known_values}),
             },
         )
@@ -330,6 +371,7 @@ class LedgerTools:
                 known_calculation_ids=reference["calculation_ids"],
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
+        readings = load_photo_readings(self.workspace, run_id)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r0.json", dumped)
         return {
@@ -346,6 +388,9 @@ class LedgerTools:
                         for dossier in dossiers
                         if module["module_id"] in dossier["module_ids"]
                     ],
+                    "photos": photos_to_check(
+                        ledger[module["module_id"]], reference, readings
+                    ),
                 }
                 for module in context["modules"]
             ],

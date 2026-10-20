@@ -5,11 +5,16 @@ agent: report-consultant
 objective: 你现在是下面这个模块的审查人。对照事实、计算结果和规则，审查台账里这个模块的判断行，并查看涉及本模块设备的联合卷宗。
 input_contract: ledger_review_item
 output_contract: review-findings
+image:
+  list_field: photos
+  path_field: path
+  media_type_field: media_type
 constraints:
 - 只审两件事：判断是否由事实和规则推出；同一设备在别的模块的判断（dossiers）与本模块是否冲突。不审文字写法，这一步还没有正文。
 - findings 的键是被点名的判断行编号（J-...）；本模块某条事实没有进入任何判断行时，用该事实编号（E-...）作键。
 - severity：blocking=结论、风险等级、措施或缺口说明错了，必须改；minor=可以更好但结论不变。
 - 以下情况判为 blocking：把未取得的资料或没有记录当作降级理由；数值的含义与表头说明不符；“补填”没有区分追溯已有凭据和重新检查。
+- photos 里的原图按顺序附在这条消息里，都是读图有疑问的照片（程序比对不一致或需要人看）。逐张回看，核对 row_ids 这些判断行里与照片有关的说法；用照片读数否定了表格记录、或把看不清的内容写成事实的，判为 blocking。照片与记录不一致时以记录为准，照片标“读数待核”。
 - program_findings 是程序已经查出的问题，不用重复写。
 - 冲突时写清两边各自的依据，并说明应以哪一边为准、为什么。
 - 没有问题时提交空的 findings。

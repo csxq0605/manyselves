@@ -9,6 +9,7 @@ read in this run is not planned again.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,50 @@ from .models.photo_reading import (
 from .models.preparation import PreparationContext
 from .storage import ReportingStore
 
-MATCH_TEXT = {"matches": "与记录相符", "conflicts": "与记录不符", "cannot_tell": "看不出是否相符"}
+MATCH_TEXT = {
+    "matches": "程序比对：照片读数与记录数值一致",
+    "conflicts": "程序比对：照片读数与记录数值不一致，以表格记录为准，照片读数待核",
+    "cannot_tell": "程序比对：无可比数值",
+}
+
+_NUMBER = re.compile(r"(?<![A-Za-z\d.])-?\d+(?:\.\d+)?(?![\d.])")
+_DATE = re.compile(
+    r"\d{4}\s*[-/年]\s*\d{1,2}|\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\s*月\s*\d{1,2}|\d{1,2}\s*:\s*\d{2}"
+)
+
+
+def _numbers(text: str) -> list[float]:
+    if _DATE.search(text):
+        return []
+    return [float(match.group(0)) for match in _NUMBER.finditer(text)]
+
+
+def compare_with_records(
+    records: list[PhotoReadingRecord], transcription: list[dict[str, Any]]
+) -> tuple[str, str]:
+    """Compare legible copied numbers with the numbers the records state.
+
+    A record number matches when a copied number is within display rounding
+    (0.05 or 2 %).  Only legible items count; names and dates are not compared.
+    """
+
+    expected = list(dict.fromkeys(value for record in records for value in record.values))
+    seen = [
+        number
+        for item in transcription
+        if item.get("legible")
+        for number in _numbers(str(item.get("text", "")))
+    ]
+    if not expected or not seen:
+        missing = "记录没有数值" if not expected else "照片没有看清的数值"
+        return "cannot_tell", missing
+    for value in expected:
+        if any(abs(value - number) <= max(0.05, 0.02 * abs(value)) for number in seen):
+            return "matches", f"记录值 {value:g} 在照片中可见"
+    return "conflicts", (
+        "记录值 " + "、".join(f"{v:g}" for v in expected)
+        + "；照片可见 " + "、".join(f"{v:g}" for v in seen)
+    )
 
 
 def photo_readings_ref(run_id: str) -> str:
@@ -42,7 +86,17 @@ def load_photo_readings(workspace: Path, run_id: str) -> dict[str, PhotoReading]
 
 
 def reading_label(reading: PhotoReading) -> str:
-    text = f"{reading.photo_id}：{reading.visible}；{MATCH_TEXT[reading.record_match]}（{reading.reason}）"
+    copied = "，".join(
+        f"{item.get('label')}={item.get('text') or '（空白）'}"
+        + ("" if item.get("legible") else "（看不清）")
+        for item in reading.transcription
+    )
+    text = f"{reading.photo_id}：{reading.visible}"
+    if copied:
+        text += f"；抄写：{copied}"
+    if reading.photo_date:
+        text += f"；照片日期：{reading.photo_date}"
+    text += f"；{MATCH_TEXT[reading.record_match]}（{reading.reason}）"
     return text + ("；需人工复核" if reading.needs_review else "")
 
 
@@ -79,6 +133,11 @@ class PhotoReadingTools:
     def prepare(self, value: Any) -> dict[str, Any]:
         context = _context(value)
         done = load_photo_readings(self.workspace, context.run_id)
+        headers = {
+            (Path(result.source_path).as_posix(), sheet): columns
+            for result in context.preparation_worker_results
+            for sheet, columns in result.column_headers.items()
+        }
         lanes: dict[str, list[PhotoReadingInput]] = {lane: [] for lane in PHOTO_READING_LANES}
         reused: list[str] = []
         pending = 0
@@ -102,15 +161,21 @@ class PhotoReadingTools:
                     cell=item.source.cell,
                     submodule_id=item.submodule_id,
                     primary=index == 0,
+                    values=_record_values(item),
                 )
                 for index, item in enumerate(bound)
             ]
+            column = re.sub(r"\d+", "", photo.source_cell or "")
+            columns = headers.get((bound[0].source.path.as_posix(), photo.source_sheet or ""), {})
             lane = PHOTO_READING_LANES[pending % len(PHOTO_READING_LANES)]
             lanes[lane].append(PhotoReadingInput(
                 run_id=context.run_id,
                 photo_id=photo.id,
                 photo_path=Path(photo.path).as_posix(),
                 media_type=photo.media_type,
+                photo_sheet=photo.source_sheet,
+                photo_cell=photo.source_cell,
+                column_header=columns.get(column) if column else None,
                 records=records,
             ))
             pending += 1
@@ -131,13 +196,17 @@ class PhotoReadingTools:
     def accept(self, value: Mapping[str, Any]) -> dict[str, Any]:
         item = PhotoReadingInput.model_validate(_dumped(value["item"]))
         submission = PhotoReadingSubmission.model_validate(_dumped(value["result"]))
+        transcription = [entry.model_dump(mode="json") for entry in submission.transcription]
+        match, reason = compare_with_records(item.records, transcription)
         return PhotoReading(
             photo_id=item.photo_id,
             evidence_ids=[record.evidence_id for record in item.records],
             visible=submission.visible,
-            record_match=submission.record_match,
-            reason=submission.reason,
-            needs_review=submission.needs_review,
+            transcription=transcription,
+            photo_date=submission.photo_date,
+            record_match=match,
+            reason=reason,
+            needs_review=submission.needs_review or match == "conflicts",
         ).model_dump(mode="json")
 
     def reduce(self, value: Mapping[str, Any]) -> dict[str, Any]:
@@ -164,6 +233,17 @@ class PhotoReadingTools:
             review_photo_ids=[r.photo_id for r in ordered if r.needs_review],
             readings_ref=ref,
         ).model_dump(mode="json")
+
+
+def _record_values(item: Any) -> list[float]:
+    values = [
+        measurement.value
+        for measurement in item.measurements
+        if measurement.value is not None
+    ]
+    if isinstance(item.value, (int, float)) and not isinstance(item.value, bool):
+        values.insert(0, float(item.value))
+    return list(dict.fromkeys(float(value) for value in values))
 
 
 def _dumped(value: Any) -> Any:

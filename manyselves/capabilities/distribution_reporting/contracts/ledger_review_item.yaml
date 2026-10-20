@@ -1,7 +1,14 @@
 id: ledger_review_item
 version: 1.0.0
-description: One module's program findings and joint dossiers for review
+description: One module's program findings, joint dossiers and doubtful photos for review
 adapter: json_schema
 schema:
   type: object
   required: [module_id, program_findings, dossiers]
+  properties:
+    photos:
+      type: array
+      description: Original images whose reading is in doubt, sent with the message in this order.
+      items:
+        type: object
+        required: [photo_id, path, media_type, row_ids]

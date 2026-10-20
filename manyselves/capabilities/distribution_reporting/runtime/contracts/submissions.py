@@ -625,9 +625,12 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "photo_reading_submission": {
         "kind": "photo_reading_submission",
-        "visible": "柜门内接线端子，铭牌可见“D1701”，A相端子有明显发黑痕迹。",
-        "record_match": "matches",
-        "reason": "铭牌与记录的柜号一致，可见发黑与记录的发热描述一致。",
+        "visible": "柜门内接线端子，A相端子有明显发黑痕迹。",
+        "transcription": [
+            {"label": "铭牌", "text": "D1701", "legible": True},
+            {"label": "温度显示", "text": "35.2℃", "legible": True},
+        ],
+        "photo_date": "2025-06-12 10:31",
         "needs_review": False,
     },
     "workflow_decision_submission": {
