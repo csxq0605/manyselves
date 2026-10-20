@@ -448,3 +448,42 @@ async def test_module_lane_reviews_and_rechecks_batches_in_one_reviewer_session(
     assert [f["id"] for f in merged["findings"]] == ["M-2.4-initial-r0-001", "M-2.4-initial-r0-002"]
     assert (root / "verdicts-r1.json").is_file()
     assert (root / "completion-r1.json").is_file()
+
+
+def test_revision_prompt_carries_only_target_submodules(tmp_path: Path) -> None:
+    """The Author revision request does not repeat untouched submodules."""
+
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.module_agent_bridge import (
+        ModuleAuthoringAgentBridge,
+    )
+    from manyselves.kernel.definitions import DefinitionKind
+
+    store = ReportingStore(tmp_path)
+    order = list(REPORT_TAXONOMY[_MODULE].submodules)
+    module = _module().model_copy(update={"submodule_narratives": {
+        submodule_id: f"### {submodule_id}\n\nNARRATIVE-{submodule_id}" for submodule_id in order
+    }})
+    context = prepare_current_module_review(
+        _context().model_copy(update={"module": module}), store=store,
+    )
+    context = accept_current_module_review(
+        {"context": context, "result": _review_result(
+            context.review.prepared.scope, [_finding(order[0])],
+        )},
+        store=store,
+    )
+    context = prepare_current_module_revision(context, store=store)
+    _capability, registry = load_distribution_reporting_capability()
+    prompt = ModuleAuthoringAgentBridge._prompt(
+        object(),
+        registry.require(DefinitionKind.AGENT, f"module-{_MODULE}-specialist"),
+        registry.require(DefinitionKind.TASK, f"module-{_MODULE}-runtime-revision"),
+        context,
+    )
+    assert f"NARRATIVE-{order[0]}" in prompt
+    assert context.revision.prepared.subject_ref in prompt
+    for untouched in order[1:]:
+        assert f"NARRATIVE-{untouched}" not in prompt

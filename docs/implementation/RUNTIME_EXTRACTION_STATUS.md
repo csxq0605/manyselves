@@ -82,6 +82,8 @@ PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通�
 - `full-report-8a17a6c61b354c4e910f026dd4186344`（@`144062c`）：读图 64 请求，63 张照片相符 35、无法判断 26、矛盾 2；五个模块初稿完成（173 请求，输入 1037 万 token，缓存命中 81%）。2.4 审查首个请求约 25 万字符（证据 9.9 万、正文与判断 6.2 万、claims 4.2 万、知识 1.4 万），发送前被 `context_budget_exhausted` 拦下，监控按停止条件取消；花费约 ¥3.85。原因：带写作范例的 Skill 让 2.4 正文与 claims 各涨约一倍，而模块审查一次装下整个模块。
 - **模块审查按小节分批（用户选定）**：`module_review_batches.py`。首次审查和复审在准备时估算输入（与 Cross 同一预算），超出就按固定小节顺序分成连续批次，批次输入写文件；车道定义用 `for_each` 在同一审查会话里每批一轮，结果合并后再走原接受逻辑（首审 finding 跨批重新编号，复审合并 verdict 与新 finding）。复审每批只带本批小节的 finding、作者回应和 diff（`build_module_recheck_delta` 新增 `view`，校验仍按整个复审范围）。批次结果文件存在时 Same-run 跳过该批；全部完成时准备阶段直接合并。测试 `tests/capabilities/distribution_reporting/test_module_review_batches.py`（含通用 Host 跑通首审 14 批、复审 2 批，同一会话）。未做：Cross 触发的 local_regression 未分批；单个小节本身超预算时仍单独发送，由运行时 `context_budget_exhausted` 停止；格式纠正提示仍附整个车道上下文。
 
+- `full-report-454fecece07849979cce232e588d587d`（@`3314ff4`）：模块审查分批生效（2.1/2.2/2.5 各 2 批，2.3 不分批，2.4 4 批），2.1、2.3 修订并复审完成。2.4 修订首个请求约 26.2 万字符被发送前拦下，监控取消；约 ¥8.88。根因：作者修订提示把整个 `ModuleRevisionPreparation`（含完整模块 `subject`，约 21.2 万字符）原样序列化，而修订输入里已有目标小节视图。已改为不序列化 `subject`（完整模块留在 `subject_ref` 引用）；测试 `test_revision_prompt_carries_only_target_submodules`，修复前失败。修订本身仍是一次整模块目标修订，未分批。
+
 ### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
 
 - Run `full-report-7b81a3ee9fbf42e3bf7ff5bf28e3f26d`，PR #7 @`697b1ee`，项目副本由 `prepare_reporting_references.py` 生成；14:14 开始，15:05 强制结束服务进程。现场、usage 账本与结果文件保存在用户本机 `runs/real-run-20261019*`，不入仓库。
