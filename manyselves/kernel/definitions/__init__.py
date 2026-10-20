@@ -14,6 +14,7 @@ from .models import (
     RecoveryPolicyDefinition,
     RecoveryRule,
     TaskDefinition,
+    TaskImageInput,
     ToolDefinition,
     WorkflowDefinition,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "RecoveryPolicyDefinition",
     "RecoveryRule",
     "TaskDefinition",
+    "TaskImageInput",
     "ToolDefinition",
     "WorkflowDefinition",
     "load_capability",

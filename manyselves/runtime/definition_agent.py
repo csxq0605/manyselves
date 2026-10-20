@@ -223,8 +223,15 @@ class DefinitionAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        try:
+            images = self._images(task, input_value)
+        except ValueError as exc:
+            return AgentInvocationOutcome(
+                status="failed", session_id=session.session_id, error=str(exc)
+            )
         request = AgentTurnRequest(
             content=self._prompt(task, input_value, tools),
+            images=images,
             message_id=f"{attempt_id}:initial",
             workflow_id=self.workflow_id,
             run_id=self.run_id,
@@ -400,9 +407,37 @@ class DefinitionAgentInvoker:
             return None
         return payload.get("reason")
 
+    def _images(self, task: TaskDefinition, input_value: Any) -> tuple[dict[str, str], ...]:
+        if task.image is None:
+            return ()
+        if not isinstance(input_value, Mapping):
+            raise ValueError(f"task {task.id} image input requires an object input")
+        relative = input_value.get(task.image.path_field)
+        media_type = input_value.get(task.image.media_type_field)
+        if not isinstance(relative, str) or not isinstance(media_type, str):
+            raise ValueError(f"task {task.id} input has no image path and media type")
+        path = (self.workspace / relative).resolve()
+        if not path.is_relative_to(self.workspace) or not path.is_file():
+            raise ValueError(f"task {task.id} image is not a workspace file: {relative}")
+        return ({"path": str(path), "media_type": media_type},)
+
     @staticmethod
     def _prompt(task: TaskDefinition, input_value: Any, tools: ToolRegistry) -> str:
-        parts = [f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>"]
+        parts: list[str] = []
+        remaining = input_value
+        if task.context_fields and isinstance(input_value, Mapping):
+            remaining = dict(input_value)
+            for field in task.context_fields:
+                if field not in remaining:
+                    continue
+                value = remaining.pop(field)
+                text = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(value, ensure_ascii=False, indent=2)
+                )
+                parts.append(f"<context name=\"{field}\">\n{text.strip()}\n</context>")
+        parts.append(f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>")
         if task.constraints:
             parts.append(
                 "<constraints>\n"
@@ -411,7 +446,7 @@ class DefinitionAgentInvoker:
             )
         parts.append(
             f"<input contract=\"{task.input_contract}\">\n"
-            + json.dumps(input_value, ensure_ascii=False, indent=2)
+            + json.dumps(remaining, ensure_ascii=False, indent=2)
             + "\n</input>"
         )
         other_tools = [name for name in tools.get_all() if name != "submit_result"]

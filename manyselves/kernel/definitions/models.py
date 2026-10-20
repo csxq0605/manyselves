@@ -102,6 +102,15 @@ class ContractDefinition(DefinitionBase):
         return self
 
 
+class TaskImageInput(BaseModel):
+    """Input fields naming one workspace image sent with the task message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path_field: str = Field(min_length=1)
+    media_type_field: str = Field(min_length=1)
+
+
 class TaskDefinition(DefinitionBase):
     """Reusable requirements for one agent invocation."""
 
@@ -114,6 +123,14 @@ class TaskDefinition(DefinitionBase):
     tools: list[str] = Field(default_factory=list)
     recovery: str | None = None
     completion: dict[str, Any] = Field(default_factory=dict)
+    context_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Top-level input fields sent as plain text blocks ahead of the task, "
+            "in this order, instead of inside the JSON input"
+        ),
+    )
+    image: TaskImageInput | None = None
 
 
 class RecoveryRule(BaseModel):

@@ -481,3 +481,94 @@ async def test_model_visible_tool_results_are_reused_in_the_same_run(
     assert first.status == second.status == "ok"
     assert lookups == [{"text": "w"}]
     assert harness.loops[0].feedback == [{"answer": "W"}, {"answer": "W"}]
+
+
+@pytest.mark.asyncio
+async def test_context_fields_are_sent_as_text_ahead_of_the_task(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = _task().model_copy(update={"context_fields": ["background"]})
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "background": "line one\nline two"},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    prompt = harness.loops[0].received[0].content
+    assert prompt.startswith('<context name="background">\nline one\nline two\n</context>')
+    assert prompt.index("</context>") < prompt.index('<task id="answer-question">')
+    assert "background" not in prompt[prompt.index("<input"):]
+
+
+@pytest.mark.asyncio
+async def test_declared_image_is_sent_with_the_task_message(tmp_path: Path) -> None:
+    (tmp_path / "photos").mkdir()
+    (tmp_path / "photos/a.png").write_bytes(b"png")
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = TaskDefinition.model_validate(
+        {
+            **_task().model_dump(),
+            "image": {"path_field": "photo", "media_type_field": "media"},
+        }
+    )
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "photo": "photos/a.png", "media": "image/png"},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    assert harness.loops[0].received[0].images == [
+        {"path": str((tmp_path / "photos/a.png").resolve()), "media_type": "image/png"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_image_outside_the_workspace_fails_the_task(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = TaskDefinition.model_validate(
+        {
+            **_task().model_dump(),
+            "image": {"path_field": "photo", "media_type_field": "media"},
+        }
+    )
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "photo": "../x.png", "media": "image/png"},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "failed" and "not a workspace file" in outcome.error
