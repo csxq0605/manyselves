@@ -15,6 +15,7 @@ from .models import (
     WorkflowState,
     WorkflowStatus,
 )
+from .records import compare
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,11 @@ def apply_action_result(state: WorkflowState, result: Any) -> WorkflowState:
     next_state.parallel_results.update(deepcopy(result.parallel_result_updates))
     next_state.parallel_states.update(deepcopy(result.parallel_state_updates))
     next_state.subworkflow_states.update(deepcopy(result.subworkflow_state_updates))
+    for action_id, item_states in getattr(result, "map_state_updates", {}).items():
+        if item_states:
+            next_state.map_states[action_id] = deepcopy(item_states)
+        else:
+            next_state.map_states.pop(action_id, None)
     if result.clear_waiting_input:
         next_state.waiting_input = None
     if result.waiting_input is not None:
@@ -257,24 +263,4 @@ def _control_target(
 
 
 def _matches(condition: VariableCondition, variables: dict[str, Any]) -> bool:
-    left = variables[condition.variable]
-    right = condition.value
-    if condition.operator == "eq":
-        return left == right
-    if condition.operator == "ne":
-        return left != right
-    if condition.operator == "lt":
-        return left < right
-    if condition.operator == "lte":
-        return left <= right
-    if condition.operator == "gt":
-        return left > right
-    if condition.operator == "gte":
-        return left >= right
-    if condition.operator == "truthy":
-        return bool(left)
-    if condition.operator == "falsy":
-        return not bool(left)
-    if condition.operator == "in":
-        return left in right
-    return left not in right
+    return compare(variables[condition.variable], condition.operator, condition.value)

@@ -28,11 +28,13 @@ from .models import (
     EndWorkflowAction,
     FailWorkflowAction,
     ForEachAction,
+    ForkConversationAction,
     GotoAction,
     IfAction,
     InvokeAgentAction,
     InvokeToolAction,
     JoinAction,
+    MapAction,
     MergeVariableAction,
     ParallelAction,
     PublishResultAction,
@@ -41,8 +43,10 @@ from .models import (
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
+    SelectRecordsAction,
     SetVariableAction,
     SubworkflowAction,
+    UpsertRecordsAction,
     ValidateContractAction,
     WaitInputAction,
 )
@@ -74,6 +78,10 @@ _ACTION_MODELS: dict[ActionKind, type[Any]] = {
     ActionKind.PARALLEL: ParallelAction,
     ActionKind.JOIN: JoinAction,
     ActionKind.SUBWORKFLOW: SubworkflowAction,
+    ActionKind.MAP: MapAction,
+    ActionKind.FORK_CONVERSATION: ForkConversationAction,
+    ActionKind.UPSERT_RECORDS: UpsertRecordsAction,
+    ActionKind.SELECT_RECORDS: SelectRecordsAction,
     ActionKind.VALIDATE_CONTRACT: ValidateContractAction,
     ActionKind.REQUEST_INPUT: RequestInputAction,
     ActionKind.WAIT_INPUT: WaitInputAction,
@@ -90,6 +98,7 @@ _CONTROL_ACTION_KINDS = {
     ActionKind.PARALLEL,
     ActionKind.JOIN,
     ActionKind.SUBWORKFLOW,
+    ActionKind.MAP,
 }
 
 
@@ -535,8 +544,11 @@ class WorkflowCompiler:
             )
             if not isinstance(agent, AgentDefinition):
                 raise CompilerError(f"definition is not an agent: {action.agent}")
+            if action.key_variable is not None:
+                self._require_variable(action.key_variable, defined_variables, action.id)
             _append_unique(agent_ids, action.agent)
             defined_variables.add(action.output_variable)
+            variable_contracts.pop(action.output_variable, None)
             conversation_agents[action.output_variable] = action.agent
             conversation_bindings[action.id] = {
                 "agent": action.agent,
@@ -544,6 +556,74 @@ class WorkflowCompiler:
                 "mode": action.mode,
                 "output_variable": action.output_variable,
             }
+            return
+        if isinstance(action, ForkConversationAction):
+            self._require_variable(action.source_variable, defined_variables, action.id)
+            if action.key_variable is not None:
+                self._require_variable(action.key_variable, defined_variables, action.id)
+            source_agent = conversation_agents.get(action.source_variable)
+            if source_agent is not None:
+                conversation_agents[action.output_variable] = source_agent
+            else:
+                conversation_agents.pop(action.output_variable, None)
+            defined_variables.add(action.output_variable)
+            variable_contracts.pop(action.output_variable, None)
+            conversation_bindings[action.id] = {
+                "forked_from_variable": action.source_variable,
+                "conversation_key": action.conversation_key,
+                "mode": action.mode,
+                "output_variable": action.output_variable,
+            }
+            return
+        if isinstance(action, UpsertRecordsAction):
+            self._require_variable(action.table_variable, defined_variables, action.id)
+            self._require_variable(action.records_variable, defined_variables, action.id)
+            if action.record_contract is not None:
+                self._require(
+                    definitions,
+                    DefinitionKind.CONTRACT,
+                    action.record_contract,
+                    action.id,
+                )
+                _append_unique(contract_ids, action.record_contract)
+            target = action.output_variable or action.table_variable
+            defined_variables.add(target)
+            variable_contracts.pop(target, None)
+            return
+        if isinstance(action, SelectRecordsAction):
+            self._require_variable(action.table_variable, defined_variables, action.id)
+            defined_variables.add(action.output_variable)
+            variable_contracts.pop(action.output_variable, None)
+            return
+        if isinstance(action, MapAction):
+            self._require_variable(action.items_variable, defined_variables, action.id)
+            for variable in action.input_variables.values():
+                self._require_variable(variable, defined_variables, action.id)
+            reserved = {action.item_input_variable}
+            if action.key_input_variable is not None:
+                reserved.add(action.key_input_variable)
+            if reserved & set(action.input_variables):
+                raise CompilerError(
+                    f"map {action.id} input_variables overwrite the item or key input"
+                )
+            if action.errors_variable == action.output_variable:
+                raise CompilerError(
+                    f"map {action.id} errors_variable must differ from output_variable"
+                )
+            child = self._require(
+                definitions,
+                DefinitionKind.WORKFLOW,
+                action.workflow,
+                action.id,
+            )
+            if not isinstance(child, WorkflowDefinition):
+                raise CompilerError(f"definition is not a workflow: {action.workflow}")
+            _append_unique(workflow_ids, action.workflow)
+            defined_variables.add(action.output_variable)
+            variable_contracts.pop(action.output_variable, None)
+            if action.errors_variable is not None:
+                defined_variables.add(action.errors_variable)
+                variable_contracts.pop(action.errors_variable, None)
             return
         if isinstance(action, InvokeAgentAction):
             self._require_variable(action.input_variable, defined_variables, action.id)
@@ -977,6 +1057,22 @@ def _read_variables(action: ResolvedAction) -> set[str]:
             if action.input_variable is not None
             else set(action.input_variables.values())
         )
+    if isinstance(
+        action,
+        (CreateConversationAction, ResolveConversationAction, ResetConversationAction),
+    ):
+        return set() if action.key_variable is None else {action.key_variable}
+    if isinstance(action, ForkConversationAction):
+        return {
+            action.source_variable,
+            *([action.key_variable] if action.key_variable is not None else []),
+        }
+    if isinstance(action, UpsertRecordsAction):
+        return {action.table_variable, action.records_variable}
+    if isinstance(action, SelectRecordsAction):
+        return {action.table_variable}
+    if isinstance(action, MapAction):
+        return {action.items_variable, *action.input_variables.values()}
     if isinstance(action, ValidateContractAction):
         return {action.input_variable}
     if isinstance(action, PublishResultAction):
@@ -1008,6 +1104,8 @@ def _defined_variables(
             CreateConversationAction,
             ResolveConversationAction,
             ResetConversationAction,
+            ForkConversationAction,
+            SelectRecordsAction,
             InvokeAgentAction,
             JoinAction,
             SubworkflowAction,
@@ -1017,6 +1115,13 @@ def _defined_variables(
         ),
     ):
         return {action.output_variable}
+    if isinstance(action, UpsertRecordsAction):
+        return {action.output_variable or action.table_variable}
+    if isinstance(action, MapAction):
+        return {
+            action.output_variable,
+            *([action.errors_variable] if action.errors_variable is not None else []),
+        }
     if isinstance(action, ForEachAction) and successor == action.body:
         return {action.item_variable}
     return set()

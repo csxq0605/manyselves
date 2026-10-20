@@ -86,6 +86,32 @@ class ConversationRegistry:
     ) -> ConversationRecord:
         return self.resolve(key, run_id=run_id) or self.create(key, run_id=run_id)
 
+    def fork(
+        self,
+        key: ConversationKey,
+        *,
+        source: ConversationRecord,
+        run_id: str,
+    ) -> ConversationRecord:
+        """Resolve or create a conversation whose history starts from ``source``.
+
+        Only the lineage is recorded here; the Runtime that owns histories copies
+        the source's completed turns into the new conversation.
+        """
+
+        existing = self.resolve(key, run_id=run_id)
+        if existing is not None:
+            return existing
+        record = self.create(key, run_id=run_id).model_copy(
+            update={"forked_from": source.conversation_id}
+        )
+        if key.mode is not ConversationMode.EPHEMERAL:
+            storage_key = self._storage_key(key, run_id)
+            self._records[storage_key] = record
+            if key.mode is ConversationMode.PERSISTENT and self._store is not None:
+                self._store.save(storage_key, record)
+        return record
+
     def remember(self, record: ConversationRecord) -> None:
         """Restore one non-ephemeral record from authoritative workflow state."""
 

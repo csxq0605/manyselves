@@ -23,6 +23,10 @@ class ActionKind(StrEnum):
     PARALLEL = "parallel"
     JOIN = "join"
     SUBWORKFLOW = "subworkflow"
+    MAP = "map"
+    FORK_CONVERSATION = "fork_conversation"
+    UPSERT_RECORDS = "upsert_records"
+    SELECT_RECORDS = "select_records"
     VALIDATE_CONTRACT = "validate_contract"
     REQUEST_INPUT = "request_input"
     WAIT_INPUT = "wait_input"
@@ -113,6 +117,7 @@ class CreateConversationAction(ResolvedActionBase):
     kind: Literal[ActionKind.CREATE_CONVERSATION] = ActionKind.CREATE_CONVERSATION
     agent: str = Field(min_length=1)
     conversation_key: str = Field(min_length=1)
+    key_variable: str | None = Field(default=None, min_length=1)
     mode: Literal["ephemeral", "run", "persistent"] = "run"
     output_variable: str = Field(min_length=1)
 
@@ -121,6 +126,7 @@ class ResolveConversationAction(ResolvedActionBase):
     kind: Literal[ActionKind.RESOLVE_CONVERSATION] = ActionKind.RESOLVE_CONVERSATION
     agent: str = Field(min_length=1)
     conversation_key: str = Field(min_length=1)
+    key_variable: str | None = Field(default=None, min_length=1)
     mode: Literal["run", "persistent"] = "run"
     output_variable: str = Field(min_length=1)
 
@@ -129,6 +135,22 @@ class ResetConversationAction(ResolvedActionBase):
     kind: Literal[ActionKind.RESET_CONVERSATION] = ActionKind.RESET_CONVERSATION
     agent: str = Field(min_length=1)
     conversation_key: str = Field(min_length=1)
+    key_variable: str | None = Field(default=None, min_length=1)
+    mode: Literal["ephemeral", "run", "persistent"] = "run"
+    output_variable: str = Field(min_length=1)
+
+
+class ForkConversationAction(ResolvedActionBase):
+    """Start a new conversation whose history begins with a source conversation.
+
+    The Kernel records only identity and lineage.  The Runtime copies the
+    source's completed history so the child shares the source prefix.
+    """
+
+    kind: Literal[ActionKind.FORK_CONVERSATION] = ActionKind.FORK_CONVERSATION
+    source_variable: str = Field(min_length=1)
+    conversation_key: str = Field(min_length=1)
+    key_variable: str | None = Field(default=None, min_length=1)
     mode: Literal["ephemeral", "run", "persistent"] = "run"
     output_variable: str = Field(min_length=1)
 
@@ -224,6 +246,72 @@ class SubworkflowAction(ResolvedActionBase):
         return self
 
 
+class ItemCondition(BaseModel):
+    """Compare one field of a record or list item with a literal value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(min_length=1)
+    operator: Literal[
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "truthy",
+        "falsy",
+        "in",
+        "not_in",
+    ]
+    value: Any = None
+
+
+class MapAction(ResolvedActionBase):
+    """Run one child workflow per item of a list or keyed record table.
+
+    Items are identified by ``key_field`` (list items) or by their table key.
+    Results are collected into ``output_variable`` keyed the same way.  When
+    ``errors_variable`` is declared, item failures are recorded there and the
+    remaining items still complete; otherwise any failure fails the action.
+    """
+
+    kind: Literal[ActionKind.MAP] = ActionKind.MAP
+    items_variable: str = Field(min_length=1)
+    key_field: str | None = Field(default=None, min_length=1)
+    where: list[ItemCondition] = Field(default_factory=list)
+    workflow: str = Field(min_length=1)
+    item_input_variable: str = Field(default="item", min_length=1)
+    key_input_variable: str | None = Field(default=None, min_length=1)
+    input_variables: dict[str, str] = Field(default_factory=dict)
+    child_output_name: str = Field(default="result", min_length=1)
+    output_variable: str = Field(min_length=1)
+    errors_variable: str | None = Field(default=None, min_length=1)
+    max_concurrency: int | None = Field(default=None, ge=1)
+
+
+class UpsertRecordsAction(ResolvedActionBase):
+    """Merge records into a keyed table, replacing records with the same key."""
+
+    kind: Literal[ActionKind.UPSERT_RECORDS] = ActionKind.UPSERT_RECORDS
+    table_variable: str = Field(min_length=1)
+    records_variable: str = Field(min_length=1)
+    key_field: str | None = Field(default=None, min_length=1)
+    merge: Literal["replace", "update"] = "replace"
+    record_contract: str | None = Field(default=None, min_length=1)
+    output_variable: str | None = Field(default=None, min_length=1)
+
+
+class SelectRecordsAction(ResolvedActionBase):
+    """Select the records of a keyed table that match every condition."""
+
+    kind: Literal[ActionKind.SELECT_RECORDS] = ActionKind.SELECT_RECORDS
+    table_variable: str = Field(min_length=1)
+    where: list[ItemCondition] = Field(default_factory=list)
+    output: Literal["table", "list", "keys"] = "table"
+    output_variable: str = Field(min_length=1)
+
+
 class ValidateContractAction(ResolvedActionBase):
     kind: Literal[ActionKind.VALIDATE_CONTRACT] = ActionKind.VALIDATE_CONTRACT
     contract: str = Field(min_length=1)
@@ -285,6 +373,10 @@ ResolvedAction = (
     | ParallelAction
     | JoinAction
     | SubworkflowAction
+    | MapAction
+    | ForkConversationAction
+    | UpsertRecordsAction
+    | SelectRecordsAction
     | ValidateContractAction
     | RequestInputAction
     | WaitInputAction
@@ -347,6 +439,7 @@ class WorkflowState(BaseModel):
     parallel_results: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
     parallel_states: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
     subworkflow_states: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    map_states: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
 
     @classmethod
     def for_plan(

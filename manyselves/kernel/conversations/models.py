@@ -26,3 +26,4 @@ class ConversationRecord(BaseModel):
     key: ConversationKey
     run_id: str | None = None
     external_session_id: str | None = None
+    forked_from: str | None = None
