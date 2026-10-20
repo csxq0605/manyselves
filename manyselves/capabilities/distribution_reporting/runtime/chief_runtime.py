@@ -481,7 +481,6 @@ class ChiefChapterAgentInvoker:
     ) -> str:
         return "\n\n".join(
             (
-                agent.instructions,
                 f"Task: {task.objective}",
                 json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",

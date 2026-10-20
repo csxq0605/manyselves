@@ -805,13 +805,14 @@ class CrossOwnerAgentInvoker:
             envelope.input_contract_ref or envelope.input_refs[0]
         )
         payload = json.loads(input_path.read_text(encoding="utf-8"))
+        # agent.instructions is already the system prompt.  The fixed task
+        # text goes before the input so requests of one task share a prefix.
         sections = [
-            agent.instructions,
             f"Task: {task.objective}",
-            # Compact: indentation of the five-module snapshot cost ~11% tokens.
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
             f"Output contract: {task.output_contract}",
+            # Compact: indentation of the five-module snapshot cost ~11% tokens.
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         ]
         if envelope is not None and envelope.inline_context:
             sections.append(f"Cross owner specialization:\n{envelope.inline_context}")

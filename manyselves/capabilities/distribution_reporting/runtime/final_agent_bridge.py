@@ -59,6 +59,27 @@ SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[[], Any | Awaitable[Any] | None]
 
 
+
+# source_context entries built from run-wide artifacts, identical for the
+# chapter 1, 3 and 4 lanes of one review round.
+FINAL_SHARED_SOURCE_CONTEXT_KEYS = (
+    "module_assessments",
+    "observation_identities",
+    "observation_ledger",
+    "observation_ledger_checks",
+    "source_observation_groups",
+)
+
+
+def _decoded(value: Any) -> Any:
+    """Show a JSON-encoded context entry as JSON instead of an escaped string."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
 class FinalChapterAgentBridge:
     """Invoke one typed Final Auditor turn through the neutral Agent service."""
 
@@ -359,22 +380,33 @@ class FinalChapterAgentBridge:
         *,
         inline_context: str | None,
     ) -> str:
+        # The system prompt already carries agent.instructions.  Content that
+        # every chapter lane shares goes first so the lanes share one cached
+        # prefix; the chapter's own fields follow.
+        lane_input = value.model_dump(mode="json")
+        source_context = lane_input.pop("source_context", {}) or {}
+        shared = {
+            key: _decoded(source_context[key])
+            for key in FINAL_SHARED_SOURCE_CONTEXT_KEYS
+            if key in source_context
+        }
+        lane_input["source_context"] = {
+            key: _decoded(item)
+            for key, item in source_context.items()
+            if key not in FINAL_SHARED_SOURCE_CONTEXT_KEYS
+        }
         sections = [
-            agent.instructions,
             f"Task: {task.objective}",
-            json.dumps(
-                value.model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-            ),
             f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
             f"Output contract: {task.output_contract}",
+            "Shared source_context (same for every chapter lane):\n"
+            + json.dumps(shared, ensure_ascii=False, separators=(",", ":")),
+            "Chapter lane input:\n"
+            + json.dumps(lane_input, ensure_ascii=False, indent=2),
         ]
         if inline_context:
             sections.append(f"Inline context:\n{inline_context}")
-        return "\n\n".join(
-            sections
-        )
+        return "\n\n".join(sections)
 
     def _read_submission(self, result_ref: str) -> FinalChapterLaneFindingSubmission:
         return FinalChapterLaneFindingSubmission.model_validate(

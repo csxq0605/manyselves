@@ -356,7 +356,6 @@ class ModuleAuthoringAgentBridge:
     ) -> str:
         return "\n\n".join(
             (
-                agent.instructions,
                 f"Task: {task.objective}",
                 json.dumps(
                     {
