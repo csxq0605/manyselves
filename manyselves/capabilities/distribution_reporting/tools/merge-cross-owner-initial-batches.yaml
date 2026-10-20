@@ -1,0 +1,10 @@
+id: merge-cross-owner-initial-batches
+version: 1.0.0
+description: Record one Cross owner initial review after all its dossier batches
+implementation: capability:distribution-reporting:merge-cross-owner-initial-batches
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

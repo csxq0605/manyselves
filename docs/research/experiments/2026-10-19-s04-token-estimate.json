@@ -1,0 +1,83 @@
+{
+  "tokenizers": [
+    "deepseek-v3",
+    "mimo-v2.5-pro",
+    "qwen3"
+  ],
+  "rows": [
+    {
+      "component": "report_prose",
+      "chars": 60000,
+      "tokenizer_tokens_max": 42123,
+      "flat_0_3_estimate": 18000,
+      "current_estimate": 42569,
+      "flat_ratio": 0.43,
+      "current_ratio": 1.01
+    },
+    {
+      "component": "fact_packet",
+      "chars": 22410,
+      "tokenizer_tokens_max": 12821,
+      "flat_0_3_estimate": 6723,
+      "current_estimate": 12729,
+      "flat_ratio": 0.52,
+      "current_ratio": 0.99
+    },
+    {
+      "component": "evidence_json",
+      "chars": 60000,
+      "tokenizer_tokens_max": 32841,
+      "flat_0_3_estimate": 18000,
+      "current_estimate": 30179,
+      "flat_ratio": 0.55,
+      "current_ratio": 0.92
+    },
+    {
+      "component": "excel_table",
+      "chars": 20731,
+      "tokenizer_tokens_max": 14290,
+      "flat_0_3_estimate": 6219,
+      "current_estimate": 13897,
+      "flat_ratio": 0.44,
+      "current_ratio": 0.97
+    },
+    {
+      "component": "agent_prompts",
+      "chars": 32254,
+      "tokenizer_tokens_max": 12643,
+      "flat_0_3_estimate": 9676,
+      "current_estimate": 14108,
+      "flat_ratio": 0.77,
+      "current_ratio": 1.12
+    },
+    {
+      "component": "tool_schemas",
+      "chars": 14357,
+      "tokenizer_tokens_max": 3479,
+      "flat_0_3_estimate": 4307,
+      "current_estimate": 4380,
+      "flat_ratio": 1.24,
+      "current_ratio": 1.26
+    },
+    {
+      "component": "python_source",
+      "chars": 15665,
+      "tokenizer_tokens_max": 3583,
+      "flat_0_3_estimate": 4699,
+      "current_estimate": 5099,
+      "flat_ratio": 1.31,
+      "current_ratio": 1.42
+    }
+  ],
+  "composite_request": {
+    "description": "2.4 author request shaped like the largest historical turns",
+    "real_message_tokens": 73215,
+    "real_tool_tokens": 3479,
+    "real_request_tokens": 76694,
+    "pre_s04_budgeted_tokens": 38523,
+    "current_budgeted_tokens": 75738,
+    "context_window_assumed": 128000,
+    "pre_s04_budgeted_share_of_real": 0.5,
+    "current_budgeted_share_of_real": 0.99
+  }
+}

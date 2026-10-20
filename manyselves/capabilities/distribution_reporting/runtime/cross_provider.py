@@ -90,7 +90,6 @@ class CrossProviderRuntime:
         )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
             "cross-module-reviewer": self,
-            "cross-relation-reviewer": self,
             "main-agent": self,
         }
 

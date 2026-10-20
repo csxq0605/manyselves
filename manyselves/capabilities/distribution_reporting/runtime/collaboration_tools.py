@@ -15,6 +15,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from manyselves.capabilities.distribution_reporting.domain.action_table import (
+    ACTION_PRIORITY_GROUPS,
+    ACTION_TABLE_HEADERS,
+    action_table_problems,
+)
 from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
@@ -913,6 +918,25 @@ class SubmitResultTool(_ResultTool):
                             "own heading; unnumbered internal labels are allowed."
                         ),
                     )
+                if part_id == "improvement_action_plan":
+                    table_problems = action_table_problems(prose)
+                    if table_problems:
+                        raise SubmissionValidationError(
+                            "3.2 must be the grouped five-column action table",
+                            field=f"result_parts.{part_id}.content",
+                            expected=(
+                                "a lead sentence, then for each priority group a bold label "
+                                f"({' / '.join(ACTION_PRIORITY_GROUPS)}, optionally '· 区域') "
+                                "directly followed by a table headed "
+                                + " | ".join(ACTION_TABLE_HEADERS)
+                            ),
+                            received=table_problems,
+                            repair_instruction=(
+                                f"Rewrite only part_id={part_id!r} as that table; keep every "
+                                "action and object, write the object in 发现问题 and the "
+                                "action with its suggested time limit in 解决方案."
+                            ),
+                        )
             submitted_ref = commit.part_refs.get(part_id)
             if submitted_ref != relative:
                 raise SubmissionValidationError(
@@ -1342,7 +1366,7 @@ class SubmitResultTool(_ResultTool):
                 {
                     "finding_id": finding_id,
                     "action": "implemented",
-                    "summary": "已按 finding 修订目标小节并保留其余证据边界。",
+                    "summary": "已按 finding 修订目标小节，未涉及的内容保持不变。",
                     "changed_target_ids": target_ids,
                 }
                 for finding_id, target_ids in response_targets
@@ -3562,7 +3586,7 @@ class WriteResultPartTool(_ResultPartTool):
             part_id: Stable identifier such as 2.4.1, overview, or conclusion.
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
-            assessments: Module-only observation judgments; provide scope, disposition, basis, rules and exact prose/action anchors. Missing records remain visible to reviewers.
+            assessments: Module-only observation judgments; provide E-* ids, disposition and exact prose/action anchors, plus scope, basis or rules only where prose and E-* records do not already state them. Missing records remain visible to reviewers.
         """
         try:
             normalized_evidence_ids = self._validate_part(

@@ -67,7 +67,11 @@ class AppendVariableAction(ResolvedActionBase):
 
     @model_validator(mode="after")
     def has_one_value_binding(self) -> "AppendVariableAction":
-        has_literal = "value" in self.model_fields_set
+        # A serialized plan carries ``value: null`` beside ``value_variable``;
+        # that null is the unset default, not a second binding.
+        has_literal = "value" in self.model_fields_set and not (
+            self.value is None and self.value_variable is not None
+        )
         if has_literal == (self.value_variable is not None):
             raise ValueError("append_variable requires exactly one value binding")
         return self
@@ -81,7 +85,11 @@ class MergeVariableAction(ResolvedActionBase):
 
     @model_validator(mode="after")
     def has_one_value_binding(self) -> "MergeVariableAction":
-        has_literal = "value" in self.model_fields_set
+        # A serialized plan carries ``value: null`` beside ``value_variable``;
+        # that null is the unset default, not a second binding.
+        has_literal = "value" in self.model_fields_set and not (
+            self.value is None and self.value_variable is not None
+        )
         if has_literal == (self.value_variable is not None):
             raise ValueError("merge_variable requires exactly one value binding")
         return self

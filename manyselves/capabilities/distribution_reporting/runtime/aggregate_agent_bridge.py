@@ -292,7 +292,6 @@ class AggregateEditorAgentBridge:
     ) -> str:
         return "\n\n".join(
             (
-                agent.instructions,
                 f"Task: {task.objective}",
                 json.dumps(
                     value.model_dump(mode="json"),

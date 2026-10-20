@@ -67,6 +67,27 @@ class AgentExecutionSession:
     created: bool
 
 
+TURN_STOP_GRACE_SECONDS = 30.0
+
+
+async def _stop_session_turn(loop: Any) -> None:
+    """Cancel a session's in-flight turn and wait briefly for it to settle."""
+
+    cancel_current = getattr(loop, "cancel_current", None)
+    if not callable(cancel_current):
+        return
+    cancel_current()
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(loop.wait_until_turn_complete()),
+            timeout=TURN_STOP_GRACE_SECONDS,
+        )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        # A repeated cancel or a slow Provider must not hold the caller; the
+        # cancel flag already keeps the turn from starting further tools.
+        pass
+
+
 @dataclass(frozen=True)
 class AgentTurnRequest:
     """Generic correlation and content for one AgentLoop turn."""
@@ -78,6 +99,8 @@ class AgentTurnRequest:
     task_id: str
     task_attempt_id: str
     source: str = "workflow"
+    # Images sent before the text, as {"path": absolute path, "media_type": ...}.
+    images: tuple[dict[str, str], ...] = ()
     internal: bool = False
     provider_stream_idle_timeout_seconds: float | None = None
     turn_kind: Literal[
@@ -162,6 +185,18 @@ class AgentRecoveryDirective:
 
 class AgentRecoveryExecutionError(RuntimeError):
     """A declared recovery action cannot be executed for the observed event."""
+
+
+def _is_context_budget_exhaustion(outcome: "AgentTurnOutcome") -> bool:
+    # Lazy: agent_loop imports this module through provider_agent_session.
+    from .loops.agent_loop import CONTEXT_BUDGET_EXHAUSTED
+
+    message = outcome.message
+    return (
+        outcome.kind == "response"
+        and isinstance(message, AgentResponse)
+        and message.content == CONTEXT_BUDGET_EXHAUSTED
+    )
 
 
 class AgentExecutionService:
@@ -321,6 +356,7 @@ class AgentExecutionService:
                     source=request.source,
                     message_id=request.message_id,
                     content=request.content,
+                    images=[dict(image) for image in request.images],
                     internal=request.internal,
                     provider_stream_idle_timeout_seconds=(
                         request.provider_stream_idle_timeout_seconds
@@ -344,6 +380,11 @@ class AgentExecutionService:
                 session_id=session.session_id,
                 runtime_id=session.runtime_id,
             )
+        except asyncio.CancelledError:
+            # Nobody will consume this turn any more: stop its model and tool
+            # work before the caller records the cancellation.
+            await _stop_session_turn(session.loop)
+            raise
         finally:
             for _kind, waiter in waiters:
                 if not waiter.done():
@@ -395,6 +436,20 @@ class AgentExecutionService:
             else:
                 outcome = observed_outcome
                 observed_outcome = None
+            if _is_context_budget_exhaustion(outcome):
+                # The mandatory typed context already exceeds the Provider
+                # window; another correction turn rebuilds the same request.
+                return await stop(
+                    outcome,
+                    AgentRecoveryDirective(
+                        event_kind=RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                        action=RecoveryActionKind.STOP,
+                        reason=(
+                            f"{outcome.message.content}: mandatory context exceeds "
+                            "the Provider window; a correction turn cannot shrink it"
+                        ),
+                    ),
+                )
             observation = await interpret(outcome, request)
             if isinstance(observation, AgentRecoveryCompleted):
                 return observation.result

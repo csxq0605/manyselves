@@ -21,10 +21,19 @@ from .models.module_lane import (
 from .models.review import ModuleInitialReviewAcceptance, ModuleRecheckAcceptance
 from .module_recheck_tools import (
     accept_current_module_recheck,
+    list_current_module_recheck_batches,
+    merge_current_module_recheck_batches,
     module_recheck_requires_agent,
     prepare_current_module_recheck,
+    select_current_module_recheck_batch,
 )
-from .module_review_acceptance import accept_current_module_review
+from .module_review_acceptance import (
+    accept_current_module_review,
+    list_current_module_review_batches,
+    merge_current_module_review_batches,
+    select_current_module_review_batch,
+)
+from .module_review_batches import current_batch_needs_agent
 from .module_review_preparation import prepare_current_module_review
 from .module_revision_tools import (
     accept_current_module_revision,
@@ -115,8 +124,10 @@ def module_review_requires_agent(
     context = _context(value)
     return (
         context.review is not None
+        and context.status != "failed"
         and context.review.acceptance is None
         and context.review.prepared.mode == "invoke_agent"
+        and current_batch_needs_agent(context.review.prepared)
     )
 
 
@@ -185,6 +196,24 @@ def build_module_lane_tool_implementations(
         "module-review-needs-revision": module_review_needs_revision,
         "prepare-current-module-review": partial(
             prepare_current_module_review,
+            store=store,
+        ),
+        "list-current-module-review-batches": list_current_module_review_batches,
+        "select-current-module-review-batch": partial(
+            select_current_module_review_batch,
+            store=store,
+        ),
+        "merge-current-module-review-batches": partial(
+            merge_current_module_review_batches,
+            store=store,
+        ),
+        "list-current-module-recheck-batches": list_current_module_recheck_batches,
+        "select-current-module-recheck-batch": partial(
+            select_current_module_recheck_batch,
+            store=store,
+        ),
+        "merge-current-module-recheck-batches": partial(
+            merge_current_module_recheck_batches,
             store=store,
         ),
         "prepare-current-module-revision": partial(

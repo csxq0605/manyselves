@@ -12,7 +12,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     MappingResult,
 )
 
-from .common import cached_formula_workbook, dispimg_refs, make_evidence
+from .common import cached_formula_workbook, dispimg_refs, make_evidence, unbound_photo_gaps
 
 _PATH_ALIASES = (
     ("配电系统负荷分配与过载风险", "2.1.1"),
@@ -245,4 +245,5 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         needs_confirmation=True,
                     )
                 )
+        gaps.extend(unbound_photo_gaps(workbook, evidence))
         return MappingResult(evidence_items=evidence, gaps=gaps)

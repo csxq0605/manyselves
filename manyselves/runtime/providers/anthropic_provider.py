@@ -16,6 +16,7 @@ from .base import (
     ProviderRequestDisposition,
     annotate_provider_request_failure,
     build_provider_request_metrics,
+    image_base64,
     infer_provider_request_disposition,
 )
 
@@ -258,6 +259,8 @@ class AnthropicProvider(LLMProvider):
                         "name": tool_names.get(tc.name, tc.name),
                         "input": tc.arguments,
                     })
+                if msg.cache_control and self._supports_cache_control():
+                    content_blocks[-1]["cache_control"] = {"type": "ephemeral"}
                 anthropic_messages.append({
                     "role": "assistant",
                     "content": self._normalize_message_content(content_blocks),
@@ -266,11 +269,14 @@ class AnthropicProvider(LLMProvider):
 
             # Tool result -> collect into pending list (grouped as one user message)
             if msg.is_tool_result:
-                pending_tool_results.append({
+                result_block = {
                     "type": "tool_result",
                     "tool_use_id": msg.tool_call_id,
                     "content": self._safe_text(msg.content),
-                })
+                }
+                if msg.cache_control and self._supports_cache_control():
+                    result_block["cache_control"] = {"type": "ephemeral"}
+                pending_tool_results.append(result_block)
                 continue
 
             # Regular text message
@@ -278,6 +284,21 @@ class AnthropicProvider(LLMProvider):
             if msg.cache_control and self._supports_cache_control() and msg.content:
                 content = [{"type": "text", "text": self._safe_text(msg.content),
                             "cache_control": {"type": "ephemeral"}}]
+            if msg.images and msg.role == "user":
+                content = [
+                    *(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image_base64(image),
+                            },
+                        }
+                        for image in msg.images
+                    ),
+                    *self._content_to_blocks(content),
+                ]
             anthropic_messages.append({
                 "role": msg.role,
                 "content": content,

@@ -3169,3 +3169,124 @@ async def test_quiescence_blocks_late_conversation_persistence(resources) -> Non
 
     assert quiesced.status_code == 200
     assert not (workspace / ".manyselves/conversations/sessions.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_generic_http_cancel_stops_a_detached_run_and_records_failure(
+    resources,
+) -> None:
+    """Real run 2026-10-19 had no way to stop a looping Run short of kill -9."""
+
+    client, host, workspace, _ = resources
+    definitions = DefinitionRegistry()
+    number = ContractDefinition(
+        id="http-cancel-number",
+        version="1.0.0",
+        description="One integer",
+        adapter="json_schema",
+        schema={"type": "integer"},
+    )
+    definitions.register(number)
+    definitions.register(
+        ToolDefinition(
+            id="http-cancel-hang",
+            version="1.0.0",
+            description="Never finishes",
+            implementation="fixture:http-cancel-hang",
+            input_contract=number.id,
+            output_contract=number.id,
+        )
+    )
+    workflow = WorkflowDefinition(
+        id="http-cancel-workflow",
+        version="1.0.0",
+        description="One hanging tool",
+        state={"input": 1},
+        actions=[
+            {
+                "id": "hang",
+                "kind": "invoke_tool",
+                "tool": "http-cancel-hang",
+                "input_variable": "input",
+                "output_variable": "output",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "output"},
+        ],
+    )
+    definitions.register(workflow)
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, definitions)
+    entered = asyncio.Event()
+
+    async def hang(_value: int) -> int:
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    store = StartAwareFileWorkflowStateStore(workspace)
+    runtime_host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    context = RuntimeContext(
+        tools={"http-cancel-hang": hang},
+        contracts={number.id: build_contract_adapter(number)},
+        definitions=definitions,
+    )
+    run_id = "report-declarative-http-cancel"
+    owner = DetachedRunTaskOwner()
+
+    class _HangingBinding:
+        capability_id = "distribution-reporting"
+
+        @property
+        def active(self) -> bool:
+            return owner.active
+
+        def cancel(self, current_run_id: str):
+            return owner.cancel(current_run_id)
+
+        def get_run(self, current_run_id: str) -> dict[str, object]:
+            state = store.load(current_run_id)
+            return {
+                "run": {
+                    "run_id": current_run_id,
+                    "capability_id": self.capability_id,
+                    "workflow_id": state.workflow_id,
+                    "status": state.status.value,
+                    "active": owner.is_active(current_run_id),
+                    "task_id": None,
+                },
+                "state": state.model_dump(mode="json"),
+                "waiting_input": [],
+            }
+
+        async def close(self) -> None:
+            await owner.close()
+
+    await owner.accept_after_persisted_state(
+        run_id=run_id,
+        state_store=store,
+        operation=runtime_host.execute(
+            plan, WorkflowState.for_plan(run_id, plan), context
+        ),
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    bindings = RuntimeBindingCatalog()
+    bindings.register(_HangingBinding())
+    previous_projection = host.app.state.workflow_projection
+    host.app.state.workflow_projection = WorkflowProjectionFacade(
+        workspace, runtime_services=None, runtime_bindings=bindings
+    )
+    try:
+        running = await client.get(f"/api/v1/runs/{run_id}")
+        cancelled = await client.post(f"/api/v1/runs/{run_id}/cancel")
+        repeated = await client.post(f"/api/v1/runs/{run_id}/cancel")
+    finally:
+        host.app.state.workflow_projection = previous_projection
+
+    assert running.json()["run"]["status"] == "running"
+    assert running.json()["run"]["active"] is True
+    assert cancelled.status_code == 200
+    assert cancelled.json()["run"]["status"] == "failed"
+    assert cancelled.json()["run"]["active"] is False
+    assert repeated.status_code == 200
+    assert repeated.json()["run"]["status"] == "failed"
+    assert store.load(run_id).actions["hang"].error == "run cancelled by user"

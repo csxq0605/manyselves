@@ -9,7 +9,7 @@ import inspect
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Sequence
@@ -49,6 +49,7 @@ from ..providers.base import (
     LLMProvider,
     LLMToolCall,
     ProviderRequestDisposition,
+    image_inputs,
     provider_request_disposition,
 )
 from ..providers.base import Message as LLMMessage
@@ -67,9 +68,23 @@ from ..tools.registry import ToolRegistry
 from ..usage_ledger import UsageLedger
 from .bus import MessageBus
 
-# Tokens per char heuristic (cl100k_base averages ~0.25 tokens/char for code, ~0.3 for text)
-_TOKENS_PER_CHAR = 0.3
-_SAFETY_BUFFER = 1024  # Extra buffer for tool definitions and overhead
+# Character-class token heuristic.  A flat 0.3 tokens/char undercounted
+# Chinese report prose, fact tables and evidence JSON by about 2x against
+# MiMo-V2.5-Pro, Qwen3 and DeepSeek-V3 BPE vocabularies; see
+# scripts/benchmarks/request_token_estimate.py.  These coefficients keep that
+# content within about 10% and err high on ASCII schemas and code.  BPE
+# merges a run of whitespace (indentation, blank lines) into about one token,
+# so a run counts once instead of per character; per-character counting made
+# indented JSON about 1.23x its real size.
+_TOKENS_PER_NON_ASCII_CHAR = 0.72
+_TOKENS_PER_ASCII_DIGIT = 1.0
+_TOKENS_PER_ASCII_LETTER = 0.22
+_TOKENS_PER_ASCII_OTHER = 0.5
+_ASCII_DIGITS = b"0123456789"
+_ASCII_LETTERS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_TOKENS_PER_WHITESPACE_RUN = 1.0
+_WHITESPACE_RUN = re.compile(r"[ \t\r\n]{2,}")
+_SAFETY_BUFFER = 1024  # Per-request framing overhead not covered by estimates
 _MAX_PROVIDER_RETRIES = 2
 _RESULT_PART_TOOLS = frozenset({"write_result_part", "write_result_parts"})
 _RESULT_PART_COMPACTION_THRESHOLD = 256
@@ -481,21 +496,61 @@ class _ProviderRequestError(RuntimeError):
         )
 
 
+def _estimate_text_tokens(text: str) -> int:
+    """Estimate BPE tokens for mixed Chinese/ASCII text by character class."""
+
+    if not text:
+        return 0
+    ascii_bytes = text.encode("ascii", "ignore")
+    non_ascii = len(text) - len(ascii_bytes)
+    digits = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_DIGITS))
+    letters = len(ascii_bytes) - len(ascii_bytes.translate(None, _ASCII_LETTERS))
+    runs = _WHITESPACE_RUN.findall(text)
+    other = len(ascii_bytes) - digits - letters - sum(len(run) for run in runs)
+    return int(
+        non_ascii * _TOKENS_PER_NON_ASCII_CHAR
+        + digits * _TOKENS_PER_ASCII_DIGIT
+        + letters * _TOKENS_PER_ASCII_LETTER
+        + other * _TOKENS_PER_ASCII_OTHER
+        + len(runs) * _TOKENS_PER_WHITESPACE_RUN
+    )
+
+
+# Conservative per-image budget estimate; providers bill images after resizing.
+IMAGE_TOKEN_ESTIMATE = 1600
+
+
 def _estimate_tokens(messages: list[LLMMessage]) -> int:
-    """Rough token count — ~4 chars per token, plus per-message overhead."""
+    """Estimated message tokens, plus per-message and per-call overhead."""
     total = 0
     for m in messages:
         total += 4  # Per-message overhead
         if m.content:
-            total += int(len(m.content) * _TOKENS_PER_CHAR)
+            total += _estimate_text_tokens(str(m.content))
         if getattr(m, "tool_calls", None):
             for tc in m.tool_calls:
                 total += 20  # Tool call overhead
                 if hasattr(tc, "arguments") and tc.arguments:
-                    total += int(len(str(tc.arguments)) * _TOKENS_PER_CHAR)
+                    total += _estimate_text_tokens(str(tc.arguments))
         if getattr(m, "thinking", None) and m.thinking:
-            total += int(len(m.thinking) * _TOKENS_PER_CHAR)
+            total += _estimate_text_tokens(m.thinking)
+        total += IMAGE_TOKEN_ESTIMATE * len(getattr(m, "images", ()) or ())
     return total
+
+
+def _estimate_tool_definition_tokens(tool_definitions: Sequence[Mapping[str, Any]] | None) -> int:
+    """Estimated tokens for the tool schemas sent beside the messages."""
+
+    if not tool_definitions:
+        return 0
+    serialized = json.dumps(
+        list(tool_definitions),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return _estimate_text_tokens(serialized) + 10 * len(tool_definitions)
 
 
 def _sanitize_provider_visible_text(value: str) -> str:
@@ -701,6 +756,7 @@ def _sanitize_provider_messages(
                 else None
             ),
             cache_control=message.cache_control,
+            images=message.images,
         )
         for message in messages
     ]
@@ -730,7 +786,7 @@ def _estimate_response_tokens(response: Any) -> int:
         if tool_calls
         else ""
     )
-    return int((len(content) + len(thinking) + len(structured)) * _TOKENS_PER_CHAR)
+    return _estimate_text_tokens(content + thinking + structured)
 
 
 def _trim_messages_to_budget(
@@ -795,11 +851,36 @@ class _TypedContextTrimResult:
     reason: str | None = None
 
 
+_MUTABLE_STATE_PREFIXES = ("<current_task_state>", "<runtime_task_state>")
+_MAX_CACHE_BREAKPOINTS = 4  # Anthropic's per-request limit
+
+
+def _with_rolling_cache_breakpoint(messages: list[LLMMessage]) -> list[LLMMessage]:
+    """Mark the last history message before trailing mutable state as cacheable.
+
+    The stable prefix already carries its own breakpoints; this one lets the
+    next request reuse the append-only history too.  Providers without
+    explicit cache control ignore the flag.
+    """
+
+    index = len(messages) - 1
+    while index > 0 and str(messages[index].content or "").startswith(_MUTABLE_STATE_PREFIXES):
+        index -= 1
+    if index <= 0 or messages[index].cache_control:
+        return messages
+    if sum(1 for message in messages if message.cache_control) >= _MAX_CACHE_BREAKPOINTS:
+        return messages
+    marked = list(messages)
+    marked[index] = replace(messages[index], cache_control=True)
+    return marked
+
+
 def _trim_typed_context_to_budget(
     messages: list[LLMMessage],
     *,
     context_window: int = 128000,
     max_output: int = 4096,
+    tool_tokens: int = 0,
 ) -> _TypedContextTrimResult:
     """Trim a rebased typed context without splitting typed units.
 
@@ -811,7 +892,11 @@ def _trim_typed_context_to_budget(
 
     if not messages:
         return _TypedContextTrimResult(messages=[])
-    budget = max(0, int(context_window) - int(max_output) - _SAFETY_BUFFER)
+    # Tool schemas travel in the same Provider request and consume the window.
+    budget = max(
+        0,
+        int(context_window) - int(max_output) - int(tool_tokens) - _SAFETY_BUFFER,
+    )
     if _estimate_tokens(messages) <= budget:
         return _TypedContextTrimResult(messages=messages)
 
@@ -843,6 +928,14 @@ def _trim_typed_context_to_budget(
                 mandatory_indices.add(index)
             if message is rest[-1] and message.role == "user" and not message.is_tool_result:
                 mandatory_indices.add(index)
+    # Mutable state now trails history; the latest exchange before it stays.
+    for index in reversed(range(len(units))):
+        if not all(
+            str(message.content or "").startswith(_MUTABLE_STATE_PREFIXES)
+            for message in units[index]
+        ):
+            mandatory_indices.add(index)
+            break
 
     mandatory_units = [units[index] for index in sorted(mandatory_indices)]
     mandatory = [system] + [item for unit in mandatory_units for item in unit]
@@ -1596,6 +1689,7 @@ class AgentLoop:
                         else None
                     ),
                     cache_control=bool(value.get("cache_control", False)),
+                    images=image_inputs(value.get("images")),
                 )
             )
         self._conversation_history = restored
@@ -2158,7 +2252,10 @@ class AgentLoop:
                 )
 
             # Add user message to conversation history
-            self._conversation_history.append(LLMMessage(role="user", content=content))
+            self._conversation_history.append(LLMMessage(
+                role="user", content=content,
+                images=image_inputs(getattr(message, "images", ())),
+            ))
 
             # Build messages — system prompt always first, conversation history follows
             context_started = time.perf_counter()
@@ -2207,7 +2304,8 @@ class AgentLoop:
                 if (
                     accumulated_content
                     and not accumulated_tool_calls
-                    and response.stop_reason not in {"max_tokens", "length"}
+                    and response.stop_reason
+                    not in {"max_tokens", "length", CONTEXT_BUDGET_EXHAUSTED}
                 ):
                     self._conversation_history.append(
                         LLMMessage(role="assistant", content=accumulated_content)
@@ -2453,6 +2551,7 @@ class AgentLoop:
     async def _acquire_provider_request_lease(
         self,
         messages: list[LLMMessage],
+        tool_definitions: list[dict] | None = None,
     ) -> Any | None:
         """Reserve one physical request, if the runner installed admission.
 
@@ -2473,8 +2572,10 @@ class AgentLoop:
         )
         task_id = str(self.usage_task_id or getattr(self._current_message, "task_id", "") or "")
         identity_key = self.provider_admission_identity_key
-        estimated_tokens = _estimate_tokens(messages) + max(
-            0, int(getattr(self.config, "max_tokens", 0) or 0)
+        estimated_tokens = (
+            _estimate_tokens(messages)
+            + _estimate_tool_definition_tokens(tool_definitions)
+            + max(0, int(getattr(self.config, "max_tokens", 0) or 0))
         )
         return await controller.acquire(
             provider,
@@ -2493,7 +2594,7 @@ class AgentLoop:
     ):
         """Yield one adapter stream while holding exactly one request lease."""
 
-        lease = await self._acquire_provider_request_lease(messages)
+        lease = await self._acquire_provider_request_lease(messages, tool_definitions)
         try:
             stream_kwargs: dict[str, Any] = {}
             if stream_idle_timeout_seconds is not None:
@@ -2504,7 +2605,7 @@ class AgentLoop:
                 messages=messages,
                 tools=tool_definitions if tool_definitions else None,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                max_tokens=self._output_limit_for_request(),
                 **stream_kwargs,
             )
             if not hasattr(stream, "__aiter__"):
@@ -2529,7 +2630,7 @@ class AgentLoop:
     ) -> Any:
         """Fallback non-streaming adapter call with its own request lease."""
 
-        lease = await self._acquire_provider_request_lease(messages)
+        lease = await self._acquire_provider_request_lease(messages, tool_definitions)
         try:
             chat_kwargs: dict[str, Any] = {}
             if reasoning_enabled is not None:
@@ -2538,7 +2639,7 @@ class AgentLoop:
                 messages=messages,
                 tools=tool_definitions,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                max_tokens=self._output_limit_for_request(),
                 **chat_kwargs,
             )
         except BaseException as exc:
@@ -2711,19 +2812,25 @@ class AgentLoop:
         return "direct_submit"
 
     def _context_window_for_request(self) -> int:
-        """Read an optional Provider/config context window without changing caps."""
+        """The model's declared context window (config first, then Provider)."""
 
-        for owner in (self.config, self.llm_provider):
-            for name in ("context_window", "max_context_tokens", "context_length"):
-                value = getattr(owner, name, None)
-                if value is not None:
-                    try:
-                        parsed = int(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if parsed > 0:
-                        return parsed
-        return 128_000
+        from manyselves.runtime.context_budget import provider_context_window
+
+        return provider_context_window(self.config, self.llm_provider)
+
+    def _output_limit_for_request(self) -> int:
+        """Max output of one request: explicit setting, else the model's own."""
+
+        from manyselves.runtime.context_budget import request_output_limit
+
+        return request_output_limit(self.config, self.llm_provider)
+
+    def _working_memory_limit(self) -> int:
+        """History size that triggers compaction (explicit, else window room)."""
+
+        from manyselves.runtime.context_budget import working_memory_limit
+
+        return working_memory_limit(self.config, self.llm_provider)
 
     def _apply_rebased_usage_metadata(self, rebased: Any) -> None:
         """Copy hash-only rebase metrics into the next ledger row."""
@@ -2864,7 +2971,8 @@ class AgentLoop:
             trim = _trim_typed_context_to_budget(
                 list(messages),
                 context_window=self._context_window_for_request(),
-                max_output=self.config.max_tokens,
+                max_output=self._output_limit_for_request(),
+                tool_tokens=_estimate_tool_definition_tokens(tool_definitions),
             )
             messages = trim.messages
             if trim.exhausted:
@@ -2880,9 +2988,10 @@ class AgentLoop:
                     tool_calls=[],
                     stop_reason=CONTEXT_BUDGET_EXHAUSTED,
                 )
-        provider_messages = _sanitize_provider_messages(
-            _provider_working_messages(messages)
-        )
+        provider_messages = _provider_working_messages(messages)
+        if phase != "context_compaction":
+            provider_messages = _with_rolling_cache_breakpoint(provider_messages)
+        provider_messages = _sanitize_provider_messages(provider_messages)
         provider_tool_definitions = _sanitize_provider_visible_value(
             tool_definitions
         )
@@ -3151,11 +3260,16 @@ class AgentLoop:
                         self._active_tool_task = None
                 parallel_results = dict(enumerate(batch_values))
             for tool_index, tool_call in enumerate(response.tool_calls):
-                if tool_index >= batch_limit:
+                overflow_tool = self.tools.get(tool_call.name)
+                if tool_index >= batch_limit and (
+                    overflow_tool is None or overflow_tool.side_effect != "pure_read"
+                ):
+                    # Read-only calls past the batch run one by one below;
+                    # only calls that change something wait for a new round.
                     result_str = (
                         "Tool call skipped: this round exceeded the maximum batch of "
-                        f"{batch_limit}. Use the results already returned, then request only "
-                        "the next necessary tool calls."
+                        f"{batch_limit} and this tool is not read-only. Use the results "
+                        "already returned, then request this call again in the next round."
                     )
                     await self.bus.publish(
                         ToolResultMsg(
@@ -3675,11 +3789,11 @@ class AgentLoop:
         placed in model-visible context.
         """
 
-        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+        if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
             return messages
         compacted = _compact_messages_for_working_memory(
             messages,
-            target_tokens=int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio),
+            target_tokens=int(self._working_memory_limit() * self.config.working_memory_compaction_target_ratio),
             task_context=self.active_task_identity,
         )
         if compacted is messages:
@@ -3784,7 +3898,7 @@ class AgentLoop:
             ),
         )
         summary_messages = [summary_system, summary_user]
-        input_limit = self._context_window_for_request() - self.config.max_tokens - _SAFETY_BUFFER
+        input_limit = self._context_window_for_request() - self._output_limit_for_request() - _SAFETY_BUFFER
         # Count the serialized arguments and wrapper too. An oversized source
         # is left intact by the caller instead of silently dropping a subset.
         if _estimate_tokens(summary_messages) > input_limit:
@@ -3868,9 +3982,9 @@ class AgentLoop:
     ) -> list[LLMMessage]:
         """Compact evicted units; failed model summaries leave history intact."""
 
-        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+        if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
             return messages
-        target_tokens = int(self.config.working_memory_tokens * self.config.working_memory_compaction_target_ratio)
+        target_tokens = int(self._working_memory_limit() * self.config.working_memory_compaction_target_ratio)
         baseline = _compact_messages_for_working_memory(
             messages,
             target_tokens=target_tokens,
@@ -3931,7 +4045,7 @@ class AgentLoop:
         logger.info(
             "Context compaction for {}: estimated_tokens={} -> {}; trigger={}; target={}; source={}",
             self.agent_type, _estimate_tokens(messages), _estimate_tokens(baseline),
-            self.config.working_memory_tokens, target_tokens, payload["source"],
+            self._working_memory_limit(), target_tokens, payload["source"],
         )
         self._persist_handoff_summary(payload)
         return baseline
@@ -3995,6 +4109,7 @@ class AgentLoop:
 
         self._usage_totals["input_tokens"] += input_tokens
         self._usage_totals["output_tokens"] += output_tokens
+        thinking_text = str(getattr(response, "thinking", "") or "")
         run_id = str(self.usage_run_id or self.agent_type)
         task_id = str(self.usage_task_id or "") or None
         serialization_started = time.perf_counter()
@@ -4002,6 +4117,7 @@ class AgentLoop:
             {
                 "role": message.role,
                 "content": message.content or "",
+                "images": [image.to_json() for image in getattr(message, "images", ())],
                 "tool_call_id": message.tool_call_id,
                 "is_tool_result": bool(message.is_tool_result),
                 "tool_calls": [
@@ -4221,6 +4337,13 @@ class AgentLoop:
             "response_tool_call_count": len(
                 getattr(response, "tool_calls", None) or []
             ),
+            # Thinking and text share one output limit; recording both shows
+            # whether a reply that hit the limit spent it on thinking.
+            "stop_reason": getattr(response, "stop_reason", None),
+            "output_limit": self._output_limit_for_request(),
+            "response_text_chars": len(str(getattr(response, "content", "") or "")),
+            "response_thinking_chars": len(thinking_text),
+            "response_thinking_tokens_estimate": _estimate_text_tokens(thinking_text),
             "duration_ms": duration_ms,
             "queue_wait_ms": queue_wait_ms,
             "context_build_ms": context_build_ms,
@@ -4343,8 +4466,10 @@ class AgentLoop:
             char if char.isalnum() or char in "-_." else "_"
             for char in str(tool_call_id)
         )
-        opaque_ref = self.artifact_gateway.persist_internal(
-            "tool-result", f"{safe_agent}:{safe_call}", rendered
+        opaque_ref = self.artifact_gateway.short_handle(
+            self.artifact_gateway.persist_internal(
+                "tool-result", f"{safe_agent}:{safe_call}", rendered
+            )
         )
         preview_chars = max(0, max_chars - 1024)
         while True:
@@ -4467,28 +4592,29 @@ class AgentLoop:
 
     async def _get_system_prompt(self) -> str:
         """Return stable instructions; live board data is inserted at dispatch."""
-        return await self._get_cached_system_prompt()
+        prompt = await self._get_cached_system_prompt()
+        if self.tools is None or not self.tools.get_all():
+            return prompt
+        limit = self.config.max_tool_calls_per_round
+        return (
+            f"{prompt}\n\n[工具调用]\n每轮最多发起 {limit} 个工具调用。超出部分里只读的调用"
+            "会依次执行；会改动内容的调用会被跳过，需要在下一轮重新发起。"
+        )
 
     def _with_live_task_state(self, messages: list[LLMMessage]) -> list[LLMMessage]:
-        """Keep current board state after the stable prefix and outside history.
+        """Append current board state after history, outside the persisted log.
 
         Called once per logical request after context rebuilding and before
         budget accounting. Retries reuse the same payload; the next request
-        reads fresh state. Never append to the persisted conversation.
+        reads fresh state. Keeping mutable state last leaves the stable prefix
+        and append-only history reusable by Provider prefix caches.
         """
         state = self._build_task_state_section()
         if not state or not messages:
             return messages
-        position = 1
-        while position < len(messages):
-            message = messages[position]
-            if message.role != "user" or message.is_tool_result or not message.cache_control:
-                break
-            position += 1
         return [
-            *messages[:position],
+            *messages,
             LLMMessage(role="user", content="<runtime_task_state>\n" + state + "\n</runtime_task_state>"),
-            *messages[position:],
         ]
 
     async def _build_messages(self) -> list[LLMMessage]:
@@ -4508,6 +4634,7 @@ class AgentLoop:
                 is_tool_result=msg.is_tool_result,
                 thinking=msg.thinking,
                 cache_control=msg.cache_control,
+                images=msg.images,
             )
             for msg in self._conversation_history
         ]

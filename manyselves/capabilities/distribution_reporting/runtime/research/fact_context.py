@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..models.agentic import SourceKind
 from ..models.reporting import EvidenceItem
+from ..observation_ledger import shared_labels
+from ..photo_reading import photo_reading_labels
 from ..source_ledger import SourceLedger
 from ..storage import ReportingStore
 from .project_evidence import ProjectEvidenceIndex, project_evidence_locator
@@ -28,6 +31,8 @@ def register_fact_sources(workspace: Path, run_id: str, items: list[EvidenceItem
 
 def render_fact_packet(
     items: list[EvidenceItem], module_id: str, *, submodule_ids: set[str] | None = None,
+    shared: Mapping[str, str] | None = None,
+    photo_readings: Mapping[str, str] | None = None,
 ) -> str:
     """Share source headers; preserve every record, qualifier and coordinate."""
     groups: dict[tuple[str, str, str | None], list[EvidenceItem]] = {}
@@ -55,6 +60,20 @@ def render_fact_packet(
         "也不能因某条原评语存在便证明其所有延伸推断。不同对象/部位/时点的OK与NG不直接抵消；"
         "同一对象在多模块的记录不重复计作多台设备。",
     ]
+    shared = shared or {}
+    if any(item.id in shared for item in items):
+        lines.append(
+            "附加字段 shared=观测组；负责小节；另见：同一原始观测也路由到其他小节。"
+            "按本小节的角度判断（例如负荷分配、发热、设备状态），并说明角度；"
+            "同一角度的结论以负责小节为准，与其他位置不一致的判断会进入联合审查。"
+            "事实里写明的计算限制（如未提供容量不能计算负荷率）对所有位置都成立。"
+        )
+    photo_readings = photo_readings or {}
+    if any(ref in photo_readings for item in items for ref in item.photo_refs):
+        lines.append(
+            "附加字段 photo_reading=逐张读图结果：照片里看得到什么、是否与该照片绑定的记录相符。"
+            "它只描述图中可见内容，不是合规结论；与记录不符或需人工复核的照片在正文中说明并保留待确认。"
+        )
     if any(item.measurements for item in items):
         lines.append(
             "measurements 按 quantity 区分物理量：measured_temperature=测点温度，ambient_temperature=环境温度，"
@@ -76,6 +95,10 @@ def render_fact_packet(
             })
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id
+            if (label := shared.get(item.id)) is not None:
+                extra["shared"] = label
+            if readings := [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]:
+                extra["photo_reading"] = " | ".join(readings) if len(readings) > 1 else readings[0]
             lines.append(json.dumps(
                 [item.id, item.submodule_id, item.subject, item.fact, coordinates, extra],
                 ensure_ascii=False, separators=(",", ":"),
@@ -93,7 +116,10 @@ def prepare_module_fact_context(workspace: Path, run_id: str, module_id: str) ->
     index = ProjectEvidenceIndex(workspace, run_id)
     items = index.module_items(module_id)
     register_fact_sources(workspace, run_id, items)
-    text = render_fact_packet(items, module_id)
+    text = render_fact_packet(
+        items, module_id, shared=shared_labels(workspace, run_id),
+        photo_readings=photo_reading_labels(workspace, run_id),
+    )
     if not index.path.is_file():
         text = "规范化证据快照不可用；不能据此认定客户未提供资料。\n" + text
     ref = f"Work/runs/{run_id}/context/module-{module_id}-facts.md"

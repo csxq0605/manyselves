@@ -1,0 +1,649 @@
+{
+ "library": "uploaded edition prepared by prepare_reporting_references.py (source text not stored)",
+ "inline_target": 14000,
+ "shrink_meaning": "inline target lowered by N chars, equivalent to selected sources growing by N",
+ "before": {
+  "0": {
+   "2.1": {
+    "chars": 11588,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9304,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6808,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 13921,
+    "own_whole": 14,
+    "own_total": 14,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "unexpanded",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 13069,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   }
+  },
+  "89": {
+   "2.1": {
+    "chars": 11590,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9306,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6810,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 12613,
+    "own_whole": 0,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-01",
+     "KU-2.4-02",
+     "KU-2.4-03",
+     "KU-2.4-04",
+     "KU-2.4-05",
+     "KU-2.4-06",
+     "KU-2.4-07",
+     "KU-2.4-08",
+     "KU-2.4-09",
+     "KU-2.4-10",
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "full"
+    }
+   },
+   "2.5": {
+    "chars": 13072,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   }
+  },
+  "1000": {
+   "2.1": {
+    "chars": 11594,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 12619,
+    "own_whole": 0,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-01",
+     "KU-2.4-02",
+     "KU-2.4-03",
+     "KU-2.4-04",
+     "KU-2.4-05",
+     "KU-2.4-06",
+     "KU-2.4-07",
+     "KU-2.4-08",
+     "KU-2.4-09",
+     "KU-2.4-10",
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "full"
+    }
+   },
+   "2.5": {
+    "chars": 11922,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   }
+  },
+  "2000": {
+   "2.1": {
+    "chars": 11594,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 5580,
+    "own_whole": 0,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-01",
+     "KU-2.4-02",
+     "KU-2.4-03",
+     "KU-2.4-04",
+     "KU-2.4-05",
+     "KU-2.4-06",
+     "KU-2.4-07",
+     "KU-2.4-08",
+     "KU-2.4-09",
+     "KU-2.4-10",
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   },
+   "2.5": {
+    "chars": 11922,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   }
+  },
+  "4000": {
+   "2.1": {
+    "chars": 3783,
+    "own_whole": 0,
+    "own_total": 5,
+    "missing": [
+     "KU-2.1-01",
+     "KU-2.1-02",
+     "KU-2.1-03",
+     "KU-2.1-04",
+     "KU-2.1-05"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 5580,
+    "own_whole": 0,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-01",
+     "KU-2.4-02",
+     "KU-2.4-03",
+     "KU-2.4-04",
+     "KU-2.4-05",
+     "KU-2.4-06",
+     "KU-2.4-07",
+     "KU-2.4-08",
+     "KU-2.4-09",
+     "KU-2.4-10",
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   },
+   "2.5": {
+    "chars": 5298,
+    "own_whole": 0,
+    "own_total": 9,
+    "missing": [
+     "KU-2.5-01",
+     "KU-2.5-02",
+     "KU-2.5-03",
+     "KU-2.5-04",
+     "KU-2.5-05",
+     "KU-2.5-06",
+     "KU-2.5-07",
+     "KU-2.5-08",
+     "KU-2.5-09"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "unexpanded",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   }
+  }
+ },
+ "after": {
+  "0": {
+   "2.1": {
+    "chars": 11588,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9304,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6808,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 13921,
+    "own_whole": 14,
+    "own_total": 14,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "unexpanded",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 13069,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   }
+  },
+  "89": {
+   "2.1": {
+    "chars": 11590,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9306,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6810,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 13680,
+    "own_whole": 13,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "partial",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 13072,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "partial"
+    }
+   }
+  },
+  "1000": {
+   "2.1": {
+    "chars": 11594,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 12781,
+    "own_whole": 12,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "unexpanded",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 11922,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   }
+  },
+  "2000": {
+   "2.1": {
+    "chars": 11594,
+    "own_whole": 5,
+    "own_total": 5,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 11862,
+    "own_whole": 10,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "partial",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 11922,
+    "own_whole": 9,
+    "own_total": 9,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   }
+  },
+  "4000": {
+   "2.1": {
+    "chars": 9772,
+    "own_whole": 4,
+    "own_total": 5,
+    "missing": [
+     "KU-2.1-05"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "partial"
+    }
+   },
+   "2.2": {
+    "chars": 9310,
+    "own_whole": 7,
+    "own_total": 7,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.3": {
+    "chars": 6814,
+    "own_whole": 3,
+    "own_total": 3,
+    "missing": [],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full"
+    }
+   },
+   "2.4": {
+    "chars": 9724,
+    "own_whole": 7,
+    "own_total": 14,
+    "missing": [
+     "KU-2.4-08",
+     "KU-2.4-09",
+     "KU-2.4-10",
+     "KU-2.4-11",
+     "KU-2.4-12",
+     "KU-2.4-13",
+     "KU-2.4-14"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "full",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   },
+   "2.5": {
+    "chars": 9824,
+    "own_whole": 8,
+    "own_total": 9,
+    "missing": [
+     "KU-2.5-08"
+    ],
+    "sources": {
+     "R-001 01_评估方法论与风险判断": "partial",
+     "R-002 03_专家问答_FAQ": "unexpanded",
+     "R-003 02_术语同义词与字段解释": "unexpanded"
+    }
+   }
+  }
+ },
+ "byte_identical_at_shrink_0": "modules 2.1-2.5 and quality context",
+ "provider_calls": 0
+}

@@ -128,6 +128,15 @@ class ReviewEvidenceExcerpt(StrictModel):
             "does not prove the observation was judged or has a corresponding action."
         ),
     )
+    shared: str | None = Field(
+        default=None,
+        description=(
+            "Set when this E ID is one copy of a source observation routed to "
+            "several subsections: '<observation>；负责=<owner>；另见=<other copies>'. "
+            "Each place may judge from its own angle; the owner decides same-angle "
+            "conflicts, and facts' calculation limits hold everywhere."
+        ),
+    )
     title: str = Field(min_length=1, description="Source title from the current-run ledger.")
     locator: str = Field(
         min_length=1,
@@ -294,9 +303,7 @@ class FinalAuditSubjectView(StrictModel):
     assessment_background: str = Field(min_length=1)
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = None
     special_topic_analysis: str | None = Field(default=None, min_length=1)
@@ -1225,6 +1232,15 @@ class CrossOwnerInput(StrictModel):
             "Bounded owner scope for this Cross execution lane, derived from the run taxonomy."
         ),
     )
+    joint_dossiers: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Per-object dossiers this owner takes part in: the object's facts and every "
+            "module's judgments with prose excerpts. When present, review these objects "
+            "only; owner scope and related views are cut to them, and related full text "
+            "stays readable by reference."
+        ),
+    )
     related_module_refs: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
     ] = Field(description="Immutable refs for the other four read-only module subjects.")
@@ -2037,6 +2053,13 @@ class ReviewCompletionRecord(StrictModel):
         default_factory=list,
         description="Module/Cross v3 optional advice retained without revision or a resolved verdict.",
     )
+    open_at_round_limit_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Corrective findings still open when the bounded rework rounds ran out. "
+            "They are carried downstream as open issues, never reported as resolved."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -2164,13 +2187,13 @@ def _example_final_finding() -> dict[str, Any]:
         "target_changes": [
             {
                 "target_section_id": "3.2",
-                "required_change": ("在行动计划中补充跨模块责任接口、依赖顺序、验收指标和剩余风险边界。"),
-                "reviewer_checks": ["行动责任、依赖顺序、验收指标和剩余风险均可核对"],
+                "required_change": ("在速查表中为每项行动写明对象、动作和建议时限。"),
+                "reviewer_checks": ["每行都写明对象、动作和建议时限"],
             }
         ],
         "category": "special_topic",
         "impact": "blocking",
-        "observation": "当前行动计划没有清楚说明跨模块责任接口、依赖顺序和联合验收边界。",
+        "observation": "当前速查表多数行动没有写明对象和时限。",
         "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
     }
 
@@ -2183,7 +2206,7 @@ def _example_special_topic_plan() -> dict[str, Any]:
             {
                 "section_id": "4.1",
                 "title": "动态专项问题",
-                "requirement": "结合项目证据说明判断边界、可选方案、实施条件和验证方法。",
+                "requirement": "结合项目事实说明可选方案、实施条件和验证方法。",
             }
         ],
     }
@@ -2193,20 +2216,18 @@ def _example_edited_report() -> dict[str, Any]:
     return {
         "kind": "edited_report_submission",
         "title": "示例报告",
-        "assessment_background": "说明评估范围、证据基础和适用边界。",
+        "assessment_background": "说明委托方、评估对象、时间、方法和客户提出的话题。",
         "findings_overview": "归纳主要发现及其管理含义。",
         "regional_executive_summary": "按真实责任边界归纳行动。",
         "module_narratives": {
             module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
-        "risk_panorama": "归纳当前模块成果支持的主要风险及其判断依据。",
-        "dimension_risk_analysis": "比较五个维度的风险和管理含义。",
-        "data_gap_analysis": "说明缺口、判断影响和补证优先级。",
+        "risk_summary": "几条总体结论，再按五个维度各列几条一句话要点。",
         "improvement_action_plan": "列出责任、依赖、行动、验收和剩余风险。",
         "special_topic_plan": _example_special_topic_plan(),
         "special_topic_analysis": (
             "### 4.1 动态专项问题\n\n"
-            "结合项目证据边界分析可选方案、实施条件和验证方法，并明确通用知识并非客户事实。"
+            "结合项目事实分析可选方案、实施条件和验证方法，并明确通用知识并非客户事实。"
         ),
         "tables": [],
         "photo_ids": [],
@@ -2445,8 +2466,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         },
         "consistency_context": {
             "1.2": _example_final_audit_subject()["findings_overview"],
-            "3.1.1": _example_final_audit_subject()["risk_panorama"],
-            "3.1.3": _example_final_audit_subject()["data_gap_analysis"],
+            "3.1": _example_final_audit_subject()["risk_summary"],
         },
         "revision": 1,
         "target_section_ids": ["3.2"],

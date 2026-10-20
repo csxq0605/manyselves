@@ -258,6 +258,27 @@ async def resume_run(
         raise _error(error) from error
 
 
+@router.post("/runs/{run_id}/cancel", response_model=WorkflowRunResponse)
+async def cancel_run(
+    run_id: str,
+    request: Request,
+    lease_token: str = Depends(require_control_lease_header),
+):
+    state = request_runtime_state(request)
+    try:
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            settled = _projection(request).request_cancel(run_id)
+        # The cancelled Run may still persist events; never hold the lock here.
+        if settled is not None:
+            await settled
+        async with state.runtime_facade.read_transaction():
+            return WorkflowRunResponse.model_validate(
+                _projection(request).get_run(run_id)
+            )
+    except Exception as error:
+        raise _error(error) from error
+
+
 @router.get("/runs/{run_id}/outputs", response_model=WorkflowOutputListResponse)
 async def get_run_outputs(run_id: str, request: Request):
     state = request_runtime_state(request)

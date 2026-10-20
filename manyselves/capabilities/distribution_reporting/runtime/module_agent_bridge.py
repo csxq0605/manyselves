@@ -76,11 +76,16 @@ def _serialize_module_context(
         # The current prepared revision already owns the exact subject,
         # immutable findings, responses and envelope. Unrelated preparation
         # state and earlier lane phases swamp that contract during compaction.
+        # The revision input carries the target submodules of the subject; the
+        # whole module stays behind subject_ref instead of repeating every
+        # untouched submodule in the request.
         return {
             "module_id": context.module_id,
             "workflow_id": context.workflow_id,
             "status": context.status,
-            "revision": context.revision.model_dump(mode="json"),
+            "revision": context.revision.model_dump(
+                mode="json", exclude={"prepared": {"subject"}},
+            ),
         }
     if output_contract in {
         "declarative_module_authoring_agent_result", "module_submission",
@@ -351,7 +356,6 @@ class ModuleAuthoringAgentBridge:
     ) -> str:
         return "\n\n".join(
             (
-                agent.instructions,
                 f"Task: {task.objective}",
                 json.dumps(
                     {

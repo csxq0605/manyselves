@@ -1,0 +1,5 @@
+id: photo_reading_submission
+version: 1.0.0
+description: Photo reader typed submission
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.agentic:PhotoReadingSubmission

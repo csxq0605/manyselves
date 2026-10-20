@@ -240,6 +240,8 @@ class KnowledgeContextBuilder:
             ]))
         sources: dict[tuple[str, str], tuple[str, ReferenceDocument]] = {}
         source_terms: dict[tuple[str, str], set[str]] = {}
+        # Cumulative terms after each section citing a source, in section order.
+        source_prefixes: dict[tuple[str, str], list[tuple[str, tuple[str, ...]]]] = {}
         for heading, requirement, documents in sections:
             ids = []
             for document in documents:
@@ -252,6 +254,9 @@ class KnowledgeContextBuilder:
                 source_terms[key].update(heading.removeprefix("## ").split())
                 if include_catalog and not self._score(document, tuple(source_terms[key])):
                     source_terms[key].update(reference_fragments(tuple(source_terms[key])))
+                source_prefixes.setdefault(key, []).append(
+                    (heading.removeprefix("## "), tuple(sorted(source_terms[key])))
+                )
                 ids.append(sources[key][0])
             reference = (
                 "候选来源：" + "、".join(dict.fromkeys(ids)) if ids else
@@ -284,16 +289,24 @@ class KnowledgeContextBuilder:
                 entries[index] = full
                 size += increment
                 continue
-            selected = select_reference_sections(document.text, tuple(sorted(source_terms[key])))
-            if selected is not None:
+            # Whole matching sections for the longest section prefix that fits;
+            # one section over budget must not hide every earlier match.
+            cumulative = source_prefixes[key]
+            for count in range(len(cumulative), 0, -1):
+                selected = select_reference_sections(document.text, cumulative[count - 1][1])
+                if selected is None:
+                    continue
+                skipped = [heading for heading, _terms in cumulative[count:]]
                 partial = prefixes[index] + selected + (
-                    f"\n其余原文未展开；open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
+                    "\n" + (f"预算内未按以下小节检索词展开：{'、'.join(skipped)}；" if skipped else "")
+                    + f"其余原文未展开；open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
                     "可读取完整来源。"
                 )
                 increment = len(partial) - len(entries[index])
                 if size + increment <= self.MAX_MODULE_CHARS:
                     entries[index] = partial
                     size += increment
+                    break
         text = "\n\n".join([*blocks, *entries])
         path = self.store.write_text(f"Work/runs/{self.run_id}/context/{filename}", text + "\n")
         return KnowledgeContext(

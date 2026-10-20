@@ -29,6 +29,9 @@ from manyselves.kernel.workflow import (
     restore_plan_definition_registry,
 )
 
+# ``asyncio.Task.cancel`` message for a user-requested Run cancel.
+RUN_CANCEL_REQUESTED = "run cancelled by user"
+
 
 class WorkflowRuntimeEvent(BaseModel):
     """Stable event-log projection emitted by the Runtime Host."""
@@ -158,6 +161,25 @@ class WorkflowRuntimeHost:
                     plan_bundle=plan.subworkflow_plans,
                     checkpoint=self._state_store.save,
                 )
+            except asyncio.CancelledError as exc:
+                # Only an explicit Run cancel is terminal.  An unlabelled
+                # cancel (process shutdown) leaves RUNNING for Same-run resume.
+                if RUN_CANCEL_REQUESTED not in exc.args:
+                    raise
+                failed = self._kernel.transition(
+                    plan,
+                    state,
+                    ActionFailed(action.id, RUN_CANCEL_REQUESTED, None),
+                )
+                self._state_store.save(failed.state)
+                self._emit(
+                    "action.failed",
+                    failed.state,
+                    action_id=action.id,
+                    error=RUN_CANCEL_REQUESTED,
+                )
+                self._emit("workflow.failed", failed.state, error=RUN_CANCEL_REQUESTED)
+                raise
             except Exception as exc:
                 failure_result = None
                 if isinstance(exc, _ParallelWorkflowExecutionError):

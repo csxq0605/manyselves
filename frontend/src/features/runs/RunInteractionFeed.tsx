@@ -320,6 +320,12 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
       void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
     },
   });
+  const cancel = useMutation({
+    mutationFn: (runId: string) => api.cancel(runId),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
+    },
+  });
   const feedRuns = runs.data?.runs ?? [];
   const latest = feedRuns[0];
   // Chat follows one current run. Historical failures remain in run history.
@@ -345,10 +351,18 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
           {latest.run.active ? <small title={reportingRunStepSummary(latest) ?? undefined}>{reportingRunStage(latest)}</small> : null}
         </div>
         <div className="run-status-bar__actions">
+          {latest.run.active ? <button
+            disabled={cancel.isPending}
+            onClick={() => {
+              if (window.confirm("停止这次运行？已完成的部分会保留，运行会记为失败。")) cancel.mutate(latest.run.runId);
+            }}
+            type="button"
+          >{cancel.isPending ? "正在停止…" : "停止运行"}</button> : null}
           {attentionCount > 0 ? <button onClick={() => setPanel("attention")} type="button">处理运行（{attentionCount}）</button> : null}
           <button aria-label="查看本次运行详情与成本" onClick={() => setPanel("latest")} type="button">详情与成本</button>
         </div>
       </div>
+      {cancel.isError ? <p role="alert">停止失败：{cancel.error.message}</p> : null}
       {panel ? <RunDetailsPanel onClose={closePanel}>
         {panel === "latest" ? <RunResult api={api} run={latest} projectId={projectId} /> : null}
         {panel === "attention" ? active.map((run) => <p key={run.run.runId}>

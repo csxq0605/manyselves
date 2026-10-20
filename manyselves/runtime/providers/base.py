@@ -183,6 +183,36 @@ class ToolResult:
     content: str
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    """One image sent with a user message; bytes are read when the request is sent."""
+
+    path: str
+    media_type: str
+
+    def to_json(self) -> dict[str, str]:
+        return {"path": self.path, "media_type": self.media_type}
+
+
+def image_inputs(values: Any) -> tuple["ImageInput", ...]:
+    """Images from persisted/bus form ({path, media_type}) or ImageInput values."""
+
+    found: list[ImageInput] = []
+    for value in values or ():
+        if isinstance(value, ImageInput):
+            found.append(value)
+        elif isinstance(value, dict) and value.get("path") and value.get("media_type"):
+            found.append(ImageInput(path=str(value["path"]), media_type=str(value["media_type"])))
+    return tuple(found)
+
+
+def image_base64(image: "ImageInput") -> str:
+    import base64
+    from pathlib import Path
+
+    return base64.b64encode(Path(image.path).read_bytes()).decode("ascii")
+
+
 @dataclass
 class Message:
     """Chat message with optional structured content for tool calls/results.
@@ -201,6 +231,7 @@ class Message:
     is_tool_result: bool = False  # marks this as a tool result message
     thinking: str | None = None  # DeepSeek extended thinking blocks
     cache_control: bool = False  # mark for prompt caching (Anthropic ephemeral cache)
+    images: tuple[ImageInput, ...] = ()  # user messages only; sent before the text
 
 
 @dataclass
@@ -248,6 +279,9 @@ class LLMProvider(ABC):
         self.api_key = api_key
         self.api_base = api_base
         self.model = model
+        # The model's declared limits in Provider tokens; None when undeclared.
+        self.context_window: int | None = None
+        self.max_output_tokens: int | None = None
 
     @abstractmethod
     async def chat(

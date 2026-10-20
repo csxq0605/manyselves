@@ -65,9 +65,7 @@ def _edited_submission() -> EditedReportSubmission:
             module_id: f"[[APPROVED_MODULE:{module_id}]] 模块 {module_id} 的汇总正文。"
             for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
         },
-        risk_panorama="风险全景正文。",
-        dimension_risk_analysis="维度风险正文。",
-        data_gap_analysis="数据缺口正文。",
+        risk_summary="风险全景正文。",
         improvement_action_plan="改进行动正文。",
     )
 

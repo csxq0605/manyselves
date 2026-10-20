@@ -616,6 +616,16 @@ export function RunWorkspace({ api, projectId }: RunWorkspaceProps) {
     },
   });
 
+  const cancelRun = useMutation({
+    mutationFn: () => api.cancel(runId),
+    onError: (reason) => setError(reason instanceof Error ? reason.message : "停止运行失败。"),
+    onSuccess: () => {
+      setError(null);
+      void run.refetch();
+      void cost.refetch();
+    },
+  });
+
   const totals = objectValue(cost.data?.usage.totals);
   const estimatedCost = totals.estimated_cost;
   const pricingStatus = typeof totals.pricing_status === "string"
@@ -763,6 +773,16 @@ export function RunWorkspace({ api, projectId }: RunWorkspaceProps) {
                 <div><dt>状态</dt><dd>{rawRunStatus}</dd></div>
                 {run.data.run.taskId ? <div><dt>Task</dt><dd>{run.data.run.taskId}</dd></div> : null}
               </dl>
+              {run.data.run.active ? <button
+                className="run-workspace__primary-action"
+                disabled={cancelRun.isPending}
+                onClick={() => {
+                  if (window.confirm("停止这次运行？已完成的部分会保留，运行会记为失败。")) cancelRun.mutate();
+                }}
+                type="button"
+              >
+                {cancelRun.isPending ? "正在停止…" : "停止运行"}
+              </button> : null}
               {canResumeRun ? <button
                 className="run-workspace__primary-action"
                 disabled={resumeRun.isPending}

@@ -1755,3 +1755,108 @@ async def test_runtime_host_waits_inside_parallel_child_and_reuses_completed_sib
         and event.workflow_id == parent.id
         and event.action_id == "right"
     ].__len__() == 1
+
+
+async def _cancel_running_tool(tmp_path: Path, cancel_message: str | None):
+    registry, executors, plan, contracts = _workflow()
+    entered = asyncio.Event()
+
+    async def double(_value: int) -> int:
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    store = FileWorkflowStateStore(tmp_path)
+    events = InMemoryWorkflowEventSink()
+    host = WorkflowRuntimeHost(executors, store, events)
+    task = asyncio.create_task(
+        host.execute(
+            plan,
+            WorkflowState.for_plan("cancel-run", plan),
+            RuntimeContext(tools={"double": double}, contracts=contracts, definitions=registry),
+        )
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    task.cancel(cancel_message)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    return store.load("cancel-run"), events
+
+
+@pytest.mark.asyncio
+async def test_user_cancel_persists_a_failed_run_instead_of_leaving_it_running(
+    tmp_path: Path,
+) -> None:
+    from manyselves.runtime.workflow_host import RUN_CANCEL_REQUESTED
+
+    state, events = await _cancel_running_tool(tmp_path, RUN_CANCEL_REQUESTED)
+
+    assert state.status is WorkflowStatus.FAILED
+    assert state.actions["double"].status == ActionExecutionStatus.FAILED
+    assert RUN_CANCEL_REQUESTED in (state.actions["double"].error or "")
+    assert [event.kind for event in events.events][-2:] == [
+        "action.failed",
+        "workflow.failed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unlabelled_task_cancel_keeps_the_run_resumable(tmp_path: Path) -> None:
+    """Process shutdown must not turn an in-flight Run into a user failure."""
+
+    state, events = await _cancel_running_tool(tmp_path, None)
+
+    assert state.status is WorkflowStatus.RUNNING
+    assert "workflow.failed" not in [event.kind for event in events.events]
+
+
+@pytest.mark.asyncio
+async def test_run_cancel_repeats_until_lane_code_that_swallows_it_yields(
+    tmp_path: Path,
+) -> None:
+    """Code that catches BaseException must not absorb a single cancel."""
+
+    from manyselves.runtime import run_lifecycle
+    from manyselves.runtime.run_lifecycle import (
+        DetachedRunTaskOwner,
+        StartAwareFileWorkflowStateStore,
+    )
+
+    registry, executors, plan, contracts = _workflow()
+    swallowed = 0
+
+    async def double(_value: int) -> int:
+        nonlocal swallowed
+        while True:
+            try:
+                await asyncio.Event().wait()
+            except BaseException:  # noqa: BLE001 - mirrors lane failure capture
+                swallowed += 1
+                if swallowed > 1:
+                    raise
+
+    store = StartAwareFileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    owner = DetachedRunTaskOwner()
+    await owner.accept_after_persisted_state(
+        run_id="swallow-run",
+        state_store=store,
+        operation=host.execute(
+            plan,
+            WorkflowState.for_plan("swallow-run", plan),
+            RuntimeContext(tools={"double": double}, contracts=contracts, definitions=registry),
+        ),
+    )
+    await asyncio.sleep(0)
+    original = run_lifecycle._CANCEL_REPEAT_SECONDS
+    run_lifecycle._CANCEL_REPEAT_SECONDS = 0.01
+    try:
+        settled = owner.cancel("swallow-run")
+        assert settled is not None
+        await asyncio.wait_for(settled, 5)
+    finally:
+        run_lifecycle._CANCEL_REPEAT_SECONDS = original
+
+    assert swallowed == 2
+    assert store.load("swallow-run").status is WorkflowStatus.FAILED
+    assert owner.cancel("swallow-run") is None

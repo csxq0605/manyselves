@@ -1,0 +1,10 @@
+id: photo-reading-requires-agent
+version: 1.0.0
+description: Select whether any photo still needs the photo reader
+implementation: capability:distribution-reporting:photo-reading-requires-agent
+input_contract: photo_reading_plan
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

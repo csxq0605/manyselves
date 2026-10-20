@@ -12,12 +12,6 @@ tools:
 accepts: []
 produces: []
 conversation_mode: task
-limits:
-  max_turns: 12
-  max_tokens: null
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你负责产品范围内可复用配电报告 Skill 的治理，不参与单次报告专业结论，也不把报告成稿直接改写成 Skill。

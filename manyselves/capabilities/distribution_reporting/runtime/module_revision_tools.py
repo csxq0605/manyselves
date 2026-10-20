@@ -184,6 +184,7 @@ async def prepare_module_revision(
         f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
         "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
         "目标小节内与本次 finding 无关的有效内容和原报告要求必须保留；只有新要求或新证据明确替代的内容才更新或移除",
+        "修订可以删减：与 finding 相关的重复论证和证据边界说明应删除或并入表格；资料缺失只保留一句指向数据缺口表；修订后篇幅变长时在 revision_responses 中说明理由",
         "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
         "disputed 或 needs_input 不得伪造 changed_target_ids",
         *(
@@ -293,6 +294,7 @@ def prepare_current_module_revision(
             f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
             "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
             "目标小节内与本次 finding 无关的有效内容和原报告要求必须保留；只有新要求或新证据明确替代的内容才更新或移除",
+            "修订可以删减：与 finding 相关的重复论证和证据边界说明应删除或并入表格；资料缺失只保留一句指向数据缺口表；修订后篇幅变长时在 revision_responses 中说明理由",
             "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
             "disputed 或 needs_input 不得伪造 changed_target_ids",
         ],

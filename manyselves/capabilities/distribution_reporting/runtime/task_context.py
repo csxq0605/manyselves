@@ -11,6 +11,8 @@ from manyselves.runtime.providers.base import Message
 
 from .collaboration_tools import ListResultPartsTool
 from .models.agentic import TaskEnvelope
+from .observation_ledger import shared_labels
+from .photo_reading import photo_reading_labels
 from .research.fact_context import render_fact_packet
 from .research.project_evidence import ProjectEvidenceIndex
 from .storage import ReportingStore
@@ -26,7 +28,11 @@ def task_fact_packet(workspace: Path, envelope: TaskEnvelope, module_id: str) ->
     if not index.path.is_file():
         return None
     scope = set(envelope.target_submodule_ids) or None
-    return render_fact_packet(index.module_items(module_id, scope), module_id, submodule_ids=scope)
+    return render_fact_packet(
+        index.module_items(module_id, scope), module_id, submodule_ids=scope,
+        shared=shared_labels(workspace, envelope.run_id),
+        photo_readings=photo_reading_labels(workspace, envelope.run_id),
+    )
 
 
 def replace_inline_fact_packet(inline: str | None, packet: str) -> str:

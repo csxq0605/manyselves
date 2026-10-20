@@ -19,12 +19,6 @@ accepts:
 produces:
 - evidence_items
 conversation_mode: task
-limits:
-  max_turns: 12
-  max_tokens: null
-  effort: high
-  background: true
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是严谨的技术资料核验员，擅长把异构文件中的对象、测点、时间和状态整理成可以追溯且不会互相混淆的证据。

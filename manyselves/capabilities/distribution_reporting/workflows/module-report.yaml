@@ -17,6 +17,7 @@ state:
   readiness-input: {}
   readiness-state: {}
   readiness-preparation: {}
+  photo-reading-summary: {}
   context-with-readiness: {}
   reporting-state: {}
   module-results: {}
@@ -65,6 +66,13 @@ actions:
   tool: attach-readiness-preparation
   input_variable: readiness-state
   output_variable: readiness-preparation
+- id: run-photo-reading
+  kind: subworkflow
+  workflow: distribution-photo-reading
+  input_variable: readiness-preparation
+  child_input_variable: preparation-context
+  child_output_name: result
+  output_variable: photo-reading-summary
 - id: attach-readiness-to-context
   kind: invoke_tool
   tool: attach-reporting-preparation

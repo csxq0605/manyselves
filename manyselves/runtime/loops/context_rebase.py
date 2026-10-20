@@ -263,16 +263,20 @@ class TaskContextRebuilder:
             if not (message.role == "user" and str(message.content or "").startswith(self.boundary))
         ] if boundary is not None else []
         # Render before projection so the Capability can compare writes with
-        # the exact current state. Keep stable inputs before mutable state for
-        # providers that support prefix caching; both remain authoritative.
+        # the exact current state. Stable inputs lead, append-only history
+        # follows, and mutable state goes last, so prefix caches can reuse the
+        # history as well; both inputs and state remain authoritative.
         if self.render_prefix is None:
-            state_messages = [LLMMessage(role="user", content=self.initial_message())]
+            leading = [LLMMessage(role="user", content=self.initial_message())]
+            trailing: list[LLMMessage] = []
         else:
             prefix = self.render_prefix()
             state = self.render_state()
-            state_messages = [
+            leading = [
                 LLMMessage(role="user", content=self.boundary + prefix + "\n</typed_task_state>",
                            cache_control=True),
+            ]
+            trailing = [
                 LLMMessage(role="user", content="<current_task_state>\n" + state + "\n</current_task_state>"),
             ]
         # Compare projected source histories, not forensic histories. If a
@@ -292,7 +296,7 @@ class TaskContextRebuilder:
         working_tail = list(compacted[1:])
         self._source_tail = source_tail
         self._working_tail = working_tail
-        projected = [messages[0], *state_messages, *working_tail]
+        projected = [messages[0], *leading, *working_tail, *trailing]
         return RebasedContext(messages=projected, tool_definitions=list(tool_definitions or ()),
                               dropped_message_count=max(0, len(messages) - len(projected)))
 

@@ -1,0 +1,6 @@
+id: photo_reading_list
+version: 1.0.0
+description: Ordered list of photo_reading values, each validated by its own contract
+adapter: json_schema
+schema:
+  type: array

@@ -28,7 +28,6 @@ from manyselves.capabilities.distribution_reporting.domain.report_markdown impor
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
-    resolve_submodule,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import StrictModel
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -42,9 +41,13 @@ from .rendered_docx_validator import validate_rendered_markdown_docx
 _CITATION_TOKEN = re.compile(r"\[\[CITE:(\d+)\]\]")
 _PHOTO_TOKEN = re.compile(r"^\[\[PHOTO:([^]]+)\]\]$")
 _FIXED_DOCX_TIME = datetime(2000, 1, 1, tzinfo=UTC)
-_PHOTOS_PER_SUMMARY_TABLE = 2
-_PHOTO_MAX_WIDTH_CM = 8.2
-_PHOTO_MAX_HEIGHT_CM = 7.0
+# Photos sit in the 「现场图片」 column of the problem table, as in the expert
+# report; the box matches the renderer's photo-cell size.
+_PHOTO_MAX_WIDTH_CM = 3.0
+_PHOTO_MAX_HEIGHT_CM = 3.0
+_PHOTO_COLUMN_TOKENS = ("图片", "照片")
+_PHOTO_ID = re.compile(r"P-\d+")
+_CELL_PHOTO_TOKEN = re.compile(r"\[\[PHOTO:([^\]]+)\]\]")
 
 
 class ReportTable(StrictModel):
@@ -79,9 +82,7 @@ class ApprovedReport(StrictModel):
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[str, str]
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = None
     special_topic_analysis: str | None = Field(default=None, min_length=1)
@@ -230,26 +231,14 @@ class PdsDocxRenderer:
 
     @staticmethod
     def _compose_markdown(report: ApprovedReport) -> str:
-        unresolved_claims = [
-            claim.text for claim in report.ledger.claims if claim.unresolved
-        ]
-        module_narratives: dict[str, str] = {}
-        for module_id in REPORT_MODULE_IDS:
-            module_photos = [
-                photo
-                for photo in report.photos
-                if (
-                    photo.submodule_id is not None
-                    and resolve_submodule(photo.submodule_id).module_id == module_id
-                )
-            ]
-            module_narratives[module_id] = PdsDocxRenderer._place_photo_tokens(
-                strip_leading_module_heading(
-                    report.module_narratives[module_id],
-                    module_id,
-                ),
-                module_photos,
+        photo_ids = {photo.id for photo in report.photos}
+        module_narratives = {
+            module_id: PdsDocxRenderer._place_photo_tokens(
+                strip_leading_module_heading(report.module_narratives[module_id], module_id),
+                photo_ids,
             )
+            for module_id in REPORT_MODULE_IDS
+        }
         return compose_canonical_markdown(
             CanonicalReportContent(
                 title=report.title,
@@ -257,10 +246,7 @@ class PdsDocxRenderer:
                 findings_overview=report.findings_overview,
                 regional_executive_summary=report.regional_executive_summary,
                 module_narratives=module_narratives,
-                risk_panorama=report.risk_panorama,
-                dimension_risk_analysis=report.dimension_risk_analysis,
-                data_gap_analysis=report.data_gap_analysis
-                or "\n".join(f"- {text}" for text in unresolved_claims),
+                risk_summary=report.risk_summary,
                 improvement_action_plan=report.improvement_action_plan,
                 special_topic_plan=report.special_topic_plan,
                 special_topic_analysis=report.special_topic_analysis,
@@ -283,50 +269,47 @@ class PdsDocxRenderer:
         return strip_leading_module_heading(narrative, module_id)
 
     @staticmethod
-    def _place_photo_tokens(narrative: str, photos: list[ReportPhoto]) -> str:
-        """Place photo evidence beside its linked submodule, not at module end."""
+    def _place_photo_tokens(narrative: str, photo_ids: set[str]) -> str:
+        """Turn photo ids in a table's 「现场图片」 column into image tokens.
 
-        if not photos:
+        Authors list the P- ids of the photos that belong to a problem row in
+        that row's photo column.  Only ids of report photos become images; any other text in the cell is left as written.
+        Photos no table row names are not placed in the body; the evidence
+        index lists every photo.
+        """
+
+        if not photo_ids:
             return narrative
-        by_submodule: dict[str, list[ReportPhoto]] = {}
-        fallback: list[ReportPhoto] = []
-        for photo in photos:
-            if photo.submodule_id:
-                by_submodule.setdefault(photo.submodule_id, []).append(photo)
-            else:
-                fallback.append(photo)
-        lines = narrative.splitlines()
         output: list[str] = []
-        active_submodule: str | None = None
-        inserted: set[str] = set()
-
-        def append_tokens(submodule_id: str | None) -> None:
-            if not submodule_id or submodule_id in inserted:
-                return
-            selected = by_submodule.get(submodule_id, [])
-            if selected:
-                output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in selected], ""])
-                inserted.add(submodule_id)
-
-        for line in lines:
-            heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
-            if heading:
-                append_tokens(active_submodule)
-                active_submodule = next(
-                    (
-                        submodule_id
-                        for submodule_id in by_submodule
-                        if submodule_id in heading.group(1)
-                    ),
-                    None,
-                )
-            output.append(line)
-        append_tokens(active_submodule)
-        for submodule_id, selected in by_submodule.items():
-            if submodule_id not in inserted:
-                output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in selected]])
-        output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in fallback]])
-        return "\n".join(output).strip()
+        photo_columns: list[int] = []
+        in_table = False
+        for line in narrative.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                in_table = False
+                output.append(line)
+                continue
+            cells = stripped.strip("|").split("|")
+            if not in_table:
+                in_table = True
+                photo_columns = [
+                    index
+                    for index, cell in enumerate(cells)
+                    if any(token in cell for token in _PHOTO_COLUMN_TOKENS)
+                ]
+                output.append(line)
+                continue
+            if not photo_columns or all(set(cell.strip()) <= set("-: ") for cell in cells):
+                output.append(line)
+                continue
+            for index in photo_columns:
+                if index >= len(cells):
+                    continue
+                ids = _PHOTO_ID.findall(cells[index])
+                if ids and all(photo_id in photo_ids for photo_id in ids):
+                    cells[index] = " " + " ".join(f"[[PHOTO:{photo_id}]]" for photo_id in ids) + " "
+            output.append("|" + "|".join(cells) + "|")
+        return "\n".join(output)
 
     @staticmethod
     def _markdown_table(table: ReportTable) -> str:
@@ -377,75 +360,35 @@ class PdsDocxRenderer:
 
     @staticmethod
     def _materialize_photos(document: Document, report: ApprovedReport) -> None:
+        """Replace photo tokens in table cells with the photos themselves."""
+
         photos = {photo.id: photo for photo in report.photos}
-        paragraphs = list(document.paragraphs)
-        index = 0
-        while index < len(paragraphs):
-            match = _PHOTO_TOKEN.match(paragraphs[index].text.strip())
-            if match is None:
-                index += 1
-                continue
-            marker_paragraphs = [paragraphs[index]]
-            selected = [photos[match.group(1)]]
-            scan = index + 1
-            while scan < len(paragraphs):
-                text = paragraphs[scan].text.strip()
-                next_match = _PHOTO_TOKEN.match(text)
-                if next_match is not None:
-                    marker_paragraphs.append(paragraphs[scan])
-                    selected.append(photos[next_match.group(1)])
-                    scan += 1
-                    continue
-                if not text:
-                    marker_paragraphs.append(paragraphs[scan])
-                    scan += 1
-                    continue
-                break
-            for photo in selected:
-                if not photo.path.is_file():
-                    raise FileNotFoundError(f"report photo not found: {photo.path}")
-            for batch_start in range(0, len(selected), _PHOTOS_PER_SUMMARY_TABLE):
-                batch = selected[
-                    batch_start : batch_start + _PHOTOS_PER_SUMMARY_TABLE
-                ]
-                if batch_start:
-                    continuation = document.add_paragraph()
-                    continuation.add_run("原表图证汇总（续）").bold = True
-                    marker_paragraphs[0]._p.addprevious(continuation._p)
-                table = document.add_table(rows=len(batch) + 1, cols=2)
-                table.autofit = False
-                if "Table Grid" in [style.name for style in document.styles]:
-                    table.style = "Table Grid"
-                headers = table.rows[0].cells
-                headers[0].text = "原表对应内容"
-                headers[1].text = "图证"
-                for header in headers:
-                    header.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                    for run in header.paragraphs[0].runs:
-                        run.bold = True
-                    header.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for photo_index, photo in enumerate(batch, start=1):
-                    detail_cell, image_cell = table.rows[photo_index].cells
-                    detail_cell.width = Cm(6.0)
-                    image_cell.width = Cm(9.0)
-                    detail_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                    image_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                    detail = detail_cell.paragraphs[0]
-                    detail.add_run(photo.caption).bold = True
-                    detail.add_run(f"\n来源：{photo.source_id}")
-                    image = image_cell.paragraphs[0]
-                    image.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    image.add_run().add_picture(
-                        str(photo.path),
-                        **PdsDocxRenderer._photo_fit_dimensions(photo.path),
-                    )
-                    image.add_run("\n原表图证")
-                marker_paragraphs[0]._p.addprevious(table._tbl)
-            for paragraph in marker_paragraphs:
-                parent = paragraph._p.getparent()
-                if parent is not None:
-                    parent.remove(paragraph._p)
-            index = scan
+        for table in document.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    photo_ids = _CELL_PHOTO_TOKEN.findall(cell.text)
+                    if not photo_ids or any(photo_id not in photos for photo_id in photo_ids):
+                        continue
+                    for photo_id in photo_ids:
+                        if not photos[photo_id].path.is_file():
+                            raise FileNotFoundError(
+                                f"report photo not found: {photos[photo_id].path}"
+                            )
+                    paragraphs = cell.paragraphs
+                    for paragraph in paragraphs[1:]:
+                        paragraph._p.getparent().remove(paragraph._p)
+                    first = paragraphs[0]
+                    for run in list(first.runs):
+                        run._r.getparent().remove(run._r)
+                    first.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    for index, photo_id in enumerate(photo_ids):
+                        paragraph = first if index == 0 else cell.add_paragraph()
+                        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        paragraph.add_run().add_picture(
+                            str(photos[photo_id].path),
+                            **PdsDocxRenderer._photo_fit_dimensions(photos[photo_id].path),
+                        )
 
     @staticmethod
     def _photo_fit_dimensions(path: Path) -> dict[str, object]:

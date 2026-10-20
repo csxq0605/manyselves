@@ -19,6 +19,7 @@ from .base import (
     Message,
     annotate_provider_request_failure,
     build_provider_request_metrics,
+    image_base64,
     infer_provider_request_disposition,
 )
 from .defaults import DEFAULT_API_BASES
@@ -236,6 +237,19 @@ class OpenAICompatProvider(LLMProvider):
                 "role": msg.role,
                 "content": msg.content,
             }
+            if msg.images and msg.role == "user":
+                regular_message["content"] = [
+                    *(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{image.media_type};base64,{image_base64(image)}",
+                            },
+                        }
+                        for image in msg.images
+                    ),
+                    {"type": "text", "text": msg.content or ""},
+                ]
             if (
                 self._is_mimo_text_model
                 and msg.role == "assistant"

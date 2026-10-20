@@ -1,0 +1,87 @@
+{
+  "provider_calls": 0,
+  "stage_active_seconds": {
+    "author": {
+      "2.5": 1128.4,
+      "2.4": 988.9,
+      "2.1": 706.9,
+      "2.3": 624.1,
+      "2.2": 432.9
+    },
+    "revision": {
+      "2.2": 1328.7,
+      "2.1": 839.2,
+      "2.4": 674.3,
+      "2.5": 524.1,
+      "2.3": 200.7
+    },
+    "review": {
+      "2.2": 2088.8,
+      "2.4": 1335.2,
+      "2.3": 1294.8,
+      "2.1": 1284.0,
+      "2.5": 460.2
+    },
+    "cross": {
+      "2.5": 845.4,
+      "2.4": 666.2,
+      "2.3": 502.5,
+      "2.1": 493.9,
+      "2.2": 325.8
+    },
+    "chief": {
+      "3": 1567.5,
+      "1": 1422.9
+    },
+    "final": {
+      "3": 360.1,
+      "1": 292.1
+    }
+  },
+  "organizations": {
+    "chapters": {
+      "serial_minutes": 110.4,
+      "path": {
+        "slowest_module_lane": "2.2",
+        "module_lane_minutes": 64.2,
+        "cross_minutes": 14.1,
+        "chief_final_minutes": 32.1
+      }
+    },
+    "lead": {
+      "serial_minutes": 264.0,
+      "path": {
+        "authoring_minutes": 64.7,
+        "single_review_minutes": 107.7,
+        "revision_minutes": 59.5,
+        "chief_final_minutes": 32.1
+      }
+    },
+    "topics+lead": {
+      "serial_minutes_by_judgment_share": {
+        "0.25": 179.6,
+        "0.5": 168.1,
+        "0.75": 156.7
+      }
+    },
+    "cross_break_even_minutes": {
+      "lead": 167.7,
+      "topics+lead@0.25": 83.3,
+      "topics+lead@0.5": 71.8,
+      "topics+lead@0.75": 60.4
+    }
+  },
+  "context_tokens": {
+    "fact_packet_by_module": {
+      "2.1": 2867,
+      "2.2": 9776,
+      "2.3": 1684,
+      "2.4": 12729,
+      "2.5": 3454
+    },
+    "chapters_largest_author_session": 12729,
+    "lead_single_session": 30510,
+    "topics+lead_lead_session": 46063,
+    "working_memory_tokens": 72000
+  }
+}

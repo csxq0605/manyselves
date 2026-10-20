@@ -114,6 +114,8 @@ class UserMessage(Message):
     internal: bool = False
     # Internal request policy. Reporting finalization can legitimately spend a
     # long time generating one structured tool payload without emitting chunks.
+    # Images sent with this message, as {"path": absolute path, "media_type": ...}.
+    images: list[dict[str, str]] = Field(default_factory=list)
     provider_stream_idle_timeout_seconds: float | None = None
     workflow_id: str = ""
     run_id: str = ""

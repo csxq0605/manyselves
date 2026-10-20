@@ -11,12 +11,6 @@ accepts:
 produces:
 - output_artifacts
 conversation_mode: task
-limits:
-  max_turns: 8
-  max_tokens: null
-  effort: medium
-  background: true
-  disallowed_tools: []
 ---
 <component_contract>
 仅发布已经通过渲染与版式校验的版本，写入项目内约定位置并向对话返回可定位成果。失败版本、临时文件和未完成状态不得标记为成功交付。

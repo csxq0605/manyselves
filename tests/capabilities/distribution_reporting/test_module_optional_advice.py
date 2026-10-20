@@ -215,3 +215,39 @@ def test_completion_loader_rejects_incorrect_advisory_closure(tmp_path, tamper):
     store.write_json(acceptance.completion_ref, completion)
     with pytest.raises(ValueError):
         _completion(store, context)
+
+
+def test_module_rework_stops_at_the_round_limit_with_findings_recorded_open(tmp_path):
+    store, context = _start(tmp_path)
+    context.reporting_state["max_module_recheck_rounds"] = 1
+    context = _accept(store, context, ["blocking"])
+    context = prepare_current_module_revision(context, store=store)
+    required_ids = context.revision.prepared.required_finding_ids
+    context = accept_current_module_revision({"context": context, "result": {
+        "status": "completed",
+        "submission": ModuleRevisionSubmission(
+            module_id="2.1", base_revision=0, revision=1,
+            submodule_narratives={"2.1.1": "### 2.1.1\n\n当前证据边界和修订内容。"},
+            source_ids=[], unresolved_questions=[],
+            revision_responses=[RevisionResponse(
+                finding_id=finding_id, action="implemented",
+                summary="已按实际证据明确说明修订内容和可以复核的边界。",
+                changed_target_ids=["2.1.1"],
+            ) for finding_id in required_ids],
+        ),
+    }}, store=store)
+    context = prepare_current_module_recheck(context, store=store)
+    accepted = accept_current_module_recheck({"context": context, "result": {
+        "status": "completed", "submission": ModuleReviewVerdictSubmission(
+            coverage={"submodule_ids": ["2.1.1"]},
+            verdicts=[ResolutionVerdict(
+                finding_id=finding_id, verdict="open",
+                reason="The revised text still does not state the measured boundary.",
+            ) for finding_id in required_ids], new_findings=[],
+        ),
+    }}, store=store)
+
+    assert accepted.review.acceptance.next_action == "completed"
+    completion, _ = _completion(store, accepted)
+    assert completion.open_at_round_limit_ids == required_ids
+    assert completion.resolved_finding_ids == []

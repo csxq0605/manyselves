@@ -39,7 +39,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "target_report_section_ids": "Final synthesis sections that must account for a supported Cross input.",
     "changed_target_ids": "Fixed submodule or final-section ids actually changed for one finding response.",
     "checked_dimensions": "Cross-review dimensions actually checked; coverage is not an approval decision.",
-    "checked_section_ids": "Final summary/conclusion sections actually checked: only 1.1, 1.2, 1.3, 3.1.1, 3.1.2, 3.1.3, and 3.2.",
+    "checked_section_ids": "Final summary/conclusion sections actually checked: only 1.1, 1.2, 1.3, 3.1, and 3.2.",
     "claim_ids_remove": "Existing in-scope Claim ids explicitly removed by a module patch.",
     "claim_ids": "Runtime-owned internal Claim bindings; model-facing contracts never create or copy these ids.",
     "claim_type": "Semantic role of a Claim: project fact, interpretation, risk judgment, or recommendation.",
@@ -55,13 +55,11 @@ FIELD_GUIDANCE: dict[str, str] = {
     "context_summary_refs": "Context-only summaries; never treat them as authoritative subject artifacts.",
     "coverage": "Structured record of what the reviewer actually checked in the current pass.",
     "coverage_ref": "Current-run immutable coverage artifact consumed by this exact authoring task.",
-    "data_gap_analysis": "Final report section 3.1.3 body explaining evidence gaps, impact, and collection priority.",
     "decision": "Main exception decision for escalated findings only.",
     "decision_implication": "Concise decision consequence, including necessary action dependencies or coordination supported by the modules; Chief expands the final explanation.",
     "description": "Human-readable contract or Skill description matching the submitted content.",
     "discovery_summary": "Complete evidence-bounded discovery summary for the assigned scope.",
     "dispositions": "One answered or explicitly unresolved disposition for every exact inbox request.",
-    "dimension_risk_analysis": "Final report section 3.1.2 body comparing risk dimensions and interactions.",
     "evidence_refs": "Existing current-run artifact or source refs that reproduce the submitted statement or verdict.",
     "evidence_ids": "Unique current-run E-* ids supporting the exact submitted scope.",
     "evidence_ref": "Current-run registered project-evidence artifact assigned to this task.",
@@ -125,7 +123,7 @@ FIELD_GUIDANCE: dict[str, str] = {
         "Existing durable prose parts explicitly authorized for rewrite by pending "
         "submission correction feedback."
     ),
-    "risk_panorama": "Final report section 3.1.1 body organized by root causes and propagation capability.",
+    "risk_summary": "Final report section 3.1 body: a few overall conclusions, then one-sentence points grouped by the five dimensions.",
     "rows": "Ordered table rows; every row width must match headers.",
     "run_id": "Current immutable report run identifier.",
     "scope": "Exact product or workflow scope declared by the active submission contract.",
@@ -183,7 +181,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "tables": "Traceable tables selected for the final report; provide only registered E-* evidence_ids and runtime derives internal bindings.",
     "target_section_ids": "Fixed final-report sections where the chief editor must act.",
     "target_changes": "One explicit required change and reviewer-check set for every targeted final-report section.",
-    "target_section_id": "One exact summary/conclusion section in 1.1, 1.2, 1.3, 3.1.1, 3.1.2, 3.1.3, or 3.2; Chapter 2 and Chapter 4 are forbidden.",
+    "target_section_id": "One exact summary/conclusion section in 1.1, 1.2, 1.3, 3.1, or 3.2; Chapter 2 and Chapter 4 are forbidden.",
     "target_submodule_id": "Exact fixed taxonomy subsection where the author must act or that owns a cross-module response.",
     "target_submodule_ids": "Fixed module-local submodules authorized for review or revision.",
     "target_module_id": "Fixed responsibility module containing the exact target taxonomy subsection.",
@@ -202,10 +200,15 @@ FIELD_GUIDANCE: dict[str, str] = {
 
 
 KIND_SEMANTIC_RULES: dict[str, list[str]] = {
+    "photo_reading_submission": [
+        "kind is required and must equal photo_reading_submission.",
+        "Describe only what is visible; do not add standards, causes or compliance verdicts.",
+        "Use cannot_tell when the photo does not show the recorded object or value clearly.",
+    ],
     "module_submission": [
         "kind is required and must equal module_submission.",
         "Before committing, write every fixed submodule with write_result_part and pass "
-        "its registered E-* ids through evidence_ids and compact observation assessments through assessments. Record scope, basis/rule applicability, and exact narrative/action anchors; do not repeat complete prose.",
+        "its registered E-* ids through evidence_ids and compact observation assessments through assessments. Record disposition and exact narrative/action anchors; add scope, basis or rule applicability only where the prose and E-* records do not already state them; do not repeat prose or E-* facts.",
         "The final commit contains only the fields declared by this schema; runtime owns all internal bindings.",
     ],
     "module_revision_submission": [
@@ -243,7 +246,7 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "A table declares registered E-* evidence_ids only; runtime derives its internal bindings.",
     ],
     "chief_revision_submission": [
-        "Write only the assigned seven summary/conclusion sections (1.1, 1.2, 1.3, 3.1.1, 3.1.2, 3.1.3, 3.2) with write_result_part.",
+        "Write only the assigned five summary/conclusion sections (1.1, 1.2, 1.3, 3.1, 3.2) with write_result_part.",
         "Do not resubmit the full report, Chapter 2, Cross dispositions, tables, photos, or editorial metadata.",
         "Runtime materializes the assigned result parts and deterministically inherits every unassigned field.",
     ],
@@ -259,7 +262,7 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "section_ids and revision_responses[].changed_target_ids use numeric section "
         "ids, while write_result_part.part_id and part_refs keys use body names: "
         "1.1=assessment_background, 1.2=findings_overview, 1.3=regional_executive_summary, "
-        "3.1.1=risk_panorama, 3.1.2=dimension_risk_analysis, 3.1.3=data_gap_analysis, "
+        "3.1=risk_summary, "
         "3.2=improvement_action_plan. Chapter 4 uses one complete special_topic_analysis part.",
         "Never copy another chapter or the full edited report.",
     ],
@@ -311,6 +314,9 @@ KIND_SUMMARIES: dict[str, str] = {
     "workflow_decision_submission": (
         "Main exception handling for a genuine reviewer escalation, user dependency, or stop decision."
     ),
+    "photo_reading_submission": (
+        "What one project photo visibly shows and whether it agrees with its bound table record."
+    ),
     "edited_report_submission": (
         "Chief-editor report structure preserving approved module prose and producing fixed synthesis sections."
     ),
@@ -356,7 +362,7 @@ def _module_revision_example() -> dict[str, Any]:
             {
                 "finding_id": "M-2.1-initial-r0-001",
                 "action": "implemented",
-                "summary": "已在 2.1.1 中统一对象称谓，并核对相关论断的证据边界。",
+                "summary": "已在 2.1.1 中统一对象称谓，并把逐对象重复的论证合并为一张表。",
                 "changed_target_ids": ["2.1.1"],
             }
         ],
@@ -375,7 +381,7 @@ def _template_skill_example() -> dict[str, Any]:
             skill_id: (
                 f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
                 f"# {skill_id} 模板方法\n\n"
-                + "按本职责组织证据边界、分析、行动与可观察质量检查；不提供项目事实。" * 8
+                + "按本职责组织现状、风险分析、建议与依据；不提供项目事实。" * 8
             )
             for skill_id in TEMPLATE_ROLE_SKILL_IDS
         },
@@ -387,13 +393,11 @@ def _edited_report_example() -> dict[str, Any]:
     return {
         "kind": "edited_report_submission",
         "title": "示例配电安全专家咨询报告",
-        "assessment_background": "基于已批准模块说明评估范围、证据边界和适用限制。",
+        "assessment_background": "说明委托方、评估对象、现场工作时间、评估方法和客户提出的话题。",
         "findings_overview": "归纳已批准模块中的主要发现，不改变其事实与风险语义。",
         "regional_executive_summary": "当前证据未定义地理区域，按责任边界归纳优先事项。",
         "module_narratives": modules,
-        "risk_panorama": "归纳当前模块成果支持的主要风险及其判断依据。",
-        "dimension_risk_analysis": "比较五个专业维度的主导风险和管理含义。",
-        "data_gap_analysis": "归并证据缺口并说明其判断影响和补证优先级。",
+        "risk_summary": "几条总体结论，再按五个维度各列几条一句话要点。",
         "improvement_action_plan": "按依赖顺序列出责任接口、行动、验收指标和剩余风险。",
         "special_topic_plan": None,
         "special_topic_analysis": None,
@@ -574,7 +578,7 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "revision_responses": [{
             "finding_id": "F-3-001",
             "action": "implemented",
-            "summary": "已按指定 finding 补充本小节的行动责任、事实边界与核验方法。",
+            "summary": "已按指定 finding 为每项行动写明对象、动作和建议时限。",
             "changed_target_ids": ["3.2"],
         }],
     },
@@ -591,14 +595,14 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
                     {
                         "target_section_id": "1.1",
                         "required_change": (
-                            "补充该结论对应的证据边界，并明确尚待确认的项目事实。"
+                            "按专家版删去重复论证，改为写明对象和数值的一段结论。"
                         ),
                         "reviewer_checks": [
-                            "修改后能够从结论直接追溯到当前运行的证据。"
+                            "修改后结论写明对象和数值，没有逐段重复的论证。"
                         ],
                     }
                 ],
-                "category": "traceability",
+                "category": "duplicate_argument",
                 "impact": "blocking",
                 "observation": (
                     "当前结论没有清楚区分已由证据支持的事实与仍待项目确认的判断。"
@@ -614,10 +618,17 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "kind": "final_chapter_lane_verdict_submission",
         "run_id": "report-example",
         "chapter_id": "3",
-        "checked_section_ids": ["3.1.1", "3.1.2", "3.1.3", "3.2"],
+        "checked_section_ids": ["3.1", "3.2"],
         "verdicts": [],
         "new_findings": [],
         "residual_risks": [],
+    },
+    "photo_reading_submission": {
+        "kind": "photo_reading_submission",
+        "visible": "柜门内接线端子，铭牌可见“D1701”，A相端子有明显发黑痕迹。",
+        "record_match": "matches",
+        "reason": "铭牌与记录的柜号一致，可见发黑与记录的发热描述一致。",
+        "needs_review": False,
     },
     "workflow_decision_submission": {
         "kind": "workflow_decision_submission",

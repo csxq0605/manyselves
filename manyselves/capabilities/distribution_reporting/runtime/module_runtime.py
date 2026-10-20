@@ -57,8 +57,17 @@ from .module_preflight_revision import (
 )
 from .module_recheck_tools import (
     accept_current_module_recheck,
+    list_current_module_recheck_batches,
+    merge_current_module_recheck_batches,
     prepare_current_module_recheck,
+    select_current_module_recheck_batch,
 )
+from .module_review_acceptance import (
+    list_current_module_review_batches,
+    merge_current_module_review_batches,
+    select_current_module_review_batch,
+)
+from .module_review_batches import InputBudget
 from .module_review_preparation import prepare_current_module_review
 from .module_revision_tools import (
     accept_current_module_revision,
@@ -699,6 +708,7 @@ class CapabilityModuleRuntime:
         agent_invokers: Mapping[str, AgentInvoker],
         agent_session_factory: SessionFactory | None = None,
         global_root: Path | None = None,
+        input_budget: InputBudget = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.store = store
@@ -735,6 +745,16 @@ class CapabilityModuleRuntime:
         self.prepare_review_lane = partial(
             prepare_current_module_review,
             store=store,
+            input_budget=input_budget,
+        )
+        self.list_review_batches = list_current_module_review_batches
+        self.select_review_batch = partial(
+            select_current_module_review_batch,
+            store=store,
+        )
+        self.merge_review_batches = partial(
+            merge_current_module_review_batches,
+            store=store,
         )
         self.review_preflight_needs_revision = module_review_preflight_needs_revision
         self.prepare_preflight_revision_lane = partial(
@@ -764,6 +784,16 @@ class CapabilityModuleRuntime:
         )
         self.prepare_recheck_lane = partial(
             prepare_current_module_recheck,
+            store=store,
+            input_budget=input_budget,
+        )
+        self.list_recheck_batches = list_current_module_recheck_batches
+        self.select_recheck_batch = partial(
+            select_current_module_recheck_batch,
+            store=store,
+        )
+        self.merge_recheck_batches = partial(
+            merge_current_module_recheck_batches,
             store=store,
         )
         self.recheck_requires_agent = module_recheck_requires_agent

@@ -329,12 +329,12 @@ class AssessmentRuleBasis(StrictModel):
 class ObservationAssessment(StrictModel):
     """Compact reasoning handoff authored alongside one section's prose."""
 
-    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations considered together; group only when scope, reasoning and disposition are the same.")
-    scope: str = Field(min_length=1, description="Object/part, observation time and conditions; never merge objects merely because their names match.")
-    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment within this scope; source OK/NG alone is not a verified judgment.")
-    basis: str = Field(min_length=1, description="Concise reasoning including quantity/unit and comparison when used; distinguish missing observation, missing condition, unverified rule and inapplicability.")
+    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations judged together; group only when disposition, reasoning and anchors are the same. Each E-* id keeps its own object, location and time.")
+    scope: str = Field(default="", description="Only conditions not already in the cited E-* records (operating state, time window, limits); object, location and time are read from those records. Never merge objects merely because their names match.")
+    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment for these observations; source OK/NG alone is not a verified judgment.")
+    basis: str = Field(default="", description="Only reasoning the prose at narrative_anchor does not state: missing observation, missing condition, unverified rule, inapplicability, or a quantity/unit comparison. Do not restate the E-* fact or the prose.")
     rules: list[AssessmentRuleBasis] = Field(default_factory=list, description="Rules actually considered, with their applicability/status; [] means no rule was selected, not that none exists.")
-    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose; empty means it is not expressed there.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose, such as the object name or measured value as written; the prose carries no E-*/P-* ids. Empty means it is not expressed there.")
     action_anchor: str = Field(default="", description="Short exact substring locating the action or verification step in the same prose; empty means no action is expressed there.")
     no_action_reason: str = Field(default="", description="Reason no action is needed or why action must be deferred; not a substitute for a missing necessary action.")
 
@@ -731,14 +731,16 @@ class ModuleReviewFinding(StrictModel):
     category: str = Field(
         min_length=1,
         description=(
-            "Short stable defect category such as evidence_boundary, factual_accuracy, "
-            "analysis_depth, action_closure, or editorial_quality."
+            "Short stable defect category such as factual_accuracy, analysis_depth, "
+            "action_closure, duplicate_argument, exemplar_structure, or editorial_quality."
         ),
     )
     impact: Literal["blocking", "advisory"] = Field(
         description=(
             "blocking requires correction and recheck for factual, risk, source-support or "
-            "required task/interface defects. advisory is optional improvement only: retained "
+            "required task/interface defects, and for prose that departs from the exemplar "
+            "organisation by repeating the argument object by object or by expounding evidence "
+            "boundaries. advisory is optional improvement only: retained "
             "without automatic author revision or a resolved verdict in module review v3. "
             "On recheck, every required_finding still requires an explicit verdict."
         )
@@ -1029,7 +1031,7 @@ class CrossSynthesisInput(StrictModel):
         min_length=20,
         description="Confidence, missing evidence, and limits on the supported inference.",
     )
-    target_report_section_ids: list[Literal["3.1.1", "3.1.2", "3.2"]] = Field(
+    target_report_section_ids: list[Literal["3.1", "3.2"]] = Field(
         min_length=1,
         description="Final synthesis sections that must account for this input.",
     )
@@ -1387,9 +1389,9 @@ class ChapterScopedFinalReviewTargetChange(StrictModel):
 
     @model_validator(mode="after")
     def target_is_chapter_scoped(self) -> "ChapterScopedFinalReviewTargetChange":
-        if not re.fullmatch(r"(?:1\.[1-3]|3\.(?:1\.[1-3]|2)|4\.[1-9][0-9]*)", self.target_section_id):
+        if not re.fullmatch(r"(?:1\.[1-3]|3\.[12]|4\.[1-9][0-9]*)", self.target_section_id):
             raise ValueError(
-                "chapter lane target must be one of 1.1-1.3, 3.1.1-3.2, or dynamic 4.x"
+                "chapter lane target must be one of 1.1-1.3, 3.1-3.2, or dynamic 4.x"
             )
         return self
 
@@ -1629,6 +1631,28 @@ CROSS_REVIEW_DIMENSIONS = (
 )
 
 
+class PhotoReadingSubmission(StrictModel):
+    """What one project photo visibly shows, checked against its bound record."""
+
+    kind: Literal["photo_reading_submission"] = "photo_reading_submission"
+    visible: str = Field(
+        min_length=1,
+        max_length=300,
+        description="Only what is visible in the photo: object, labels, readings, condition.",
+    )
+    record_match: Literal["matches", "conflicts", "cannot_tell"] = Field(
+        description="Whether the photo agrees with the bound table record(s).",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=200,
+        description="One line naming what in the photo supports record_match.",
+    )
+    needs_review: bool = Field(
+        description="True when a person should look at the photo (unclear, conflicting, unsafe-looking).",
+    )
+
+
 class WorkflowDecisionSubmission(StrictModel):
     """A lead decision for an explicit reviewer or author exception."""
 
@@ -1691,9 +1715,7 @@ class EditedReportSubmission(StrictModel):
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str]
-    risk_panorama: str = Field(min_length=1)
-    dimension_risk_analysis: str = Field(min_length=1)
-    data_gap_analysis: str = Field(min_length=1)
+    risk_summary: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
     special_topic_plan: SpecialTopicPlan | None = Field(
         default=None,
@@ -1718,9 +1740,7 @@ class EditedReportSubmission(StrictModel):
                 "assessment_background",
                 "findings_overview",
                 "regional_executive_summary",
-                "risk_panorama",
-                "dimension_risk_analysis",
-                "data_gap_analysis",
+                "risk_summary",
                 "improvement_action_plan",
             ):
                 body = value.get(field)
@@ -1737,9 +1757,7 @@ class EditedReportSubmission(StrictModel):
             "assessment_background",
             "findings_overview",
             "regional_executive_summary",
-            "risk_panorama",
-            "dimension_risk_analysis",
-            "data_gap_analysis",
+            "risk_summary",
             "improvement_action_plan",
         )
         for field in body_fields:
@@ -1836,9 +1854,7 @@ class EditedReportSubmissionInput(StrictModel):
     findings_overview: str | TextArtifactRef
     regional_executive_summary: str | TextArtifactRef
     module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str | TextArtifactRef]
-    risk_panorama: str | TextArtifactRef
-    dimension_risk_analysis: str | TextArtifactRef
-    data_gap_analysis: str | TextArtifactRef
+    risk_summary: str | TextArtifactRef
     improvement_action_plan: str | TextArtifactRef
     special_topic_analysis: str | TextArtifactRef | None = None
     tables: list[TableSubmissionInput] = Field(default_factory=list)
@@ -1876,6 +1892,7 @@ Submission = Annotated[
     | FinalChapterLaneFindingSubmission
     | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
+    | PhotoReadingSubmission
     | ChiefRevisionSubmission
     | EditedReportSubmission
     | SkillEvolutionSubmission,
@@ -1901,6 +1918,7 @@ SubmissionInput = Annotated[
     | FinalChapterLaneFindingSubmission
     | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
+    | PhotoReadingSubmission
     | EditedReportSubmissionInput
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
@@ -1928,6 +1946,7 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "final_chapter_lane_finding_submission": FinalChapterLaneFindingSubmission,
     "final_chapter_lane_verdict_submission": FinalChapterLaneVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
+    "photo_reading_submission": PhotoReadingSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }

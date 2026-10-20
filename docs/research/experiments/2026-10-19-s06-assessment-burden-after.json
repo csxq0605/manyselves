@@ -1,0 +1,115 @@
+{
+  "provider_calls": 0,
+  "tokenizer": "mimo_v25pro.json",
+  "schema_per_request": {
+    "module-2.4-authoring": {
+      "tools_tokens_with": 3455,
+      "tools_tokens_without": 2533,
+      "added_per_request": 922
+    },
+    "module-2.4-revision": {
+      "tools_tokens_with": 3863,
+      "tools_tokens_without": 2941,
+      "added_per_request": 922
+    },
+    "chief_chapter_lane_submission": {
+      "schema_tokens_with": 997,
+      "schema_tokens_without": 659,
+      "added_per_request": 338
+    },
+    "chief_chapter_lane_revision_submission": {
+      "schema_tokens_with": 1530,
+      "schema_tokens_without": 1197,
+      "added_per_request": 333
+    }
+  },
+  "contract": "compact",
+  "output": {
+    "per_observation": {
+      "modules": {
+        "2.1": {
+          "observations": 31,
+          "records": 31,
+          "assessment_output_tokens": 2094,
+          "largest_part_output_tokens": 1631,
+          "concern_records": 18
+        },
+        "2.2": {
+          "observations": 97,
+          "records": 97,
+          "assessment_output_tokens": 6398,
+          "largest_part_output_tokens": 4325,
+          "concern_records": 40
+        },
+        "2.3": {
+          "observations": 16,
+          "records": 16,
+          "assessment_output_tokens": 982,
+          "largest_part_output_tokens": 696,
+          "concern_records": 10
+        },
+        "2.4": {
+          "observations": 126,
+          "records": 126,
+          "assessment_output_tokens": 8500,
+          "largest_part_output_tokens": 1972,
+          "concern_records": 43
+        },
+        "2.5": {
+          "observations": 46,
+          "records": 46,
+          "assessment_output_tokens": 3258,
+          "largest_part_output_tokens": 1222,
+          "concern_records": 35
+        }
+      },
+      "author_output_tokens_total": 21232,
+      "author_output_tokens_max_module": 8500,
+      "chief_links_output_tokens_total": 7001,
+      "downstream_module_assessments_tokens_per_request": 20815
+    },
+    "grouped": {
+      "modules": {
+        "2.1": {
+          "observations": 31,
+          "records": 29,
+          "assessment_output_tokens": 1986,
+          "largest_part_output_tokens": 1523,
+          "concern_records": 17
+        },
+        "2.2": {
+          "observations": 97,
+          "records": 61,
+          "assessment_output_tokens": 4544,
+          "largest_part_output_tokens": 2625,
+          "concern_records": 34
+        },
+        "2.3": {
+          "observations": 16,
+          "records": 7,
+          "assessment_output_tokens": 550,
+          "largest_part_output_tokens": 381,
+          "concern_records": 5
+        },
+        "2.4": {
+          "observations": 126,
+          "records": 90,
+          "assessment_output_tokens": 6705,
+          "largest_part_output_tokens": 1913,
+          "concern_records": 40
+        },
+        "2.5": {
+          "observations": 46,
+          "records": 21,
+          "assessment_output_tokens": 1768,
+          "largest_part_output_tokens": 570,
+          "concern_records": 11
+        }
+      },
+      "author_output_tokens_total": 15553,
+      "author_output_tokens_max_module": 6705,
+      "chief_links_output_tokens_total": 5514,
+      "downstream_module_assessments_tokens_per_request": 16697
+    }
+  }
+}
