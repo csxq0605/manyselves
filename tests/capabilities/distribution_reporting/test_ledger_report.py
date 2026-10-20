@@ -288,8 +288,9 @@ def _answer(message):
     raise AssertionError(f"unexpected task {task}")
 
 
-@pytest.mark.asyncio
-async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: Path) -> None:
+async def run_ledger_report(tmp_path: Path):
+    """Run the ledger report with scripted agents; return binding, run id and loops."""
+
     _write_complete_template_skill_fixture(tmp_path)
     evidence = _evidence()
     evidence_path = tmp_path / f"Work/runs/{RUN_ID}/preparation/evidence.jsonl"
@@ -339,7 +340,12 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         await binding.close()
         bus.shutdown()
         await bus_task
+    return binding, accepted, loops
 
+
+@pytest.mark.asyncio
+async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: Path) -> None:
+    binding, accepted, loops = await run_ledger_report(tmp_path)
     run = binding.get_run(accepted["run_id"])
     assert run["run"]["status"] == "completed", run["state"].get("error")
     outputs = binding.get_outputs(accepted["run_id"])["outputs"]

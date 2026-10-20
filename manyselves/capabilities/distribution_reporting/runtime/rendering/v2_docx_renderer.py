@@ -664,19 +664,20 @@ def write_report_into_paragraphs(
 
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        if not line or line in {"---", "***", "___"}:
-            continue
-        if is_report_title(line):
-            continue
         if is_table_line(line):
             table_buffer.append(line)
             continue
-
+        # A table ends at its first non-table line, a blank line included, so
+        # two tables apart in the Markdown stay two tables in Word.
         if table_buffer:
             if last_written_paragraph is not None:
                 format_table_title_paragraph(last_written_paragraph)
             write_markdown_table(document, next_paragraph(), table_buffer, model)
             table_buffer.clear()
+        if not line or line in {"---", "***", "___"}:
+            continue
+        if is_report_title(line):
+            continue
 
         written = write_line_or_expanded(next_paragraph, line)
         if written:
@@ -2498,14 +2499,14 @@ def add_report_content(document: Document, report_text: str, model: dict[str, An
     table_buffer: list[str] = []
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        if not line or is_report_title(line):
-            continue
         if is_table_line(line):
             table_buffer.append(line)
             continue
         if table_buffer:
             write_markdown_table(document, document.add_paragraph(), table_buffer, model)
             table_buffer.clear()
+        if not line or is_report_title(line):
+            continue
         paragraph = document.add_paragraph()
         write_line_to_paragraph(paragraph, line)
     if table_buffer:

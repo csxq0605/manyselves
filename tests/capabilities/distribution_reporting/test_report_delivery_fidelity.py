@@ -286,3 +286,18 @@ def test_word_tables_keep_every_markdown_row() -> None:
     (table,) = document.tables
     assert len(table.rows) == 36
     assert table.rows[-1].cells[0].text == "35#柜"
+
+
+def test_tables_apart_in_markdown_stay_apart_in_word() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.rendering.v2_docx_renderer import (
+        add_report_content,
+    )
+
+    document = Document()
+    add_report_content(
+        document,
+        "总体评价。\n\n| 维度 | 状态 |\n| --- | --- |\n| 环境 | 良 |\n\n"
+        "| 优先级 | 风险 |\n| --- | --- |\n| 1 | 过热 |\n",
+    )
+
+    assert [len(table.rows) for table in document.tables] == [2, 2]
