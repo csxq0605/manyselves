@@ -37,6 +37,16 @@
 - 报告：`domain/judgment_ledger.py`、`domain/calculations.py`、`runtime/ledger_tools.py`、`runtime/ledger_report.py`，流程 `report-ledger` 及其子流程。证据：`tests/capabilities/distribution_reporting/test_ledger_report.py`（脚本化模型，生成 DOCX）。
 - 设计与进度：项目文件 `handoff/report-architecture-redesign-20261020.md`、`handoff/reporting-option2-implementation.md`。
 
+### 2026-10-20 交付文件缺陷修复（work-arch，本地提交）
+
+- 引用：`[[CITE:n]]` 改为真实 Word 脚注（`word/footnotes.xml`，正文 `w:footnoteReference`），脚注文字为该条引用的来源（编号＋标题＋位置）；交付 MD 同步写成 `[^n]` 与末尾定义，编号按出现顺序。代码 `rendering/report_footnotes.py`、`PdsDocxRenderer._materialize_citations`。
+- 封面：模板文本框里的 `XXXXX有限公司`/`XXXXXX地区` 用收资表证据中的“客户名称=…/项目地点=…”填写，没有就写“待补”（`runtime/report_front_matter.py`、`PdsDocxRenderer._fill_cover`）。现有映射器还不抽取这两项，所以实际会是“待补”。
+- 草稿：`missing_evidence_policy=draft` 且登记了数据缺口时，标题加“（草稿）”，MD 标题下与 DOCX 正文、页眉都有同一句草稿说明。
+- MD/DOCX 同文：V2 渲染器的 `normalize_report_text` 不再在“报告编制说明/如有疑问/资料缺失…声明”处截断正文；两份文件都来自 `PdsDocxRenderer.delivery_markdown`。
+- 图片：照片以字节流插入，媒体部件按实际格式命名（原来无扩展名的文件产生 `imageN.`）。
+- 渲染校验：`render_verification`（protected_prose_verified、validation_warnings）写入 delivery-completion.json 和 compose-report 的返回值；不新增门禁。
+- 测试：`test_ledger_report.py` 端到端断言以上各项；`test_report_delivery_fidelity.py`。
+
 ### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
 
 参照物是专家优化版报告（`docs/research/session-records/2026-10-10_to_2026-10-15/audit_manyselves/配电安全专家咨询报告(专家优化版).docx.txt`），完整方案见项目文件 `handoff/run6-plan-20261020.md`。角色和阶段不变，只改职责、合同和渲染。

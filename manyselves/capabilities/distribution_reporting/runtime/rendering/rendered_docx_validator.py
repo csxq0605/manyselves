@@ -17,7 +17,9 @@ from docx.text.paragraph import Paragraph
 from .markdown_content import markdown_content_expectations, semantic_content_text
 
 LOGGER = logging.getLogger(__name__)
-_UNRESOLVED_TOKEN = re.compile(r"\[\[(?:CLAIM:C-[^\]\s]+|CITE:\d+|PHOTO:[^\]]+)\]\]")
+_UNRESOLVED_TOKEN = re.compile(
+    r"\[\[(?:CLAIM:C-[^\]\s]+|CITE:\d+|PHOTO:[^\]]+)\]\]|\[\^\d+\]"
+)
 
 
 def validate_rendered_markdown_docx(

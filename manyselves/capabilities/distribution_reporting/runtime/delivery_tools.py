@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -478,6 +479,7 @@ class DeliveryTools:
             f"Work/runs/{state['run_id']}/delivery-completion.json"
         )
         state["delivery_status"] = "delivered"
+        state["render_verification"] = self._render_verification(context)
         self.store.write_json(
             completion_ref.as_posix(),
             {
@@ -489,6 +491,9 @@ class DeliveryTools:
                 ).as_posix(),
                 "final_audit_snapshot_ref": context.final_audit_snapshot_ref,
                 "final_review_completion_ref": final_review_ref,
+                # Not a gate: the report is delivered either way, but a person
+                # must be able to see that the DOCX text was not verified.
+                "render_verification": state["render_verification"],
                 "output_artifacts": [
                     artifact.model_dump(mode="json")
                     for artifact in state["output_artifacts"]
@@ -497,6 +502,18 @@ class DeliveryTools:
         )
         state["delivery_completion_ref"] = completion_ref.as_posix()
         return context
+
+    def _render_verification(self, context: DeliveryContext) -> dict[str, Any]:
+        path = self.workspace / context.render_result_ref
+        if path.is_file():
+            result = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            result = {"validation_warnings": ["render result record is missing"]}
+        return {
+            "protected_prose_verified": bool(result.get("protected_prose_verified")),
+            "validation_warnings": list(result.get("validation_warnings") or []),
+            "render_result_ref": Path(context.render_result_ref).as_posix(),
+        }
 
     @staticmethod
     def _delivery_output_artifacts(

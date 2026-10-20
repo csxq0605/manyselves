@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import zipfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -36,6 +37,99 @@ from tests.capabilities.distribution_reporting.test_public_reporting_runtime imp
 from tests.runtime.scripted_loop import ScriptedLoop
 
 RUN_ID = "report-ledger-run"
+W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+MEDIA_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "bmp": "image/bmp",
+    "tif": "image/tiff",
+    "tiff": "image/tiff",
+    "emf": "image/x-emf",
+    "wmf": "image/x-wmf",
+}
+
+
+def assert_media_parts_are_named_by_type(docx: Path) -> None:
+    """Every image part ends with the extension its content type declares."""
+
+    from xml.etree import ElementTree
+
+    with zipfile.ZipFile(docx) as archive:
+        types = ElementTree.fromstring(archive.read("[Content_Types].xml"))
+        ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+        defaults = {
+            node.get("Extension").lower(): node.get("ContentType")
+            for node in types.iter(f"{ns}Default")
+        }
+        overrides = {
+            node.get("PartName"): node.get("ContentType")
+            for node in types.iter(f"{ns}Override")
+        }
+        media = [name for name in archive.namelist() if name.startswith("word/media/")]
+    for name in media:
+        stem, dot, extension = name.rpartition(".")
+        assert dot and stem and extension, name
+        assert extension.lower() in MEDIA_TYPES, name
+        declared = overrides.get(f"/{name}") or defaults.get(extension.lower())
+        assert declared == MEDIA_TYPES[extension.lower()], (name, declared)
+
+
+def _semantic(text: str) -> str:
+    text = re.sub(r"\[\^\d+\]", "", text).replace("**", "")
+    text = re.sub(r"^#{1,6}\s*|^[-*]\s+|^\d+(?:\.\d+)*\.?\s+", "", text.strip())
+    return re.sub(r"\s+", "", text)
+
+
+def markdown_text_lines(markdown: str) -> list[str]:
+    """Visible content of the delivered Markdown, one entry per block or cell."""
+
+    values = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped or re.match(r"^\[\^\d+\]:", stripped) or stripped.startswith("#"):
+            continue
+        if stripped.startswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+                continue
+            values.extend(cell for cell in cells if cell)
+            continue
+        values.append(stripped)
+    return [value for value in (_semantic(item) for item in values) if value]
+
+
+def docx_body_text_lines(docx: Path) -> list[str]:
+    """Visible body content of the DOCX after the table of contents."""
+
+    from docx import Document
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = Document(docx)
+    children = list(document.element.body.iterchildren())
+
+    def style_of(child: Any) -> str:
+        paragraph = Paragraph(child, document)
+        return paragraph.style.name if paragraph.style is not None else ""
+
+    toc = [
+        index
+        for index, child in enumerate(children)
+        if isinstance(child, CT_P) and style_of(child).lower().startswith("toc")
+    ]
+    values: list[str] = []
+    for child in children[toc[-1] + 1 :]:
+        if isinstance(child, CT_P):
+            if not style_of(child).startswith("Heading"):
+                values.append(Paragraph(child, document).text)
+        elif isinstance(child, CT_Tbl):
+            for row in Table(child, document).rows:
+                values.extend(cell.text for cell in row.cells if cell.text.strip())
+    return [value for value in (_semantic(item) for item in values) if value]
 
 
 def _evidence() -> list[EvidenceItem]:
@@ -79,6 +173,17 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
         "evidence_ids": [f"E-{number:04d}"],
         "basis": "记录完整。",
     }
+    if module_id == "2.5":
+        # A data gap: with the default "draft" policy the report is a draft.
+        row.update(
+            disposition="undetermined",
+            evidence_status="资料未提供",
+            gap={
+                "missing": "缺少SOP文件",
+                "impact": "无法判断操作规程是否完善",
+                "requested_input": "提供现行SOP/EOP文件",
+            },
+        )
     if module_id == "2.4":
         row.update(
             disposition="concern",
@@ -242,6 +347,55 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     assert result["delivery_status"]
     artifacts = [item for item in outputs if item["kind"] == "artifact"]
     assert artifacts and all(item["exists"] for item in artifacts)
+
+    # Rendering verification is reported with the delivered result.
+    assert result["render_verification"]["protected_prose_verified"] is True
+    assert result["render_verification"]["validation_warnings"] == []
+    completion = json.loads(
+        (tmp_path / result["delivery_completion_ref"]).read_text(encoding="utf-8")
+    )
+    assert completion["render_verification"] == result["render_verification"]
+
+    markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(
+        encoding="utf-8"
+    )
+    docx = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
+    # The draft is marked the same way in both files.
+    assert markdown.startswith("# 配电安全专家咨询报告（草稿）\n\n草稿：本报告存在资料缺口")
+    with zipfile.ZipFile(docx) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+        footnotes_xml = archive.read("word/footnotes.xml").decode("utf-8")
+        headers = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if re.fullmatch(r"word/header\d*\.xml", name)
+        )
+        rels = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+        content_types = archive.read("[Content_Types].xml").decode("utf-8")
+        visible = "".join(
+            text
+            for name in archive.namelist()
+            if re.fullmatch(r"word/[a-z]+\d*\.xml", name)
+            for text in re.findall(
+                r"<w:t(?: [^>]*)?>([^<]*)</w:t>", archive.read(name).decode("utf-8")
+            )
+        )
+    assert "配电安全专家咨询报告（草稿）" in document_xml
+    assert "草稿：本报告存在资料缺口" in headers
+    # The cover carries no template placeholder; unknown facts say 待补.
+    assert not re.search(r"X{3,}|〈[^〉]*〉", visible)
+    assert "待补" in document_xml
+    # Citations are Word footnotes with the source of each cited claim.
+    assert 'relationships/footnotes" Target="footnotes.xml"' in rels
+    assert "/word/footnotes.xml" in content_types
+    assert document_xml.count("<w:footnoteReference ") == 5
+    assert "E-0001 设备1（Inputs/table.xlsx）" in footnotes_xml
+    assert "设备1检查情况良好，无需处理。[^1]" in markdown
+    assert "[^1]: E-0001 设备1（Inputs/table.xlsx）" in markdown
+    assert "[[CITE" not in markdown and "[^" not in visible
+    # The DOCX shows exactly the delivered Markdown's text.
+    assert docx_body_text_lines(docx) == markdown_text_lines(markdown)
+    assert_media_parts_are_named_by_type(docx)
 
     ledger_dir = tmp_path / f"Work/runs/{RUN_ID}/ledger"
     final = json.loads((ledger_dir / "judgments.json").read_text(encoding="utf-8"))

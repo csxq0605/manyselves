@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import re
@@ -14,7 +15,16 @@ from typing import Callable
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Cm, Pt
+from docx.opc.constants import CONTENT_TYPE as CT
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.packuri import PackURI
+from docx.opc.part import Part, XmlPart
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
+from docx.text.paragraph import Paragraph
+from docx.text.run import Run
+from lxml import etree
 from PIL import Image, ImageOps
 from pydantic import Field, field_validator, model_validator
 
@@ -35,10 +45,26 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SpecialTopicPlan,
 )
 
+from ..report_front_matter import DRAFT_SUFFIX, MISSING_COVER_VALUE
 from .handoff_docx import HandoffDocxCore
 from .rendered_docx_validator import validate_rendered_markdown_docx
+from .report_footnotes import (
+    FOOTNOTE_REFERENCE,
+    citation_footnote_texts,
+    markdown_with_footnotes,
+    split_footnote_definitions,
+)
 
-_CITATION_TOKEN = re.compile(r"\[\[CITE:(\d+)\]\]")
+_PLACEHOLDER = re.compile(r"X{3,}|〈[^〉]*〉")
+_CLIENT_SLOT_WORDS = ("公司", "单位", "集团", "客户", "委托")
+_SITE_SLOT_WORDS = ("地区", "地点", "厂区", "地址", "区域", "现场")
+_EMPTY_FOOTNOTES = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    '<w:footnote w:type="separator" w:id="0"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>'
+    '<w:footnote w:type="continuationSeparator" w:id="1"><w:p><w:r>'
+    "<w:continuationSeparator/></w:r></w:p></w:footnote></w:footnotes>"
+)
 _PHOTO_TOKEN = re.compile(r"^\[\[PHOTO:([^]]+)\]\]$")
 _FIXED_DOCX_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 # Photos sit in the 「现场图片」 column of the problem table, as in the expert
@@ -89,6 +115,9 @@ class ApprovedReport(StrictModel):
     ledger: ClaimLedger
     tables: list[ReportTable] = Field(default_factory=list)
     photos: list[ReportPhoto] = Field(default_factory=list)
+    client_name: str | None = None
+    site_name: str | None = None
+    draft_notice: str | None = Field(default=None, min_length=1)
 
     @field_validator("module_narratives")
     @classmethod
@@ -173,11 +202,14 @@ class PdsDocxRenderer:
     ) -> PdsRenderResult:
         """Render approved prose only and validate semantic preservation."""
 
-        cited_markdown = (
+        footnoted = markdown_with_footnotes(
             approved_markdown
             if approved_markdown is not None
-            else report.ledger.bind_citations(self._compose_markdown(report))
+            else self.delivery_markdown(report),
+            citation_footnote_texts(report.ledger),
         )
+        # Footnote definitions become Word footnotes, not body paragraphs.
+        cited_markdown, footnotes = split_footnote_definitions(footnoted)
         _, raw_docx = self.handoff_core.render_approved_prose(
             cited_markdown,
             filename=Path(output_path).name,
@@ -185,7 +217,10 @@ class PdsDocxRenderer:
         )
         document = Document(io.BytesIO(raw_docx))
         self._ensure_title(document, report.title)
-        self._materialize_citations(document)
+        self._fill_cover(document, report)
+        if report.draft_notice:
+            self._mark_draft_headers(document, report.draft_notice)
+        self._materialize_citations(document, footnotes)
         self._materialize_photos(document, report)
         document.core_properties.created = _FIXED_DOCX_TIME
         document.core_properties.modified = _FIXED_DOCX_TIME
@@ -230,6 +265,15 @@ class PdsDocxRenderer:
         )
 
     @staticmethod
+    def delivery_markdown(report: ApprovedReport) -> str:
+        """The one delivered Markdown: citations bound and written as footnotes."""
+
+        return markdown_with_footnotes(
+            report.ledger.bind_citations(PdsDocxRenderer._compose_markdown(report)),
+            citation_footnote_texts(report.ledger),
+        )
+
+    @staticmethod
     def _compose_markdown(report: ApprovedReport) -> str:
         photo_ids = {photo.id for photo in report.photos}
         module_narratives = {
@@ -239,7 +283,7 @@ class PdsDocxRenderer:
             )
             for module_id in REPORT_MODULE_IDS
         }
-        return compose_canonical_markdown(
+        markdown = compose_canonical_markdown(
             CanonicalReportContent(
                 title=report.title,
                 assessment_background=report.assessment_background,
@@ -261,6 +305,10 @@ class PdsDocxRenderer:
                 ],
             )
         )
+        if not report.draft_notice:
+            return markdown
+        title, _, rest = markdown.partition("\n")
+        return f"{title}\n\n{report.draft_notice}\n{rest}"
 
     @staticmethod
     def _strip_leading_module_heading(narrative: str, module_id: str) -> str:
@@ -323,7 +371,9 @@ class PdsDocxRenderer:
         )
 
     @staticmethod
-    def _materialize_citations(document: Document) -> None:
+    def _materialize_citations(document: Document, footnote_texts: dict[int, str]) -> int:
+        """Turn ``[^n]`` references into Word footnotes carrying their source text."""
+
         paragraphs = list(document.paragraphs)
         paragraphs.extend(
             p
@@ -332,18 +382,179 @@ class PdsDocxRenderer:
             for cell in row.cells
             for p in cell.paragraphs
         )
-        for paragraph in paragraphs:
-            text = paragraph.text
-            if not _CITATION_TOKEN.search(text):
-                continue
-            pieces = _CITATION_TOKEN.split(text)
-            paragraph.clear()
-            for index, piece in enumerate(pieces):
-                if not piece:
+        cited = [p for p in paragraphs if FOOTNOTE_REFERENCE.search(p.text)]
+        if not cited:
+            return 0
+        part = PdsDocxRenderer._footnotes_part(document)
+        root = part.element if isinstance(part, XmlPart) else parse_xml(part.blob)
+        ids = [int(node.get(qn("w:id"))) for node in root.findall(qn("w:footnote"))]
+        next_id = max([*ids, 1]) + 1
+        count = 0
+        seen: set[int] = set()
+        for paragraph in cited:
+            in_runs = sum(len(FOOTNOTE_REFERENCE.findall(run.text)) for run in paragraph.runs)
+            if in_runs != len(FOOTNOTE_REFERENCE.findall(paragraph.text)):
+                # A reference split across runs: rebuild the paragraph as plain runs.
+                text = paragraph.text
+                for run in list(paragraph.runs):
+                    run._r.getparent().remove(run._r)
+                paragraph.add_run(text)
+            for run in list(paragraph.runs):
+                pieces = FOOTNOTE_REFERENCE.split(run.text)
+                if len(pieces) == 1:
                     continue
-                run = paragraph.add_run(piece)
-                if index % 2 == 1:
-                    run.font.superscript = True
+                run.text = pieces[0]
+                anchor = run._r
+                for index in range(1, len(pieces), 2):
+                    number = int(pieces[index])
+                    if number in seen:
+                        # Each citation is one footnote; a repeat keeps its number visible.
+                        reference = PdsDocxRenderer._styled_run(
+                            run, paragraph, str(number), superscript=True
+                        )
+                    else:
+                        seen.add(number)
+                        reference = PdsDocxRenderer._footnote_reference_run(
+                            run, paragraph, next_id
+                        )
+                        PdsDocxRenderer._append_footnote(
+                            root, next_id, footnote_texts.get(number) or f"来源{number}"
+                        )
+                        next_id += 1
+                        count += 1
+                    anchor.addnext(reference)
+                    anchor = reference
+                    if pieces[index + 1]:
+                        text_run = PdsDocxRenderer._styled_run(run, paragraph, pieces[index + 1])
+                        anchor.addnext(text_run)
+                        anchor = text_run
+                if not run.text:
+                    run._r.getparent().remove(run._r)
+        if not isinstance(part, XmlPart):
+            part._blob = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+        return count
+
+    @staticmethod
+    def _footnotes_part(document: Document) -> Part:
+        for relationship in document.part.rels.values():
+            if relationship.reltype == RT.FOOTNOTES and not relationship.is_external:
+                return relationship.target_part
+        part = Part(
+            PackURI("/word/footnotes.xml"),
+            CT.WML_FOOTNOTES,
+            _EMPTY_FOOTNOTES.encode("utf-8"),
+            document.part.package,
+        )
+        document.part.relate_to(part, RT.FOOTNOTES)
+        return part
+
+    @staticmethod
+    def _styled_run(
+        source: Run, paragraph: Paragraph, text: str, *, superscript: bool = False
+    ):
+        element = OxmlElement("w:r")
+        if source._r.rPr is not None:
+            element.append(copy.deepcopy(source._r.rPr))
+        run = Run(element, paragraph)
+        run.text = text
+        if superscript:
+            run.font.superscript = True
+        return element
+
+    @staticmethod
+    def _footnote_reference_run(source: Run, paragraph: Paragraph, footnote_id: int):
+        element = OxmlElement("w:r")
+        if source._r.rPr is not None:
+            element.append(copy.deepcopy(source._r.rPr))
+        Run(element, paragraph).font.superscript = True
+        reference = OxmlElement("w:footnoteReference")
+        reference.set(qn("w:id"), str(footnote_id))
+        element.append(reference)
+        return element
+
+    @staticmethod
+    def _append_footnote(root, footnote_id: int, text: str) -> None:
+        footnote = etree.SubElement(root, qn("w:footnote"))
+        footnote.set(qn("w:id"), str(footnote_id))
+        paragraph = etree.SubElement(footnote, qn("w:p"))
+        properties = etree.SubElement(paragraph, qn("w:pPr"))
+        etree.SubElement(properties, qn("w:ind")).set(qn("w:firstLine"), "0")
+        mark = etree.SubElement(paragraph, qn("w:r"))
+        etree.SubElement(etree.SubElement(mark, qn("w:rPr")), qn("w:vertAlign")).set(
+            qn("w:val"), "superscript"
+        )
+        etree.SubElement(mark, qn("w:footnoteRef"))
+        body = etree.SubElement(paragraph, qn("w:r"))
+        etree.SubElement(etree.SubElement(body, qn("w:rPr")), qn("w:sz")).set(
+            qn("w:val"), "18"
+        )
+        content = etree.SubElement(body, qn("w:t"))
+        content.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        content.text = f" {text}"
+
+    @staticmethod
+    def _fill_cover(document: Document, report: ApprovedReport) -> None:
+        """Replace template cover placeholders with the report's own facts."""
+
+        client = report.client_name or MISSING_COVER_VALUE
+        site = report.site_name or MISSING_COVER_VALUE
+        base_title = report.title.removesuffix(DRAFT_SUFFIX)
+        roots = [document.element.body]
+        roots.extend(
+            relationship.target_part.element
+            for relationship in document.part.rels.values()
+            if relationship.reltype in {RT.HEADER, RT.FOOTER} and not relationship.is_external
+        )
+        for root in roots:
+            for paragraph in root.iter(qn("w:p")):
+                in_template_chrome = root is not document.element.body or any(
+                    ancestor.tag == qn("w:txbxContent") for ancestor in paragraph.iterancestors()
+                )
+                if not in_template_chrome:
+                    continue
+                texts = [
+                    node
+                    for run in paragraph.findall(qn("w:r"))
+                    for node in run.findall(qn("w:t"))
+                ]
+                text = "".join(node.text or "" for node in texts)
+                if not texts or not text.strip():
+                    continue
+                if _PLACEHOLDER.search(text):
+                    if any(word in text for word in _CLIENT_SLOT_WORDS):
+                        value = client
+                    elif any(word in text for word in _SITE_SLOT_WORDS):
+                        value = site
+                    else:
+                        value = _PLACEHOLDER.sub(MISSING_COVER_VALUE, text)
+                elif text.strip() == base_title and report.title != base_title:
+                    value = report.title
+                else:
+                    continue
+                texts[0].text = value
+                for node in texts[1:]:
+                    node.text = ""
+
+    @staticmethod
+    def _mark_draft_headers(document: Document, notice: str) -> None:
+        """Repeat the draft notice as a header line on every page."""
+
+        headers = {
+            id(relationship.target_part): relationship.target_part
+            for relationship in document.part.rels.values()
+            if relationship.reltype == RT.HEADER and not relationship.is_external
+        }
+        for part in headers.values():
+            element = OxmlElement("w:p")
+            part.element.append(element)
+            paragraph = Paragraph(element, None)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = paragraph.add_run(notice)
+            run.font.size = Pt(9)
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
 
     @staticmethod
     def _ensure_title(document: Document, title: str) -> None:
@@ -385,8 +596,11 @@ class PdsDocxRenderer:
                     for index, photo_id in enumerate(photo_ids):
                         paragraph = first if index == 0 else cell.add_paragraph()
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        # A stream names the media part after the detected image
+                        # format; a file name without (or with a wrong)
+                        # extension would yield ``imageN.`` parts Word rejects.
                         paragraph.add_run().add_picture(
-                            str(photos[photo_id].path),
+                            io.BytesIO(photos[photo_id].path.read_bytes()),
                             **PdsDocxRenderer._photo_fit_dimensions(photos[photo_id].path),
                         )
 

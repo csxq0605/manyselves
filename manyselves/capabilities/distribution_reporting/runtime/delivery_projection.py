@@ -12,6 +12,12 @@ from manyselves.capabilities.distribution_reporting.domain.claim_ledger import (
 from .assets import ReportAssetAssembler, expand_approved_module_markers
 from .models.agentic import EditedReportSubmission, ModuleSubmission
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
+from .report_front_matter import (
+    DRAFT_NOTICE,
+    draft_title,
+    report_cover_facts,
+    report_is_draft,
+)
 from .source_ledger import SourceLedger
 
 
@@ -45,8 +51,10 @@ def build_delivery_projection(
         claims,
         edited,
     )
+    draft = report_is_draft(workspace, state)
+    cover = report_cover_facts(state.get("evidence_items", []))
     report = ApprovedReport(
-        title=edited.title,
+        title=draft_title(edited.title) if draft else edited.title,
         assessment_background=edited.assessment_background,
         findings_overview=edited.findings_overview,
         regional_executive_summary=edited.regional_executive_summary,
@@ -58,8 +66,12 @@ def build_delivery_projection(
         ledger=ledger,
         tables=tables,
         photos=photos,
+        client_name=cover.client_name,
+        site_name=cover.site_name,
+        draft_notice=DRAFT_NOTICE if draft else None,
     )
-    return report, ledger.bind_citations(PdsDocxRenderer._compose_markdown(report))
+    # The Markdown and the DOCX are both rendered from this one text.
+    return report, PdsDocxRenderer.delivery_markdown(report)
 
 
 __all__ = ["build_delivery_projection"]

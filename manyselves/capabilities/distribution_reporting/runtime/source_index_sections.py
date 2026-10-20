@@ -60,8 +60,9 @@ def judgment_basis_lines(module_submissions: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def data_gap_lines(workspace: Path, run_id: str) -> list[str]:
-    lines = ["### 数据缺口表", ""]
+def load_data_gaps(workspace: Path, run_id: str) -> list[dict[str, Any]]:
+    """The registered data gaps of one run, without duplicates."""
+
     gaps: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for path in sorted((Path(workspace) / f"Work/runs/{run_id}/gaps").glob("*.json")):
@@ -74,6 +75,12 @@ def data_gap_lines(workspace: Path, run_id: str) -> list[str]:
             continue
         seen.add(key)
         gaps.append(gap)
+    return gaps
+
+
+def data_gap_lines(workspace: Path, run_id: str) -> list[str]:
+    lines = ["### 数据缺口表", ""]
+    gaps = load_data_gaps(workspace, run_id)
     if not gaps:
         return [*lines, "本报告没有登记资料缺口。", ""]
     rows = [

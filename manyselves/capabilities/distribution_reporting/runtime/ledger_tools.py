@@ -742,6 +742,7 @@ class LedgerTools:
             "delivery_status": state.get("delivery_status"),
             "delivery_completion_ref": state.get("delivery_completion_ref"),
             "output_artifacts": state.get("output_artifacts", []),
+            "render_verification": state.get("render_verification"),
         }
 
     def _module_submission(

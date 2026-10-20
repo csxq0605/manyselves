@@ -3271,10 +3271,10 @@ def clean_numbered_item_text(value: Any) -> str:
 
 
 def is_report_title(line: str) -> bool:
-    clean = normalize_heading_title(clean_markdown_heading(line))
+    clean = normalize_heading_title(clean_markdown_heading(line)).removesuffix("（草稿）")
     if clean in {"配电安全专家咨询报告", "配电安全评估报告", "配电系统安全评估报告"}:
         return True
-    return bool(re.match(r"^#\s+.+报告\s*$", str(line).strip()))
+    return bool(re.match(r"^#\s+.+报告(?:（草稿）)?\s*$", str(line).strip()))
 
 
 def clean_markdown_heading(line: str) -> str:
@@ -4118,10 +4118,15 @@ def normalize_report_text(report_text: str) -> str:
     provenance and whole positive-advice blocks at render time.  That made the
     DOCX disagree with the Chief Editor artifact and correctly tripped the
     protected-prose check.  Evidence cleanup belongs before approval, never in
-    the deterministic renderer.
+    the deterministic renderer.  The legacy normalizer also cut the text at
+    the first "报告编制说明"/"如有疑问"/"资料缺失…声明" line, which silently
+    rendered a shorter DOCX than the delivered Markdown; only model reasoning
+    blocks are removed here.
     """
 
-    return _LEGACY_NORMALIZE_REPORT_TEXT(report_text)
+    return re.sub(
+        r"<think>.*?</think>", "", report_text or "", flags=re.DOTALL | re.IGNORECASE
+    ).strip()
 
 
 def normalize_table_cell_value(value: Any, header: Any = "", is_header: bool = False) -> str:
