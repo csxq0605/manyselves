@@ -189,14 +189,15 @@ async def test_workflow_without_photos_skips_the_model(tmp_path: Path) -> None:
     assert summary["photo_count"] == 0 and summary["read_count"] == 0
 
 
-def test_root_workflows_read_photos_before_the_module_cohort() -> None:
+def test_root_workflows_read_photos_before_any_module_writes() -> None:
     _capability, registry = load_distribution_reporting_capability()
-    for workflow_id in ("full-report", "module-report"):
+    for workflow_id, writer in (
+        ("full-report", "report-ledger"),
+        ("module-report", "distribution-module-cohort"),
+    ):
         workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
         children = [a["workflow"] for a in workflow.actions if a["kind"] == "subworkflow"]
-        assert children.index("distribution-photo-reading") < children.index(
-            "distribution-module-cohort"
-        )
+        assert children.index("distribution-photo-reading") < children.index(writer)
         specialized = _registry_with_existing_workflow_specializers()
         plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
             specialized.require(DefinitionKind.WORKFLOW, workflow_id), specialized,

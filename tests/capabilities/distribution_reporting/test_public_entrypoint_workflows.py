@@ -89,9 +89,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
         "run-photo-reading",
         "attach-readiness-to-context",
         "build-reporting-state",
-        "run-module-cohort",
-        "attach-module-results",
-        "run-reporting-tail",
+        "run-report-ledger",
         "publish-full-report",
         "finish-full-report",
     ]
@@ -104,8 +102,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
         "distribution-reporting-preparation",
         "distribution-evidence-readiness",
         "distribution-photo-reading",
-        "distribution-module-cohort",
-        "distribution-reporting-tail",
+        "report-ledger",
     ]
 
 
@@ -248,14 +245,15 @@ def test_public_roots_are_accepted_with_existing_definition_specializers(
     assert plan.workflow_id == workflow_id
     assert "distribution-reporting-preparation" in plan.workflow_ids
     assert "distribution-evidence-readiness" in plan.workflow_ids
-    assert "distribution-module-cohort" in plan.workflow_ids
+    assert "distribution-reporting-tail" not in plan.workflow_ids
     if workflow_id == "full-report":
-        assert "distribution-reporting-tail" in plan.workflow_ids
+        assert "report-ledger" in plan.workflow_ids
+        assert "distribution-module-cohort" not in plan.workflow_ids
     else:
-        assert "distribution-reporting-tail" not in plan.workflow_ids
+        assert "distribution-module-cohort" in plan.workflow_ids
 
 
-@pytest.mark.parametrize("workflow_id", ("full-report", "module-report"))
+@pytest.mark.parametrize("workflow_id", ("module-report",))
 def test_public_root_compile_boundary_is_existing_child_specialization(
     workflow_id: str,
 ) -> None:

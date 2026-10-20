@@ -10,10 +10,6 @@ import pytest
 from manyselves.capabilities.distribution_reporting.adapters.runtime import (
     DistributionReportingRuntimeBinding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    REPORT_MODULE_IDS,
-    ReportRequest,
-)
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     ModuleProviderRuntime,
 )
@@ -119,9 +115,11 @@ def test_web_projection_reuses_the_account_runtime_catalog() -> None:
     assert _projection(request) is projection
 
 
-def test_full_report_binding_composes_the_complete_capability_tail(
+def test_full_report_binding_runs_the_ledger_flow_on_the_generic_binding(
     tmp_path: Path,
 ) -> None:
+    from manyselves.runtime.generic_binding import GenericCapabilityRuntimeBinding
+
     services = RuntimeServicesView(
         workspace=tmp_path,
         bus=MessageBus(),
@@ -131,33 +129,21 @@ def test_full_report_binding_composes_the_complete_capability_tail(
     )
     binding = DistributionReportingRuntimeBinding(tmp_path, services)
     runtime = binding._runtimes["full-report"]
-    request = ReportRequest(
-        operation="full_report",
-        instruction="Compile the complete report.",
-        target_modules=list(REPORT_MODULE_IDS),
-        missing_evidence_policy="draft",
-        preparation_mode="serial",
-    )
 
-    definitions, contracts, plan = runtime.compile_plan(request)
-    tools = runtime._tools(definitions, contracts, plan)
-    agents = runtime._agent_invokers()
+    assert isinstance(runtime, GenericCapabilityRuntimeBinding)
+    assert binding._start_stores["full-report"] is runtime.state_store
+    from manyselves.runtime.generic_binding import _contracts
 
-    assert "distribution-observation-consolidation" in plan.subworkflow_plans
-    assert "distribution-cross-joint-review" not in plan.subworkflow_plans
+    registry, plan = runtime._compile("full-report")
+    tools = runtime._tools(plan, _contracts(registry), None)
     assert {
-        "consolidate-observation-ledger",
-        "prepare-chief-chapter-cohort",
-        "prepare-final-chapter-cohort",
-        "prepare-render-delivery",
-        "complete-delivery",
+        "prepare-ledger-context",
+        "build-judgment-ledger",
+        "finalize-judgment-ledger",
+        "check-report",
+        "compose-report",
     } <= tools.keys()
-    assert {
-        "module-2.4-specialist",
-        "evidence-auditor",
-        "chief-editor",
-        "chief-editor-auditor",
-    } <= agents.keys()
+    assert "distribution-reporting-tail" not in plan.subworkflow_plans
 
 
 def test_reporting_binding_owns_one_agent_execution_service_per_account(

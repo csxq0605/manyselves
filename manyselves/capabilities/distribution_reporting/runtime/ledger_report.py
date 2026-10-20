@@ -66,6 +66,7 @@ def build_ledger_report_binding(
     input_snapshot: Any,
     snapshot_content: Any,
     loop_builder: Any | None = None,
+    execution: Any | None = None,
 ) -> GenericCapabilityRuntimeBinding:
     return GenericCapabilityRuntimeBinding(
         capability_file=CAPABILITY_FILE,
@@ -79,6 +80,7 @@ def build_ledger_report_binding(
         ),
         loop_builder=loop_builder,
         start_input=ledger_report_start_input(Path(workspace)),
+        execution=execution,
     )
 
 

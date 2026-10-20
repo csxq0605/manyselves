@@ -239,6 +239,7 @@ class DistributionReportingRuntimeBinding:
             services,
             input_snapshot=snapshot_store.load,
             snapshot_content=partial(snapshot_content, self.workspace, content_store),
+            execution=self._execution,
         )
         self._providers = (*self._providers, ledger_report)
         self._runtimes: dict[str, DetachedRuntime] = {

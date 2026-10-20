@@ -63,6 +63,7 @@ class GenericCapabilityRuntimeBinding:
         tool_implementations: ToolImplementations,
         loop_builder: Callable[..., AgentSessionLoop] | None = None,
         start_input: StartInput | None = None,
+        execution: AgentExecutionService | None = None,
     ) -> None:
         capability, _registry = load_capability(capability_file)
         self.capability_id = capability.id
@@ -76,13 +77,17 @@ class GenericCapabilityRuntimeBinding:
         self._store = StartAwareFileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
         self._detached = DetachedRunTaskOwner()
-        self._execution = (
+        self._execution = execution or (
             AgentExecutionService(services.bus) if services is not None else None
         )
 
     @property
     def active(self) -> bool:
         return self._detached.active
+
+    @property
+    def execution(self) -> AgentExecutionService | None:
+        return self._execution
 
     @property
     def state_store(self) -> StartAwareFileWorkflowStateStore:
