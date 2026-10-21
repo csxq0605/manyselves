@@ -106,7 +106,7 @@ def test_evidence_status_reaches_the_problem_and_action_tables() -> None:
          "basis": "未取得资质文件",
          "gap": {"missing": "资质证书", "impact": "不能判断", "requested_input": "资质证书"}}
     )
-    assert "（资料未提供）不能判定：资质证书" in problem_table([row])
+    assert problem_table([row]) == "另有 1 个对象资料不足，不能判定，见数据缺口表。"
     action = ChiefAction(priority="一般", content="补资料", problem="资质未提供", hazard="待定",
                          solution="提供资质证书", row_ids=["J-2.5-1"])
     assert "依据：资料未提供" in action_table_markdown("措施如下。", [action], {"J-2.5-1": "资料未提供"})
@@ -154,7 +154,7 @@ def test_gap_measure_is_written_once_and_chief_text_holds_no_table() -> None:
          "basis": "b", "gap": {"missing": "铭牌", "impact": "i", "requested_input": "补充该柜铭牌参数"}}
     )
     table = problem_table([row])
-    assert "补充该柜铭牌参数" in table and "补充补充" not in table
+    assert "补充该柜铭牌参数" not in table and "数据缺口表" in table
     findings = chief_findings(
         actions=[], health=[], risks=[], rows_by_module={},
         texts={"overall_assessment": "总体良好。\n\n| 维度 | 状态 |\n| --- | --- |\n| 环境 | 良 |"},
@@ -185,3 +185,27 @@ def test_the_edit_pass_finds_a_table_written_into_the_overview_text() -> None:
     texts = {"1.1": "背景。", "1.2": "总体良好。\n| 维度 | 状态 |\n| --- | --- |", "1.3": "摘要。", "3.1": "风险。"}
     findings = LedgerTools._chief_text_findings({}, texts)
     assert set(findings) == {"1.2"} and findings["1.2"]["severity"] == "blocking"
+
+
+def test_problem_table_merges_objects_with_the_same_finding() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import problem_table
+
+    def row(n: int, basis: str, disposition: str = "concern", photos: tuple[str, ...] = ()) -> JudgmentRow:
+        value = {"id": f"J-2.4-{n}", "submodule_id": "2.4.2", "object": f"{n}#柜", "checkpoint": "接地",
+                 "disposition": disposition, "evidence_status": "现场确认", "evidence_ids": [f"E-{n}"],
+                 "basis": basis, "photo_ids": list(photos)}
+        if disposition == "concern":
+            value |= {"risk_level": "中", "hazard": "h",
+                      "action": {"measure": "补接地线", "priority": "一般", "timeframe": "一月"}}
+        else:
+            value |= {"gap": {"missing": "接地照片", "impact": "i", "requested_input": "补拍照片"}}
+        return JudgmentRow.model_validate(value)
+
+    table = problem_table([
+        row(1, "柜门未接地", photos=("P-1",)), row(2, "柜门未接地", photos=("P-2",)),
+        row(3, "接地线截面偏小"), row(4, "x", "undetermined"), row(5, "y", "undetermined"),
+    ])
+    lines = [line for line in table.splitlines() if line.startswith("| ") and "---" not in line]
+    assert len(lines) == 3  # header, the merged row, the different finding
+    assert "| 1#柜、2#柜 | 接地 | 柜门未接地 | 中 | 补接地线 | P-1、P-2 |" in table
+    assert "4#柜" not in table and "另有 2 个对象资料不足" in table

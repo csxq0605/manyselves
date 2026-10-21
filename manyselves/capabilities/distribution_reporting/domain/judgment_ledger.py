@@ -224,30 +224,46 @@ def _table(headers: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
 
 
 def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
-    """The per-object problem table of one submodule, or None without problems."""
+    """The problem table of one submodule, or None when nothing is flagged.
 
-    flagged = [row for row in rows if row.disposition in {"concern", "undetermined"}]
-    if not flagged:
-        return None
-    has_photos = any(row.photo_ids for row in flagged)
-    headers = PROBLEM_TABLE_HEADERS if has_photos else PROBLEM_TABLE_HEADERS[:-1]
-    body = []
-    for row in flagged:
-        if row.disposition == "concern":
-            problem = row.basis
-            level = row.risk_level or ""
-            measure = row.action.measure if row.action else ""
-        else:
-            problem = f"不能判定：{row.gap.missing if row.gap else row.basis}"
-            level = "待定"
-            measure = row.gap.requested_input if row.gap else ""
+    Objects with the same checkpoint, evidence status, finding, risk level and
+    measure share one row.  Objects that could not be judged are not listed
+    here: each one is in the data gap table already, so the table only says
+    how many there are.
+    """
+
+    concerns = [row for row in rows if row.disposition == "concern"]
+    unknown = list(dict.fromkeys(row.object for row in rows if row.disposition == "undetermined"))
+    note = (
+        f"另有 {len(unknown)} 个对象资料不足，不能判定，见数据缺口表。" if unknown else ""
+    )
+    if not concerns:
+        return note or None
+    groups: dict[tuple[str, ...], dict[str, list[str]]] = {}
+    for row in concerns:
+        problem = row.basis
         if row.evidence_status != "现场确认":
             problem = f"（{row.evidence_status}）{problem}"
-        values = [row.object, row.checkpoint, problem, level, measure]
+        key = (
+            row.checkpoint,
+            problem,
+            row.risk_level or "",
+            row.action.measure if row.action else "",
+        )
+        group = groups.setdefault(key, {"objects": [], "photos": []})
+        if row.object not in group["objects"]:
+            group["objects"].append(row.object)
+        group["photos"].extend(p for p in row.photo_ids if p not in group["photos"])
+    has_photos = any(group["photos"] for group in groups.values())
+    headers = PROBLEM_TABLE_HEADERS if has_photos else PROBLEM_TABLE_HEADERS[:-1]
+    body = []
+    for (checkpoint, problem, level, measure), group in groups.items():
+        values = ["、".join(group["objects"]), checkpoint, problem, level, measure]
         if has_photos:
-            values.append("、".join(row.photo_ids))
+            values.append("、".join(group["photos"]))
         body.append(values)
-    return _table(headers, body)
+    table = _table(headers, body)
+    return table + ("\n\n" + note if note else "")
 
 
 def place_problem_table(prose: str, rows: Sequence[JudgmentRow]) -> str:
