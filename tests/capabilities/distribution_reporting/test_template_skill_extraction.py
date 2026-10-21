@@ -37,6 +37,7 @@ from manyselves.capabilities.distribution_reporting.runtime.template_skills impo
     publish_template_skills,
     skill_order,
     skills_with_lessons,
+    template_policy,
     template_roles,
     writing_lessons,
 )
@@ -81,23 +82,25 @@ def test_declared_roles_resolve_on_the_template_and_keep_the_loading_order() -> 
 
 
 def _good_entries(packet: dict[str, Any]) -> list[dict[str, Any]]:
-    """One method per section with text, quoting its first text block."""
+    """One entry per required use for each section with text, quoting its first text block."""
 
+    required = [use["id"] for use in packet["uses"] if use["required"]]
     entries = []
     for section in packet["sections"]:
         block = next((b for b in section["blocks"] if len(re.sub(r"\s+", "", b["text"])) >= 8), None)
         if block is None:
             continue
         quote = re.sub(r"\s+", "", block["text"])[:8]
-        entries.append(
-            {
-                "kind": "method",
-                "text": "先写现状，再写风险，最后写建议，三段一一对应。",
-                "applies_when": "未明确",
-                "locator": block["locator"],
-                "quote": quote,
-            }
-        )
+        for use in required:
+            entries.append(
+                {
+                    "use": use,
+                    "text": "先看现状，再推风险，最后对应建议，三者一一对应。",
+                    "applies_when": "未明确",
+                    "locator": block["locator"],
+                    "quote": quote,
+                }
+            )
     return entries
 
 
@@ -171,7 +174,7 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     role = next(r for r in template_roles() if r.id == "author-2.1")
     from manyselves.runtime.exemplar.extraction import role_packet
 
-    REVISED["author-2.1"] = _good_entries(role_packet(outline, role_scope(outline, role)))
+    REVISED["author-2.1"] = _good_entries(role_packet(outline, role_scope(outline, role), template_policy()))
 
     binding, accepted, loops = await _run(tmp_path, "extract-template-skills", {}, _extraction_answer, 1)
     run = binding.get_run(accepted["run_id"])
@@ -194,6 +197,10 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     assert "## 2.1.1 电力系统负荷分配与过载风险" in candidate
     assert "110kV" not in candidate
     assert "分段小标题：现状描述" in candidate
+    assert "判断方法：" in candidate and "写法：" in candidate
+    comparison = (tmp_path / result["compare_ref"]).read_text(encoding="utf-8")
+    assert "## author-2.1" in comparison and "| 结果 | 现用版条目 |" in comparison
+    assert set(result["compare_counts"]) >= {"author-2.1", "chief-editor-chapter-3"}
     diff = (tmp_path / result["diff_ref"]).read_text(encoding="utf-8")
     assert "author-2.1（新提炼）" in diff
     # Nothing reached Inputs before publishing.

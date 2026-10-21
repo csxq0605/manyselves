@@ -7,6 +7,7 @@ input_contract: ledger_edit_item
 output_contract: review-findings
 constraints:
 - findings 的键是小节编号；severity：blocking=有台账里没有的新结论、与台账矛盾或组织方式明显偏离范例；minor=措辞或篇幅可以更好。
+- 可对照共享资料“专家版方法”里相应小节的“核对要点”。
 - program_findings 是程序核对出的问题，不用重复写。
 - 不要求补写证据边界或口径说明；资料缺口由数据缺口表承载。
 - 有 cited_rows 时（总编各章），逐条对照所引判断行：结论、风险或措施比所引行更强的判为 blocking，例如把“资料未提供”写成“缺失/无资质”，把“可能”写成“将会”，把来源作者意见写成已确认事实，把照片待核写成事实。

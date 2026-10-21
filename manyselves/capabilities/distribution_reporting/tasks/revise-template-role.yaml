@@ -1,14 +1,14 @@
 id: revise-template-role
-version: 1.0.0
+version: 2.0.0
 description: Correct the entries the program refused, in the conversation that wrote them
 agent: method-curator
-objective: 程序核对了你提交的条目，下面是没通过的条目和原因，以及还没有覆盖的小节。修改后重新提交这个角色的全部条目。
+objective: 程序核对了你提交的条目，下面是没通过的条目和原因、还没有覆盖的小节、还缺条目的用途。修改后重新提交这个角色的全部条目。
 input_contract: template_role_revision
 output_contract: exemplar_submission
 constraints:
 - 重新提交完整的 entries 和 skipped，包括已经通过的条目；没通过的按原因改，改不好的就删掉。
 - 原文片段找不到的，重新逐字摘录该坐标处的原文，或换成正确的坐标。
-- 还没覆盖的小节补上条目，或放进 skipped 写明原因。
-- 写法要求与第一次相同。
+- 还没覆盖的小节补上条目，或放进 skipped 写明原因；missing_uses 里的用途至少补一条。
+- 提炼要求与第一次相同。
 tools: []
 recovery: typed-turn-recovery

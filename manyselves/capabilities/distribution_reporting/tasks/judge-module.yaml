@@ -6,6 +6,7 @@ objective: 你现在是下面这个模块的责任专家。逐个对象、逐个
 input_contract: ledger_module_brief
 output_contract: ledger_judgment_set
 constraints:
+- 共享资料“专家版方法”里本模块各小节的“判断方法”是专家的判断思路，判断时参考；它是建议，与本合同冲突时以合同为准。
 - 按 role 里的视角和职责判断；只判断本模块的小节（submodules），别的模块的问题可以在 basis 里提到影响，但不替它下结论。
 - evidence_ids 里列出的本模块事实，每一条都要进入至少一行判断；同一对象、同一检查点、同一结论的几条事实可以合成一行。
 - concern 和 undetermined 行一行只写一个对象，不把几个对象并成一行；多个对象都正常时可以合成一行 no_concern。数量、分组、最高最低和“几倍”用“程序统计”里的结果，计算编号填进 calculation_ids，不自己数。

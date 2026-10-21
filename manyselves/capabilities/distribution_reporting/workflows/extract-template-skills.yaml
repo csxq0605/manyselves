@@ -1,6 +1,6 @@
 id: extract-template-skills
 version: 1.0.0
-description: Outline the report template, extract each declared role's writing methods, check and render candidate Skills
+description: Outline the report template, extract each declared role's methods by section and use, check and render candidate Skills with a comparison against the Skills in use
 tasks: []
 recovery:
 - typed-turn-recovery

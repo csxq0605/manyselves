@@ -266,48 +266,73 @@ def place_problem_table(prose: str, rows: Sequence[JudgmentRow]) -> str:
 
 class ChiefAction(_Model):
     priority: Priority
-    content: str = Field(min_length=1)
-    problem: str = Field(min_length=1)
-    hazard: str = Field(min_length=1)
-    solution: str = Field(min_length=1)
-    note: str = ""
+    content: str = Field(min_length=1, description="评估内容，写成“维度＞小节＞子项”")
+    problem: str = Field(min_length=1, description="发现问题，写明对象；合并几条行动时覆盖全部对象")
+    hazard: str = Field(min_length=1, description="风险与危害")
+    solution: str = Field(
+        min_length=1,
+        description="解决方案：对象上的动作，建议时限写在动作里（如“建议〈时限〉内…”），有依据时末尾写“依据：…”",
+    )
+    note: str = Field(default="", description="备注；模块之间对同一对象结论不同时，在这里说明以负责模块为准")
     row_ids: list[str] = Field(min_length=1)
 
 
 class DimensionHealth(_Model):
     module_id: str = Field(min_length=1)
-    status: str = Field(min_length=1)
-    key_indicators: str = Field(min_length=1)
+    status: str = Field(min_length=1, description="健康状态，一句话，例如〈保护定值不匹配，越级跳闸风险高〉")
+    key_indicators: str = Field(
+        min_length=1, description="关键异常指标，写明所在小节，例如〈变压器速断未躲涌流；见〈小节〉〉"
+    )
     risk_level: Literal["高", "中", "低", "待定"]
 
 
 class KeyRisk(_Model):
-    description: str = Field(min_length=1)
-    hazard: str = Field(min_length=1)
-    action: str = Field(min_length=1)
+    description: str = Field(min_length=1, description="风险描述，例如〈保护定值不匹配→越级跳闸〉")
+    hazard: str = Field(min_length=1, description="危害")
+    action: str = Field(min_length=1, description="行动建议，与第三章的行动一致")
     row_ids: list[str] = Field(min_length=1)
 
 
 class Phase(_Model):
-    phase: str = Field(min_length=1)
-    time: str = Field(min_length=1)
-    tasks: str = Field(min_length=1)
-    effect: str = Field(min_length=1)
+    phase: str = Field(min_length=1, description="阶段名称")
+    time: str = Field(min_length=1, description="时间范围；第三章没有时限的行动归入“时限待定”")
+    tasks: str = Field(min_length=1, description="核心任务：第三章中建议时限落在这一范围的行动")
+    effect: str = Field(min_length=1, description="预期效果")
 
 
 class ChiefChapter3(_Model):
-    risk_overview: str = Field(min_length=1, description="3.1 正文")
-    action_lead: str = Field(min_length=1, description="3.2 表前导语")
-    actions: list[ChiefAction]
+    risk_overview: str = Field(
+        min_length=1,
+        description="3.1 正文：先用几条总体结论概括全报告的主要风险（条数按实际，每条一句），"
+        "再写“详述见下”，按评估维度各列几条短要点，每条一句，能定位到第二章小节",
+    )
+    action_lead: str = Field(min_length=1, description="3.2 表前导语，一句话")
+    actions: list[ChiefAction] = Field(
+        description="3.2 行动速查表的行，系统按优先级分组生成五列表格"
+    )
 
 
 class ChiefChapter1(_Model):
-    assessment_background: str = Field(min_length=1, description="1.1 正文")
-    overall_assessment: str = Field(min_length=1, description="1.2 表前的总体评价")
-    dimension_health: list[DimensionHealth] = Field(min_length=1)
-    key_risks: list[KeyRisk] = Field(default_factory=list)
-    phases: list[Phase] = Field(default_factory=list)
-    regional_executive_summary: str = Field(min_length=1, description="1.3 正文")
+    assessment_background: str = Field(
+        min_length=1,
+        description="1.1 正文：委托方、评估对象与地点、现场工作时间、评估方法以及客户提出的专项话题；"
+        "不写证据边界、资料清单或阅读说明",
+    )
+    overall_assessment: str = Field(
+        min_length=1, description="1.2 表前的总体评价：一句定性结论，再用几句展开主要短板"
+    )
+    dimension_health: list[DimensionHealth] = Field(min_length=1, description="1.2 健康度表，每个评估维度一行")
+    key_risks: list[KeyRisk] = Field(
+        default_factory=list, description="1.2 重点风险表，条数按实际，不凑数；按提交顺序编号"
+    )
+    phases: list[Phase] = Field(
+        default_factory=list, description="1.2 阶段表，由第三章行动的建议时限归并得出"
+    )
+    regional_executive_summary: str = Field(
+        min_length=1,
+        description="1.3 正文：项目分区域时，每个区域写供电架构、运行现状、最大风险、核心结论和五个维度的发现；"
+        "不分区域时写全站摘要",
+    )
 
 
 class SpecialTopicAnalysis(_Model):

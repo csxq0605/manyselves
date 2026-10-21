@@ -23,6 +23,7 @@ from typing import Any, get_args
 
 import yaml
 
+from manyselves.runtime.exemplar.compare import compare_items, render_comparison, skill_items
 from manyselves.runtime.exemplar.extraction import (
     ExemplarPolicy,
     ExemplarRole,
@@ -49,7 +50,8 @@ from ..domain.lesson_triage import TriggerKind
 from .template_resolver import resolve_report_template
 from .template_skill_paths import TEMPLATE_SKILL_ROOT, TEMPLATE_SKILL_SOURCE, template_skill_ref
 
-_DOMAIN = Path(__file__).resolve().parents[1] / "domain"
+_CAPABILITY = Path(__file__).resolve().parents[1]
+_DOMAIN = _CAPABILITY / "domain"
 ROLES_FILE = _DOMAIN / "template-skill-roles.yaml"
 LESSONS_FILE = _DOMAIN / "writing-lessons.yaml"
 TRIGGER_KINDS: tuple[str, ...] = get_args(TriggerKind)
@@ -206,7 +208,7 @@ class TemplateSkillTools:
             if scope.missing:
                 missing[role.id] = list(scope.missing)
             if scope.sections:
-                packets.append(role_packet(outline, scope))
+                packets.append(role_packet(outline, scope, template_policy()))
         self._write_json(f"{root}/packets.json", packets)
         return {
             "run_id": run_id,
@@ -307,6 +309,9 @@ class TemplateSkillTools:
         }
         summary_ref = f"{root}/summary.json"
         self._write_json(summary_ref, summary)
+        comparison = compare_with_published(self.workspace, run_id)
+        summary.update({"compare_ref": comparison["compare_ref"], "compare_counts": comparison["counts"]})
+        self._write_json(summary_ref, summary)
         return {**summary, "summary_ref": summary_ref}
 
     def implementations(self) -> dict[str, Any]:
@@ -380,8 +385,78 @@ def publish_template_skills(
     return {"published": published, "backup": (root / "previous").relative_to(workspace).as_posix()}
 
 
+# -- comparison with the Skills in use -------------------------------------
+
+# The report steps whose task contracts state rules a Skill no longer needs to repeat.
+_RULE_WORKFLOWS = ("report-ledger.yaml", "ledger-*.yaml")
+_RULE_AGENT = "report-consultant"
+
+
+def stated_rules() -> list[tuple[str, str]]:
+    """(source, rule) for every objective and constraint the report steps already state."""
+
+    workflows = _CAPABILITY / "workflows"
+    tasks: list[str] = []
+    for pattern in _RULE_WORKFLOWS:
+        for path in sorted(workflows.glob(pattern)):
+            for action in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("actions", []):
+                if action.get("task") and action["task"] not in tasks:
+                    tasks.append(action["task"])
+    rules: list[tuple[str, str]] = []
+    for task_id in tasks:
+        task = yaml.safe_load((_CAPABILITY / "tasks" / f"{task_id}.yaml").read_text(encoding="utf-8"))
+        rules.extend((f"合同 {task_id}", text) for text in [task.get("objective", ""), *task.get("constraints", [])] if text)
+    agent = (_CAPABILITY / "agents" / f"{_RULE_AGENT}.md").read_text(encoding="utf-8")
+    rules.extend((f"Agent {_RULE_AGENT}", item) for _heading, item in skill_items(agent))
+    return rules
+
+
+def compare_with_published(
+    workspace: Path, run_id: str, *, threshold: float = 0.4
+) -> dict[str, Any]:
+    """Match every item of the Skills in use against a run's candidates and the stated rules.
+
+    The Skills in use are the published files, or their backups when the run
+    has already been published.  Writes ``compare.md`` and ``compare.json``
+    beside the candidates and changes nothing else.
+    """
+
+    workspace = Path(workspace).resolve()
+    root = workspace / run_root(run_id)
+    summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+    candidates = {
+        role_id: (workspace / ref).read_text(encoding="utf-8")
+        for role_id, ref in summary["candidates"].items()
+    }
+    pool = [(role_id, item) for role_id, text in candidates.items() for _h, item in skill_items(text)]
+    rules = stated_rules()
+    by_role = {}
+    for role_id in [r for r in skill_order() if r in candidates]:
+        backup = root / "previous" / role_id / "SKILL.md"
+        current = backup if backup.is_file() else workspace / template_skill_ref(role_id)
+        if not current.is_file():
+            continue
+        by_role[role_id] = compare_items(skill_items(current.read_text(encoding="utf-8")), pool, rules)
+    text, counts = render_comparison(by_role, threshold=threshold)
+    (root / "compare.md").write_text(text, encoding="utf-8")
+    detail = {
+        role_id: [match.__dict__ for match in matches] for role_id, matches in by_role.items()
+    }
+    (root / "compare.json").write_text(
+        json.dumps({"threshold": threshold, "counts": counts, "items": detail}, ensure_ascii=False, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "compare_ref": (root / "compare.md").relative_to(workspace).as_posix(),
+        "counts": counts,
+    }
+
+
 __all__ = [
     "FACT_FLAGS",
+    "compare_with_published",
+    "stated_rules",
     "plain_value",
     "LESSONS_FILE",
     "ROLES_FILE",

@@ -307,7 +307,7 @@ class LedgerTools:
                     render_statistics(statistic_lines),
                     self._length_reference(run_id, module_ids),
                     *knowledge_blocks,
-                    "# 写作方法与专家版范例\n"
+                    "# 专家版方法（按小节，每节分判断方法、写法、章节综合、范例、核对要点）\n"
                     + "\n\n".join(
                         f"## {skill_id}\n{skills[skill_id]}"
                         for skill_id in skill_order()

@@ -1,21 +1,26 @@
-"""Role-by-role extraction of writing methods from an exemplar, checked by program.
+"""Role-by-role extraction of methods from an exemplar, checked by program.
 
-A capability declares roles and the exemplar sections each role covers.  For
-one role the program builds a packet (the role's blocks with locators and the
-outline's structure), a model returns structured entries, and the program
-accepts only entries that:
+A capability declares the uses an entry can serve (for example one use per
+step of its workflow that reads the Skill), the roles, and the exemplar
+sections each role covers.  For one role the program builds a packet (the
+role's blocks with locators, the outline's structure and the uses the role
+may fill), a model returns structured entries, and the program accepts only
+entries that:
 
+- name a use the role may fill;
 - cite a locator inside the role's sections, with a quote found at that
   locator;
-- as a method, carry none of the exemplar's numbers, codes or organisation
-  names and none of the declared mandatory words (hard rules belong to the
-  task contract, not to a method);
-- as an example, put every exemplar fact in placeholders.
+- in a use without placeholders, carry none of the exemplar's numbers, codes
+  or organisation names and none of the declared mandatory words (hard rules
+  belong to the task contract, not to a method);
+- in a use with placeholders, put every exemplar fact in placeholders;
+- mention none of the features the capability declares unavailable.
 
 Every section of the role that has content is either cited or skipped with a
-reason.  The accepted entries render as a Markdown Skill; quotes stay in the
-provenance file, never in the Skill.  Nothing here knows the exemplar's
-subject.
+reason, and every use the role requires has at least one entry.  The accepted
+entries render as a Markdown Skill grouped by section and then by use; quotes
+stay in the provenance file, never in the Skill.  Nothing here knows the
+exemplar's subject.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import difflib
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +47,27 @@ class _Model(BaseModel):
 class SectionRef(_Model):
     number: str
     title: str = ""
+    generated: str = Field(
+        default="",
+        description="When the product draws this section's tables itself: why, shown instead "
+        "of the exemplar's table columns",
+    )
+
+
+class ExemplarUse(_Model):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    title: str
+    description: str
+    placeholders: bool = Field(
+        default=False,
+        description="True for examples: exemplar facts are allowed only inside placeholders",
+    )
+
+
+DEFAULT_USES = (
+    ExemplarUse(id="method", title="方法", description="可迁移的组织方式或写法"),
+    ExemplarUse(id="example", title="范例", description="范例句式，事实换成占位", placeholders=True),
+)
 
 
 class ExemplarRole(_Model):
@@ -50,6 +76,8 @@ class ExemplarRole(_Model):
     purpose: str
     sections: list[SectionRef] = Field(default_factory=list)
     extract: bool = True
+    uses: list[str] = Field(default_factory=list, description="Uses this role may fill; empty means all")
+    required_uses: list[str] = Field(default_factory=list)
 
 
 class ExemplarPolicy(_Model):
@@ -57,13 +85,24 @@ class ExemplarPolicy(_Model):
     organisation_suffixes: list[str] = Field(default_factory=list)
     placeholder_open: str = "〈"
     placeholder_close: str = "〉"
+    uses: list[ExemplarUse] = Field(default_factory=lambda: list(DEFAULT_USES))
+    unavailable: dict[str, str] = Field(
+        default_factory=dict,
+        description="Words naming what the product does not produce, with the reason",
+    )
+
+    def use(self, use_id: str) -> ExemplarUse | None:
+        return next((use for use in self.uses if use.id == use_id), None)
+
+    def role_uses(self, role: ExemplarRole) -> list[ExemplarUse]:
+        if not role.uses:
+            return list(self.uses)
+        return [use for use in self.uses if use.id in role.uses]
 
 
 class ExemplarEntry(_Model):
-    kind: Literal["method", "example"] = Field(
-        description="method=可迁移的组织方式或写法；example=范例句式，事实换成〈〉占位"
-    )
-    text: str = Field(min_length=1, description="方法或范例本身")
+    use: str = Field(min_length=1, description="这条内容的用途，取资料 uses 里的 id")
+    text: str = Field(min_length=1, description="内容本身，一条只写一个要点")
     applies_when: str = Field(
         min_length=1, description="什么情况下用这条写法；源文没有说明就写“未明确”"
     )
@@ -86,6 +125,7 @@ class RoleScope:
     role: ExemplarRole
     sections: tuple[OutlineSection, ...]
     missing: tuple[str, ...] = ()
+    generated: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def numbers(self) -> set[str]:
@@ -105,16 +145,23 @@ class Acceptance:
     rejected: list[Rejection] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)
     skipped: list[SkippedSection] = field(default_factory=list)
+    missing_uses: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
-        return bool(self.accepted) and not self.rejected and not self.uncovered
+        return (
+            bool(self.accepted)
+            and not self.rejected
+            and not self.uncovered
+            and not self.missing_uses
+        )
 
 
 def role_scope(outline: DocumentOutline, role: ExemplarRole) -> RoleScope:
     """The outline sections a role covers: each declared section and its subtree."""
 
     found: dict[str, OutlineSection] = {}
+    generated: dict[str, str] = {}
     missing: list[str] = []
     for ref in role.sections:
         head = resolve_section(outline, ref.number, ref.title)
@@ -123,13 +170,18 @@ def role_scope(outline: DocumentOutline, role: ExemplarRole) -> RoleScope:
             continue
         for section in outline.subtree(head.number):
             found.setdefault(section.number, section)
+            if ref.generated:
+                generated.setdefault(section.number, ref.generated)
     ordered = tuple(s for s in outline.sections if s.number in found)
-    return RoleScope(role, ordered, tuple(missing))
+    return RoleScope(role, ordered, tuple(missing), generated)
 
 
-def role_packet(outline: DocumentOutline, scope: RoleScope) -> dict[str, Any]:
-    """What the model reads for one role: structure and every located block."""
+def role_packet(
+    outline: DocumentOutline, scope: RoleScope, policy: ExemplarPolicy | None = None
+) -> dict[str, Any]:
+    """What the model reads for one role: uses, structure and every located block."""
 
+    policy = policy or ExemplarPolicy()
     sections = []
     for section in scope.sections:
         blocks = [outline.block(locator) for locator in section.blocks]
@@ -137,7 +189,7 @@ def role_packet(outline: DocumentOutline, scope: RoleScope) -> dict[str, Any]:
             {
                 "number": section.number,
                 "title": section.title,
-                "structure": structure_line(outline, section),
+                "structure": structure_line(outline, section, generated=scope.generated.get(section.number, "")),
                 "blocks": [
                     {
                         "locator": block.locator,
@@ -156,6 +208,17 @@ def role_packet(outline: DocumentOutline, scope: RoleScope) -> dict[str, Any]:
         "role_id": scope.role.id,
         "title": scope.role.title,
         "purpose": scope.role.purpose,
+        "uses": [
+            {
+                "id": use.id,
+                "title": use.title,
+                "description": use.description,
+                "placeholders": use.placeholders,
+                "required": use.id in scope.role.required_uses,
+            }
+            for use in policy.role_uses(scope.role)
+        ],
+        "unavailable": dict(policy.unavailable),
         "sections": sections,
     }
 
@@ -165,12 +228,15 @@ def structure_line(
     section: OutlineSection,
     *,
     policy: ExemplarPolicy | None = None,
+    generated: str = "",
 ) -> str:
     """The program-counted shape of one section, in words.
 
     With a ``policy`` (for a published Skill) row counts are left out and a
     table's columns are shown only when they carry no number and no
     organisation name, since a first row can hold the exemplar's own facts.
+    When the product draws the section's tables itself (``generated``), the
+    exemplar's tables are named but their columns are not shown.
     """
 
     parts: list[str] = []
@@ -179,7 +245,11 @@ def structure_line(
         parts.append("分段小标题：" + " → ".join(labels))
     blocks = [b for b in (outline.block(locator) for locator in section.blocks) if b is not None]
     names = organisation_names(outline, policy.organisation_suffixes) if policy else set()
-    for table in (block for block in blocks if block.kind == "table"):
+    tables = [block for block in blocks if block.kind == "table"]
+    if tables and generated:
+        parts.append(f"表（{generated}）")
+        tables = []
+    for table in tables:
         columns = [c for c in table.columns if c]
         if policy is None:
             parts.append(f"表（{table.rows} 行，列：" + "、".join(columns) + "）")
@@ -233,10 +303,16 @@ def accept_submission(
     numbers_allowed = outline.section_numbers()
     organisations = organisation_names(outline, policy.organisation_suffixes)
     in_scope = scope.numbers
+    allowed_uses = {use.id: use for use in policy.role_uses(scope.role)}
     result = Acceptance()
     seen: set[tuple[str | None, str, str]] = set()
     for index, entry in enumerate(submission.entries):
         reasons: list[str] = []
+        use = allowed_uses.get(entry.use.strip())
+        if use is None:
+            reasons.append(
+                f"用途 {entry.use} 不是本角色可用的用途：" + "、".join(allowed_uses)
+            )
         block = outline.block(entry.locator.strip())
         if block is None:
             reasons.append(f"来源坐标 {entry.locator} 不存在")
@@ -246,7 +322,7 @@ def accept_submission(
             block.text
         ):
             reasons.append(f"原文片段在 {entry.locator} 处找不到，要逐字摘录")
-        if entry.kind == "method":
+        if use is None or not use.placeholders:
             checked = f"{entry.text}\n{entry.applies_when}"
             numbers = _numbers(checked, numbers_allowed)
             if numbers:
@@ -270,8 +346,11 @@ def accept_submission(
         names = [name for name in organisations if name in _normal(checked)]
         if names:
             reasons.append("含模板里的单位名称：" + "、".join(sorted(names)))
+        for word, why in policy.unavailable.items():
+            if word in entry.text or word in entry.applies_when:
+                reasons.append(f"提到了“{word}”：{why}")
         # The same method may hold in several sections; repeat it only once per section.
-        key = (block.section if block is not None else None, entry.kind, _normal(entry.text))
+        key = (block.section if block is not None else None, entry.use.strip(), _normal(entry.text))
         if not reasons and key in seen:
             continue
         if reasons:
@@ -293,6 +372,8 @@ def accept_submission(
         for section in scope.sections
         if section.blocks and section.number not in cited and section.number not in skipped
     ]
+    filled = {entry.use.strip() for entry in result.accepted}
+    result.missing_uses = [use for use in scope.role.required_uses if use not in filled]
     return result
 
 
@@ -304,13 +385,14 @@ def revision_request(acceptance: Acceptance) -> dict[str, Any]:
             {
                 "index": rejection.index,
                 "locator": rejection.entry.locator,
-                "kind": rejection.entry.kind,
+                "use": rejection.entry.use,
                 "text": rejection.entry.text,
                 "reasons": rejection.reasons,
             }
             for rejection in acceptance.rejected
         ],
         "uncovered_sections": acceptance.uncovered,
+        "missing_uses": acceptance.missing_uses,
         "accepted_count": len(acceptance.accepted),
     }
 
@@ -328,6 +410,7 @@ def acceptance_record(acceptance: Acceptance) -> dict[str, Any]:
             for rejection in acceptance.rejected
         ],
         "uncovered": acceptance.uncovered,
+        "missing_uses": acceptance.missing_uses,
         "skipped": [skip.model_dump(mode="json") for skip in acceptance.skipped],
     }
 
@@ -341,7 +424,7 @@ def render_role_skill(
     policy: ExemplarPolicy,
     skipped: Iterable[SkippedSection] = (),
 ) -> str:
-    """The accepted entries as a Markdown Skill, grouped by exemplar section."""
+    """The accepted entries as a Markdown Skill, by exemplar section and then by use."""
 
     by_section: dict[str, list[ExemplarEntry]] = {}
     for entry in entries:
@@ -350,6 +433,7 @@ def render_role_skill(
             by_section.setdefault(block.section, []).append(entry)
     reasons = {skip.section: skip.reason for skip in skipped}
     role = scope.role
+    uses = policy.role_uses(role)
     lines = [
         "---",
         f"name: {role.id}",
@@ -360,30 +444,37 @@ def render_role_skill(
         "",
         role.purpose,
         "",
-        "以下写法由程序按小节从专家版模板提炼并核对出处：结构是程序数出来的，"
-        "方法和范例是建议，不是规定；本轮必须做的事只看任务合同。"
-        "范例里〈〉处是要换成本项目事实的位置，不能照抄模板的数值和对象。",
+        "以下内容由程序按小节从专家版模板提炼并核对出处，每节按用途分块："
+        + "；".join(f"{use.title}（{use.description}）" for use in uses)
+        + "。结构是程序数出来的，其余是建议，不是规定；本轮必须做的事只看任务合同。"
+        f"{policy.placeholder_open}{policy.placeholder_close}处是要换成本项目事实的位置，"
+        "不能照抄模板的数值和对象。",
     ]
     for section in scope.sections:
         found = by_section.get(section.number, [])
-        structure = structure_line(outline, section, policy=policy)
+        structure = structure_line(
+            outline, section, policy=policy, generated=scope.generated.get(section.number, "")
+        )
         if not found and not structure:
             continue
         lines.extend(["", f"## {section.number} {section.title}"])
         if structure:
             lines.append(f"结构：{structure}")
-        for entry in found:
-            if entry.kind == "method":
+        for use in uses:
+            chosen = [entry for entry in found if entry.use.strip() == use.id]
+            if not chosen:
+                continue
+            lines.append(f"{use.title}：")
+            for entry in chosen:
                 condition = entry.applies_when.strip()
+                show = not use.placeholders and condition and condition != "未明确"
                 lines.append(
-                    f"- 方法：{entry.text.strip()}"
-                    + (f"（适用：{condition}）" if condition and condition != "未明确" else "")
+                    f"- {entry.text.strip()}"
+                    + (f"（适用：{condition}）" if show else "")
                     + f" 〔模板 {entry.locator.strip()}〕"
                 )
-            else:
-                lines.append(f"- 范例：{entry.text.strip()} 〔模板 {entry.locator.strip()}〕")
         if not found and section.number in reasons:
-            lines.append(f"- 本节无可迁移写法：{reasons[section.number]}")
+            lines.append(f"- 本节无可迁移内容：{reasons[section.number]}")
     return "\n".join(lines) + "\n"
 
 
@@ -403,7 +494,18 @@ def parse_roles(value: Mapping[str, Any]) -> tuple[list[ExemplarRole], ExemplarP
     ids = [role.id for role in roles]
     if len(ids) != len(set(ids)):
         raise ValueError("exemplar role ids must be unique")
-    return roles, ExemplarPolicy.model_validate(value.get("policy", {}))
+    policy = ExemplarPolicy.model_validate(value.get("policy", {}))
+    known = {use.id for use in policy.uses}
+    if len(known) != len(policy.uses):
+        raise ValueError("exemplar use ids must be unique")
+    for role in roles:
+        unknown = sorted(set(role.uses) - known)
+        if unknown:
+            raise ValueError(f"role {role.id} names unknown uses: {', '.join(unknown)}")
+        allowed = {use.id for use in policy.role_uses(role)}
+        if not set(role.required_uses) <= allowed:
+            raise ValueError(f"role {role.id} requires a use it may not fill")
+    return roles, policy
 
 
 __all__ = [
@@ -412,6 +514,7 @@ __all__ = [
     "ExemplarPolicy",
     "ExemplarRole",
     "ExemplarSubmission",
+    "ExemplarUse",
     "Rejection",
     "RoleScope",
     "SectionRef",

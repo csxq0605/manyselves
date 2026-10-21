@@ -13,6 +13,7 @@ from docx import Document
 
 from manyselves.runtime.exemplar.extraction import (
     ExemplarPolicy,
+    ExemplarUse,
     ExemplarRole,
     ExemplarSubmission,
     accept_submission,
@@ -121,19 +122,19 @@ def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> N
     submission = ExemplarSubmission.model_validate(
         {
             "entries": [
-                {"kind": "method", "text": "先用一句话交代抽查范围和发现，再用表格列出位置、问题和建议。",
+                {"use": "method", "text": "先用一句话交代抽查范围和发现，再用表格列出位置、问题和建议。",
                  "applies_when": "发现多处同类问题时", "locator": lead, "quote": "抽查发现3株树干开裂"},
-                {"kind": "example", "text": "抽查发现〈数量〉处〈问题〉，详见下表。",
+                {"use": "example", "text": "抽查发现〈数量〉处〈问题〉，详见下表。",
                  "applies_when": "未明确", "locator": lead, "quote": "树干开裂，详见下表"},
-                {"kind": "method", "text": "列出3株问题树。", "applies_when": "未明确",
+                {"use": "method", "text": "列出3株问题树。", "applies_when": "未明确",
                  "locator": lead, "quote": "抽查发现3株树干开裂"},
-                {"kind": "method", "text": "建议必须写成加固措施。", "applies_when": "未明确",
+                {"use": "method", "text": "建议必须写成加固措施。", "applies_when": "未明确",
                  "locator": advice, "quote": "尽快加固开裂树干"},
-                {"kind": "example", "text": "抽查发现3株树干开裂。", "applies_when": "未明确",
+                {"use": "example", "text": "抽查发现3株树干开裂。", "applies_when": "未明确",
                  "locator": lead, "quote": "抽查发现3株树干开裂"},
-                {"kind": "method", "text": "结论一句话说明状态。", "applies_when": "未明确",
+                {"use": "method", "text": "结论一句话说明状态。", "applies_when": "未明确",
                  "locator": soil, "quote": "土壤湿度偏高"},
-                {"kind": "method", "text": "交代陪同单位示例花园有限公司。", "applies_when": "未明确",
+                {"use": "method", "text": "交代陪同单位示例花园有限公司。", "applies_when": "未明确",
                  "locator": _locator(outline, "1.1", "陪同"), "quote": "示例花园有限公司陪同"},
             ],
             "skipped": [{"section": "2", "reason": "只有标题"}],
@@ -155,6 +156,48 @@ def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> N
     assert not result.passed
 
 
+def test_uses_unavailable_features_and_generated_tables(outline) -> None:
+    policy = ExemplarPolicy(
+        mandatory_words=["必须"],
+        uses=[
+            ExemplarUse(id="judge", title="判断方法", description="怎样下判断"),
+            ExemplarUse(id="write", title="写法", description="怎样组织"),
+            ExemplarUse(id="example", title="范例", description="句式", placeholders=True),
+        ],
+        unavailable={"附件": "成品不带附件"},
+    )
+    role = ExemplarRole.model_validate(
+        {"id": "writer", "title": "巡查结果", "purpose": "写巡查结果时参考。",
+         "sections": [{"number": "2", "title": "巡查结果", "generated": "表由系统生成"}],
+         "uses": ["judge", "write"], "required_uses": ["judge"]}
+    )
+    scope = role_scope(outline, role)
+    packet = role_packet(outline, scope, policy)
+    assert [use["id"] for use in packet["uses"]] == ["judge", "write"]
+    assert packet["uses"][0]["required"] is True
+    health = next(s for s in packet["sections"] if s["number"] == "2.1")
+    assert "表（表由系统生成）" in health["structure"] and "位置" not in health["structure"]
+    lead = _locator(outline, "2.1", "抽查发现")
+    soil = _locator(outline, "2.2", "土壤湿度")
+    submission = ExemplarSubmission.model_validate(
+        {"entries": [
+            {"use": "write", "text": "先交代抽查范围，再列出问题。", "applies_when": "未明确",
+             "locator": lead, "quote": "抽查发现3株树干开裂"},
+            {"use": "example", "text": "抽查发现〈数量〉处〈问题〉。", "applies_when": "未明确",
+             "locator": lead, "quote": "抽查发现3株树干开裂"},
+            {"use": "write", "text": "细节放进附件。", "applies_when": "未明确",
+             "locator": soil, "quote": "土壤湿度适中"},
+        ]}
+    )
+    result = accept_submission(outline, scope, submission, policy)
+    reasons = {r.index: " ".join(r.reasons) for r in result.rejected}
+    assert "不是本角色可用的用途" in reasons[1]
+    assert "附件" in reasons[2]
+    assert result.missing_uses == ["judge"] and not result.passed
+    text = render_role_skill(outline, scope, result.accepted, source="示例", policy=policy)
+    assert "写法：\n- 先交代抽查范围" in text and "判断方法：" not in text
+
+
 def test_organisation_names_are_refused_even_in_scope(tmp_path: Path) -> None:
     outline = document_outline(_exemplar(tmp_path / "e.docx"))
     role = ExemplarRole.model_validate(
@@ -163,7 +206,7 @@ def test_organisation_names_are_refused_even_in_scope(tmp_path: Path) -> None:
     scope = role_scope(outline, role)
     locator = _locator(outline, "1.1", "陪同")
     submission = ExemplarSubmission.model_validate(
-        {"entries": [{"kind": "example", "text": "由示例花园有限公司陪同完成巡查。",
+        {"entries": [{"use": "example", "text": "由示例花园有限公司陪同完成巡查。",
                       "applies_when": "未明确", "locator": locator, "quote": "示例花园有限公司陪同"}]}
     )
     result = accept_submission(outline, scope, submission, POLICY)
@@ -174,14 +217,14 @@ def test_rendered_skill_keeps_locators_and_drops_quotes(outline) -> None:
     scope = role_scope(outline, _role())
     lead = _locator(outline, "2.1", "抽查发现")
     entries = ExemplarSubmission.model_validate(
-        {"entries": [{"kind": "method", "text": "先交代范围，再列表。", "applies_when": "未明确",
+        {"entries": [{"use": "method", "text": "先交代范围，再列表。", "applies_when": "未明确",
                       "locator": lead, "quote": "抽查发现3株树干开裂"}]}
     ).entries
     text = render_role_skill(outline, scope, entries, source="示例", policy=POLICY)
     assert "表（列：位置、问题、建议）" in text and "3 行" not in text
     assert text.startswith("---\nname: writer\n")
     assert "## 2.1 树木健康" in text
-    assert f"- 方法：先交代范围，再列表。 〔模板 {lead}〕" in text
+    assert f"方法：\n- 先交代范围，再列表。 〔模板 {lead}〕" in text
     assert "适用：未明确" not in text
     assert "3株" not in text and "抽查发现" not in text
 
@@ -225,3 +268,19 @@ def test_lessons_merge_only_active_and_firing() -> None:
     assert [lesson.id for lesson in chosen] == ["L-001"]
     assert "易错：甲。做法：乙" in render_lessons(chosen)
     assert next_lesson_ids(book, 2) == ["L-004", "L-005"]
+
+
+def test_comparison_sorts_old_items_by_their_closest_match() -> None:
+    from manyselves.runtime.exemplar.compare import compare_items, render_comparison, skill_items
+
+    old = skill_items(
+        "---\nname: x\n---\n# 写法\n- 先交代抽查范围，再列出发现的问题。\n"
+        "- 缺资料时只写一句资料未提供。\n- 树木的养护记录按季度归档备查。\n| 表 | 行 |\n"
+    )
+    assert [item for _heading, item in old][0] == "先交代抽查范围，再列出发现的问题。"
+    new = [("writer", "先交代抽查范围，再列出发现的问题和建议。")]
+    rules = [("合同", "缺资料时只写一句“资料未提供”，不展开说明。")]
+    matches = compare_items(old, new, rules)
+    text, counts = render_comparison({"writer": matches}, threshold=0.4)
+    assert counts["writer"] == {"新版有对应": 1, "合同已有": 1, "未对应": 1}
+    assert text.index("未对应") < text.index("新版有对应 |")
