@@ -99,7 +99,7 @@ def test_declared_roles_resolve_on_the_template_and_keep_the_loading_order() -> 
     outline = document_outline(TEMPLATE)
     assert skill_order() == (
         "author-2.1", "author-2.2", "author-2.3", "author-2.4", "author-2.5",
-        "chief-editor-chapter-1", "chief-editor-chapter-3", "chief-editor-chapter-4",
+        "chief-editor-chapter-1", "chief-editor-chapter-3",
     )
     covered: set[str] = set()
     for role in template_roles():

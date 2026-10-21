@@ -76,7 +76,3 @@ roles:
   sections: [{number: "3", title: 结论与建议, generated: 行动表由系统按结构化字段生成，列以任务合同为准}]
   uses: [synthesis, write, example, check]
   required_uses: [synthesis]
-- id: chief-editor-chapter-4
-  title: 第四章专题分析的方法
-  purpose: 第四章写哪些专题由本轮输入的专题计划决定，没有通用写法，这个角色不从专家版提炼，沿用项目里现有的 Skill 文件。
-  extract: false
