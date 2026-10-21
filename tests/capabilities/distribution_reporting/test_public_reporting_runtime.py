@@ -9,6 +9,7 @@ from uuid import UUID
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import example_report_taxonomy
 from manyselves.capabilities.distribution_reporting.runtime import (
     module_cohort_tools,
     preparation_tools,
@@ -633,9 +634,8 @@ def _patch_minimal_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         preparation_tools,
         "parse_report_taxonomy_workbook",
-        lambda *args, **kwargs: {"schema_version": 1, "modules": []},
+        lambda *args, **kwargs: example_report_taxonomy(),
     )
-    monkeypatch.setattr(preparation_tools, "activate_report_taxonomy", lambda _value: None)
     monkeypatch.setattr(
         preparation_tools,
         "prepare_manifest_file",

@@ -17,7 +17,6 @@ from manyselves.capabilities.distribution_reporting.domain.coverage import (
     evaluate_coverage,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
-    activate_report_taxonomy,
     parse_report_taxonomy_workbook,
 )
 from manyselves.capabilities.distribution_reporting.runtime.intake import (
@@ -199,11 +198,9 @@ class PreparationTools:
             source_ref=source_ref,
             source_sha256=source.sha256,
         )
+        # Later steps bind this tree from the context they are given; nothing
+        # is left bound in the process.
         context.report_taxonomy = payload
-        # Coverage and downstream domain helpers read the run-local taxonomy
-        # through this existing capability context.  The serial payload remains
-        # the durable value carried by PreparationContext.
-        activate_report_taxonomy(payload)
         return context
 
     async def parse_artifacts(

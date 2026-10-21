@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
@@ -159,7 +159,20 @@ from manyselves.runtime.typed_recovery import (
 
 from .task_context import bind_task_context
 
-REPORT_MODULE_IDS = tuple(REPORT_TAXONOMY)
+class _RunModuleIds(Sequence[str]):
+    """The bound run's module ids, read on use rather than at import."""
+
+    def __getitem__(self, index):  # type: ignore[override]
+        return tuple(REPORT_TAXONOMY)[index]
+
+    def __len__(self) -> int:
+        return len(REPORT_TAXONOMY)
+
+    def __iter__(self):
+        return iter(REPORT_TAXONOMY)
+
+
+REPORT_MODULE_IDS: Sequence[str] = _RunModuleIds()
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]

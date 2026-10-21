@@ -1,13 +1,17 @@
 """Capability-owned run-scoped taxonomy for distribution reporting.
 
-The built-in tree is the process default for non-authoring inspection.
-Every new authoring run replaces it with the immutable tree parsed from that
-run's frozen S4-6 workbook.
+Chapter 2's section tree comes only from the run's own 评估信息汇总表 (the
+S4-6 workbook).  There is no built-in tree: a step that reads the taxonomy
+without one bound fails instead of falling back to some other project's
+sections.  ``report-taxonomy-example.json`` illustrates contracts and serves
+tests; a run never reads it.
 """
 
 import hashlib
+import json
 import re
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,85 +73,16 @@ def _module(
     )
 
 
-_DEFAULT_REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
-    "2.1": _module(
-        "2.1",
-        "配电系统架构问题",
-        (
-            ("2.1.1", "配电系统负荷分配与过载风险"),
-            ("2.1.2", "关键负荷供电路径与应急/备用供电的问题"),
-            ("2.1.3", "配网自动化、备用电源自动切换（可能性及功能验证）"),
-            ("2.1.4", "防止2路电源并联产生环流"),
-            ("2.1.5", "系统无功补偿与电容柜问题"),
-        ),
-    ),
-    "2.2": _module(
-        "2.2",
-        "环境工况风险",
-        (
-            ("2.2.1", "来自电能质量的风险"),
-            ("2.2.1.1", "谐波风险情况"),
-            ("2.2.1.2", "电压扰动情况"),
-            ("2.2.1.3", "频繁启动与冲击负荷"),
-            ("2.2.2", "其他运行工况风险"),
-            ("2.2.2.1", "低压配电设备发热情况"),
-            ("2.2.2.2", "高压配电设备局放情况"),
-            ("2.2.2.3", "其他物理环境风险"),
-        ),
-    ),
-    "2.3": _module(
-        "2.3",
-        "针对故障的保护",
-        (
-            ("2.3.1", "配电系统保护方案与定值的论证计算"),
-            ("2.3.2", "零序/漏电的防范"),
-            ("2.3.3", "电压事件（过压）的防范"),
-        ),
-    ),
-    "2.4": _module(
-        "2.4",
-        "配电设备/元件内在风险",
-        (
-            ("2.4.1", "配置与选型问题"),
-            ("2.4.1.1", "额定/分断能力"),
-            ("2.4.1.2", "配电柜分隔形式"),
-            ("2.4.1.3", "配电设备安全连锁/闭锁"),
-            ("2.4.1.4", "设备分合/储能/工作位置显示"),
-            ("2.4.2", "安装规范性问题"),
-            ("2.4.2.1", "裸露导体防护"),
-            ("2.4.2.2", "等电位连接与接地问题"),
-            ("2.4.2.3", "电气连接问题"),
-            ("2.4.2.4", "标牌标识"),
-            ("2.4.2.5", "电缆、桥架、母线安装问题"),
-            ("2.4.2.6", "设备外壳IP等级与封堵问题"),
-            ("2.4.3", "带病运行问题汇总"),
-            ("2.4.3.1", "低压回路剩余电流过大"),
-            ("2.4.3.2", "部分高压柜照明功能缺失"),
-            ("2.4.3.3", "部分高压柜柜内除湿装置未开启"),
-            ("2.4.4", "末端配电抽查情况"),
-        ),
-    ),
-    "2.5": _module(
-        "2.5",
-        "运维管理与风险管控机制",
-        (
-            ("2.5.1", "SOP/EOP"),
-            ("2.5.2", "图纸资料"),
-            ("2.5.3", "运维（巡检、维护）的实施与组织"),
-            ("2.5.3.1", "运维组织架构与人员配备"),
-            ("2.5.3.2", "关键配电设备维护工作全面性检查"),
-            ("2.5.3.3", "配电设备维保覆盖"),
-            ("2.5.4", "运维的智能化手段"),
-            ("2.5.5", "配电室装备与LOTO流程的实施"),
-            ("2.5.6", "备件管理"),
-            ("2.5.7", "退市设备与生命周期管理"),
-        ),
-    ),
-}
-
 _ACTIVE_REPORT_TAXONOMY: ContextVar[Mapping[str, ModuleDefinition] | None] = (
     ContextVar("active_report_taxonomy", default=None)
 )
+
+
+EXAMPLE_TAXONOMY_FILE = Path(__file__).with_name("report-taxonomy-example.json")
+
+
+class ReportTaxonomyUnbound(LookupError):
+    """A step read the section tree before the run's own tree was bound."""
 
 
 class _RunTaxonomyView(Mapping[str, ModuleDefinition]):
@@ -155,7 +90,12 @@ class _RunTaxonomyView(Mapping[str, ModuleDefinition]):
 
     @staticmethod
     def _current() -> Mapping[str, ModuleDefinition]:
-        return _ACTIVE_REPORT_TAXONOMY.get() or _DEFAULT_REPORT_TAXONOMY
+        modules = _ACTIVE_REPORT_TAXONOMY.get()
+        if modules is None:
+            raise ReportTaxonomyUnbound(
+                "报告小节树未绑定：第二章小节只从本次运行的评估信息汇总表读取"
+            )
+        return modules
 
     def __getitem__(self, key: str) -> ModuleDefinition:
         return self._current()[key]
@@ -178,20 +118,27 @@ def _section_id(value: Any) -> str | None:
     else:
         text = str(value).strip()
     text = re.sub(r"\s+", "", text)
-    return text if re.fullmatch(r"2\.[1-5](?:\.\d+)*", text) else None
+    return text if re.fullmatch(r"2\.\d+(?:\.\d+)*", text) else None
 
 
 def _validate_taxonomy(modules: Mapping[str, ModuleDefinition]) -> None:
-    expected_modules = tuple(f"2.{index}" for index in range(1, 6))
-    if tuple(modules) != expected_modules:
+    """The tree is whatever the table lists, as long as it is a tree.
+
+    Which modules and sections appear is the table's call; a project without
+    a problem leaves its section out.  Ids must be chapter 2 and in order.
+    """
+
+    if not modules:
+        raise ValueError("S4-6 workbook taxonomy has no chapter 2 module")
+    keys = [tuple(int(part) for part in module_id.split(".")) for module_id in modules]
+    if any(len(key) != 2 or key[0] != 2 for key in keys) or keys != sorted(set(keys)):
         raise ValueError(
-            "S4-6 workbook taxonomy must contain ordered modules 2.1 through 2.5; "
-            f"actual={list(modules)}"
+            f"S4-6 workbook taxonomy modules must be ordered chapter 2 ids; actual={list(modules)}"
         )
     seen: set[str] = set(modules)
     for module_id, module in modules.items():
-        if not module.title.strip() or not module.sections:
-            raise ValueError(f"workbook taxonomy module is empty: {module_id}")
+        if not module.title.strip():
+            raise ValueError(f"workbook taxonomy module has no title: {module_id}")
         for section_id, section in module.sections.items():
             if section_id in seen:
                 raise ValueError(f"duplicate workbook taxonomy id: {section_id}")
@@ -211,7 +158,7 @@ def parse_report_taxonomy_workbook(
     source_ref: str | None = None,
     source_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Parse the complete 2.1-2.5 heading tree from a frozen S4-6 workbook."""
+    """Parse the chapter 2 heading tree a frozen S4-6 workbook lists."""
 
     path = Path(path)
     workbook = load_workbook(path, read_only=False, data_only=False)
@@ -338,6 +285,61 @@ def reset_report_taxonomy(
     token: Token[Mapping[str, ModuleDefinition] | None],
 ) -> None:
     _ACTIVE_REPORT_TAXONOMY.reset(token)
+
+
+@contextmanager
+def bound_report_taxonomy(payload: Mapping[str, Any]) -> Iterator[None]:
+    """Bind a run's taxonomy snapshot for the duration of a block."""
+
+    token = activate_report_taxonomy(payload)
+    try:
+        yield
+    finally:
+        reset_report_taxonomy(token)
+
+
+def report_taxonomy_bound() -> bool:
+    return _ACTIVE_REPORT_TAXONOMY.get() is not None
+
+
+def example_report_taxonomy() -> dict[str, Any]:
+    """The illustration tree for contract examples and tests; never a run's tree."""
+
+    payload = json.loads(EXAMPLE_TAXONOMY_FILE.read_text(encoding="utf-8"))
+    payload.pop("_note", None)
+    return payload
+
+
+_MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(2\.\d+(?:\.\d+)*)\.?\s+(.+?)\s*$")
+
+
+def taxonomy_from_markdown(markdown: str) -> dict[str, Any]:
+    """The chapter 2 tree a finished report's own headings list.
+
+    For rendering a report on its own, outside a run that has its table.
+    """
+
+    titles: dict[str, str] = {}
+    for line in markdown.splitlines():
+        match = _MARKDOWN_HEADING.match(line.strip())
+        if match and match.group(1) not in titles:
+            titles[match.group(1)] = match.group(2).strip()
+    modules = {
+        module_id: _module(
+            module_id,
+            title,
+            tuple(
+                (section_id, section_title)
+                for section_id, section_title in titles.items()
+                if section_id.startswith(module_id + ".")
+            ),
+        )
+        for module_id, title in titles.items()
+        if module_id.count(".") == 1
+    }
+    return report_taxonomy_snapshot(
+        modules, source_ref="report-markdown", source_sha256="", sheet=""
+    )
 
 
 def resolve_submodule(submodule_id: str) -> SubmoduleDefinition:

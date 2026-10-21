@@ -37,7 +37,7 @@ class CrossLaneSpecialization:
 CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
     "2.1": CrossLaneSpecialization(
         module_id="2.1",
-        title=REPORT_TAXONOMY["2.1"].title,
+        title="",  # the run's own title is filled in on use
         review_focus=(
             "核对负荷分配、关键供电路径和备用切换结论是否吸收 2.2 工况、2.3 保护、2.4 设备能力及 2.5 操作条件。",
             "核对双电源、自动切换、防并联和恢复路径是否与保护配合、机械/电气闭锁及 SOP/EOP 的实际接口一致。",
@@ -46,7 +46,7 @@ CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
     ),
     "2.2": CrossLaneSpecialization(
         module_id="2.2",
-        title=REPORT_TAXONOMY["2.2"].title,
+        title="",  # the run's own title is filled in on use
         review_focus=(
             "核对谐波、电压扰动和冲击负荷的风险判断是否连接 2.1 供电方式、2.3 保护行为、2.4 元件能力及 2.5 监测处置。",
             "核对发热、局放和物理环境异常是否与设备状态、安装缺陷、维护覆盖和停运条件形成可执行接口。",
@@ -55,7 +55,7 @@ CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
     ),
     "2.3": CrossLaneSpecialization(
         module_id="2.3",
-        title=REPORT_TAXONOMY["2.3"].title,
+        title="",  # the run's own title is filled in on use
         review_focus=(
             "核对保护方案、定值和选择性结论是否使用与 2.1 实际拓扑及运行方式一致的前提。",
             "核对短路、接地、零序/漏电及过压防范是否与 2.2 工况、2.4 额定/分断能力和接地连接边界一致。",
@@ -64,7 +64,7 @@ CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
     ),
     "2.4": CrossLaneSpecialization(
         module_id="2.4",
-        title=REPORT_TAXONOMY["2.4"].title,
+        title="",  # the run's own title is filled in on use
         review_focus=(
             "核对设备选型、额定和分断能力判断是否建立在 2.1 拓扑/负荷、2.2 工况和 2.3 故障参数的共同边界上。",
             "核对闭锁、接地、连接、封堵和安装缺陷是否削弱保护动作、切换操作或故障隔离屏障。",
@@ -73,7 +73,7 @@ CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
     ),
     "2.5": CrossLaneSpecialization(
         module_id="2.5",
-        title=REPORT_TAXONOMY["2.5"].title,
+        title="",  # the run's own title is filled in on use
         review_focus=(
             "核对 SOP/EOP、LOTO 和人员责任是否覆盖 2.1 切换路径、2.3 保护投退及 2.4 闭锁和设备操作约束。",
             "核对图纸、台账、巡检和智能监测能否承接 2.2 工况信号、2.3 动作记录及 2.4 状态缺陷。",

@@ -17,7 +17,11 @@ from uuid import UUID
 import pytest
 
 from manyselves.capabilities.distribution_reporting import CAPABILITY_FILE
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    bound_report_taxonomy,
+    example_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
     ledger_report_tool_implementations,
 )
@@ -290,14 +294,14 @@ def _answer(message):
     raise AssertionError(f"unexpected task {task}")
 
 
-async def run_ledger_report(tmp_path: Path, answer=None, evidence=None):
+async def run_ledger_report(tmp_path: Path, answer=None, evidence=None, extra_state=None):
     """Run the ledger report with scripted agents; return binding, run id and loops."""
 
     answer = answer or _answer
     _write_complete_template_skill_fixture(tmp_path)
     evidence = evidence or _evidence()
     evidence_path = tmp_path / f"Work/runs/{RUN_ID}/preparation/evidence.jsonl"
-    evidence_path.parent.mkdir(parents=True)
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
     evidence_path.write_text(
         "".join(item.model_dump_json() + "\n" for item in evidence), encoding="utf-8"
     )
@@ -306,6 +310,7 @@ async def run_ledger_report(tmp_path: Path, answer=None, evidence=None):
         "request": ReportRequest(instruction="写一份完整报告。").model_dump(mode="json"),
         "evidence_items": [item.model_dump(mode="json") for item in evidence],
         "photo_assets": [],
+        **(extra_state or {}),
     }
 
     bus = MessageBus()
@@ -587,3 +592,42 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
     assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
     (chain,) = seen["chains"]
     assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}
+
+
+@pytest.mark.unbound_taxonomy
+@pytest.mark.asyncio
+async def test_every_step_reads_the_tree_of_the_run_and_writes_only_its_sections(
+    tmp_path: Path,
+) -> None:
+    """Nothing is bound in the process: every tool binds the run's own tree.
+
+    This run's table leaves out 2.4.3 and its subsections, so the report has
+    no such heading and no placeholder for it.
+    """
+
+    tree = example_report_taxonomy()
+    for module in tree["modules"]:
+        module["sections"] = [
+            s for s in module["sections"]
+            if s["id"] != "2.4.3" and not s["id"].startswith("2.4.3.")
+        ]
+
+    def answer(message):
+        # The scripted agents read the tree too; real agents read it from the prompt.
+        with bound_report_taxonomy(tree):
+            return _answer(message)
+
+    with bound_report_taxonomy(tree):
+        evidence = _evidence()
+    # Preparation persists the run's tree beside its evidence.
+    persisted = tmp_path / f"Work/runs/{RUN_ID}/preparation/report-taxonomy.json"
+    persisted.parent.mkdir(parents=True)
+    persisted.write_text(json.dumps(tree, ensure_ascii=False), encoding="utf-8")
+    binding, accepted, _loops = await run_ledger_report(
+        tmp_path, answer=answer, evidence=evidence, extra_state={"report_taxonomy": tree}
+    )
+    run = binding.get_run(accepted["run_id"])
+    assert run["run"]["status"] == "completed", run["state"].get("error")
+    markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(encoding="utf-8")
+    assert "2.4.2" in markdown
+    assert not re.search(r"^#+ 2\.4\.3", markdown, re.M)

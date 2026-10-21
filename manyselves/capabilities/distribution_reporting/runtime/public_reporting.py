@@ -439,8 +439,10 @@ class PublicReportingWorkflowRuntime:
         from .photo_reading import build_photo_reading_tool_implementations
         from .report_revision import build_report_revision_tools
         from .revision_impact import bind_revision_impact_tools
+        from .run_taxonomy import bind_run_taxonomy
 
-        return {
+        # Every call reads chapter 2's tree from the run it serves.
+        return bind_run_taxonomy({
             **build_aggregate_existing_tool_implementations(
                 workspace=self.workspace, input_snapshot=self.input_snapshot, store=reporting_store,
             ),
@@ -462,7 +464,7 @@ class PublicReportingWorkflowRuntime:
             **self._module_tool_implementations(),
             **build_module_cohort_tool_implementations(),
             **self.additional_tool_implementations,
-        }
+        }, self.workspace)
 
     def _module_tool_implementations(self) -> dict[str, Any]:
         runtime = self.module_runtime

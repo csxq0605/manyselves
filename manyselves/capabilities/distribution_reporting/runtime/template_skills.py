@@ -14,6 +14,7 @@ has read the diff.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
@@ -44,7 +45,7 @@ from manyselves.runtime.exemplar.lessons import (
     load_lessons,
     render_lessons,
 )
-from manyselves.runtime.exemplar.outline import DocumentOutline, document_outline
+from manyselves.runtime.exemplar.outline import DocumentOutline, document_outline, similar
 
 from ..domain.calculations import compute
 from ..domain.lesson_triage import TriggerKind
@@ -85,6 +86,116 @@ def skill_targets() -> tuple[Target, ...]:
         chapter_2.append(Target(module.id, module.title))
         chapter_2.extend(Target(section.id, section.title) for section in module.sections.values())
     return (*_declared_targets(), *chapter_2)
+
+
+# -- aligning Skills to this run's section tree --------------------------------
+
+_SKILL_SECTION = re.compile(r"^##\s+(2\.\d+(?:\.\d+)*)\s+(.*?)\s*$")
+_SAME_SECTION = 0.5  # the bar distillation uses to align an expert section
+
+
+def _best(title: str, candidates: Mapping[str, str]) -> str | None:
+    """The candidate id whose title is most like ``title``, when alike enough."""
+
+    ranked = sorted(
+        ((similar(title, other), key) for key, other in candidates.items()), reverse=True
+    )
+    if ranked and ranked[0][0] >= _SAME_SECTION:
+        return ranked[0][1]
+    return None
+
+
+def module_skill_roles() -> dict[str, str]:
+    """This run's module id -> the author Skill whose module means the same.
+
+    A Skill learns from one chapter 2 module of the expert report.  The run's
+    table may number or word its modules differently, so the module is
+    matched by title; the number alone decides only when titles agree.
+    """
+
+    modules = {module.id: module.title for module in REPORT_TAXONOMY.values()}
+    chosen: dict[str, str] = {}
+    for role in template_roles():
+        refs = [ref for ref in role.sections if re.fullmatch(r"2\.\d+", ref.number)]
+        if len(refs) != 1:
+            continue
+        ref = refs[0]
+        if ref.number in modules and similar(ref.title, modules[ref.number]) >= _SAME_SECTION:
+            module_id = ref.number
+        else:
+            module_id = _best(ref.title, modules)
+        if module_id is not None:
+            chosen.setdefault(module_id, role.id)
+    return chosen
+
+
+def align_skill_sections(text: str, module_id: str) -> tuple[str, list[str]]:
+    """Head a module Skill's sections with this run's numbers and titles.
+
+    Each "## number title" section is matched to the run's subsection of the
+    same meaning, number first when the titles agree; a section the run's
+    table does not list is left out, since nothing is written for it.
+    Returns the aligned text and what was renumbered or left out.
+    """
+
+    module = REPORT_TAXONOMY[module_id]
+    sections = {section.id: section.title for section in module.sections.values()}
+    notes: list[str] = []
+    out: list[str] = []
+    keep = True
+    for line in text.splitlines():
+        match = _SKILL_SECTION.match(line)
+        if match is None:
+            if line.startswith("## "):
+                keep = True
+            if keep:
+                out.append(line)
+            continue
+        number, title = match.groups()
+        if number.count(".") == 1:
+            # The module's own heading: the Skill's module is this run's module.
+            keep = True
+            out.append(f"## {module.id} {module.title}")
+            continue
+        if number in sections and similar(title, sections[number]) >= _SAME_SECTION:
+            target = number
+        else:
+            target = _best(title, sections)
+        keep = target is not None
+        if target is None:
+            notes.append(f"{number} {title}：本次评估信息汇总表没有这一节，略去")
+            continue
+        if target != number:
+            notes.append(f"{number} {title} → 本次 {target} {sections[target]}")
+        out.append(f"## {target} {sections[target]}")
+    return "\n".join(out) + ("\n" if text.endswith("\n") else ""), notes
+
+
+def skills_for_run(skills: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Skills as this run reads them, and each module's author Skill.
+
+    Returns (Skills by role, with module Skills aligned to the run's tree;
+    the author Skill text per run module; what alignment changed).
+    """
+
+    aligned = dict(skills)
+    by_module: dict[str, str] = {}
+    notes: list[str] = []
+    for module_id, role_id in module_skill_roles().items():
+        if not skills.get(role_id):
+            continue
+        text, changed = align_skill_sections(skills[role_id], module_id)
+        aligned[role_id] = text
+        by_module[module_id] = text
+        notes.extend(f"{role_id}（本次 {module_id}）：{note}" for note in changed)
+    matched = set(module_skill_roles().values())
+    for role in template_roles():
+        refs = [ref for ref in role.sections if re.fullmatch(r"2\.\d+", ref.number)]
+        if len(refs) == 1 and role.id not in matched and skills.get(role.id):
+            # Its module is not in this run's table: nothing is written for it.
+            aligned.pop(role.id, None)
+            notes.append(f"{role.id}：本次评估信息汇总表没有对应模块，略去")
+    return aligned, by_module, notes
 
 
 def template_roles() -> tuple[ExemplarRole, ...]:
@@ -490,7 +601,10 @@ __all__ = [
     "TemplateSkillTools",
     "publish_template_skills",
     "skill_order",
+    "align_skill_sections",
+    "module_skill_roles",
     "skill_targets",
+    "skills_for_run",
     "skills_with_lessons",
     "template_policy",
     "template_roles",

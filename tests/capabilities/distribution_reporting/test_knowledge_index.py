@@ -6,6 +6,10 @@ from manyselves.capabilities.distribution_reporting.domain.judgment_ledger impor
     JudgmentRow,
     RowRelation,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    bound_report_taxonomy,
+    example_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.cross_module import (
     checked_relations,
     unlisted_relations,
@@ -157,3 +161,35 @@ def test_unlisted_relation_kept_only_with_mechanism_and_condition():
     assert dropped["J-2.4-01"][0]["relation"] == "随便"
     (candidate,) = unlisted_relations(kept, ["负荷—发热"])
     assert candidate["relation"] == "积灰—发热" and candidate["to"]["row_id"] == "J-2.2-01"
+
+
+def _tree_without(drop: str, renumber: dict[str, str] | None = None) -> dict:
+    tree = example_report_taxonomy()
+    for module in tree["modules"]:
+        module["sections"] = [s for s in module["sections"] if s["id"] != drop]
+        for section in module["sections"]:
+            section["id"] = (renumber or {}).get(section["id"], section["id"])
+    return tree
+
+
+def test_a_section_the_table_numbers_differently_is_matched_by_title():
+    with bound_report_taxonomy(_tree_without("", {"2.4.3.1": "2.4.3.9"})):
+        index = build_index([KNOWLEDGE])
+    assert index.unit_sections["KU-2.4-11"] == ("2.4.3.9",)
+
+
+def test_a_default_section_the_table_leaves_out_is_named_on_the_record():
+    with bound_report_taxonomy(_tree_without("2.3.2")):
+        index = build_index([KNOWLEDGE])
+        routed = route_evidence([_record("剩余电流(A)")], index)
+    # 2.4.3.1 is still in the table, so the record goes there only.
+    assert [i.submodule_id for i in routed] == ["2.4.3.1"]
+    assert index.unit_outside["KU-2.3-02"] == ("2.3.2 零序/漏电的防范",)
+
+
+def test_a_record_whose_only_default_section_is_left_out_stays_unassigned_and_says_why():
+    knowledge = KNOWLEDGE.replace("KU-2.3-02 / KU-2.4-11", "KU-2.3-02")
+    with bound_report_taxonomy(_tree_without("2.3.2")):
+        (item,) = route_evidence([_record("剩余电流(A)")], build_index([knowledge]))
+    assert item.module_id is None
+    assert "2.3.2 零序/漏电的防范 不在本次评估信息汇总表里" in item.knowledge_note

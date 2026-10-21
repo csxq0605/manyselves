@@ -10,7 +10,12 @@ from typing import Any, Literal
 
 from pydantic import Field, TypeAdapter, model_validator
 
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    example_report_taxonomy,
+    reset_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FINAL_AUDIT_SECTION_IDS,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -2253,6 +2258,8 @@ def _example_final_audit_metadata() -> dict[str, Any]:
     }
 
 
+# Examples illustrate contracts with the example tree; a run binds its own.
+_EXAMPLE_TAXONOMY = activate_report_taxonomy(example_report_taxonomy())
 _EXAMPLE_MODULES = {
     module_id: module_content_view(
         ModuleSubmission.model_validate(_example_module(module_id))
@@ -2551,6 +2558,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         ],
     },
 }
+reset_report_taxonomy(_EXAMPLE_TAXONOMY)
 
 
 def _enrich_properties(node: Any) -> None:

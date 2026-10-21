@@ -51,8 +51,6 @@ from ..domain.judgment_ledger import (
 )
 from ..domain.taxonomy import (
     REPORT_TAXONOMY,
-    activate_report_taxonomy,
-    reset_report_taxonomy,
 )
 from .assets import runtime_photo_ids
 from .cross_module import (
@@ -92,7 +90,8 @@ from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
 from .template_skill_paths import is_template_skill_path
-from .template_skills import plain_value, skill_order, skills_with_lessons
+from .run_taxonomy import run_taxonomy
+from .template_skills import plain_value, skill_order, skills_for_run, skills_with_lessons
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
 CHIEF_OWNER = "chief"
@@ -114,15 +113,10 @@ REPORT_TITLE = "配电安全专家咨询报告"
 
 @contextmanager
 def _taxonomy(state: Mapping[str, Any]) -> Iterator[None]:
-    snapshot = state.get("report_taxonomy")
-    if not isinstance(snapshot, Mapping):
+    """Bind the run's tree; without one, reading the tree fails (no default)."""
+
+    with run_taxonomy(state):
         yield
-        return
-    token = activate_report_taxonomy(snapshot)
-    try:
-        yield
-    finally:
-        reset_report_taxonomy(token)
 
 
 def _plain(value: Any) -> Any:
@@ -488,6 +482,12 @@ class LedgerTools:
                 mapping_gaps=[plain_value(gap) for gap in state.get("mapping_gaps") or []],
                 calculation_gaps=calculation_gaps,
             )
+            # Skills are matched to this run's modules and sections by meaning;
+            # a section the table does not list is left out of its Skill.
+            skills, module_skills, skill_notes = skills_for_run(skills)
+            self.store.write_json(
+                f"Work/runs/{run_id}/ledger/skill-alignment.json", {"changes": skill_notes}
+            )
             plan = state.get("special_topic_plan")
             plan_value = (
                 SpecialTopicPlan.model_validate(plan).model_dump(mode="json")
@@ -587,7 +587,7 @@ class LedgerTools:
                     for calc in calculations
                 },
                 "author_skills": {
-                    module_id: skills.get(f"author-{module_id}", "") for module_id in module_ids
+                    module_id: module_skills.get(module_id, "") for module_id in module_ids
                 },
                 "unassigned_evidence_ids": [item.id for item in unassigned],
                 # The section each record goes to by default.

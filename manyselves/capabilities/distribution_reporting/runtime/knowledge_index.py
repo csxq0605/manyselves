@@ -25,12 +25,13 @@ from typing import Any
 import yaml
 
 from ..domain.taxonomy import REPORT_TAXONOMY
+from manyselves.runtime.exemplar.outline import similar
+
 from .mappers.common import evidence_id, field_name
 from .models.reporting import EvidenceItem
 from .rule_standards import unit_bodies
 
 STRUCTURE_FILE = Path(__file__).resolve().parents[1] / "domain/knowledge-structure.yaml"
-_SECTION_ID = re.compile(r"(?<![\d.])\d+(?:\.\d+)+(?![\d.])")
 
 
 @cache
@@ -48,15 +49,57 @@ def unit_field(body: str, name: str) -> str:
     return "；".join(dict.fromkeys(value for value in values if value))
 
 
-def _leaf_sections(text: str) -> list[str]:
-    """Report subsections named in a text, kept only if the taxonomy has them."""
+# A section the knowledge base names: its number and the title after it.
+_NAMED_SECTION = re.compile(
+    r"(?<![\d.])(\d+(?:\.\d+)+)(?![\d.])\s*(.*?)(?=[。；;\n]|[、，,\s]+\d+(?:\.\d+)+|$)"
+)
+_SAME_TITLE = 0.6
+
+
+def _leaf_sections(text: str) -> tuple[list[str], list[str]]:
+    """Sections a knowledge text names, matched to this run's tree by meaning.
+
+    A number in the tree whose title agrees is taken as is.  Otherwise the
+    title decides: the run's table may number the same section differently.
+    What matches no subsection of the tree is returned separately, as
+    "number title", so the record can say the table leaves it out.
+    """
 
     leaves = {
-        sub_id
+        sub_id: sub.title
         for module in REPORT_TAXONOMY.values()
-        for sub_id in module.submodules
+        for sub_id, sub in module.submodules.items()
     }
-    return list(dict.fromkeys(s for s in _SECTION_ID.findall(text) if s in leaves))
+    headings = {
+        section_id: section.title
+        for module in REPORT_TAXONOMY.values()
+        for section_id, section in (
+            (module.id, module), *module.sections.items()
+        )
+        if section_id not in leaves
+    }
+    found: list[str] = []
+    outside: list[str] = []
+    for number, raw_title in _NAMED_SECTION.findall(text):
+        title = raw_title.strip()
+        if number in leaves and (not title or similar(title, leaves[number]) >= 0.5):
+            found.append(number)
+            continue
+        ranked = sorted(
+            ((similar(title, leaf_title), leaf_id) for leaf_id, leaf_title in leaves.items()),
+            reverse=True,
+        ) if title else []
+        if ranked and ranked[0][0] >= _SAME_TITLE and (
+            len(ranked) == 1 or ranked[1][0] < ranked[0][0]
+        ):
+            found.append(ranked[0][1])
+        elif number in headings or any(
+            similar(title, heading) >= _SAME_TITLE for heading in headings.values()
+        ):
+            continue  # a heading of the tree, not a section to write
+        elif number.count(".") >= 2:
+            outside.append(f"{number} {title}".strip())
+    return list(dict.fromkeys(found)), list(dict.fromkeys(outside))
 
 
 @dataclass(frozen=True)
@@ -73,6 +116,8 @@ class KnowledgeIndex:
     units: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     unit_sections: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     fields: Mapping[str, FieldEntry] = field(default_factory=dict)
+    # Sections a unit names that this run's table does not list.
+    unit_outside: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def entry(self, label: str | None) -> FieldEntry | None:
         return self.fields.get(field_name(label or "")) if label else None
@@ -80,6 +125,9 @@ class KnowledgeIndex:
     def to_json(self) -> dict[str, Any]:
         return {
             "unit_sections": {unit: list(s) for unit, s in self.unit_sections.items()},
+            "unit_sections_not_in_table": {
+                unit: list(s) for unit, s in self.unit_outside.items()
+            },
             "fields": {
                 name: {"units": list(entry.units), "note": entry.note}
                 for name, entry in self.fields.items()
@@ -117,20 +165,27 @@ def build_index(texts: Iterable[str]) -> KnowledgeIndex:
     names = structure()["unit"]["fields"]
     units: dict[str, dict[str, str]] = {}
     sections: dict[str, tuple[str, ...]] = {}
+    outside: dict[str, tuple[str, ...]] = {}
     for unit_id, (title, body) in unit_bodies(texts).items():
         values = {"title": title}
         values.update({key: unit_field(body, name) for key, name in names.items()})
         units[unit_id] = values
-        found = _leaf_sections(values.get("topics", "")) or _leaf_sections(
-            values.get("category", "")
-        )
+        # The topic names the leaf; the category only its heading.
+        found, missing = _leaf_sections(values.get("topics", ""))
+        if not found:
+            found, category_missing = _leaf_sections(values.get("category", ""))
+            missing = missing or category_missing
         if found:
             sections[unit_id] = tuple(found)
+        elif missing:
+            outside[unit_id] = tuple(missing)
     fields: dict[str, FieldEntry] = {}
     for text in texts:
         for name, entry in _field_entries(text).items():
             fields.setdefault(name, entry)
-    return KnowledgeIndex(units=units, unit_sections=sections, fields=fields)
+    return KnowledgeIndex(
+        units=units, unit_sections=sections, fields=fields, unit_outside=outside
+    )
 
 
 def documents_with_role(documents: Sequence[Any], role: str) -> list[Any]:
@@ -170,9 +225,19 @@ def route_evidence(
             for section in index.unit_sections.get(unit, ()):
                 by_section.setdefault(section, []).append(unit)
         if not by_section:
+            notes = [entry.note] if entry and entry.note else []
+            left_out = [
+                section for unit in (entry.units if entry else ())
+                for section in index.unit_outside.get(unit, ())
+            ]
+            if left_out:
+                notes.append(
+                    "知识库默认归入的小节 " + "、".join(dict.fromkeys(left_out))
+                    + " 不在本次评估信息汇总表里，由模块作者按知识单元判断归属"
+                )
             routed.append(item.model_copy(update={
                 "knowledge_units": list(entry.units) if entry else [],
-                "knowledge_note": (entry.note or None) if entry else None,
+                "knowledge_note": "；".join(notes) or None,
             }))
             continue
         for section, units in by_section.items():

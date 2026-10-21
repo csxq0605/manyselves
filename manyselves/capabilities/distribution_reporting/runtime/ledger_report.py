@@ -21,6 +21,7 @@ from .ledger_tools import LedgerTools
 from .models.reporting import ReportRequest
 from .photo_reading import build_photo_reading_tool_implementations
 from .preparation_tools import build_preparation_tool_implementations
+from .run_taxonomy import bind_run_taxonomy
 from .public_entrypoints import project_public_entrypoint_input
 from .storage import ReportingStore
 
@@ -33,7 +34,8 @@ def ledger_report_tool_implementations(
     global_knowledge_root: Path | None = None,
 ) -> dict[str, Any]:
     store = ReportingStore(workspace)
-    return {
+    # Every call reads chapter 2's tree from the run it serves.
+    return bind_run_taxonomy({
         **build_public_entrypoint_tool_implementations(),
         **build_preparation_tool_implementations(
             workspace=workspace,
@@ -46,7 +48,7 @@ def ledger_report_tool_implementations(
         **build_evidence_readiness_tool_implementations(),
         **build_photo_reading_tool_implementations(workspace, store),
         **LedgerTools(workspace, global_knowledge_root=global_knowledge_root).implementations(),
-    }
+    }, workspace)
 
 
 def ledger_report_start_input(workspace: Path):

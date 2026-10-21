@@ -13,7 +13,12 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    example_report_taxonomy,
+    reset_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
     TEMPLATE_ROLE_SKILL_IDS,
@@ -438,6 +443,8 @@ def _cross_owner_coverage_example(module_id: str = "2.1") -> dict[str, Any]:
     }
 
 
+# Examples illustrate contracts with the example tree; a run binds its own.
+_EXAMPLE_TAXONOMY = activate_report_taxonomy(example_report_taxonomy())
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
@@ -648,6 +655,7 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "summary": "已记录可追溯反馈，尚未发布 Skill 变更。",
     },
 }
+reset_report_taxonomy(_EXAMPLE_TAXONOMY)
 
 
 def submission_model(kind: str) -> type:

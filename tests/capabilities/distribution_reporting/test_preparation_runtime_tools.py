@@ -161,7 +161,6 @@ def test_prepare_taxonomy_uses_the_manifest_snapshot(monkeypatch: pytest.MonkeyP
         return payload
 
     monkeypatch.setattr(preparation_tools, "parse_report_taxonomy_workbook", parse)
-    monkeypatch.setattr(preparation_tools, "activate_report_taxonomy", lambda _payload: None)
     tools, _photo_calls = _tools(Path("/tmp/preparation-tools-test"))
     context = _context().model_copy(
         update={"project_manifest": ProjectManifest(files=[source])}

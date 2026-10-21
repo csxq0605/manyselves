@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import tempfile
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -49,12 +50,18 @@ from manyselves.runtime.tool_adapter import (
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeHost
 
 from .. import load_distribution_reporting_capability
+from ..domain.taxonomy import (
+    bound_report_taxonomy,
+    report_taxonomy_bound,
+    taxonomy_from_markdown,
+)
 from .delivery_tools import atomic_copy_file
 from .input_snapshot import RunInputSnapshotStore
 from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import PdsDocxRenderer
 from .rendering.rendered_docx_validator import validate_rendered_markdown_docx
+from .run_taxonomy import bind_run_taxonomy
 from .storage import ReportingStore
 from .template_resolver import resolve_report_template
 
@@ -166,11 +173,16 @@ def _render_document(
 
     output = workspace / value.output_ref
     template = workspace / value.template_ref
-    _rendered_name, raw_docx = PackagedV2DocxCore(template).render_approved_prose(
-        markdown,
-        filename=output.name,
-        report_model=None,
-    )
+    # A report rendered on its own carries its chapter 2 tree in its headings.
+    with (
+        nullcontext() if report_taxonomy_bound()
+        else bound_report_taxonomy(taxonomy_from_markdown(markdown))
+    ):
+        _rendered_name, raw_docx = PackagedV2DocxCore(template).render_approved_prose(
+            markdown,
+            filename=output.name,
+            report_model=None,
+        )
     title = next(
         (
             line.removeprefix("#").strip()
@@ -249,10 +261,10 @@ def build_render_existing_tool_implementations(
             store=store,
         )
 
-    return {
+    return bind_run_taxonomy({
         "prepare-render-existing": prepare,
         "render-existing": render,
-    }
+    }, workspace)
 
 
 class RenderExistingWorkflowRuntime:

@@ -29,7 +29,7 @@ def _is_placeholder(value: Any) -> bool:
 
 def _known_submodule(value: Any) -> str | None:
     candidate = _text(value)
-    if not candidate.startswith(("2.1.", "2.2.", "2.3.", "2.4.", "2.5.")):
+    if not candidate.startswith("2."):
         return None
     try:
         resolve_submodule(candidate)

@@ -109,34 +109,12 @@ _HEADINGS_BEFORE_MODULES: list[tuple[str, str, int]] = [
     ("1.3", "各区域执行摘要", 2),
     ("2", "评估内容描述", 1),
 ]
-_MODULE_HEADINGS = [
-    heading
-    for module in REPORT_TAXONOMY.values()
-    for heading in (
-        (module.id, module.title, 2),
-        *(
-            (
-                section.id,
-                section.title,
-                section.id.count(".") + 1,
-            )
-            for section in module.sections.values()
-        ),
-    )
-]
 _HEADINGS_AFTER_MODULES: list[tuple[str, str, int]] = [
     ("3", "结论与建议", 1),
     ("3.1", "风险/问题汇总与概览", 2),
     ("3.2", "改善行动速查表", 2),
     ("4", "专项问题分析", 1),
 ]
-HEADINGS: list[tuple[str, str, int]] = [
-    *_HEADINGS_BEFORE_MODULES,
-    *_MODULE_HEADINGS,
-    *_HEADINGS_AFTER_MODULES,
-]
-
-
 def _heading_key(text: str) -> str:
     text = str(text).replace("**", "").replace("__", "").strip()
     text = re.sub(r"^#{1,6}\s*", "", text)
@@ -144,10 +122,29 @@ def _heading_key(text: str) -> str:
     return re.sub(r"[。．.：:]+", "", text)
 
 
-HEADING_BY_NUMBER = {number: (title, level) for number, title, level in HEADINGS}
-HEADING_BY_TITLE = {_heading_key(title): (number, title, level) for number, title, level in HEADINGS}
-HEADING_ORDER = {number: index for index, (number, _, _) in enumerate(HEADINGS)}
-DETAIL_SECTION_IDS = [number for number, _, level in HEADINGS if number.startswith("2.") and level >= 3]
+def headings() -> list[tuple[str, str, int]]:
+    """Report headings; chapter 2's come from the run's bound section tree."""
+
+    modules = [
+        heading
+        for module in REPORT_TAXONOMY.values()
+        for heading in (
+            (module.id, module.title, 2),
+            *(
+                (section.id, section.title, section.id.count(".") + 1)
+                for section in module.sections.values()
+            ),
+        )
+    ]
+    return [*_HEADINGS_BEFORE_MODULES, *modules, *_HEADINGS_AFTER_MODULES]
+
+
+def heading_by_number() -> dict[str, tuple[str, int]]:
+    return {number: (title, level) for number, title, level in headings()}
+
+
+def heading_by_title() -> dict[str, tuple[str, str, int]]:
+    return {_heading_key(title): (number, title, level) for number, title, level in headings()}
 INLINE_LABELS = (
     "现状描述",
     "现状分析",
@@ -421,7 +418,7 @@ def build_report_text_from_model(model: dict[str, Any], fallback_text: str) -> s
         "",
     ])
 
-    for number, title, level in HEADINGS:
+    for number, title, level in headings():
         if number in {"1", "1.1", "1.2", "1.3", "2", "3", "3.1", "3.2", "4", "4.1", "4.2", "4.3", "4.4"}:
             continue
         if not number.startswith("2."):
@@ -937,7 +934,7 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
     # Only explicit Markdown headings own the report taxonomy.  Chief-editor
     # prose may contain local numbered labels such as ``**1.1 负荷均衡调整**``;
     # treating those body lines as canonical headings silently replaces their
-    # approved titles when the local number collides with HEADINGS.
+    # approved titles when the local number collides with a report heading.
     if not re.match(r"^#{1,6}\s+", line.strip()):
         return None
     clean = clean_inline_marks(clean_markdown_heading(line))
@@ -947,19 +944,19 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
     match = re.match(r"^(\d+(?:\.\d+)+)(?:\.)?\s+(.+)$", clean)
     if match:
         number = match.group(1)
-        if number in HEADING_BY_NUMBER:
-            title, level = HEADING_BY_NUMBER[number]
+        if number in heading_by_number():
+            title, level = heading_by_number()[number]
             return number, title, level
         if number.startswith("4."):
             return number, match.group(2).strip(), 2
     top_level_match = re.match(r"^([1234])\.\s+(.+)$", clean)
     if top_level_match:
         number = top_level_match.group(1)
-        expected = HEADING_BY_NUMBER.get(number)
+        expected = heading_by_number().get(number)
         if expected and normalize_heading_title(top_level_match.group(2)) == normalize_heading_title(expected[0]):
             return number, expected[0], expected[1]
     normalized = normalize_heading_title(strip_number_prefix(clean))
-    by_title = HEADING_BY_TITLE.get(normalized)
+    by_title = heading_by_title().get(normalized)
     return by_title
 
 
@@ -1372,7 +1369,7 @@ def parse_section_reasoning_results(value: Any) -> dict[str, dict[str, Any]]:
         if not section_id:
             section_title = clean_text(item.get("section_title"))
             if section_title:
-                section_id = HEADING_BY_TITLE.get(_heading_key(section_title), ("", "", 0))[0]
+                section_id = heading_by_title().get(_heading_key(section_title), ("", "", 0))[0]
         if not section_id:
             continue
         results[section_id] = item
@@ -2107,7 +2104,7 @@ def headers_for_table(col_count: int) -> list[str]:
 
 
 def placeholder_row(col_count: int, section_id: str) -> list[str]:
-    title = HEADING_BY_NUMBER.get(section_id, ("待核实", 4))[0]
+    title = heading_by_number().get(section_id, ("待核实", 4))[0]
     base = ["待核实", "待核实", "待补充", f"{title}未在上传资料中识别到明确异常", "结合现场资料进一步核实", ""]
     if col_count == 2:
         return [title, "上传资料中未识别到明确异常，建议现场核实。"]
@@ -2980,7 +2977,7 @@ def issue_status_label(issue: dict[str, Any], rule: dict[str, Any]) -> str:
 
 def status_conclusion_text(section_id: str, item_name: str, status_label: str, problem: str) -> str:
     """Build KU conclusion text using the fixed acceptance template."""
-    item_name = clean_text(item_name) or HEADING_BY_NUMBER.get(section_id, ("该检测项", 3))[0]
+    item_name = clean_text(item_name) or heading_by_number().get(section_id, ("该检测项", 3))[0]
     problem = clean_text(problem)
     detail = strip_status_tail(problem)
     if status_label == "OK":
@@ -3377,7 +3374,7 @@ def _v2_status(issue: dict[str, Any]) -> str:
 
 
 def status_conclusion_text(section_id: str, item_name: str, status_label: str, problem: str) -> str:
-    item_name = clean_text(item_name) or HEADING_BY_NUMBER.get(section_id, ("该检测项", 3))[0]
+    item_name = clean_text(item_name) or heading_by_number().get(section_id, ("该检测项", 3))[0]
     status = clean_text(status_label)
     detail = strip_status_tail(problem)
     detail = detail or "本次上传资料未提供可直接引用的定量描述"

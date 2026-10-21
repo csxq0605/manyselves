@@ -508,9 +508,9 @@ def test_bound_module_runtime_owns_the_review_and_recheck_tools(tmp_path: Path) 
     )
     implementations = runtime._tool_implementations(ReportingStore(tmp_path))
 
-    assert implementations["prepare-current-module-review"] == module_runtime.prepare_review_lane
-    assert implementations["prepare-current-module-recheck"] == module_runtime.prepare_recheck_lane
+    assert implementations["prepare-current-module-review"].__wrapped__ == module_runtime.prepare_review_lane
+    assert implementations["prepare-current-module-recheck"].__wrapped__ == module_runtime.prepare_recheck_lane
     assert (
-        implementations["list-current-module-review-batches"]
+        implementations["list-current-module-review-batches"].__wrapped__
         == module_runtime.list_review_batches
     )

@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
+from manyselves.capabilities.distribution_reporting.runtime.run_taxonomy import (
+    bind_run_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
@@ -366,7 +369,7 @@ def build_aggregate_existing_tool_implementations(
             store=tools.store,
         )
     )
-    return implementations
+    return bind_run_taxonomy(implementations, workspace)
 
 
 def project_aggregate_existing_handoff(value: Any) -> AggregateExistingHandoff:
