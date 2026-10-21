@@ -457,7 +457,7 @@ def chief_findings(
             "每个评估维度写一行。",
         )
     for field, text in (texts or {}).items():
-        if _TABLE_RULE.search(text):
+        if field in GENERATED_TABLE_FIELDS and has_markdown_table(text):
             findings[field] = _finding(
                 "文字字段里画了表格；本章的表格由程序按结构化字段生成",
                 "删去文字里的表格，只留文字；表里的内容放进对应的结构化字段。",
@@ -465,7 +465,19 @@ def chief_findings(
     return findings
 
 
-_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", re.M)
+# Text fields placed right before tables the program builds from structured
+# rows; a table written in them would be a second, unchecked copy.
+GENERATED_TABLE_FIELDS = frozenset({"overall_assessment", "action_lead"})
+
+
+def has_markdown_table(text: str) -> bool:
+    """Two consecutive lines the renderer would draw as table rows."""
+
+    rows = [
+        line.strip().startswith("|") and line.count("|") >= 2
+        for line in text.splitlines()
+    ]
+    return any(a and b for a, b in zip(rows, rows[1:]))
 
 
 _NUMBER_WITH_UNIT = re.compile(
@@ -637,6 +649,7 @@ __all__ = [
     "apply_revisions",
     "chief_findings",
     "findings_overview_markdown",
+    "has_markdown_table",
     "known_values_from_text",
     "ledger_findings",
     "ledger_judgments",

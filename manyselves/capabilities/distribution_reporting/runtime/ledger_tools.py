@@ -657,15 +657,35 @@ class LedgerTools:
                     for row in all_rows
                     if row.id in cited
                 ],
-                "program_findings": report_check_findings(
-                    sections=chief_texts,
-                    rows_by_submodule={},
-                    known_values=[*known, *((count, "个") for count in counts)],
-                    subject_values=reference.get("subject_values"),
+                "program_findings": self._chief_text_findings(
+                    report_check_findings(
+                        sections=chief_texts,
+                        rows_by_submodule={},
+                        known_values=[*known, *((count, "个") for count in counts)],
+                        subject_values=reference.get("subject_values"),
+                    ),
+                    chief_texts,
                 ),
             }
         )
         return {"edit_items": items}
+
+    @staticmethod
+    def _chief_text_findings(
+        findings: dict[str, dict[str, Any]], chief_texts: Mapping[str, str]
+    ) -> dict[str, dict[str, Any]]:
+        """Add, per section, the check that no generated table is written again."""
+
+        fields = {CHIEF_SECTIONS[section_id]: section_id for section_id in chief_texts}
+        tables = chief_findings(
+            actions=[], health=[], risks=[], rows_by_module={},
+            texts={field: chief_texts[section_id] for field, section_id in fields.items()},
+        )
+        merged = dict(findings)
+        for field, finding in tables.items():
+            section_id = fields[field]
+            merged[section_id] = _combined(merged.get(section_id), finding)
+        return merged
 
     def close_edit(self, value: dict[str, Any]) -> dict[str, Any]:
         item = value["item"]

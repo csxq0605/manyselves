@@ -164,3 +164,24 @@ def test_gap_measure_is_written_once_and_chief_text_holds_no_table() -> None:
         actions=[], health=[], risks=[], rows_by_module={},
         texts={"overall_assessment": "总体良好，A｜B 两路供电。"},
     ) == {}
+
+
+def test_only_text_before_generated_tables_may_not_hold_a_table() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        chief_findings,
+    )
+
+    table = "| 区域 | 结论 |\n| 1#楼 | 良 |"  # no separator row: still drawn as a table
+    findings = chief_findings(
+        actions=[], health=[], risks=[], rows_by_module={},
+        texts={"overall_assessment": "总体良好。\n" + table, "regional_executive_summary": table},
+    )
+    assert set(findings) == {"overall_assessment"}
+
+
+def test_the_edit_pass_finds_a_table_written_into_the_overview_text() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
+
+    texts = {"1.1": "背景。", "1.2": "总体良好。\n| 维度 | 状态 |\n| --- | --- |", "1.3": "摘要。", "3.1": "风险。"}
+    findings = LedgerTools._chief_text_findings({}, texts)
+    assert set(findings) == {"1.2"} and findings["1.2"]["severity"] == "blocking"

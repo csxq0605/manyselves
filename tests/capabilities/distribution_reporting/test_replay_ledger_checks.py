@@ -84,3 +84,44 @@ def test_a_copied_project_gets_its_verified_inputs_rebound(tmp_path: Path) -> No
     assert resolved.is_relative_to(copy.resolve())
     # The source project's record is untouched and still valid.
     assert store.resolve_trusted_handle(store.load_trusted_handle(handle.manifest_ref))
+
+
+def test_summary_rows_are_found_after_preparation_renumbered_them(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    from manyselves.capabilities.distribution_reporting.runtime.mappers import map_s4_6
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        EvidenceItem,
+    )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "结论建议汇总表"
+    sheet.append([])
+    sheet.append([None, "带病运行问题", "16号楼变压器异响震动", "可能停电", "安排检修"])
+    (tmp_path / "Inputs").mkdir()
+    workbook.save(tmp_path / "Inputs/S4-6.xlsx")
+    (mapped,) = map_s4_6(tmp_path / "Inputs/S4-6.xlsx", file_id="s4-6").evidence_items
+    assert mapped.summary_entry
+    # Preparation renumbers facts, may append to the fact, and drops nothing else.
+    prepared = mapped.model_copy(
+        update={"id": "E-0007", "summary_entry": False, "fact": mapped.fact + "；附注"}
+    )
+    other = EvidenceItem.model_validate(
+        {"id": "E-0001", "subject": "1#柜", "fact": "温度=35℃",
+         "source": {"file_id": "s4-4", "path": "Inputs/S4-4.xlsx", "sheet": "红外", "cell": "C3"}}
+    )
+    run_dir = tmp_path / "Work/runs/run-1"
+    (run_dir / "preparation").mkdir(parents=True)
+    (run_dir / "preparation/manifest.json").write_text(json.dumps({"files": [
+        {"id": "s4-6", "path": "Inputs/S4-6.xlsx", "sha256": "x",
+         "media_type": "application/vnd.ms-excel", "purpose": "s4-6"},
+    ]}), encoding="utf-8")
+    (run_dir / "preparation/evidence.jsonl").write_text(
+        other.model_dump_json() + "\n" + prepared.model_dump_json() + "\n", encoding="utf-8"
+    )
+
+    counts, items = _replay_module()._remark_summary_rows(tmp_path, run_dir)
+
+    assert counts == {"summary_files": 1, "mapped": 1, "marked": 1}
+    assert [item.summary_entry for item in items] == [False, True]

@@ -127,19 +127,37 @@ def _refresh_evidence_sources(workspace: Path, run_id: str, items: list[Evidence
     return count
 
 
-def _remark_summary_rows(workspace: Path, run_dir: Path) -> tuple[int, list[EvidenceItem]]:
+def _fact_key(item: EvidenceItem) -> tuple:
+    # The fact text is left out: preparation may append a note to it.
+    return (item.source.file_id, item.source.sheet, item.source.cell, item.submodule_id)
+
+
+def _remark_summary_rows(
+    workspace: Path, run_dir: Path
+) -> tuple[dict[str, int], list[EvidenceItem]]:
     """Mark summary-sheet rows by re-running the summary-sheet mapper on its input."""
 
-    manifest_path = run_dir / "preparation/manifest.json"
-    manifest = _load(manifest_path) if manifest_path.is_file() else {}
+    manifest_path = next(
+        (
+            path
+            for path in (run_dir / "preparation/manifest.json", workspace / "Work/manifest.json")
+            if path.is_file()
+        ),
+        None,
+    )
+    manifest = _load(manifest_path) if manifest_path else {}
     files = manifest.get("files") or manifest.get("manifest_files") or []
-    summary_ids: set[str] = set()
+    # Preparation renumbers facts (E-0001…), so a mapped row is matched to
+    # its prepared fact by where it came from and what it says.
+    summary_keys: set[tuple] = set()
+    summary_files = 0
     for entry in files:
         if entry.get("purpose") != "s4-6":
             continue
+        summary_files += 1
         source = workspace / (entry.get("snapshot_ref") or entry["path"])
         mapped = map_s4_6(source, file_id=entry["id"])
-        summary_ids.update(item.id for item in mapped.evidence_items if item.summary_entry)
+        summary_keys.update(_fact_key(item) for item in mapped.evidence_items if item.summary_entry)
     path = run_dir / "preparation/evidence.jsonl"
     items = [
         EvidenceItem.model_validate_json(line)
@@ -147,12 +165,18 @@ def _remark_summary_rows(workspace: Path, run_dir: Path) -> tuple[int, list[Evid
         if line.strip()
     ]
     items = [
-        item.model_copy(update={"summary_entry": item.id in summary_ids}) for item in items
+        item.model_copy(update={"summary_entry": _fact_key(item) in summary_keys})
+        for item in items
     ]
     path.write_text(
         "".join(item.model_dump_json() + "\n" for item in items), encoding="utf-8"
     )
-    return len(summary_ids & {item.id for item in items}), items
+    marked = sum(item.summary_entry for item in items)
+    if summary_keys and not marked:
+        raise ValueError(
+            f"{len(summary_keys)} summary-sheet rows were mapped but none matched a prepared fact"
+        )
+    return {"summary_files": summary_files, "mapped": len(summary_keys), "marked": marked}, items
 
 
 def _recompare_photos(
@@ -415,7 +439,11 @@ def replay(project: Path, run_id: str, output: Path, knowledge_root: Path | None
 
 def _print(summary: dict) -> None:
     photos = summary["photo_comparison"]
-    print(f"run {summary['run_id']}；汇总表条目已标记 {summary['summary_rows_marked']} 条")
+    rows = summary["summary_rows_marked"]
+    print(
+        f"run {summary['run_id']}；评估总表文件 {rows['summary_files']} 个，"
+        f"映射出汇总条目 {rows['mapped']} 条，标记 {rows['marked']} 条"
+    )
     print(f"读图比对：{photos.get('before')} → {photos.get('after')}")
     for line in photos.get("changed", []):
         print("  ", line)
