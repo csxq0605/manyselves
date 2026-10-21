@@ -241,7 +241,7 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     from scripts.maintenance.precheck_template_skills import precheck
 
     report = precheck(tmp_path, accepted["run_id"], None)
-    assert "## author-2.1" in report and "只因场地词被拒的条目" in report
+    assert "## author-2.1" in report and "只因实例词被拒的条目" in report
     assert "判断方法：" in candidate and "写法：" in candidate
     comparison = (tmp_path / result["compare_ref"]).read_text(encoding="utf-8")
     assert "## author-2.1" in comparison and "| 结果 | 现用版条目 |" in comparison

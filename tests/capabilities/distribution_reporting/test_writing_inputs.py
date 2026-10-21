@@ -105,14 +105,17 @@ def test_row_text_is_checked_for_workflow_words_and_missing_knowledge_units() ->
     leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "该冲突提交联合审查"})
     bare = _row("J-2.1-2", "undetermined")
     fine = _row("J-2.1-3", "no_concern")
+    only_id = _row("J-2.1-4", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "按 R-001 判断"})
     findings = ledger_findings(
-        JudgmentSet(module_id="2.1", rows=[leaky, bare, fine]),
+        JudgmentSet(module_id="2.1", rows=[leaky, bare, fine, only_id]),
         submodule_ids=["2.1.1"], module_evidence_ids=["E-1"], known_evidence_ids=["E-1"],
         known_photo_ids=[],
     )
     assert "联合审查" in findings["J-2.1-1"]["problem"] and findings["J-2.1-1"]["severity"] == "blocking"
     assert findings["J-2.1-2"]["severity"] == "minor" and "KU" in findings["J-2.1-2"]["problem"]
     assert "J-2.1-3" not in findings
+    # An id alone is minor; workflow words hold up the revision.
+    assert findings["J-2.1-4"]["severity"] == "minor" and "R-001" in findings["J-2.1-4"]["problem"]
 
 
 def test_a_revision_is_checked_once_more_by_the_program(tmp_path) -> None:

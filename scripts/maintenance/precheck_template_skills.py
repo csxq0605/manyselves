@@ -35,13 +35,11 @@ from manyselves.runtime.exemplar.extraction import (
     accept_submission,
     instance_terms,
     role_scope,
-    site_words,
 )
 from manyselves.runtime.exemplar.outline import document_outline
 
 KINDS = (
     ("专家版项目的实际", "实例词"),
-    ("场地划分", "场地词"),
     ("数值或编号", "数值"),
     ("强制词", "强制词"),
     ("单位名称", "单位名称"),
@@ -73,7 +71,7 @@ def precheck(workspace: Path, run_id: str, knowledge: Path | None) -> str:
         for rejection in result.rejected:
             found = {_kind(reason) for reason in rejection.reasons}
             kinds.update(found)
-            if found == {"场地词"}:
+            if found == {"实例词"}:
                 site_only.append(f"- {role.id} {rejection.entry.locator}：{rejection.entry.text}")
         totals.update(kinds)
         folded = ", ".join(scope.folded) or "无"
@@ -86,14 +84,14 @@ def precheck(workspace: Path, run_id: str, knowledge: Path | None) -> str:
                 f"{s.number}→{scope.target(s).number}" for s in scope.sections
                 if scope.target(s).number != s.number
             ),
-            f"- 实例词 {len(instance_terms(outline, scope, policy))} 个，场地词：" + "、".join(site_words(scope, policy)),
+            "- 实例词：" + ("、".join(instance_terms(outline, scope)) or "无"),
             "",
         ]
         for rejection in result.rejected[:5]:
             lines.append(f"  - {rejection.entry.text} —— " + "；".join(rejection.reasons))
         lines.append("")
     lines += ["## 合计", "- " + ("、".join(f"{k} {n}" for k, n in totals.most_common()) or "无拒收"), ""]
-    lines += ["## 只因场地词被拒的条目（逐条看是否误伤）", *(site_only or ["- 无"]), ""]
+    lines += ["## 只因实例词被拒的条目（逐条看是否误伤）", *(site_only or ["- 无"]), ""]
     if knowledge is not None:
         texts = [p.read_text(encoding="utf-8-sig") for p in sorted(knowledge.rglob("*.md"))]
         units = knowledge_units(texts)

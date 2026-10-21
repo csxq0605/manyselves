@@ -214,6 +214,9 @@ def _answer(message):
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-judgments":
+        if not value["findings"]:
+            # Only other modules' flagged rows to weigh; none bears on this row.
+            return ("submit", [{"rows": []}])
         assert set(value["findings"]) == {"J-2.4-1"}
         row = _row("2.4", REPORT_MODULE_IDS.index("2.4") + 1)
         row["basis"] = "记录显示温度偏高，需要复测。"
@@ -424,7 +427,12 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         assert loop.restored[0][0].content == shared.received[0].content
     # 2.4 revised only in its own conversation; 2.1 revised its text there too.
     assert "revise-judgments" in tasks_of(authors["2.4"])
-    assert "revise-judgments" not in tasks_of(authors["2.1"])
+    # Every author weighs what other modules flagged (the concern of 2.4, the data gap of 2.5).
+    revise_21 = next(
+        _input_of(m.content) for m in authors["2.1"].received if _task(m.content) == "revise-judgments"
+    )
+    assert not revise_21["findings"]
+    assert sorted(line.split()[0] for line in revise_21["flagged_elsewhere"]) == ["J-2.4-1", "J-2.5-1"]
     assert "revise-sections" in tasks_of(authors["2.1"])
     assert "revise-sections" not in tasks_of(authors["2.4"])
     # Prose is written once per section, after judgment, in the author's conversation.

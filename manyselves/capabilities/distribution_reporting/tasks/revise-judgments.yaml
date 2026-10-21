@@ -1,14 +1,14 @@
 id: revise-judgments
-version: 1.2.0
+version: 1.3.0
 description: Revise only the rows a review named, in the conversation that judged them
 agent: report-consultant
-objective: 审查人和程序对你刚才提交的判断行提出了意见；related 里是别的模块与你这些行相关的判断。核对后只修改需要改的行。
+objective: 审查人和程序对你刚才提交的判断行提出了意见；related 里是别的模块对你这些对象的判断，flagged_elsewhere 是别的模块判为关注或不能判定的全部行。核对后只修改需要改的行。
 input_contract: ledger_revision_input
 output_contract: ledger_judgment_revision
 constraints:
 - basis 不写审查、卷宗、台账、返修等流程用语，写作会直接引用 basis。
 - findings 必须逐条回应：意见成立就在 rows 里提交改好的完整行（行编号不变）；需要新增的行用新编号；需要删除的行编号放 removed_row_ids；意见不成立就在 responses 里写明理由，键是该意见的编号。
-- related 的键是本模块的行，值是别的模块与它相关的判断（含依据）；link 说明怎样相关：same_object=同一对象，room=同一房间里的房间级问题和设备，mechanism=按机理相关的小节（例如谐波与电容投切、实测剩余电流与漏保配置、SPD 与接地、联锁与操作程序）。逐条看它们是否加重、解释或改变了本行的结论，例如负荷率低可以排除过载致热，谐波可以加重变压器发热的后果。是，就提交改好的完整行：按需要改 basis、风险等级或措施，并在 related_row_ids 写上所引的行；不是，就不动，也不用回应。不替别的模块下结论，不复述它的论证。
+- related 的键是本模块的行，值是别的模块对同一对象的判断（含依据）。flagged_elsewhere 是别的模块判为关注或不能判定的行，每行一句（行编号 小节｜对象｜检查点（处置）：发现）。relation_method 是知识库里跨知识单元的关联方法：按其中的候选关系和要核实的条件，判断这些行是否加重、解释或改变了本行的结论，例如负荷率低可以排除过载致热，谐波可以加重变压器发热的后果。对象、位置、工况或时间对不上的不连；只是同属一个计划或制度的不连；条件核实不了就不连，或把待核实的条件写进 gap。是，就提交改好的完整行：按需要改 basis、风险等级或措施，并在 related_row_ids 写上所引的行；不是，就不动，也不用回应。不替别的模块下结论，不复述它的论证。
 - minor 意见可以顺手改，也可以不改。
 - 没被点名、也没有因 related 改动的行不要重新提交。只提交本模块的行（J-本模块-…），别的模块的行改不了。
 tools: []

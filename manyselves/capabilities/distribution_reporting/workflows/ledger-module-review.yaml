@@ -1,6 +1,6 @@
 id: ledger-module-review
-version: 1.1.0
-description: Review one module's rows on the ledger; the author revises the named rows and weighs other modules' judgments on the same objects
+version: 1.2.0
+description: Review one module's rows on the ledger; the author revises the named rows and weighs other modules' flagged rows
 tasks:
 - review-judgments
 - revise-judgments

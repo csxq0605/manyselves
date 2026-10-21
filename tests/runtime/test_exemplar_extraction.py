@@ -314,23 +314,21 @@ def _sites_exemplar(path: Path) -> Path:
     return path
 
 
-SITE_POLICY = ExemplarPolicy(site_suffixes=["园区"], instance_columns=["位置"])
+PLAIN = ExemplarPolicy(organisation_suffixes=["有限公司"])
 TARGETS = [Target("1", "巡查结果"), Target("1.1", "修剪情况"), Target("1.2", "浇水与灌溉情况")]
+ROLE = {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
 
 
 def test_sections_are_aligned_to_our_titles_and_unknown_ones_fold(tmp_path: Path) -> None:
     outline = document_outline(_sites_exemplar(tmp_path / "e.docx"))
-    role = ExemplarRole.model_validate(
-        {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
-    )
-    scope = role_scope(outline, role, TARGETS)
+    scope = role_scope(outline, ExemplarRole.model_validate(ROLE), TARGETS)
     # Matched by title, not by the exemplar's position.
     assert scope.target(outline.section("1.1")).heading == "1.2 浇水与灌溉情况"
     assert scope.target(outline.section("1.2")).heading == "1.1 修剪情况"
     # The exemplar's own place has no counterpart: it folds into its parent.
     assert scope.target(outline.section("1.1.1")).heading == "1.2 浇水与灌溉情况"
     assert scope.folded == ("1.1.1",)
-    packet = role_packet(outline, scope, SITE_POLICY)
+    packet = role_packet(outline, scope, PLAIN)
     assert packet["sections"][1]["product_section"] == "1.2 浇水与灌溉情况"
 
     entries = ExemplarSubmission.model_validate(
@@ -341,46 +339,65 @@ def test_sections_are_aligned_to_our_titles_and_unknown_ones_fold(tmp_path: Path
              "locator": _locator(outline, "1.2", "分批修剪"), "quote": "建议：分批修剪"},
         ]}
     ).entries
-    text = render_role_skill(outline, scope, entries, source="示例", policy=SITE_POLICY)
+    text = render_role_skill(outline, scope, entries, source="示例", policy=PLAIN)
     # One heading per product section; the exemplar's numbering is gone.
     assert text.count("## 1.2 浇水与灌溉情况") == 1 and "## 1.1.1" not in text
     assert text.index("## 1.2 浇水") < text.index("## 1.1 修剪情况")  # exemplar order kept
-    # Structure shows the labels reused across sections, never one section's own subheading.
-    assert "分段标签：现状描述 → 建议" in text
-    assert "喷头堵塞较多" not in text and "另有 1 个分项小标题" in text
+    # A generic subheading stays in the structure line.
+    assert "喷头堵塞较多" in text
 
 
-def test_the_exemplars_own_places_and_objects_are_refused(tmp_path: Path) -> None:
-    outline = document_outline(_sites_exemplar(tmp_path / "e.docx"))
-    role = ExemplarRole.model_validate(
-        {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
-    )
-    scope = role_scope(outline, role, TARGETS)
-    terms = instance_terms(outline, scope, SITE_POLICY)
-    assert {"东湖园区", "西山园区", "北坡花坛"} <= set(terms)
-    lead = _locator(outline, "1.1", "喷头均已检查")
+def _site_report(path: Path, *, topic: str, place: str, other: str, finding: str) -> Path:
+    """One exemplar shape; the subject, the places and the finding vary."""
+
+    document = Document()
+    document.add_heading("巡查结果", level=1)
+    document.add_heading(f"{topic}情况", level=2)
+    document.add_paragraph(f"现状描述：{place}与{other}的{topic}设施均已检查。")
+    document.add_paragraph(f"{finding}：{other}最明显，共7处。")
+    document.add_paragraph(f"建议：逐个区域说明{topic}设施状态。")
+    document.add_heading(place, level=3)  # one place of the exemplar, no counterpart
+    document.add_paragraph(f"现状描述：{place}{topic}设施完好。")
+    document.save(str(path))
+    return path
+
+
+VARIANTS = [
+    {"topic": "灌溉", "place": "东湖园区", "other": "西山园区", "finding": "喷头堵塞较多"},
+    {"topic": "照明", "place": "门诊楼", "other": "住院部", "finding": "门诊楼灯具损坏"},
+]
+
+
+@pytest.mark.parametrize("variant", VARIANTS, ids=["park", "hospital"])
+def test_only_the_exemplars_own_facts_are_refused_never_ordinary_words(
+    tmp_path: Path, variant: dict[str, str]
+) -> None:
+    outline = document_outline(_site_report(tmp_path / "e.docx", **variant))
+    targets = [Target("1", "巡查结果"), Target("1.1", f"{variant['topic']}情况")]
+    scope = role_scope(outline, ExemplarRole.model_validate(ROLE), targets)
+    # Derived from this exemplar's structure alone, with no word list.
+    assert set(instance_terms(outline, scope)) == {variant["place"]}
+    lead = _locator(outline, "1.1", "均已检查")
+    entries = [
+        f"先写{variant['place']}，再写其他地方。",          # the exemplar's own place
+        "抽查发现7处问题时逐处写出。",                     # its number
+        "逐个园区、楼宇或区域说明设施状态。",              # ordinary words
+        "同类问题合并成一句说明。",
+    ]
     submission = ExemplarSubmission.model_validate(
         {"entries": [
-            {"use": "method", "text": "先写西山园区，再写其他地方。", "applies_when": "未明确",
-             "locator": lead, "quote": "喷头均已检查"},
-            {"use": "example", "text": "〈位置〉北坡花坛喷头〈问题〉。", "applies_when": "未明确",
-             "locator": lead, "quote": "喷头均已检查"},
-            {"use": "method", "text": "逐个园区说明喷头状态。", "applies_when": "未明确",
-             "locator": lead, "quote": "喷头均已检查"},
-            {"use": "method", "text": "按区域说明喷头状态，再给建议。", "applies_when": "未明确",
-             "locator": lead, "quote": "喷头均已检查"},
-            {"use": "example", "text": "〈园区〉喷头〈问题〉。", "applies_when": "未明确",
-             "locator": lead, "quote": "喷头均已检查"},
-            {"use": "method", "text": "同类问题合并成一句说明。", "applies_when": "有多个园区时",
-             "locator": lead, "quote": "喷头均已检查"},
+            {"use": "method", "text": text, "applies_when": "有多个厂区时", "locator": lead, "quote": "设施均已检查"}
+            for text in entries
         ]}
     )
-    result = accept_submission(outline, scope, submission, SITE_POLICY)
+    result = accept_submission(outline, scope, submission, PLAIN)
     reasons = {r.index: " ".join(r.reasons) for r in result.rejected}
-    assert "西山园区（专家版项目的地点）" in reasons[0]
-    assert "北坡花坛（专家版表格里的位置或对象）" in reasons[1]
-    assert "场地划分" in reasons[2]
-    # Our own word, a placeholder and a site word only in the condition are fine.
-    assert [e.text for e in result.accepted] == [
-        "按区域说明喷头状态，再给建议。", "〈园区〉喷头〈问题〉。", "同类问题合并成一句说明。"
-    ]
+    assert f"{variant['place']}（专家版独有的小节标题）" in reasons[0]
+    assert "7" in reasons[1]
+    assert [e.text for e in result.accepted] == entries[2:]
+    # A subheading naming the exemplar's own place is counted, not shown; a generic one is shown.
+    text = render_role_skill(outline, scope, result.accepted, source="示例", policy=PLAIN)
+    if variant["place"] in variant["finding"]:
+        assert variant["finding"] not in text and "带专家版项目的实际" in text
+    else:
+        assert variant["finding"] in text

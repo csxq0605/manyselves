@@ -12,12 +12,6 @@ policy:
   mandatory_words: [必须, 一律, 务必, 立即, 均须, 均应, 一定要, 不允许]
   # An organisation name in the template is two to four characters before one of these.
   organisation_suffixes: [有限公司, 股份公司, 集团, 公司]
-  # The expert report's own places are named by these suffixes; such names are
-  # refused, and so is the suffix word itself (our own grouping is 区域, whose
-  # expert instances are section titles we fold away).
-  site_suffixes: [工厂, 厂区, 园区, 基地, 车间]
-  # Table columns whose values are the expert report's own places or objects.
-  instance_columns: [位置, 区域, 厂区, 地点, 场所, 车间, 配电室]
   # What the product does not produce; an entry that mentions it is refused.
   unavailable:
     附件: 报告不带附件，不能让读者去看附件

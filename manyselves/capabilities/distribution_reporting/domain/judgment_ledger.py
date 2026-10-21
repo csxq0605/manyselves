@@ -83,7 +83,7 @@ class JudgmentRow(_Model):
     photo_ids: list[str] = Field(default_factory=list)
     related_row_ids: list[str] = Field(
         default_factory=list,
-        description="别的模块与本行相关的判断行（同一对象、同一房间或机理相关）中，加重、解释或改变了本行结论的那些行（J-...）",
+        description="别的模块的判断行中，加重、解释或改变了本行结论的那些行（J-...）",
     )
 
     @model_validator(mode="after")
@@ -172,12 +172,20 @@ def ledger_findings(
             texts += [row.gap.missing, row.gap.impact, row.gap.requested_input]
         # Row text goes into the prose and the problem table as written.
         leaked = list(dict.fromkeys(term for text in texts for term in process_terms(text)))
-        if leaked:
+        words = [term for term in leaked if term in PROCESS_TERMS]
+        if words:
             problems.append("判断行文字里有内部流程用语或编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表")
         if problems:
             findings[row.id] = _finding(
                 "；".join(problems),
                 "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号。判断本身不变。",
+            )
+        elif leaked:
+            # An id alone is easy to drop in writing; it does not hold up a revision.
+            findings[row.id] = _finding(
+                "判断行文字里有内部编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表",
+                "删去这些编号。判断本身不变。",
+                severity="minor",
             )
         elif row.disposition in {"concern", "undetermined"} and not any(
             _UNIT_REF.search(ref) for ref in row.rule_refs

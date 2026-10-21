@@ -15,17 +15,16 @@ entries that:
   belong to the task contract, not to a method);
 - in a use with placeholders, put every exemplar fact in placeholders;
 - mention none of the features the capability declares unavailable;
-- carry none of the exemplar's own instances: places named with a declared
-  site suffix, values of the declared place columns of its tables, and the
-  titles of its sections that the product has no section for.
+- carry none of the exemplar's own instances, taken from its structure: the
+  titles of its sections that the product has no section for.  Ordinary
+  words are never refused; only the exemplar's facts are.
 
 When the capability passes its own section headings (``targets``), every
 exemplar section is aligned to the product section with the most similar
 title under the same parent; a section with no counterpart folds into its
 parent.  The Skill is then headed by the product's sections, not by the
-exemplar's numbering.  Structure lines show the shape of a section and only
-the labels the exemplar reuses across sections, never one section's own
-subheadings.
+exemplar's numbering.  Structure lines show the shape of a section; a label
+carrying one of the exemplar's facts is only counted.
 
 Every section of the role that has content is either cited or skipped with a
 reason, and every use the role requires has at least one entry.  The accepted
@@ -101,17 +100,6 @@ class ExemplarPolicy(_Model):
         default_factory=dict,
         description="Words naming what the product does not produce, with the reason",
     )
-    site_suffixes: list[str] = Field(
-        default_factory=list,
-        description="Suffixes of the exemplar's own place names (two to four characters before "
-        "one); the suffix word itself is refused too unless a product section title uses it",
-    )
-    instance_columns: list[str] = Field(
-        default_factory=list,
-        description="Words in a table header naming a column of the exemplar's own places or "
-        "objects; the values of such columns are refused",
-    )
-
     def use(self, use_id: str) -> ExemplarUse | None:
         return next((use for use in self.uses if use.id == use_id), None)
 
@@ -257,59 +245,17 @@ def role_scope(
     )
 
 
-def _suffixed_names(texts: Iterable[str], suffixes: Sequence[str]) -> set[str]:
-    """Names of two to four characters before a suffix, with their shorter tails."""
-
-    names: set[str] = set()
-    for suffix in suffixes:
-        pattern = re.compile(r"([一-鿿A-Za-z]{2,4})" + re.escape(suffix))
-        for text in texts:
-            for match in pattern.finditer(_normal(text)):
-                lead = match.group(1)
-                names.update(lead[start:] + suffix for start in range(len(lead) - 1))
-    return names
-
-
-def _outline_texts(outline: DocumentOutline) -> list[str]:
-    return [*outline.front_matter, *(s.title for s in outline.sections), *(b.text for b in outline.blocks)]
-
-
-def _column_values(outline: DocumentOutline, words: Sequence[str]) -> set[str]:
-    values: set[str] = set()
-    if not words:
-        return values
-    for block in outline.blocks:
-        if block.kind != "table" or not block.columns:
-            continue
-        wanted = [i for i, column in enumerate(block.columns) if any(w in column for w in words)]
-        if not wanted:
-            continue
-        for line in block.text.splitlines()[1:]:
-            cells = line.split(" | ")
-            if len(cells) != len(block.columns):
-                continue  # a merged note row
-            values.update(_normal(cells[i]) for i in wanted)
-    return values
-
-
-def instance_terms(
-    outline: DocumentOutline, scope: RoleScope, policy: ExemplarPolicy
-) -> dict[str, str]:
+def instance_terms(outline: DocumentOutline, scope: RoleScope) -> dict[str, str]:
     """The exemplar's own instances an entry may not carry, each with where it came from.
 
-    Gathered from the exemplar alone: place names with a declared site
-    suffix, the values of declared place columns, and the titles of sections
-    with no product counterpart.  A term inside a product section title is
-    the product's own word and is not refused.
+    Taken from the exemplar's structure alone, with no word list: the titles
+    of its sections that have no product counterpart (its own places, objects
+    or topics).  Ordinary words are not refused; numbers, codes and
+    organisation names are checked separately.  A term inside a product
+    section title is the product's own word and is not refused.
     """
 
     terms: dict[str, str] = {}
-    # A suffix our own titles use is our word; its names in the exemplar body are
-    # mostly ordinary phrases, so only foreign suffixes name places.
-    for name in _suffixed_names(_outline_texts(outline), site_words(scope, policy)):
-        terms.setdefault(name, "专家版项目的地点")
-    for value in _column_values(outline, policy.instance_columns):
-        terms.setdefault(value, "专家版表格里的位置或对象")
     for number in scope.folded:
         section = outline.section(number)
         if section is not None:
@@ -319,27 +265,6 @@ def instance_terms(
         term: why for term, why in terms.items()
         if len(term) >= 2 and not _NUMBER.fullmatch(term) and not any(term in title for title in own)
     }
-
-
-def site_words(scope: RoleScope, policy: ExemplarPolicy) -> list[str]:
-    """Site suffix words the product never uses in its own section titles."""
-
-    own = "".join(scope.product_titles)
-    return [word for word in policy.site_suffixes if word not in own]
-
-
-def structural_labels(outline: DocumentOutline) -> set[str]:
-    """Labels the exemplar uses under two or more parents: its shape, not one topic's content.
-
-    A finding's subheading can repeat in sibling sections of one topic; a
-    label of the document's shape recurs across topics.
-    """
-
-    seen: dict[str, set[str]] = {}
-    for section in outline.sections:
-        for label in section.labels:
-            seen.setdefault(label, set()).add(_parent_number(section.number))
-    return {label for label, parents in seen.items() if len(parents) >= 2}
 
 
 def role_packet(
@@ -401,14 +326,15 @@ def structure_line(
     *,
     policy: ExemplarPolicy | None = None,
     generated: str = "",
+    hidden: Iterable[str] = (),
 ) -> str:
     """The program-counted shape of one section, in words.
 
     With a ``policy`` (for a published Skill) row counts are left out, a
     table's columns are shown only when they carry no number and no
     organisation name, since a first row can hold the exemplar's own facts,
-    and only the labels the exemplar reuses across sections are named; one
-    section's own subheadings are its findings, so only their count is shown.
+    and a label carrying a number, an organisation name or one of ``hidden``
+    (the exemplar's own instances) is only counted.
     When the product draws the section's tables itself (``generated``), the
     exemplar's tables are named but their columns are not shown.
     """
@@ -418,17 +344,16 @@ def structure_line(
     if labels and policy is None:
         parts.append("分段小标题：" + " → ".join(labels))
     elif labels:
-        shape = structural_labels(outline)
-        hidden = set(_suffixed_names(labels, policy.site_suffixes)) | set(policy.site_suffixes)
+        own = {*organisation_names(outline, policy.organisation_suffixes), *hidden}
         shown = [
             label for label in labels
-            if label in shape and not any(word in label for word in hidden)
+            if not _NUMBER.search(label) and not any(word in _normal(label) for word in own)
         ]
         others = len(labels) - len(shown)
         if shown:
             parts.append("分段标签：" + " → ".join(shown))
         if others:
-            parts.append(f"另有 {others} 个分项小标题（按本项目的发现自拟）")
+            parts.append(f"另有 {others} 个小标题带专家版项目的实际，未列出")
     blocks = [b for b in (outline.block(locator) for locator in section.blocks) if b is not None]
     names = organisation_names(outline, policy.organisation_suffixes) if policy else set()
     tables = [block for block in blocks if block.kind == "table"]
@@ -488,8 +413,7 @@ def accept_submission(
 
     numbers_allowed = outline.section_numbers()
     organisations = organisation_names(outline, policy.organisation_suffixes)
-    instances = instance_terms(outline, scope, policy)
-    framing = site_words(scope, policy)
+    instances = instance_terms(outline, scope)
     in_scope = scope.numbers
     allowed_uses = {use.id: use for use in policy.role_uses(scope.role)}
     result = Acceptance()
@@ -543,13 +467,6 @@ def accept_submission(
                 + "、".join(f"{term}（{instances[term]}）" for term in found)
                 + "；改成通用说法"
                 + ("，或换成" + policy.placeholder_open + policy.placeholder_close + "占位" if use and use.placeholders else "")
-            )
-        # A site word only in the condition describes when to use the method, not the method.
-        body = _strip_placeholders(entry.text, policy) if use is not None and use.placeholders else entry.text
-        words = [word for word in framing if word in _normal(body)]
-        if words:
-            reasons.append(
-                "按专家版项目的场地划分来写（" + "、".join(words) + "）；本产品的小节标题不用这个词，改成通用说法"
             )
         for word, why in policy.unavailable.items():
             if word in entry.text or word in entry.applies_when:
@@ -637,6 +554,7 @@ def render_role_skill(
         if block is not None and block.section is not None:
             by_section.setdefault(block.section, []).append(entry)
     reasons = {skip.section: skip.reason for skip in skipped}
+    instances = instance_terms(outline, scope)
     role = scope.role
     uses = policy.role_uses(role)
     lines = [
@@ -672,6 +590,7 @@ def render_role_skill(
                     text := structure_line(
                         outline, section, policy=policy,
                         generated=scope.generated.get(section.number, ""),
+                        hidden=instances,
                     )
                 )
             )

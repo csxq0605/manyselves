@@ -110,14 +110,29 @@ def test_the_author_revises_when_other_modules_judged_its_objects(tmp_path: Path
     assert merged["revision_input"]["related"] == related
 
 
-def test_a_row_keeps_only_references_to_other_modules_on_its_object() -> None:
-    dossier = {
-        "dossier_id": "D-001", "subject": "1#变压器", "kind": "complement",
-        "judgments": [_judgment(m, rows[0]) for m, rows in LEDGER.items()],
-    }
+def test_authors_see_what_other_modules_flagged_and_the_relation_method(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.cross_module import flagged_rows
+
+    flagged = flagged_rows(LEDGER)
+    assert {entry["module_id"] for entry in flagged} <= set(LEDGER)
+    tools = LedgerTools(tmp_path)
+    tools.store.write_json(
+        "Work/runs/r/ledger/relation-candidates.json", {"flagged": flagged, "method": "候选关系与核实条件"}
+    )
+    merged = tools.merge_findings(
+        {"item": {"run_id": "r", "module_id": "2.2", "program_findings": {}}, "review": {}}
+    )
+    others = [e for e in flagged if e["module_id"] != "2.2"]
+    assert merged["revise"] is bool(others)
+    lines = merged["revision_input"]["flagged_elsewhere"]
+    assert len(lines) == len(others) and not any(line.startswith("J-2.2-") for line in lines)
+    assert merged["revision_input"]["relation_method"] == "候选关系与核实条件"
+
+
+def test_a_row_keeps_only_references_to_existing_rows_of_other_modules() -> None:
     row = LEDGER["2.2"][0].model_copy(update={"related_row_ids": ["J-2.1-1", "J-2.2-1", "J-2.3-9"]})
     ledger = {**LEDGER, "2.2": [row]}
-    kept, dropped = checked_relations(ledger, see_also_by_row([dossier], ledger))
+    kept, dropped = checked_relations(ledger)
     assert kept["2.2"][0].related_row_ids == ["J-2.1-1"]
     assert dropped == {"J-2.2-1": ["J-2.2-1", "J-2.3-9"]}
     (entry,) = related_rows(kept["2.2"], kept)
@@ -164,33 +179,3 @@ def test_cross_findings_cite_two_modules_and_appear_in_the_overview() -> None:
     )["3.1"]["problem"]
     assert "只来自一个模块" in problem and "J-9.9-9" in problem and "没有原样写进" in problem
 
-
-def _placed(row_id: str, submodule: str, disposition: str, evidence: str) -> JudgmentRow:
-    return _row(row_id, submodule, disposition, evidence=evidence)
-
-
-def test_rooms_hold_their_equipment_and_mechanism_pairs_join_across_objects() -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.cross_module import structural_links
-
-    subjects = {
-        "E-1": "文体中心配电房",            # room-level record
-        "E-2": "文体中心配电房/1D1",
-        "E-3": "文体中心配电房/电容柜",
-        "E-4": "文体中心配电房/1#变",
-        "E-5": "科研楼配电房",
-        "E-6": "科研楼配电房/2#变",
-    }
-    ledger = {
-        "2.5": [_placed("J-2.5-1", "2.5.6", "concern", "E-1")],          # no spares in the room
-        "2.2": [_placed("J-2.2-1", "2.2.2.1", "concern", "E-2"),         # 1D1 runs hot
-                _placed("J-2.2-2", "2.2.1.1", "no_concern", "E-4"),      # THDu low on 1#变
-                _placed("J-2.2-3", "2.2.1.1", "no_concern", "E-6")],     # another room
-        "2.1": [_placed("J-2.1-1", "2.1.5", "concern", "E-3")],          # capacitor cabinet off
-    }
-    pairs = [("2.1.5", "2.2.1.1")]
-    links = structural_links(ledger, subjects, pairs)
-    # The room's spares gap reaches the equipment recorded in that room, and back.
-    assert {e["row_id"]: e["link"] for e in links["J-2.5-1"]} == {"J-2.2-1": "room", "J-2.1-1": "room"}
-    # Capacitor and harmonics are paired by mechanism in the same room only.
-    assert {e["row_id"]: e["link"] for e in links["J-2.1-1"]} == {"J-2.5-1": "room", "J-2.2-2": "mechanism"}
-    assert "J-2.2-3" not in links  # other room, and nothing flagged with it
