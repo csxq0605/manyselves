@@ -91,6 +91,13 @@ class JudgmentRow(_Model):
     rule_refs: list[str] = Field(default_factory=list)
     risk_level: RiskLevel | None = None
     hazard: str = ""
+    hazard_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "hazard 里后果的出处：本行所引的事实、计算、照片编号或知识单元 KU 编号；"
+            "没有出处的后果写成“可能……，待核实”"
+        ),
+    )
     action: JudgmentAction | None = None
     gap: JudgmentGap | None = None
     photo_ids: list[str] = Field(default_factory=list)
@@ -117,6 +124,15 @@ class JudgmentRow(_Model):
 class JudgmentSet(_Model):
     module_id: str = Field(min_length=1)
     rows: list[JudgmentRow]
+
+
+class RelationSet(_Model):
+    """One author's cross-module relations, by its own row id."""
+
+    relations: dict[str, list[RowRelation]] = Field(
+        default_factory=dict,
+        description="键是本模块的判断行编号，值是这一行的关联；不连的行不写",
+    )
 
 
 class JudgmentRevision(_Model):
@@ -146,6 +162,7 @@ def ledger_findings(
     known_calculation_ids: Iterable[str] = (),
     evidence_subjects: Mapping[str, str] | None = None,
     cited_values: Mapping[str, Iterable[Sequence[Any]]] | None = None,
+    summary_evidence_ids: Iterable[str] = (),
 ) -> dict[str, dict[str, str]]:
     """Return program findings keyed by row id or by the uncovered fact id.
 
@@ -155,6 +172,9 @@ def ledger_findings(
     -> its values with units), a measured value written in a row's
     checkpoint, basis or hazard must be one of the values of what the row
     cites; counts and ratios are left to the report check.
+    A concern row names the sources of its hazard among what it cites, or
+    marks the hazard as 待核实.  A row resting only on summary-sheet entries
+    (another author's assessment) is not 现场确认.
     """
 
     submodules = set(submodule_ids)
@@ -191,6 +211,14 @@ def ledger_findings(
                 "判断行里的数值不在它所引的事实、计算、照片或知识单元里："
                 + "、".join(stray)
             )
+        problems.extend(_hazard_problems(row))
+        summaries = set(summary_evidence_ids)
+        if (
+            row.evidence_status == "现场确认"
+            and row.evidence_ids
+            and set(row.evidence_ids) <= summaries
+        ):
+            problems.append("所引事实都来自汇总表里的既有评估，证据状态应是“来源作者意见”，不是“现场确认”")
         covered.update(row.evidence_ids)
         texts = [row.checkpoint, row.basis, row.hazard]
         if row.action is not None:
@@ -229,6 +257,30 @@ def ledger_findings(
             "补一行判断（可以是正常、关注、不能判定或不适用），或并入已有的同一对象判断行。",
         )
     return findings
+
+
+UNVERIFIED_MARK = "待核实"
+
+
+def _hazard_problems(row: JudgmentRow) -> list[str]:
+    if row.disposition != "concern":
+        return []
+    cited = {
+        *row.evidence_ids,
+        *row.calculation_ids,
+        *row.photo_ids,
+        *(unit for ref in row.rule_refs for unit in _UNIT_REF.findall(ref)),
+    }
+    stray = [source for source in row.hazard_sources if source not in cited]
+    problems = []
+    if stray:
+        problems.append("hazard 的出处不在本行所引的资料里：" + "、".join(stray) + "；出处先写进本行的引用")
+    if not row.hazard_sources and UNVERIFIED_MARK not in row.hazard:
+        problems.append(
+            "hazard 没有写出处（hazard_sources）；有出处就填所引的事实、计算、照片或 KU 编号，"
+            f"没有出处的后果写成“可能……，{UNVERIFIED_MARK}”"
+        )
+    return problems
 
 
 # Counts and ratios are derived in writing and checked against the report.
@@ -872,8 +924,13 @@ def layout_findings(
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
     elsewhere: Mapping[str, Sequence[str]],
     cited_values: Mapping[str, Iterable[Sequence[Any]]],
+    row_sections: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Minor findings on where the prose points and what it repeats.
+
+    With ``row_sections`` (row id -> its subsection), each relation a row
+    records must show in the prose as a reference to the related row's
+    subsection, so a cross-module link is not lost in writing.
 
     The prose points to a table below although the section has no problem
     table; or a row whose data another section presents (``elsewhere``) has
@@ -905,16 +962,31 @@ def layout_findings(
                     f"{row.object} 的数据由 " + "、".join(elsewhere[row.id])
                     + " 呈现，本节又写了 " + "、".join(repeated)
                 )
+        missing_links = [
+            f"{row.object}↔{(row_sections or {})[relation.row_id]}"
+            for row in rows
+            for relation in row.relations
+            if row_sections and relation.row_id in row_sections
+            and row_sections[relation.row_id] not in text
+        ]
+        if missing_links:
+            problems.append(
+                "判断行记下的跨模块关联没有写进正文（找不到所关联的小节号）："
+                + "、".join(dict.fromkeys(missing_links))
+            )
         if problems:
             findings[section_id] = _finding(
                 "；".join(problems),
-                "没有问题表就删去指向表格的话；数据在别的小节呈现的，只留一个关键值并标“（数据见 2.x.x）”。",
+                "没有问题表就删去指向表格的话；数据在别的小节呈现的，只留一个关键值并标“（数据见 2.x.x）”；"
+                "记下的关联在风险分析里写出来并标“（详见 2.x.x）”。",
                 severity="minor",
             )
     return findings
 
 
 __all__ = [
+    "RelationSet",
+    "UNVERIFIED_MARK",
     "action_content",
     "layout_findings",
     "SpecialTopicAnalysis",

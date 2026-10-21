@@ -188,7 +188,7 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
         row.update(
             disposition="concern",
             risk_level="中",
-            hazard="可能过热。",
+            hazard="可能过热，待核实。",
             action={"measure": "复测温度", "priority": "重要，紧急", "timeframe": "一周内"},
         )
     return row
@@ -204,6 +204,8 @@ def _answer(message):
         module_id = value["module_id"]
         number = REPORT_MODULE_IDS.index(module_id) + 1
         return ("submit", [{"module_id": module_id, "rows": [_row(module_id, number)]}])
+    if task == "relate-judgments":
+        return ("submit", [{"relations": {}}])
     if task == "review-judgments":
         findings = {}
         if value["module_id"] == "2.4":
@@ -214,9 +216,7 @@ def _answer(message):
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-judgments":
-        if not value["findings"]:
-            # Only other modules' flagged rows to weigh; none bears on this row.
-            return ("submit", [{"rows": []}])
+        # Only blocking findings send an author back.
         assert set(value["findings"]) == {"J-2.4-1"}
         row = _row("2.4", REPORT_MODULE_IDS.index("2.4") + 1)
         row["basis"] = "记录显示温度偏高，需要复测。"
@@ -424,14 +424,26 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     for loop in authors.values():
         # Every author starts from the shared project reading.
         assert loop.restored[0][0].content == shared.received[0].content
-    # 2.4 revised only in its own conversation; 2.1 revised its text there too.
+    # 2.4 revised only in its own conversation; 2.1 had nothing blocking.
     assert "revise-judgments" in tasks_of(authors["2.4"])
-    # Every author weighs what other modules flagged (the concern of 2.4, the data gap of 2.5).
-    revise_21 = next(
-        _input_of(m.content) for m in authors["2.1"].received if _task(m.content) == "revise-judgments"
+    assert "revise-judgments" not in tasks_of(authors["2.1"])
+    # Before review, every author weighs what other modules flagged
+    # (the concern of 2.4, the data gap of 2.5) in its own conversation.
+    relate_21 = next(
+        _input_of(m.content) for m in authors["2.1"].received if _task(m.content) == "relate-judgments"
     )
-    assert not revise_21["findings"]
-    assert sorted(line.split()[0] for line in revise_21["flagged_elsewhere"]) == ["J-2.4-1", "J-2.5-1"]
+    assert sorted(line.split()[0] for line in relate_21["flagged_elsewhere"]) == ["J-2.4-1", "J-2.5-1"]
+    assert tasks_of(authors["2.1"]).index("relate-judgments") == 1
+    # Each review starts in a fresh conversation with the rows and what they cite.
+    reviews = [loop for loop in loops if tasks_of(loop) == ["review-judgments"]]
+    assert len(reviews) == len(REPORT_MODULE_IDS)
+    assert all(not loop.restored for loop in reviews)
+    review_24 = next(
+        loop.received[0].content for loop in reviews
+        if _input_of(loop.received[0].content)["module_id"] == "2.4"
+    )
+    assert '<context name="facts">' in review_24 and "E-0004" in review_24
+    assert _input_of(review_24)["rows"][0]["id"] == "J-2.4-1"
     assert "revise-sections" in tasks_of(authors["2.1"])
     assert "revise-sections" not in tasks_of(authors["2.4"])
     # Prose is written once per section, after judgment, in the author's conversation.
@@ -545,14 +557,14 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         value = _input_of(message.content)
         if task == "review-judgments":
             seen.setdefault("dossiers", {})[value["module_id"]] = value["dossiers"]
-        if task == "revise-judgments" and "J-2.2-1" in value.get("related", {}):
+        if task == "relate-judgments" and "J-2.2-1" in value.get("related", {}):
             seen["related"] = value["related"]
-            row = _row("2.2", REPORT_MODULE_IDS.index("2.2") + 1)
-            row.update(relations=[
+            return ("submit", [{"relations": {"J-2.2-1": [
                 {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "2.4 记录的温度偏高与本行同期。"},
                 {"row_id": "J-9.9-9", "relation": "负荷—发热", "reason": "不存在的行。"},
-            ])
-            return ("submit", [{"rows": [row]}])
+            ]}}])
+        if task == "review-judgments" and value["module_id"] == "2.2":
+            seen["review_related"] = value.get("related_rows")
         if task == "write-section" and value.get("related_rows"):
             seen["related_rows"] = value["related_rows"]
         if task in {"chief-chapter-3", "revise-chief-actions"}:
@@ -570,6 +582,8 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
     )
     assert [r["row_id"] for r in final["2.2"][0]["relations"]] == ["J-2.4-1"]
+    # The reviewer of 2.2 sees the related row itself, to check the reason.
+    assert [entry["row"]["id"] for entry in seen["review_related"]] == ["J-2.4-1"]
     assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
     (chain,) = seen["chains"]
     assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}

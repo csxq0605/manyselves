@@ -79,6 +79,7 @@ from .photo_reading import load_photo_readings, photo_reading_labels, reading_la
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
+from .review_packets import ReviewPackets
 from .rule_standards import knowledge_units, section_standards, standards_coverage, unit_bodies
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
@@ -469,6 +470,18 @@ class LedgerTools:
                     subject: sorted(set(pairs)) for subject, pairs in subject_values.items() if pairs
                 },
                 "cited_values": self._cited_values(run_id, items, calculations),
+                # What a review packet shows next to each row.
+                "summary_evidence_ids": [item.id for item in items if item.summary_entry],
+                "column_headers": [
+                    [path, sheet, dict(columns)] for (path, sheet), columns in headers.items()
+                ],
+                "calculation_lines": {
+                    calc.id: render_calculations([calc], []).splitlines()[3]
+                    for calc in calculations
+                },
+                "author_skills": {
+                    module_id: skills.get(f"author-{module_id}", "") for module_id in module_ids
+                },
             },
         )
         return {
@@ -557,6 +570,7 @@ class LedgerTools:
                 known_calculation_ids=reference["calculation_ids"],
                 evidence_subjects=reference.get("evidence_subjects"),
                 cited_values=reference.get("cited_values"),
+                summary_evidence_ids=reference.get("summary_evidence_ids") or (),
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         see_also = see_also_by_row(dossiers, ledger)
@@ -568,6 +582,68 @@ class LedgerTools:
         readings = load_photo_readings(self.workspace, run_id)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r0.json", dumped)
+        del readings
+        return {
+            "run_id": run_id,
+            "ledger": dumped,
+            "snapshot": {"ledger_text": _ledger_text(dumped)},
+            "program_findings": findings,
+            "dossiers": dossiers,
+            # Each author decides its cross-module relations before review.
+            "relate_items": [
+                {
+                    "run_id": run_id,
+                    "module_id": module["module_id"],
+                    "related": {
+                        row.id: others
+                        for row in ledger[module["module_id"]]
+                        if (others := see_also.get(row.id))
+                    },
+                    **self._relation_candidates(run_id, module["module_id"]),
+                }
+                for module in context["modules"]
+            ],
+            "review_items": [],
+        }
+
+    def apply_relations(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Put each author's relations on its rows, then build the review packets.
+
+        Only an author's own existing rows take relations; the program keeps
+        relations to existing rows of other modules under a listed candidate
+        relation and records what it dropped.
+        """
+
+        context = value["context"]
+        built = value["ledger"]
+        run_id = context["run_id"]
+        ledger = {module_id: _rows(rows) for module_id, rows in built["ledger"].items()}
+        for module_id, chosen in (value.get("relations") or {}).items():
+            by_row = dict((_plain(chosen) or {}).get("relations") or {})
+            ledger[module_id] = [
+                row.model_copy(update={"relations": by_row[row.id]})
+                if row.id in by_row
+                else row
+                for row in ledger.get(module_id, [])
+            ]
+        ledger = {
+            module_id: [
+                JudgmentRow.model_validate(row.model_dump(mode="json")) for row in rows
+            ]
+            for module_id, rows in ledger.items()
+        }
+        ledger, dropped = checked_relations(
+            ledger, relation_names(self._relation_method(run_id))
+        )
+        dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
+        self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r1.json", dumped)
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/relations-r1.json", {"dropped_relations": dropped}
+        )
+        reference = self._reference(run_id)
+        readings = load_photo_readings(self.workspace, run_id)
+        elsewhere = self._data_elsewhere(run_id, ledger)
+        packets = ReviewPackets(self, run_id, ledger, reference, elsewhere)
         return {
             "run_id": run_id,
             "ledger": dumped,
@@ -577,21 +653,17 @@ class LedgerTools:
                     "run_id": run_id,
                     "module_id": module["module_id"],
                     "title": module["title"],
-                    "program_findings": findings[module["module_id"]],
+                    "program_findings": built["program_findings"][module["module_id"]],
                     "dossiers": [
                         dossier
-                        for dossier in dossiers
+                        for dossier in built["dossiers"]
                         if dossier["kind"] == "conflict"
                         and module["module_id"] in dossier["module_ids"]
                     ],
                     "photos": photos_to_check(
                         ledger[module["module_id"]], reference, readings
                     ),
-                    "related": {
-                        row.id: others
-                        for row in ledger[module["module_id"]]
-                        if (others := see_also.get(row.id))
-                    },
+                    **packets.packet(module["module_id"]),
                 }
                 for module in context["modules"]
             ],
@@ -617,18 +689,14 @@ class LedgerTools:
             target: _combined(program.get(target), reviewed.get(target))
             for target in dict.fromkeys([*program, *reviewed])
         }
-        related = dict(item.get("related") or {})
-        candidates = self._relation_candidates(item.get("run_id"), module_id)
         return {
             "findings": findings,
             "foreign_findings": foreign,
             "blocking": _blocking(findings),
-            # The author also weighs other modules' judgments on its objects
-            # and what other modules flagged elsewhere.
-            "revise": _blocking(findings) or bool(related) or bool(candidates["flagged_elsewhere"]),
+            # Relations were settled before review; only blocking findings
+            # send the author back.
+            "revise": _blocking(findings),
             "revision_input": {
-                "related": related,
-                **candidates,
                 "findings": {
                     target: finding
                     for target, finding in findings.items()
@@ -670,8 +738,16 @@ class LedgerTools:
                 if blocking:
                     unanswered[module_id] = blocking
                 continue
+            # Relations were settled before review.  A resubmitted row that
+            # drops them keeps them, unless a finding named that row (the
+            # reviewer may have asked for a relation to go).
+            current = {row.id: row for row in ledger[module_id]}
+            named = set((review.get("findings") or {}).keys())
             revised = [
-                row for row in _rows(revision.get("rows") or [])
+                row
+                if row.relations or row.id not in current or row.id in named
+                else row.model_copy(update={"relations": current[row.id].relations})
+                for row in _rows(revision.get("rows") or [])
                 if not _foreign_row(row.id, module_id)
             ]
             dropped = [
@@ -861,6 +937,7 @@ class LedgerTools:
                 by_submodule.setdefault(row.submodule_id, []).append(row)
         elsewhere = self._data_elsewhere(run_id, ledger)
         cited_values = reference.get("cited_values") or {}
+        row_sections = {row.id: row.submodule_id for rows in ledger.values() for row in rows}
         items = []
         for module_id, sections in value["written"].items():
             texts = {section["submodule_id"]: section["text"] for section in sections}
@@ -869,6 +946,7 @@ class LedgerTools:
                 rows_by_submodule=by_submodule,
                 elsewhere=elsewhere,
                 cited_values=cited_values,
+                row_sections=row_sections,
             )
             cited = {
                 entry["row_id"]: entry
@@ -1177,6 +1255,7 @@ class LedgerTools:
         methods = {
             "prepare-ledger-context": self.prepare_context,
             "build-judgment-ledger": self.build_ledger,
+            "apply-judgment-relations": self.apply_relations,
             "merge-review-findings": self.merge_findings,
             "close-review": self.close_review,
             "finalize-judgment-ledger": self.finalize_ledger,

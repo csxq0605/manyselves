@@ -98,16 +98,20 @@ def test_a_finding_on_another_modules_row_does_not_reach_this_author(tmp_path: P
     assert set(merged["foreign_findings"]) == {"J-2.4-1"}
 
 
-def test_the_author_revises_when_other_modules_judged_its_objects(tmp_path: Path) -> None:
+def test_only_blocking_findings_send_the_author_back(tmp_path: Path) -> None:
     tools = LedgerTools(tmp_path)
     quiet = tools.merge_findings({"item": {"module_id": "2.2", "program_findings": {}}, "review": {}})
     assert quiet["revise"] is False
-    related = {"J-2.2-1": [{"row_id": "J-2.1-1", "basis": "负荷率 6.44%"}]}
+    minor = {"J-2.2-1": {"problem": "p", "severity": "minor", "suggestion": "s"}}
     merged = tools.merge_findings(
-        {"item": {"module_id": "2.2", "program_findings": {}, "related": related}, "review": {}}
+        {"item": {"module_id": "2.2", "program_findings": minor}, "review": {}}
     )
-    assert merged["revise"] is True and merged["blocking"] is False
-    assert merged["revision_input"]["related"] == related
+    assert merged["revise"] is False and merged["revision_input"]["minor"] == minor
+    blocking = {"J-2.2-1": {"problem": "p", "severity": "blocking", "suggestion": "s"}}
+    merged = tools.merge_findings(
+        {"item": {"module_id": "2.2", "program_findings": {}}, "review": {"findings": blocking}}
+    )
+    assert merged["revise"] is True and set(merged["revision_input"]["findings"]) == {"J-2.2-1"}
 
 
 def test_authors_see_what_other_modules_flagged_and_the_relation_method(tmp_path: Path) -> None:
@@ -119,14 +123,12 @@ def test_authors_see_what_other_modules_flagged_and_the_relation_method(tmp_path
     tools.store.write_json(
         "Work/runs/r/ledger/relation-candidates.json", {"flagged": flagged, "method": "候选关系与核实条件"}
     )
-    merged = tools.merge_findings(
-        {"item": {"run_id": "r", "module_id": "2.2", "program_findings": {}}, "review": {}}
-    )
+    # What one author weighs in its relate step, before review.
+    candidates = tools._relation_candidates("r", "2.2")
     others = [e for e in flagged if e["module_id"] != "2.2"]
-    assert merged["revise"] is bool(others)
-    lines = merged["revision_input"]["flagged_elsewhere"]
+    lines = candidates["flagged_elsewhere"]
     assert len(lines) == len(others) and not any(line.startswith("J-2.2-") for line in lines)
-    assert merged["revision_input"]["relation_method"] == "候选关系与核实条件"
+    assert candidates["relation_method"] == "候选关系与核实条件"
 
 
 def test_a_row_keeps_only_listed_relations_to_existing_rows_of_other_modules() -> None:

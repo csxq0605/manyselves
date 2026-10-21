@@ -1,0 +1,10 @@
+id: apply-judgment-relations
+version: 1.0.0
+description: Put the authors' relations on their rows, check them and build the review packets
+implementation: capability:distribution-reporting:apply-judgment-relations
+input_contract: ledger_apply_relations_input
+output_contract: ledger_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

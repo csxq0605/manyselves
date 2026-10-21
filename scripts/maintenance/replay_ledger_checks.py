@@ -246,12 +246,12 @@ def _replay_checks(
         and "dossiers" in record["input"] and "program_findings" in record["input"]
     }
     ledger_checks = {
-        item["module_id"]: {
-            "old_blocking": len(_blocking(old_review.get(item["module_id"], {}))),
-            "new_blocking": len(_blocking(item["program_findings"])),
-            "new": {t: f["problem"] for t, f in item["program_findings"].items()},
+        module_id: {
+            "old_blocking": len(_blocking(old_review.get(module_id, {}))),
+            "new_blocking": len(_blocking(findings)),
+            "new": {t: f["problem"] for t, f in findings.items()},
         }
-        for item in built["review_items"]
+        for module_id, findings in built["program_findings"].items()
     }
 
     # Result files are named by the action id, plus "--<task id>" when the

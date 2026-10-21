@@ -1,6 +1,6 @@
 id: report-ledger
-version: 1.0.0
-description: Judge into a ledger first, review the ledger, write once, then check and deliver
+version: 1.1.0
+description: Judge into a ledger first, relate across modules, review each row with what it cites, write once, then check and deliver
 tasks:
 - read-project
 - read-ledger
@@ -58,6 +58,27 @@ actions:
   input_variables:
     context: context
     judgments: judgments
+  output_variable: built
+- id: relate-items
+  kind: set_variable
+  variable: relate_items
+  value_variable: built
+  field: relate_items
+- id: relate-modules
+  kind: map
+  items_variable: relate_items
+  key_field: module_id
+  workflow: ledger-module-relate
+  key_input_variable: item_key
+  output_variable: relations
+  max_concurrency: 5
+- id: apply-relations
+  kind: invoke_tool
+  tool: apply-judgment-relations
+  input_variables:
+    context: context
+    ledger: built
+    relations: relations
   output_variable: ledger
 - id: ledger-snapshot
   kind: set_variable
@@ -88,8 +109,6 @@ actions:
   key_field: module_id
   workflow: ledger-module-review
   key_input_variable: item_key
-  input_variables:
-    review_base: review_base
   output_variable: reviews
   max_concurrency: 5
 - id: finalize-ledger

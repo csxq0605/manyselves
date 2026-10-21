@@ -286,3 +286,82 @@ def test_prose_pointing_to_a_missing_table_or_repeating_data_shown_elsewhere_is_
         rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, cited_values=values,
     )
     assert one_value == {}
+
+
+def _concern(row_id: str, **extra) -> dict:
+    value = {"id": row_id, "submodule_id": "2.4.1", "object": "1#", "checkpoint": "温升",
+             "disposition": "concern", "evidence_status": "现场确认", "basis": "温升偏高",
+             "risk_level": "中", "hazard": "可能加速绝缘老化", "evidence_ids": ["E-1"],
+             "rule_refs": ["KU-2.4-01"],
+             "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+    return value | extra
+
+
+def test_a_hazard_names_its_sources_or_says_it_is_unverified() -> None:
+    judgment = JudgmentSet.model_validate({"module_id": "2.4", "rows": [
+        _concern("J-2.4-1"),
+        _concern("J-2.4-2", hazard_sources=["KU-2.4-01"]),
+        _concern("J-2.4-3", hazard="可能加速绝缘老化，待核实"),
+        _concern("J-2.4-4", hazard_sources=["E-9"]),
+    ]})
+    findings = ledger_findings(
+        judgment, submodule_ids=["2.4.1"], module_evidence_ids=["E-1"],
+        known_evidence_ids=["E-1", "E-9"], known_photo_ids=[],
+    )
+    assert set(findings) == {"J-2.4-1", "J-2.4-4"}
+    assert "hazard_sources" in findings["J-2.4-1"]["problem"]
+    assert "E-9" in findings["J-2.4-4"]["problem"]
+
+
+def test_a_row_on_summary_entries_only_is_not_confirmed_on_site() -> None:
+    row = {"id": "J-2.5-1", "submodule_id": "2.5.1", "object": "台账", "checkpoint": "完整性",
+           "disposition": "no_concern", "evidence_status": "现场确认", "basis": "评估表写完整",
+           "evidence_ids": ["E-5"]}
+    judgment = JudgmentSet.model_validate({"module_id": "2.5", "rows": [row]})
+    findings = ledger_findings(
+        judgment, submodule_ids=["2.5.1"], module_evidence_ids=["E-5"],
+        known_evidence_ids=["E-5"], known_photo_ids=[], summary_evidence_ids=["E-5"],
+    )
+    assert "来源作者意见" in findings["J-2.5-1"]["problem"]
+
+
+def test_program_picks_rows_for_the_reviewer_without_judging_them() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.review_packets import (
+        program_checks,
+    )
+
+    def row(row_id, disposition, status="现场确认", submodule="2.1.1"):
+        value = {"id": row_id, "submodule_id": submodule, "object": "1#", "checkpoint": "c",
+                 "disposition": disposition, "evidence_status": status, "basis": "b",
+                 "evidence_ids": ["E-1"]}
+        if disposition == "concern":
+            value |= {"risk_level": "中", "hazard": "h，待核实",
+                      "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+        return JudgmentRow.model_validate(value)
+
+    owner = row("J-2.4-1", "concern", submodule="2.4.4")
+    checks = program_checks(
+        [row("J-2.1-1", "no_concern"), row("J-2.1-2", "no_concern", "资料未提供")],
+        facts={"E-1": "消防设施=NG"},
+        owner_rows={"J-2.1-1": [owner]},
+    )
+    found = [(c["row_id"], c["check"][:6]) for c in checks]
+    assert ("J-2.1-1", "同一份记录由") in found
+    assert ("J-2.1-1", "所引记录有 ") in found
+    assert ("J-2.1-2", "证据状态是资") in found
+
+
+def test_a_recorded_relation_must_show_in_the_prose() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        layout_findings,
+    )
+
+    row = JudgmentRow.model_validate(_concern("J-2.4-1", hazard="h，待核实", relations=[
+        {"row_id": "J-2.1-3", "relation": "负荷—发热", "reason": "负荷率低，可排除过载"}]))
+    sections = {"2.4.1": "1# 温升偏高，可排除过载致热。"}
+    found = layout_findings(sections=sections, rows_by_submodule={"2.4.1": [row]},
+                            elsewhere={}, cited_values={}, row_sections={"J-2.1-3": "2.1.1"})
+    assert "1#↔2.1.1" in found["2.4.1"]["problem"]
+    sections = {"2.4.1": "1# 温升偏高，负荷率低（详见 2.1.1），可排除过载致热。"}
+    assert layout_findings(sections=sections, rows_by_submodule={"2.4.1": [row]},
+                           elsewhere={}, cited_values={}, row_sections={"J-2.1-3": "2.1.1"}) == {}

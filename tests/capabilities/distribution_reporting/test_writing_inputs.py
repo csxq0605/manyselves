@@ -40,7 +40,7 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
         "basis": "b", "rule_refs": refs or [],
     }
     if disposition == "concern":
-        value |= {"risk_level": "中", "hazard": "h",
+        value |= {"risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
                   "action": {"measure": "核查", "priority": "一般", "timeframe": "一月"}}
     if disposition == "undetermined":
         value |= {"gap": {"missing": "m", "impact": "i", "requested_input": "补资料"}}
