@@ -79,7 +79,8 @@ def test_the_brief_says_how_much_a_section_has_to_say_and_where_its_data_lives()
 def test_internal_workflow_words_in_prose_are_found_by_the_program() -> None:
     assert process_terms("该冲突提交联合审查，参照KU-2.1-01，见D-003。") == ["联合审查", "KU-2.1-01", "D-003"]
     # Trade words with their own meaning stay.
-    assert process_terms("设备台账完整，故障件已返修。") == []
+    assert process_terms("另一模块对低压回路逐条实测（E-12、J-2.4-3）。") == ["另一模块", "E-12", "J-2.4-3"]
+    assert process_terms("设备台账完整，故障件已返修，详见 2.4.3.1。") == []
     findings = report_check_findings(
         sections={"2.1.1": "两个模块结论不同，已提交联合审查。"},
         rows_by_submodule={}, known_values=[],

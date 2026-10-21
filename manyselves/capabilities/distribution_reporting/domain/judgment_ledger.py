@@ -663,8 +663,12 @@ def _mispaired(
 
 # Words of this product's own workflow that a reader of the report cannot know.
 # Ordinary trade words with another meaning (设备台账, 返修) are not listed.
-PROCESS_TERMS = ("联合审查", "联合卷宗", "卷宗", "判断台账", "判断行", "审查人", "程序统计", "知识单元")
-_PROCESS_ID = re.compile(r"(?<![A-Za-z0-9])(?:KU-\d[\d.]*-\d+|D-\d+)")
+PROCESS_TERMS = (
+    "联合审查", "联合卷宗", "卷宗", "判断台账", "判断行", "审查人", "程序统计", "知识单元",
+    "另一模块", "其他模块", "别的模块",
+)
+# Ids of facts, knowledge, sources, photos, rows and dossiers; section numbers (2.1.1) are fine.
+_PROCESS_ID = re.compile(r"(?<![A-Za-z0-9])(?:KU-\d[\d.]*-\d+|[EKRPDJ]-[\d.\-]*\d)")
 
 
 def process_terms(text: str) -> list[str]:
