@@ -13,9 +13,9 @@ from docx import Document
 
 from manyselves.runtime.exemplar.extraction import (
     ExemplarPolicy,
-    ExemplarUse,
     ExemplarRole,
     ExemplarSubmission,
+    ExemplarUse,
     accept_submission,
     render_role_skill,
     role_packet,
