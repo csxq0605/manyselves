@@ -12,6 +12,12 @@ policy:
   mandatory_words: [必须, 一律, 务必, 立即, 均须, 均应, 一定要, 不允许]
   # An organisation name in the template is two to four characters before one of these.
   organisation_suffixes: [有限公司, 股份公司, 集团, 公司]
+  # The expert report's own places are named by these suffixes; such names are
+  # refused, and so is the suffix word itself (our own grouping is 区域, whose
+  # expert instances are section titles we fold away).
+  site_suffixes: [工厂, 厂区, 园区, 基地, 车间]
+  # Table columns whose values are the expert report's own places or objects.
+  instance_columns: [位置, 区域, 厂区, 地点, 场所, 车间, 配电室]
   # What the product does not produce; an entry that mentions it is refused.
   unavailable:
     附件: 报告不带附件，不能让读者去看附件
@@ -33,6 +39,18 @@ policy:
   - id: check
     title: 核对要点
     description: 编辑通读成稿时用。对照专家版的做法核对什么，例如每个关注项是否都有对应的建议、正文和表是否说的是同一对象
+# Our own headings outside the chapter 2 taxonomy.  Skills are headed by our
+# sections: each expert section is aligned to ours by title, and an expert
+# section we have no counterpart for folds into its parent.  Chapter 2 headings
+# come from the report taxonomy.
+targets:
+- {number: "1", title: 配电评估概述}
+- {number: "1.1", title: 评估背景}
+- {number: "1.2", title: 健康度总览}
+- {number: "1.3", title: 各区域执行摘要}
+- {number: "3", title: 结论与建议}
+- {number: "3.1", title: 风险/问题汇总与概览}
+- {number: "3.2", title: 改善行动速查表}
 roles:
 - id: author-2.1
   title: 2.1 配电系统架构问题的方法

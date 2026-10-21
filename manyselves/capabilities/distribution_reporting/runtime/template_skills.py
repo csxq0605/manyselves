@@ -28,6 +28,7 @@ from manyselves.runtime.exemplar.extraction import (
     ExemplarPolicy,
     ExemplarRole,
     ExemplarSubmission,
+    Target,
     accept_submission,
     acceptance_record,
     parse_roles,
@@ -47,6 +48,7 @@ from manyselves.runtime.exemplar.outline import DocumentOutline, document_outlin
 
 from ..domain.calculations import compute
 from ..domain.lesson_triage import TriggerKind
+from ..domain.taxonomy import REPORT_TAXONOMY
 from .template_access import FORBIDDEN_AGENT_DOCUMENT_NAME
 from .template_skill_paths import TEMPLATE_SKILL_ROOT, TEMPLATE_SKILL_SOURCE, template_skill_ref
 
@@ -65,6 +67,24 @@ FACT_FLAGS = ("needs_confirmation", "summary_entry")
 def _roles() -> tuple[tuple[ExemplarRole, ...], ExemplarPolicy]:
     roles, policy = parse_roles(yaml.safe_load(ROLES_FILE.read_text(encoding="utf-8")) or {})
     return tuple(roles), policy
+
+
+@lru_cache(maxsize=1)
+def _declared_targets() -> tuple[Target, ...]:
+    data = yaml.safe_load(ROLES_FILE.read_text(encoding="utf-8")) or {}
+    return tuple(
+        Target(str(item["number"]), str(item["title"])) for item in data.get("targets", [])
+    )
+
+
+def skill_targets() -> tuple[Target, ...]:
+    """Our own section headings the Skills are aligned to: chapters 1 and 3, and the taxonomy."""
+
+    chapter_2 = [Target("2", "")]
+    for module in REPORT_TAXONOMY.values():
+        chapter_2.append(Target(module.id, module.title))
+        chapter_2.extend(Target(section.id, section.title) for section in module.sections.values())
+    return (*_declared_targets(), *chapter_2)
 
 
 def template_roles() -> tuple[ExemplarRole, ...]:
@@ -209,7 +229,7 @@ class TemplateSkillTools:
         for role in template_roles():
             if not role.extract or (wanted and role.id not in wanted):
                 continue
-            scope = role_scope(outline, role)
+            scope = role_scope(outline, role, skill_targets())
             if scope.missing:
                 missing[role.id] = list(scope.missing)
             if scope.sections:
@@ -225,7 +245,7 @@ class TemplateSkillTools:
 
     def _acceptance(self, template_ref: str, role_id: str, submission: Any):
         outline = self._outline(template_ref)
-        scope = role_scope(outline, _role(role_id))
+        scope = role_scope(outline, _role(role_id), skill_targets())
         parsed = ExemplarSubmission.model_validate(submission or {})
         return outline, scope, accept_submission(outline, scope, parsed, template_policy())
 
@@ -270,7 +290,7 @@ class TemplateSkillTools:
             result = extractions.get(role.id)
             if not role.extract or result is None:
                 continue
-            scope = role_scope(outline, role)
+            scope = role_scope(outline, role, skill_targets())
             entries = ExemplarSubmission.model_validate(
                 {"entries": result.get("accepted", []), "skipped": result.get("skipped", [])}
             )
@@ -470,6 +490,7 @@ __all__ = [
     "TemplateSkillTools",
     "publish_template_skills",
     "skill_order",
+    "skill_targets",
     "skills_with_lessons",
     "template_policy",
     "template_roles",

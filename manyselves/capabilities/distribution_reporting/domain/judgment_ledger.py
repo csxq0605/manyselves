@@ -661,6 +661,20 @@ def _mispaired(
     return problems
 
 
+# Words of this product's own workflow that a reader of the report cannot know.
+# Ordinary trade words with another meaning (设备台账, 返修) are not listed.
+PROCESS_TERMS = ("联合审查", "联合卷宗", "卷宗", "判断台账", "判断行", "审查人", "程序统计", "知识单元")
+_PROCESS_ID = re.compile(r"(?<![A-Za-z0-9])(?:KU-\d[\d.]*-\d+|D-\d+)")
+
+
+def process_terms(text: str) -> list[str]:
+    """Internal workflow words or ids that leaked into report prose."""
+
+    found = [term for term in PROCESS_TERMS if term in text]
+    found = [term for term in found if not any(term != other and term in other for other in found)]
+    return [*found, *dict.fromkeys(_PROCESS_ID.findall(text))]
+
+
 def report_check_findings(
     *,
     sections: Mapping[str, str],
@@ -719,6 +733,14 @@ def report_check_findings(
                 "以下关注项的对象没有在本节正文点名：" + "、".join(missing),
                 "在正文里点名这些对象。",
                 severity="minor",
+            )
+        if leaked := process_terms(text):
+            problem = "正文里出现了内部流程用语或编号：" + "、".join(leaked)
+            earlier = findings.get(section_id)
+            findings[section_id] = _finding(
+                problem if earlier is None else f"{earlier['problem']}；{problem}",
+                ("" if earlier is None else f"{earlier['suggestion']}；")
+                + "删去这些用语，只写结论和依据本身。",
             )
     return findings
 

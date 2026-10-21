@@ -1,11 +1,12 @@
 id: chief-chapter-1
-version: 1.1.0
+version: 1.2.0
 description: Write chapter 1 from the ledger and the chapter 3 just settled
 agent: report-consultant
 objective: 继续作为总编，写第一章：1.1 评估背景、1.2 健康度总览（总体评价加三张表的结构化行）、1.3 各区域执行摘要。
 input_contract: ledger_chief_input
 output_contract: ledger_chief_chapter_1
 constraints:
+- 不写审查、卷宗、台账、返修等流程用语，也不写免责句。
 - 参考共享资料“专家版方法”里第一章的“章节综合”“写法”和“范例”。文字字段只写文字，不画表；表格由系统按结构化字段生成。
 - dimension_health 每个评估维度（模块）一行；module_id 填模块编号。
 - key_risks 按实际条数，row_ids 写依据的判断行；行动建议与第三章一致。第三章有跨模块综合结论（cross_findings）时，涉及同一对象的风险按综合结论写成一条，row_ids 沿用。

@@ -69,11 +69,12 @@ from .models.agentic import (
 )
 from .models.reporting import EvidenceItem, PhotoAsset, ReportRequest, SpecialTopicPlan
 from .module_authoring_preparation import load_template_skill
-from .observation_ledger import shared_labels
+from .observation_ledger import build_observation_ledger, shared_labels
 from .photo_reading import load_photo_readings, photo_reading_labels, reading_label
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
+from .rule_standards import knowledge_units, section_standards, standards_coverage
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
@@ -231,6 +232,39 @@ def _supplement_lines(request: ReportRequest) -> list[str]:
         for supplement in request.user_supplements
         if supplement.id not in superseded
     ]
+
+
+def _section_state(rows: Sequence[JudgmentRow]) -> str:
+    """How much a section has to say, counted by the program."""
+
+    dispositions = {row.disposition for row in rows}
+    if not rows:
+        return "no_rows"
+    if dispositions == {"no_concern"}:
+        return "no_concern"
+    if dispositions == {"undetermined"}:
+        return "undetermined_only"
+    return "mixed"
+
+
+def _section_brief(
+    sub: Mapping[str, Any],
+    rows: Sequence[JudgmentRow],
+    *,
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    units: Mapping[str, Mapping[str, str]],
+    elsewhere: Mapping[str, Sequence[str]],
+) -> dict[str, Any]:
+    return {
+        "submodule_id": sub["id"],
+        "title": sub["title"],
+        "section_state": _section_state(rows),
+        "rows": [row.model_dump(mode="json", exclude_none=True) for row in rows],
+        "problem_table_marker": PROBLEM_TABLE_MARKER,
+        "related_rows": related_rows(rows, ledger),
+        "rule_standards": section_standards(rows, units),
+        "data_elsewhere": {row.id: list(elsewhere[row.id]) for row in rows if row.id in elsewhere},
+    }
 
 
 class LedgerTools:
@@ -561,6 +595,11 @@ class LedgerTools:
                 "dropped_relations": dropped_relations,
             },
         )
+        units = self._knowledge_units(run_id)
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/rule-standards.json", standards_coverage(ledger, units)
+        )
+        elsewhere = self._data_elsewhere(run_id, ledger)
         writing_items = []
         for module in context["modules"]:
             rows = ledger[module["module_id"]]
@@ -569,19 +608,8 @@ class LedgerTools:
                     "module_id": module["module_id"],
                     "title": module["title"],
                     "sections": [
-                        {
-                            "submodule_id": sub["id"],
-                            "title": sub["title"],
-                            "rows": [
-                                row.model_dump(mode="json", exclude_none=True)
-                                for row in rows
-                                if row.submodule_id == sub["id"]
-                            ],
-                            "problem_table_marker": PROBLEM_TABLE_MARKER,
-                            "related_rows": related_rows(
-                                [row for row in rows if row.submodule_id == sub["id"]], ledger
-                            ),
-                        }
+                        _section_brief(sub, [row for row in rows if row.submodule_id == sub["id"]],
+                                       ledger=ledger, units=units, elsewhere=elsewhere)
                         for sub in module["submodules"]
                     ],
                 }
@@ -602,6 +630,43 @@ class LedgerTools:
                 "module_titles": context["module_titles"],
             },
         }
+
+    def _knowledge_units(self, run_id: str) -> dict[str, dict[str, str]]:
+        """Knowledge units of the run's frozen sources; none when there are no sources."""
+
+        try:
+            documents = KnowledgeContextBuilder(
+                self.workspace, run_id, global_root=self.global_knowledge_root
+            ).freeze_sources()
+        except (OSError, ValueError):
+            return {}
+        return knowledge_units(document.text for document in documents)
+
+    def _data_elsewhere(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
+    ) -> dict[str, list[str]]:
+        """Row id -> the subsections that own all of its facts, when it owns none of them.
+
+        Mappers copy one observation into several subsections; the owner from
+        ``observation-ownership.yaml`` presents the data, the others cite it.
+        """
+
+        observations = build_observation_ledger(self.workspace, run_id)
+        if observations is None:
+            return {}
+        found: dict[str, list[str]] = {}
+        for rows in ledger.values():
+            for row in rows:
+                owners = [observations.owner_for_reference(e) for e in row.evidence_ids]
+                if not owners or any(owner is None for owner in owners):
+                    continue
+                places = sorted(
+                    {owner.submodule_id for owner in owners if owner.submodule_id}
+                    - {row.submodule_id}
+                )
+                if places:
+                    found[row.id] = places
+        return found
 
     def _write_gaps(self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]) -> None:
         for module_id, rows in ledger.items():

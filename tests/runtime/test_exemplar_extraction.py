@@ -16,7 +16,9 @@ from manyselves.runtime.exemplar.extraction import (
     ExemplarRole,
     ExemplarSubmission,
     ExemplarUse,
+    Target,
     accept_submission,
+    instance_terms,
     render_role_skill,
     role_packet,
     role_scope,
@@ -284,3 +286,93 @@ def test_comparison_sorts_old_items_by_their_closest_match() -> None:
     text, counts = render_comparison({"writer": matches}, threshold=0.4)
     assert counts["writer"] == {"新版有对应": 1, "合同已有": 1, "未对应": 1}
     assert text.index("未对应") < text.index("新版有对应 |")
+
+
+def _sites_exemplar(path: Path) -> Path:
+    """Two parks visited; each section opens with the same labels, one with its own finding."""
+
+    document = Document()
+    document.add_heading("巡查结果", level=1)
+    document.add_heading("灌溉情况", level=2)  # our product calls it 浇水
+    document.add_paragraph("现状描述：东湖园区与西山园区的喷头均已检查。")
+    document.add_paragraph("喷头堵塞较多：西山园区北坡最明显。")
+    table = document.add_table(rows=2, cols=2)
+    for row, values in zip(table.rows, (("位置", "问题"), ("北坡花坛", "堵塞"))):
+        for cell, value in zip(row.cells, values, strict=True):
+            cell.text = value
+    document.add_paragraph("建议：分区清洗喷头。")
+    document.add_heading("东湖园区", level=3)  # one place of the exemplar, no counterpart
+    document.add_paragraph("现状描述：东湖园区喷头完好。")
+    document.add_heading("修剪", level=2)
+    document.add_paragraph("现状描述：枝条过密。")
+    document.add_paragraph("建议：分批修剪。")
+    document.save(str(path))
+    return path
+
+
+SITE_POLICY = ExemplarPolicy(site_suffixes=["园区"], instance_columns=["位置"])
+TARGETS = [Target("1", "巡查结果"), Target("1.1", "修剪情况"), Target("1.2", "浇水与灌溉情况")]
+
+
+def test_sections_are_aligned_to_our_titles_and_unknown_ones_fold(tmp_path: Path) -> None:
+    outline = document_outline(_sites_exemplar(tmp_path / "e.docx"))
+    role = ExemplarRole.model_validate(
+        {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
+    )
+    scope = role_scope(outline, role, TARGETS)
+    # Matched by title, not by the exemplar's position.
+    assert scope.target(outline.section("1.1")).heading == "1.2 浇水与灌溉情况"
+    assert scope.target(outline.section("1.2")).heading == "1.1 修剪情况"
+    # The exemplar's own place has no counterpart: it folds into its parent.
+    assert scope.target(outline.section("1.1.1")).heading == "1.2 浇水与灌溉情况"
+    assert scope.folded == ("1.1.1",)
+    packet = role_packet(outline, scope, SITE_POLICY)
+    assert packet["sections"][1]["product_section"] == "1.2 浇水与灌溉情况"
+
+    entries = ExemplarSubmission.model_validate(
+        {"entries": [
+            {"use": "method", "text": "先写现状，再给建议。", "applies_when": "未明确",
+             "locator": _locator(outline, "1.1.1", "喷头完好"), "quote": "东湖园区喷头完好"},
+            {"use": "method", "text": "分批写出修剪建议。", "applies_when": "未明确",
+             "locator": _locator(outline, "1.2", "分批修剪"), "quote": "建议：分批修剪"},
+        ]}
+    ).entries
+    text = render_role_skill(outline, scope, entries, source="示例", policy=SITE_POLICY)
+    # One heading per product section; the exemplar's numbering is gone.
+    assert text.count("## 1.2 浇水与灌溉情况") == 1 and "## 1.1.1" not in text
+    assert text.index("## 1.2 浇水") < text.index("## 1.1 修剪情况")  # exemplar order kept
+    # Structure shows the labels reused across sections, never one section's own subheading.
+    assert "分段标签：现状描述 → 建议" in text
+    assert "喷头堵塞较多" not in text and "另有 1 个分项小标题" in text
+
+
+def test_the_exemplars_own_places_and_objects_are_refused(tmp_path: Path) -> None:
+    outline = document_outline(_sites_exemplar(tmp_path / "e.docx"))
+    role = ExemplarRole.model_validate(
+        {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
+    )
+    scope = role_scope(outline, role, TARGETS)
+    terms = instance_terms(outline, scope, SITE_POLICY)
+    assert {"东湖园区", "西山园区", "北坡花坛"} <= set(terms)
+    lead = _locator(outline, "1.1", "喷头均已检查")
+    submission = ExemplarSubmission.model_validate(
+        {"entries": [
+            {"use": "method", "text": "先写西山园区，再写其他地方。", "applies_when": "未明确",
+             "locator": lead, "quote": "喷头均已检查"},
+            {"use": "example", "text": "〈位置〉北坡花坛喷头〈问题〉。", "applies_when": "未明确",
+             "locator": lead, "quote": "喷头均已检查"},
+            {"use": "method", "text": "逐个园区说明喷头状态。", "applies_when": "未明确",
+             "locator": lead, "quote": "喷头均已检查"},
+            {"use": "method", "text": "按区域说明喷头状态，再给建议。", "applies_when": "未明确",
+             "locator": lead, "quote": "喷头均已检查"},
+            {"use": "example", "text": "〈园区〉喷头〈问题〉。", "applies_when": "未明确",
+             "locator": lead, "quote": "喷头均已检查"},
+        ]}
+    )
+    result = accept_submission(outline, scope, submission, SITE_POLICY)
+    reasons = {r.index: " ".join(r.reasons) for r in result.rejected}
+    assert "西山园区（专家版项目的地点）" in reasons[0]
+    assert "北坡花坛（专家版表格里的位置或对象）" in reasons[1]
+    assert "场地划分" in reasons[2]
+    # Our own word and a placeholder are fine.
+    assert [e.text for e in result.accepted] == ["按区域说明喷头状态，再给建议。", "〈园区〉喷头〈问题〉。"]

@@ -234,7 +234,8 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
         assert counts["accepted"] > 0 and counts["rejected"] == 0 and counts["uncovered"] == [], role_id
 
     candidate = (tmp_path / result["candidates"]["author-2.1"]).read_text(encoding="utf-8")
-    assert "## 2.1.1 电力系统负荷分配与过载风险" in candidate
+    # Headed by our own section titles, not the expert report's.
+    assert "## 2.1.1 配电系统负荷分配与过载风险" in candidate
     assert "110kV" not in candidate
     assert "判断方法：" in candidate and "写法：" in candidate
     comparison = (tmp_path / result["compare_ref"]).read_text(encoding="utf-8")

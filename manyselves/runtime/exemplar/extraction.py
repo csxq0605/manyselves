@@ -14,7 +14,18 @@ entries that:
   or organisation names and none of the declared mandatory words (hard rules
   belong to the task contract, not to a method);
 - in a use with placeholders, put every exemplar fact in placeholders;
-- mention none of the features the capability declares unavailable.
+- mention none of the features the capability declares unavailable;
+- carry none of the exemplar's own instances: places named with a declared
+  site suffix, values of the declared place columns of its tables, and the
+  titles of its sections that the product has no section for.
+
+When the capability passes its own section headings (``targets``), every
+exemplar section is aligned to the product section with the most similar
+title under the same parent; a section with no counterpart folds into its
+parent.  The Skill is then headed by the product's sections, not by the
+exemplar's numbering.  Structure lines show the shape of a section and only
+the labels the exemplar reuses across sections, never one section's own
+subheadings.
 
 Every section of the role that has content is either cited or skipped with a
 reason, and every use the role requires has at least one entry.  The accepted
@@ -33,7 +44,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .outline import DocumentOutline, OutlineSection, label_sequence, resolve_section
+from .outline import DocumentOutline, OutlineSection, label_sequence, resolve_section, similar
 
 _NUMBER = re.compile(r"\d+(?:[.,．]\d+)*")
 _SPACE = re.compile(r"\s+")
@@ -90,6 +101,16 @@ class ExemplarPolicy(_Model):
         default_factory=dict,
         description="Words naming what the product does not produce, with the reason",
     )
+    site_suffixes: list[str] = Field(
+        default_factory=list,
+        description="Suffixes of the exemplar's own place names (two to four characters before "
+        "one); the suffix word itself is refused too unless a product section title uses it",
+    )
+    instance_columns: list[str] = Field(
+        default_factory=list,
+        description="Words in a table header naming a column of the exemplar's own places or "
+        "objects; the values of such columns are refused",
+    )
 
     def use(self, use_id: str) -> ExemplarUse | None:
         return next((use for use in self.uses if use.id == use_id), None)
@@ -121,15 +142,35 @@ class ExemplarSubmission(_Model):
 
 
 @dataclass(frozen=True)
+class Target:
+    """One of the product's own section headings."""
+
+    number: str
+    title: str
+
+    @property
+    def heading(self) -> str:
+        return f"{self.number} {self.title}".strip()
+
+
+@dataclass(frozen=True)
 class RoleScope:
     role: ExemplarRole
     sections: tuple[OutlineSection, ...]
     missing: tuple[str, ...] = ()
     generated: Mapping[str, str] = field(default_factory=dict)
+    # Exemplar section number -> the product section it is written under.
+    aligned: Mapping[str, Target] = field(default_factory=dict)
+    # Exemplar sections that have no product counterpart and fold into their parent.
+    folded: tuple[str, ...] = ()
+    product_titles: tuple[str, ...] = ()
 
     @property
     def numbers(self) -> set[str]:
         return {section.number for section in self.sections}
+
+    def target(self, section: OutlineSection) -> Target:
+        return self.aligned.get(section.number) or Target(section.number, section.title)
 
 
 @dataclass
@@ -157,12 +198,31 @@ class Acceptance:
         )
 
 
-def role_scope(outline: DocumentOutline, role: ExemplarRole) -> RoleScope:
-    """The outline sections a role covers: each declared section and its subtree."""
+ALIGN_SIMILARITY = 0.5  # the same bar resolve_section uses for a declared title
+
+
+def _parent_number(number: str) -> str:
+    return number.rpartition(".")[0]
+
+
+def role_scope(
+    outline: DocumentOutline,
+    role: ExemplarRole,
+    targets: Sequence[Target] = (),
+) -> RoleScope:
+    """The outline sections a role covers: each declared section and its subtree.
+
+    With ``targets`` (the product's own headings) each section is aligned to
+    the product section with the most similar title among the children of its
+    parent's product section; one without a counterpart folds into its parent.
+    """
 
     found: dict[str, OutlineSection] = {}
     generated: dict[str, str] = {}
     missing: list[str] = []
+    aligned: dict[str, Target] = {}
+    folded: list[str] = []
+    by_number = {target.number: target for target in targets}
     for ref in role.sections:
         head = resolve_section(outline, ref.number, ref.title)
         if head is None:
@@ -172,8 +232,110 @@ def role_scope(outline: DocumentOutline, role: ExemplarRole) -> RoleScope:
             found.setdefault(section.number, section)
             if ref.generated:
                 generated.setdefault(section.number, ref.generated)
+            if not targets or section.number in aligned:
+                continue
+            if section.number == head.number:
+                aligned[section.number] = by_number.get(ref.number) or Target(
+                    ref.number, ref.title or head.title
+                )
+                continue
+            parent = aligned.get(_parent_number(section.number)) or aligned[head.number]
+            children = [
+                target for target in targets
+                if _parent_number(target.number) == parent.number
+            ]
+            best = max(children, key=lambda t: similar(t.title, section.title), default=None)
+            if best is not None and similar(best.title, section.title) >= ALIGN_SIMILARITY:
+                aligned[section.number] = best
+            else:
+                aligned[section.number] = parent
+                folded.append(section.number)
     ordered = tuple(s for s in outline.sections if s.number in found)
-    return RoleScope(role, ordered, tuple(missing), generated)
+    return RoleScope(
+        role, ordered, tuple(missing), generated, aligned, tuple(folded),
+        tuple(target.title for target in targets),
+    )
+
+
+def _suffixed_names(texts: Iterable[str], suffixes: Sequence[str]) -> set[str]:
+    """Names of two to four characters before a suffix, with their shorter tails."""
+
+    names: set[str] = set()
+    for suffix in suffixes:
+        pattern = re.compile(r"([一-鿿A-Za-z]{2,4})" + re.escape(suffix))
+        for text in texts:
+            for match in pattern.finditer(_normal(text)):
+                lead = match.group(1)
+                names.update(lead[start:] + suffix for start in range(len(lead) - 1))
+    return names
+
+
+def _outline_texts(outline: DocumentOutline) -> list[str]:
+    return [*outline.front_matter, *(s.title for s in outline.sections), *(b.text for b in outline.blocks)]
+
+
+def _column_values(outline: DocumentOutline, words: Sequence[str]) -> set[str]:
+    values: set[str] = set()
+    if not words:
+        return values
+    for block in outline.blocks:
+        if block.kind != "table" or not block.columns:
+            continue
+        wanted = [i for i, column in enumerate(block.columns) if any(w in column for w in words)]
+        if not wanted:
+            continue
+        for line in block.text.splitlines()[1:]:
+            cells = line.split(" | ")
+            if len(cells) != len(block.columns):
+                continue  # a merged note row
+            values.update(_normal(cells[i]) for i in wanted)
+    return values
+
+
+def instance_terms(
+    outline: DocumentOutline, scope: RoleScope, policy: ExemplarPolicy
+) -> dict[str, str]:
+    """The exemplar's own instances an entry may not carry, each with where it came from.
+
+    Gathered from the exemplar alone: place names with a declared site
+    suffix, the values of declared place columns, and the titles of sections
+    with no product counterpart.  A term inside a product section title is
+    the product's own word and is not refused.
+    """
+
+    terms: dict[str, str] = {}
+    # A suffix our own titles use is our word; its names in the exemplar body are
+    # mostly ordinary phrases, so only foreign suffixes name places.
+    for name in _suffixed_names(_outline_texts(outline), site_words(scope, policy)):
+        terms.setdefault(name, "专家版项目的地点")
+    for value in _column_values(outline, policy.instance_columns):
+        terms.setdefault(value, "专家版表格里的位置或对象")
+    for number in scope.folded:
+        section = outline.section(number)
+        if section is not None:
+            terms.setdefault(_normal(section.title), "专家版独有的小节标题")
+    own = [_normal(title) for title in scope.product_titles]
+    return {
+        term: why for term, why in terms.items()
+        if len(term) >= 2 and not _NUMBER.fullmatch(term) and not any(term in title for title in own)
+    }
+
+
+def site_words(scope: RoleScope, policy: ExemplarPolicy) -> list[str]:
+    """Site suffix words the product never uses in its own section titles."""
+
+    own = "".join(scope.product_titles)
+    return [word for word in policy.site_suffixes if word not in own]
+
+
+def structural_labels(outline: DocumentOutline) -> set[str]:
+    """Labels the exemplar uses in two or more sections: its shape, not one section's content."""
+
+    seen: dict[str, set[str]] = {}
+    for section in outline.sections:
+        for label in section.labels:
+            seen.setdefault(label, set()).add(section.number)
+    return {label for label, numbers in seen.items() if len(numbers) >= 2}
 
 
 def role_packet(
@@ -185,10 +347,16 @@ def role_packet(
     sections = []
     for section in scope.sections:
         blocks = [outline.block(locator) for locator in section.blocks]
+        target = scope.target(section)
         sections.append(
             {
                 "number": section.number,
                 "title": section.title,
+                **(
+                    {"product_section": target.heading}
+                    if scope.aligned and target.heading != f"{section.number} {section.title}"
+                    else {}
+                ),
                 "structure": structure_line(outline, section, generated=scope.generated.get(section.number, "")),
                 "blocks": [
                     {
@@ -232,17 +400,31 @@ def structure_line(
 ) -> str:
     """The program-counted shape of one section, in words.
 
-    With a ``policy`` (for a published Skill) row counts are left out and a
+    With a ``policy`` (for a published Skill) row counts are left out, a
     table's columns are shown only when they carry no number and no
-    organisation name, since a first row can hold the exemplar's own facts.
+    organisation name, since a first row can hold the exemplar's own facts,
+    and only the labels the exemplar reuses across sections are named; one
+    section's own subheadings are its findings, so only their count is shown.
     When the product draws the section's tables itself (``generated``), the
     exemplar's tables are named but their columns are not shown.
     """
 
     parts: list[str] = []
     labels = label_sequence(section.labels)
-    if labels:
+    if labels and policy is None:
         parts.append("分段小标题：" + " → ".join(labels))
+    elif labels:
+        shape = structural_labels(outline)
+        hidden = set(_suffixed_names(labels, policy.site_suffixes)) | set(policy.site_suffixes)
+        shown = [
+            label for label in labels
+            if label in shape and not any(word in label for word in hidden)
+        ]
+        others = len(labels) - len(shown)
+        if shown:
+            parts.append("分段标签：" + " → ".join(shown))
+        if others:
+            parts.append(f"另有 {others} 个分项小标题（按本项目的发现自拟）")
     blocks = [b for b in (outline.block(locator) for locator in section.blocks) if b is not None]
     names = organisation_names(outline, policy.organisation_suffixes) if policy else set()
     tables = [block for block in blocks if block.kind == "table"]
@@ -302,6 +484,8 @@ def accept_submission(
 
     numbers_allowed = outline.section_numbers()
     organisations = organisation_names(outline, policy.organisation_suffixes)
+    instances = instance_terms(outline, scope, policy)
+    framing = site_words(scope, policy)
     in_scope = scope.numbers
     allowed_uses = {use.id: use for use in policy.role_uses(scope.role)}
     result = Acceptance()
@@ -346,6 +530,21 @@ def accept_submission(
         names = [name for name in organisations if name in _normal(checked)]
         if names:
             reasons.append("含模板里的单位名称：" + "、".join(sorted(names)))
+        found = sorted(term for term in instances if term in _normal(checked))
+        # Report the longest names only: a tail of one found name adds nothing.
+        found = [term for term in found if not any(term != other and term in other for other in found)]
+        if found:
+            reasons.append(
+                "含专家版项目的实际："
+                + "、".join(f"{term}（{instances[term]}）" for term in found)
+                + "；改成通用说法"
+                + ("，或换成" + policy.placeholder_open + policy.placeholder_close + "占位" if use and use.placeholders else "")
+            )
+        words = [word for word in framing if word in _normal(checked)]
+        if words:
+            reasons.append(
+                "按专家版项目的场地划分来写（" + "、".join(words) + "）；本产品的小节标题不用这个词，改成通用说法"
+            )
         for word, why in policy.unavailable.items():
             if word in entry.text or word in entry.applies_when:
                 reasons.append(f"提到了“{word}”：{why}")
@@ -450,16 +649,31 @@ def render_role_skill(
         f"{policy.placeholder_open}{policy.placeholder_close}处是要换成本项目事实的位置，"
         "不能照抄模板的数值和对象。",
     ]
+    # Exemplar sections written under the same product section share one heading.
+    groups: dict[str, list[OutlineSection]] = {}
+    headings: dict[str, str] = {}
     for section in scope.sections:
-        found = by_section.get(section.number, [])
-        structure = structure_line(
-            outline, section, policy=policy, generated=scope.generated.get(section.number, "")
+        target = scope.target(section)
+        groups.setdefault(target.number, []).append(section)
+        headings.setdefault(target.number, target.heading)
+    for number, sections in groups.items():
+        found = [entry for section in sections for entry in by_section.get(section.number, [])]
+        structures = list(
+            dict.fromkeys(
+                text
+                for section in sections
+                if (
+                    text := structure_line(
+                        outline, section, policy=policy,
+                        generated=scope.generated.get(section.number, ""),
+                    )
+                )
+            )
         )
-        if not found and not structure:
+        if not found and not structures:
             continue
-        lines.extend(["", f"## {section.number} {section.title}"])
-        if structure:
-            lines.append(f"结构：{structure}")
+        lines.extend(["", f"## {headings[number]}"])
+        lines.extend(f"结构：{text}" for text in structures)
         for use in uses:
             chosen = [entry for entry in found if entry.use.strip() == use.id]
             if not chosen:
@@ -473,8 +687,12 @@ def render_role_skill(
                     + (f"（适用：{condition}）" if show else "")
                     + f" 〔模板 {entry.locator.strip()}〕"
                 )
-        if not found and section.number in reasons:
-            lines.append(f"- 本节无可迁移内容：{reasons[section.number]}")
+        if not found:
+            lines.extend(
+                f"- 本节无可迁移内容：{reasons[section.number]}"
+                for section in sections
+                if section.number in reasons
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -519,8 +737,10 @@ __all__ = [
     "RoleScope",
     "SectionRef",
     "SkippedSection",
+    "Target",
     "accept_submission",
     "acceptance_record",
+    "instance_terms",
     "organisation_names",
     "parse_roles",
     "render_role_skill",
