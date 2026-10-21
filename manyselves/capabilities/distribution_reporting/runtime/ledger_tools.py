@@ -44,6 +44,8 @@ from ..domain.judgment_ledger import (
     ledger_findings,
     ledger_judgments,
     place_problem_table,
+    problem_table,
+    process_terms,
     report_check_findings,
 )
 from ..domain.taxonomy import (
@@ -55,9 +57,11 @@ from .assets import runtime_photo_ids
 from .cross_module import (
     checked_relations,
     conflict_summary,
+    joined_see_also,
     object_chains,
     related_rows,
     see_also_by_row,
+    structural_links,
 )
 from .delivery_tools import DeliveryTools
 from .joint_dossiers import build_dossiers
@@ -232,6 +236,38 @@ def _supplement_lines(request: ReportRequest) -> list[str]:
         for supplement in request.user_supplements
         if supplement.id not in superseded
     ]
+
+
+def _with_table_terms(
+    findings: dict[str, dict[str, Any]],
+    sections: Mapping[str, str],
+    rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
+) -> dict[str, dict[str, Any]]:
+    """Workflow words in the problem table the program draws from the rows.
+
+    The table is built from row text, so the editor cannot change it: the
+    finding names the rows to report it, and stays minor.
+    """
+
+    merged = dict(findings)
+    for section_id in sections:
+        rows = rows_by_submodule.get(section_id, ())
+        leaked = {
+            row.id: terms
+            for row in rows
+            if (terms := process_terms(problem_table([row]) or ""))
+        }
+        if leaked:
+            merged[section_id] = _combined(
+                merged.get(section_id),
+                {
+                    "problem": "问题表里有内部流程用语或编号（来自判断行文字）："
+                    + "；".join(f"{row_id} {'、'.join(terms)}" for row_id, terms in leaked.items()),
+                    "severity": "minor",
+                    "suggestion": "问题表由程序从判断行生成，正文不用改；记录下来供判断阶段改正。",
+                },
+            )
+    return merged
 
 
 def _section_state(rows: Sequence[JudgmentRow]) -> str:
@@ -433,6 +469,9 @@ class LedgerTools:
         lengths = matched_lengths(template_sections(template), titles.items())
         return render_length_reference(lengths, titles)
 
+    def _has_reference(self, run_id: str) -> bool:
+        return (self.workspace / f"Work/runs/{run_id}/ledger/reference-values.json").is_file()
+
     def _reference(self, run_id: str) -> dict[str, Any]:
         path = self.workspace / f"Work/runs/{run_id}/ledger/reference-values.json"
         return json.loads(path.read_text(encoding="utf-8"))
@@ -459,7 +498,10 @@ class LedgerTools:
                 evidence_subjects=reference.get("evidence_subjects"),
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
-        see_also = see_also_by_row(dossiers, ledger)
+        see_also = joined_see_also(
+            see_also_by_row(dossiers, ledger),
+            structural_links(ledger, reference.get("evidence_subjects") or {}),
+        )
         readings = load_photo_readings(self.workspace, run_id)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r0.json", dumped)
@@ -581,7 +623,13 @@ class LedgerTools:
             if missing := [target for target in blocking if target not in answered]:
                 unanswered[module_id] = missing
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
-        ledger, dropped_relations = checked_relations(ledger, see_also_by_row(dossiers, ledger))
+        subjects = self._reference(run_id).get("evidence_subjects") if self._has_reference(run_id) else {}
+        ledger, dropped_relations = checked_relations(
+            ledger,
+            joined_see_also(
+                see_also_by_row(dossiers, ledger), structural_links(ledger, subjects or {})
+            ),
+        )
         conflicts = [d for d in dossiers if d["kind"] == "conflict"]
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
@@ -736,11 +784,15 @@ class LedgerTools:
                     "owner": module_id,
                     "sections": texts,
                     **({"cited_rows": list(cited.values())} if cited else {}),
-                    "program_findings": report_check_findings(
-                        sections=texts,
-                        rows_by_submodule=by_submodule,
-                        known_values=known,
-                        subject_values=reference.get("subject_values"),
+                    "program_findings": _with_table_terms(
+                        report_check_findings(
+                            sections=texts,
+                            rows_by_submodule=by_submodule,
+                            known_values=known,
+                            subject_values=reference.get("subject_values"),
+                        ),
+                        texts,
+                        by_submodule,
                     ),
                 }
             )
@@ -821,17 +873,61 @@ class LedgerTools:
             merged[section_id] = _combined(merged.get(section_id), finding)
         return merged
 
+    @staticmethod
+    def _revised_sections(item: Mapping[str, Any], *revisions: Mapping[str, Any] | None) -> dict[str, str]:
+        sections = dict(item["sections"])
+        for revision in revisions:
+            sections.update(
+                {
+                    key: text
+                    for key, text in ((revision or {}).get("sections") or {}).items()
+                    if key in sections
+                }
+            )
+        return sections
+
+    def recheck_edit(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Program checks on the sections a revision changed, which nothing reviewed after it.
+
+        Only the checks that need no reference data run here: workflow words
+        and ids in the prose, and, for the chief, tables written into prose
+        that the program draws itself.  A finding sends the owner back once.
+        """
+
+        item = value["item"]
+        revision = value.get("revision") or {}
+        changed = {
+            key: text
+            for key, text in self._revised_sections(item, revision).items()
+            if key in (revision.get("sections") or {})
+        }
+        findings: dict[str, dict[str, Any]] = {}
+        for section_id, text in changed.items():
+            if leaked := process_terms(text):
+                findings[section_id] = {
+                    "problem": "修订后的正文里出现了内部流程用语或编号：" + "、".join(leaked),
+                    "severity": "blocking",
+                    "suggestion": "删去这些用语，只写结论和依据本身。",
+                }
+        if item["owner"] == CHIEF_OWNER and changed:
+            findings = self._chief_text_findings(findings, changed)
+        findings = {key: f for key, f in findings.items() if key in changed}
+        return {
+            "findings": findings,
+            "blocking": _blocking(findings),
+            "revision_input": {"findings": findings, "minor": {}},
+        }
+
     def close_edit(self, value: dict[str, Any]) -> dict[str, Any]:
         item = value["item"]
-        sections = dict(item["sections"])
-        revision = value.get("revision") or {}
-        sections.update(
-            {key: text for key, text in (revision.get("sections") or {}).items() if key in sections}
-        )
+        recheck = value.get("recheck") or {}
         return {
             "owner": item["owner"],
-            "sections": sections,
+            "sections": self._revised_sections(
+                item, value.get("revision"), value.get("recheck_revision")
+            ),
             "findings": value["merged"]["findings"],
+            **({"recheck_findings": recheck["findings"]} if recheck.get("findings") else {}),
         }
 
     # -- composition and delivery -----------------------------------------
@@ -977,6 +1073,7 @@ class LedgerTools:
             "finalize-judgment-ledger": self.finalize_ledger,
             "check-chief-tables": self.check_chief,
             "check-report": self.check_report,
+            "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,
             "compose-report": self.compose_report,
         }

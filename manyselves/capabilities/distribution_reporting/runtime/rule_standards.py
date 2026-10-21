@@ -23,6 +23,13 @@ _FIELD = re.compile(
     r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?(" + "|".join(STANDARD_FIELDS) + r")(?:\*\*)?\s*[：:]\s*(.+?)\s*$"
 )
 _EMPTY = {"", "无", "暂无", "—", "-", "/"}
+_UNIT_ID = re.compile(r"KU-\d[\d.]*-\d+")
+
+
+def unit_ids(ref: str) -> list[str]:
+    """The knowledge unit ids inside one rule reference, e.g. "R-001（KU-2.1-01）"."""
+
+    return list(dict.fromkeys(_UNIT_ID.findall(ref)))
 
 
 def knowledge_units(texts: Iterable[str]) -> dict[str, dict[str, str]]:
@@ -55,12 +62,12 @@ def section_standards(
 
     found: dict[str, dict[str, Any]] = {}
     for row in rows:
-        for ref in row.rule_refs:
-            unit = units.get(ref.strip())
+        for unit_id in (u for ref in row.rule_refs for u in unit_ids(ref)):
+            unit = units.get(unit_id)
             if unit is None or not unit.get("standards"):
                 continue
             entry = found.setdefault(
-                ref.strip(),
+                unit_id,
                 {"rule": unit.get("title", ""), "standards": unit["standards"], "for_rows": []},
             )
             entry["for_rows"].append(row.id)
@@ -72,14 +79,21 @@ def standards_coverage(
 ) -> dict[str, Any]:
     """How many cited knowledge units resolved to a standard, for checking a run."""
 
-    cited = {ref.strip() for rows in ledger.values() for row in rows for ref in row.rule_refs}
-    resolved = sorted(ref for ref in cited if units.get(ref, {}).get("standards"))
+    rows = [row for rows in ledger.values() for row in rows]
+    cited = {u for row in rows for ref in row.rule_refs for u in unit_ids(ref)}
+    resolved = sorted(u for u in cited if units.get(u, {}).get("standards"))
+    without = [
+        row.id for row in rows
+        if not any(units.get(u, {}).get("standards") for ref in row.rule_refs for u in unit_ids(ref))
+    ]
     return {
         "units_in_knowledge": len(units),
         "units_cited": len(cited),
         "units_with_standards": len(resolved),
         "unresolved": sorted(cited - set(resolved)),
+        "rows": len(rows),
+        "rows_without_standard": len(without),
     }
 
 
-__all__ = ["STANDARD_FIELDS", "knowledge_units", "section_standards", "standards_coverage"]
+__all__ = ["STANDARD_FIELDS", "knowledge_units", "section_standards", "standards_coverage", "unit_ids"]

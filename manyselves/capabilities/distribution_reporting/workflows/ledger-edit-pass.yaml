@@ -1,6 +1,6 @@
 id: ledger-edit-pass
-version: 1.0.0
-description: One editorial pass over an owner's sections; the owner revises only the named ones
+version: 1.1.0
+description: One editorial pass over an owner's sections; the owner revises only the named ones, and the program checks the revision once
 tasks:
 - edit-sections
 - revise-sections
@@ -12,6 +12,8 @@ state:
   item_key: null
   review_base: null
   revision: null
+  recheck: null
+  recheck_revision: null
 actions:
 - id: open-edit
   kind: fork_conversation
@@ -66,6 +68,39 @@ actions:
   conversation_variable: owner_conversation
   input_variable: revision_input
   output_variable: revision
+- id: recheck
+  kind: invoke_tool
+  tool: recheck-edit
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+  output_variable: recheck
+- id: recheck-blocking
+  kind: set_variable
+  variable: recheck_blocking
+  value_variable: recheck
+  field: blocking
+- id: recheck-route
+  kind: if
+  condition:
+    variable: recheck_blocking
+    operator: eq
+    value: true
+  then: recheck-input
+  otherwise: close
+- id: recheck-input
+  kind: set_variable
+  variable: recheck_revision_input
+  value_variable: recheck
+  field: revision_input
+- id: revise-again
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-sections
+  conversation_variable: owner_conversation
+  input_variable: recheck_revision_input
+  output_variable: recheck_revision
 - id: close
   kind: invoke_tool
   tool: close-edit
@@ -73,6 +108,8 @@ actions:
     item: item
     merged: merged
     revision: revision
+    recheck: recheck
+    recheck_revision: recheck_revision
   output_variable: result
 - id: finish
   kind: end_workflow

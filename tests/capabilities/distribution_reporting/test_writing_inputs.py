@@ -87,3 +87,47 @@ def test_internal_workflow_words_in_prose_are_found_by_the_program() -> None:
     )
     assert "联合审查" in findings["2.1.1"]["problem"]
     assert findings["2.1.1"]["severity"] == "blocking"
+
+
+def test_rule_refs_written_with_a_source_id_still_reach_their_standard() -> None:
+    units = knowledge_units([KNOWLEDGE])
+    rows = [_row("J-2.1-1", "concern", ["R-001（KU-2.1-01）"]), _row("J-2.1-2", "concern", ["R-001"])]
+    assert section_standards(rows, units)[0]["for_rows"] == ["J-2.1-1"]
+    assert standards_coverage({"2.1": rows}, units)["rows_without_standard"] == 1
+
+
+def test_row_text_is_checked_for_workflow_words_and_missing_knowledge_units() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        JudgmentSet,
+        ledger_findings,
+    )
+
+    leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "该冲突提交联合审查"})
+    bare = _row("J-2.1-2", "undetermined")
+    fine = _row("J-2.1-3", "no_concern")
+    findings = ledger_findings(
+        JudgmentSet(module_id="2.1", rows=[leaky, bare, fine]),
+        submodule_ids=["2.1.1"], module_evidence_ids=["E-1"], known_evidence_ids=["E-1"],
+        known_photo_ids=[],
+    )
+    assert "联合审查" in findings["J-2.1-1"]["problem"] and findings["J-2.1-1"]["severity"] == "blocking"
+    assert findings["J-2.1-2"]["severity"] == "minor" and "KU" in findings["J-2.1-2"]["problem"]
+    assert "J-2.1-3" not in findings
+
+
+def test_a_revision_is_checked_once_more_by_the_program(tmp_path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
+
+    tools = LedgerTools(tmp_path)
+    item = {"owner": "2.5", "sections": {"2.5.5": "原文。", "2.5.6": "原文。"}}
+    revision = {"sections": {"2.5.5": "该冲突提交联合审查。"}}
+    checked = tools.recheck_edit({"item": item, "merged": {"findings": {}}, "revision": revision})
+    assert checked["blocking"] is True and set(checked["findings"]) == {"2.5.5"}
+    clean = tools.recheck_edit({"item": item, "merged": {"findings": {}}, "revision": {"sections": {"2.5.5": "见 2.4.1.3。"}}})
+    assert clean["blocking"] is False
+    closed = tools.close_edit({
+        "item": item, "merged": {"findings": {}}, "revision": revision, "recheck": checked,
+        "recheck_revision": {"sections": {"2.5.5": "改好的。"}},
+    })
+    assert closed["sections"] == {"2.5.5": "改好的。", "2.5.6": "原文。"}
+    assert "2.5.5" in closed["recheck_findings"]

@@ -163,3 +163,34 @@ def test_cross_findings_cite_two_modules_and_appear_in_the_overview() -> None:
         [good, one_module, missing], rows_by_module=LEDGER, overview="x。"
     )["3.1"]["problem"]
     assert "只来自一个模块" in problem and "J-9.9-9" in problem and "没有原样写进" in problem
+
+
+def _placed(row_id: str, submodule: str, disposition: str, evidence: str) -> JudgmentRow:
+    return _row(row_id, submodule, disposition, evidence=evidence)
+
+
+def test_rooms_hold_their_equipment_and_mechanism_pairs_join_across_objects() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.cross_module import structural_links
+
+    subjects = {
+        "E-1": "文体中心配电房",            # room-level record
+        "E-2": "文体中心配电房/1D1",
+        "E-3": "文体中心配电房/电容柜",
+        "E-4": "文体中心配电房/1#变",
+        "E-5": "科研楼配电房",
+        "E-6": "科研楼配电房/2#变",
+    }
+    ledger = {
+        "2.5": [_placed("J-2.5-1", "2.5.6", "concern", "E-1")],          # no spares in the room
+        "2.2": [_placed("J-2.2-1", "2.2.2.1", "concern", "E-2"),         # 1D1 runs hot
+                _placed("J-2.2-2", "2.2.1.1", "no_concern", "E-4"),      # THDu low on 1#变
+                _placed("J-2.2-3", "2.2.1.1", "no_concern", "E-6")],     # another room
+        "2.1": [_placed("J-2.1-1", "2.1.5", "concern", "E-3")],          # capacitor cabinet off
+    }
+    pairs = [("2.1.5", "2.2.1.1")]
+    links = structural_links(ledger, subjects, pairs)
+    # The room's spares gap reaches the equipment recorded in that room, and back.
+    assert {e["row_id"]: e["link"] for e in links["J-2.5-1"]} == {"J-2.2-1": "room", "J-2.1-1": "room"}
+    # Capacitor and harmonics are paired by mechanism in the same room only.
+    assert {e["row_id"]: e["link"] for e in links["J-2.1-1"]} == {"J-2.5-1": "room", "J-2.2-2": "mechanism"}
+    assert "J-2.2-3" not in links  # other room, and nothing flagged with it

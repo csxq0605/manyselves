@@ -83,7 +83,7 @@ class JudgmentRow(_Model):
     photo_ids: list[str] = Field(default_factory=list)
     related_row_ids: list[str] = Field(
         default_factory=list,
-        description="别的模块对同一对象的判断行中，加重、解释或改变了本行结论的那些行（J-...）",
+        description="别的模块与本行相关的判断行（同一对象、同一房间或机理相关）中，加重、解释或改变了本行结论的那些行（J-...）",
     )
 
     @model_validator(mode="after")
@@ -165,10 +165,27 @@ def ledger_findings(
                 "一行判断写了多个对象（" + "、".join(objects) + "），关注项和不能判定项要一行一个对象"
             )
         covered.update(row.evidence_ids)
+        texts = [row.checkpoint, row.basis, row.hazard]
+        if row.action is not None:
+            texts += [row.action.measure, row.action.timeframe]
+        if row.gap is not None:
+            texts += [row.gap.missing, row.gap.impact, row.gap.requested_input]
+        # Row text goes into the prose and the problem table as written.
+        leaked = list(dict.fromkeys(term for text in texts for term in process_terms(text)))
+        if leaked:
+            problems.append("判断行文字里有内部流程用语或编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表")
         if problems:
             findings[row.id] = _finding(
                 "；".join(problems),
-                "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行，判断本身不变。",
+                "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号。判断本身不变。",
+            )
+        elif row.disposition in {"concern", "undetermined"} and not any(
+            _UNIT_REF.search(ref) for ref in row.rule_refs
+        ):
+            findings[row.id] = _finding(
+                "关注或不能判定的行没有在 rule_refs 写所用知识单元的 KU 编号，写作拿不到标准名",
+                "在 rule_refs 写所用知识单元的 KU 编号；确实没有适用的知识单元就不写。",
+                severity="minor",
             )
     for evidence_id in sorted(set(module_evidence_ids) - covered):
         findings[evidence_id] = _finding(
@@ -669,6 +686,9 @@ PROCESS_TERMS = (
 )
 # Ids of facts, knowledge, sources, photos, rows and dossiers; section numbers (2.1.1) are fine.
 _PROCESS_ID = re.compile(r"(?<![A-Za-z0-9])(?:KU-\d[\d.]*-\d+|[EKRPDJ]-[\d.\-]*\d)")
+
+
+_UNIT_REF = re.compile(r"KU-\d[\d.]*-\d+")
 
 
 def process_terms(text: str) -> list[str]:

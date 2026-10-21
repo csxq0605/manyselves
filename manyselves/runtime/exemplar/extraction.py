@@ -329,13 +329,17 @@ def site_words(scope: RoleScope, policy: ExemplarPolicy) -> list[str]:
 
 
 def structural_labels(outline: DocumentOutline) -> set[str]:
-    """Labels the exemplar uses in two or more sections: its shape, not one section's content."""
+    """Labels the exemplar uses under two or more parents: its shape, not one topic's content.
+
+    A finding's subheading can repeat in sibling sections of one topic; a
+    label of the document's shape recurs across topics.
+    """
 
     seen: dict[str, set[str]] = {}
     for section in outline.sections:
         for label in section.labels:
-            seen.setdefault(label, set()).add(section.number)
-    return {label for label, numbers in seen.items() if len(numbers) >= 2}
+            seen.setdefault(label, set()).add(_parent_number(section.number))
+    return {label for label, parents in seen.items() if len(parents) >= 2}
 
 
 def role_packet(
@@ -540,7 +544,9 @@ def accept_submission(
                 + "；改成通用说法"
                 + ("，或换成" + policy.placeholder_open + policy.placeholder_close + "占位" if use and use.placeholders else "")
             )
-        words = [word for word in framing if word in _normal(checked)]
+        # A site word only in the condition describes when to use the method, not the method.
+        body = _strip_placeholders(entry.text, policy) if use is not None and use.placeholders else entry.text
+        words = [word for word in framing if word in _normal(body)]
         if words:
             reasons.append(
                 "按专家版项目的场地划分来写（" + "、".join(words) + "）；本产品的小节标题不用这个词，改成通用说法"

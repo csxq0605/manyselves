@@ -1,0 +1,10 @@
+id: recheck-edit
+version: 1.0.0
+description: Program checks on the sections a revision changed
+implementation: capability:distribution-reporting:recheck-edit
+input_contract: ledger_close_input
+output_contract: ledger_merged_findings
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

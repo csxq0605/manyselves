@@ -306,6 +306,10 @@ def _sites_exemplar(path: Path) -> Path:
     document.add_heading("修剪", level=2)
     document.add_paragraph("现状描述：枝条过密。")
     document.add_paragraph("建议：分批修剪。")
+    document.add_heading("复查", level=1)  # the same labels under another topic: the document's shape
+    document.add_heading("复查结果", level=2)
+    document.add_paragraph("现状描述：已复查。")
+    document.add_paragraph("建议：定期复查。")
     document.save(str(path))
     return path
 
@@ -367,6 +371,8 @@ def test_the_exemplars_own_places_and_objects_are_refused(tmp_path: Path) -> Non
              "locator": lead, "quote": "喷头均已检查"},
             {"use": "example", "text": "〈园区〉喷头〈问题〉。", "applies_when": "未明确",
              "locator": lead, "quote": "喷头均已检查"},
+            {"use": "method", "text": "同类问题合并成一句说明。", "applies_when": "有多个园区时",
+             "locator": lead, "quote": "喷头均已检查"},
         ]}
     )
     result = accept_submission(outline, scope, submission, SITE_POLICY)
@@ -374,5 +380,7 @@ def test_the_exemplars_own_places_and_objects_are_refused(tmp_path: Path) -> Non
     assert "西山园区（专家版项目的地点）" in reasons[0]
     assert "北坡花坛（专家版表格里的位置或对象）" in reasons[1]
     assert "场地划分" in reasons[2]
-    # Our own word and a placeholder are fine.
-    assert [e.text for e in result.accepted] == ["按区域说明喷头状态，再给建议。", "〈园区〉喷头〈问题〉。"]
+    # Our own word, a placeholder and a site word only in the condition are fine.
+    assert [e.text for e in result.accepted] == [
+        "按区域说明喷头状态，再给建议。", "〈园区〉喷头〈问题〉。", "同类问题合并成一句说明。"
+    ]
