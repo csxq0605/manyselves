@@ -43,3 +43,28 @@ async def test_replay_reruns_checks_and_delivery_on_a_copy(tmp_path: Path) -> No
     )
     assert "设备1检查情况良好，无需处理。" in replayed
     assert (tmp_path / "replay/replay-summary.json").is_file()
+
+
+def test_a_copied_project_gets_its_verified_inputs_rebound(tmp_path: Path) -> None:
+    import shutil
+
+    from manyselves.runtime.artifacts.content_store import ContentAddressedStore
+
+    project = tmp_path / "project"
+    (project / "Inputs").mkdir(parents=True)
+    source = project / "Inputs/table.xlsx"
+    source.write_bytes(b"table bytes")
+    store = ContentAddressedStore(project)
+    handle = store.issue_trusted_handle(store.ingest_file(source), lineage_id="run-1")
+    copy = tmp_path / "copy"
+    shutil.copytree(project, copy, symlinks=True)
+    copied = ContentAddressedStore(copy)
+    with pytest.raises(ValueError, match="changed since"):
+        copied.resolve_trusted_handle(copied.load_trusted_handle(handle.manifest_ref))
+
+    assert _replay_module()._rebind_trusted_blobs(copy) == 1
+
+    resolved = copied.resolve_trusted_handle(copied.load_trusted_handle(handle.manifest_ref))
+    assert resolved.is_relative_to(copy.resolve())
+    # The source project's record is untouched and still valid.
+    assert store.resolve_trusted_handle(store.load_trusted_handle(handle.manifest_ref))

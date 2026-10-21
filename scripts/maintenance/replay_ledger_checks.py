@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -74,6 +75,28 @@ def _agent_results(run_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
 
 
 # -- 1. evidence and photo readings --------------------------------------------
+
+
+def _rebind_trusted_blobs(workspace: Path) -> int:
+    """Re-bind the copy's verified content records to the copied files.
+
+    A verified record names the file's device, inode and mtime, so a copied
+    project fails the check by design.  Each copied file is hashed first; a
+    file whose bytes differ from its record is an error, not re-bound.
+    """
+
+    count = 0
+    for manifest in sorted((workspace / "Work/content/verified").rglob("*.json")):
+        payload = _load(manifest)
+        target = workspace / payload["relative_path"]
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        if digest != payload["sha256"] or target.stat().st_size != payload["size"]:
+            raise ValueError(f"copied content differs from its record: {target}")
+        stat = target.stat()
+        payload.update(device=stat.st_dev, inode=stat.st_ino, mtime_ns=stat.st_mtime_ns)
+        _write(manifest, payload)
+        count += 1
+    return count
 
 
 def _remark_summary_rows(workspace: Path, run_dir: Path) -> tuple[int, list[EvidenceItem]]:
@@ -325,6 +348,7 @@ def replay(project: Path, run_id: str, output: Path, knowledge_root: Path | None
     if output.exists() or output.is_relative_to(project):
         raise ValueError("output must be a new directory outside the source project")
     shutil.copytree(project, output, symlinks=True)
+    rebound = _rebind_trusted_blobs(output)
     run_dir = output / "Work/runs" / run_id
     state_file = _load(run_dir / "runtime-state.json")
     variables = state_file["variables"]
@@ -348,6 +372,7 @@ def replay(project: Path, run_id: str, output: Path, knowledge_root: Path | None
     delivery = _deliver(tools, output, state, replayed)
     summary = {
         "run_id": run_id,
+        "trusted_blobs_rebound": rebound,
         "summary_rows_marked": summary_rows,
         "photo_comparison": photos,
         "ledger_checks": replayed["ledger_checks"],
