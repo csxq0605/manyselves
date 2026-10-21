@@ -1,16 +1,11 @@
 # Which subsection judges a source observation that mappers route to several
 # subsections.  Other routes reference the owner's judgment and do not judge
 # again.  Key: the routed subsections; value: the owner.  Route sets missing
-# here fall back to the mapper's first route.
+# here fall back to the first route (lowest E-ID); for fields the knowledge
+# base indexes to several units, that is the knowledge base's own order.
 #
 # Chosen by subsection meaning (taxonomy titles), not by mapper order:
-# load rate and overload belong to 2.1.1; branch current without capacity is a
-# spot-check reading for 2.4.4; equipment heating belongs to 2.2.2.1.
-# This also keeps the owner→reference graph one level deep.
+# equipment heating belongs to 2.2.2.1.
 rules:
-  - routes: ["2.1.1", "2.4.1.1"]   # running current with transformer capacity (S4-4)
-    owner: "2.1.1"                 # 配电系统负荷分配与过载风险
-  - routes: ["2.1.1", "2.4.4"]     # running current without capacity (S4-4)
-    owner: "2.4.4"                 # 末端配电抽查: no capacity, so no load rate to judge
   - routes: ["2.2.2.1", "2.4.4"]   # infrared temperature (S4-4)
     owner: "2.2.2.1"               # 低压配电设备发热情况

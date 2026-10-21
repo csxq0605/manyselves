@@ -57,6 +57,7 @@ from ..domain.taxonomy import (
 from .assets import runtime_photo_ids
 from .cross_module import (
     checked_relations,
+    unlisted_relations,
     conflict_summary,
     flagged_rows,
     object_chains,
@@ -80,10 +81,17 @@ from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
 from .review_packets import ReviewPackets
-from .rule_standards import knowledge_units, section_standards, standards_coverage, unit_bodies
+from .rule_standards import (
+    knowledge_units,
+    section_standards,
+    standards_coverage,
+    unit_bodies,
+    unit_ids,
+)
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
+from .template_skill_paths import is_template_skill_path
 from .template_skills import plain_value, skill_order, skills_with_lessons
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
@@ -290,6 +298,74 @@ def _with_table_terms(
     return merged
 
 
+def placement_findings(
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    unassigned_ids: Sequence[str],
+    defaults: Mapping[str, str],
+    unit_sections: Mapping[str, Sequence[str]],
+) -> tuple[dict[str, dict[str, dict[str, Any]]], list[dict[str, Any]]]:
+    """Program checks on where the authors placed records, and the departures.
+
+    The knowledge base's index gives a record its default section; it is a
+    default, not a rule.  An author may judge a record in another section, or
+    in several, when the knowledge units say so: the row then gives a reason
+    and cites a unit that serves its section.  A record with no default
+    (unassigned) must be judged by some module, by a row that cites the units
+    it applied.  Departures are returned for the knowledge base's maintenance.
+    """
+
+    unassigned = set(unassigned_ids)
+    found: dict[str, dict[str, dict[str, Any]]] = {module_id: {} for module_id in ledger}
+    departures: list[dict[str, Any]] = []
+    claimed: set[str] = set()
+    for module_id, rows in ledger.items():
+        for row in rows:
+            placed = sorted(unassigned & set(row.evidence_ids))
+            moved = [
+                e for e in row.evidence_ids
+                if defaults.get(e) and defaults[e] != row.submodule_id
+            ] if row.placement_reason.strip() else []
+            if not placed and not moved:
+                continue
+            claimed.update(placed)
+            units = [u for ref in row.rule_refs for u in unit_ids(ref)]
+            sections = sorted({s for u in units for s in unit_sections.get(u, ())})
+            if moved:
+                departures.append({
+                    "row_id": row.id,
+                    "evidence_ids": moved,
+                    "default_sections": sorted({defaults[e] for e in moved}),
+                    "chosen_section": row.submodule_id,
+                    "reason": row.placement_reason,
+                    "rule_refs": list(row.rule_refs),
+                })
+            if not units:
+                problem = "本行把事实放在默认以外的小节或判断了待归属的事实，但没有写所依据的知识单元"
+            elif sections and row.submodule_id not in sections:
+                problem = (
+                    f"本行所依据的知识单元对应 {'、'.join(sections)}，本行却在 {row.submodule_id}"
+                )
+            else:
+                continue
+            found[module_id][row.id] = {
+                "problem": problem,
+                "severity": "minor",
+                "suggestion": "在 rule_refs 写覆盖本小节的知识单元；没有这样的知识单元时放回默认小节，或说明理由。",
+            }
+    # Keyed by the fact, like an uncovered fact: a new row citing it answers.
+    for evidence_id in (e for e in unassigned_ids if e not in claimed):
+        for module_id in found:
+            found[module_id][evidence_id] = {
+                "problem": "这条待归属的事实还没有任何模块判断",
+                "severity": "blocking",
+                "suggestion": (
+                    "属于本模块某个小节的，新增判断行并写所依据的知识单元；"
+                    "不属于本模块的，在 responses 里说明。"
+                ),
+            }
+    return found, departures
+
+
 def _section_state(rows: Sequence[JudgmentRow]) -> str:
     """How much a section has to say, counted by the program."""
 
@@ -310,6 +386,7 @@ def _section_brief(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     units: Mapping[str, Mapping[str, str]],
     elsewhere: Mapping[str, Sequence[str]],
+    names: Sequence[str] = (),
 ) -> dict[str, Any]:
     return {
         "submodule_id": sub["id"],
@@ -319,7 +396,7 @@ def _section_brief(
         "problem_table_marker": PROBLEM_TABLE_MARKER,
         # Only concern rows make a problem table.
         "has_problem_table": any(row.disposition == "concern" for row in rows),
-        "related_rows": related_rows(rows, ledger),
+        "related_rows": related_rows(rows, ledger, names),
         "rule_standards": section_standards(rows, units),
         "data_elsewhere": {row.id: list(elsewhere[row.id]) for row in rows if row.id in elsewhere},
     }
@@ -358,7 +435,10 @@ class LedgerTools:
             modules: list[dict[str, Any]] = []
             for module_id in module_ids:
                 module = REPORT_TAXONOMY[module_id]
-                module_items = index.module_items(module_id)
+                # Unassigned records are shown once, below, not in every module.
+                module_items = [
+                    item for item in index.module_items(module_id) if item.module_id == module_id
+                ]
                 fact_blocks.append(
                     render_fact_packet(
                         module_items,
@@ -382,6 +462,25 @@ class LedgerTools:
                             item.id for item in module_items if item.module_id == module_id
                         ],
                     }
+                )
+            unassigned = [
+                item for item in items
+                if item.module_id is None and not is_template_skill_path(item.source.path)
+            ]
+            if unassigned:
+                fact_blocks.append(
+                    "# 待归属的事实\n"
+                    "这些记录的检查点没有固定小节：知识库的字段索引没有给它们指定知识单元"
+                    "（或写明要按实际检查内容匹配），或者是原表的“其他”栏、不在固定清单里的行。"
+                    "内容属于你这个模块某个小节的，就在那个小节判断它，并在 rule_refs 写所依据的知识单元；"
+                    "不属于本模块的不用管。每条都要有模块判断，没人判断的会退回。\n\n"
+                    + render_fact_packet(
+                        unassigned,
+                        "未归属",
+                        shared=shared,
+                        photo_readings=readings,
+                        column_headers=headers,
+                    )
                 )
             skills = skills_with_lessons(
                 state.get("template_skill_text") or {},
@@ -414,6 +513,14 @@ class LedgerTools:
                     render_statistics(statistic_lines),
                     self._length_reference(run_id, module_ids),
                     *knowledge_blocks,
+                    *(
+                        ["# 判断条件（知识库）\n"
+                         "知识库对各类记录能否比较、怎样判断的适用条件。判断以知识单元的限值、结论标准、"
+                         "依据状态和这里的条件为准；专家版方法里的判断方法只作思路参考，与这里冲突时以这里为准。\n\n"
+                         + conditions]
+                        if (conditions := knowledge.judgment_conditions())
+                        else []
+                    ),
                     "# 专家版方法（按小节，每节分判断方法、写法、章节综合、范例、核对要点）\n"
                     + "\n\n".join(
                         f"## {skill_id}\n{skills[skill_id]}"
@@ -482,6 +589,11 @@ class LedgerTools:
                 "author_skills": {
                     module_id: skills.get(f"author-{module_id}", "") for module_id in module_ids
                 },
+                "unassigned_evidence_ids": [item.id for item in unassigned],
+                # The section each record goes to by default.
+                "default_sections": {
+                    item.id: item.submodule_id for item in items if item.submodule_id
+                },
             },
         )
         return {
@@ -536,6 +648,14 @@ class LedgerTools:
             return {}
         return unit_bodies(document.text for document in documents)
 
+    def _unit_sections(self, run_id: str) -> dict[str, list[str]]:
+        """Knowledge unit -> the sections it serves, as routed for this run."""
+
+        path = self.workspace / f"Work/runs/{run_id}/knowledge-routing.json"
+        if not path.is_file():
+            return {}
+        return dict(json.loads(path.read_text(encoding="utf-8")).get("unit_sections") or {})
+
     def _length_reference(self, run_id: str, module_ids: Sequence[str]) -> str:
         template, _source = resolve_report_template(self.workspace, run_id)
         titles = dict(CHIEF_SECTION_TITLES)
@@ -572,6 +692,15 @@ class LedgerTools:
                 cited_values=reference.get("cited_values"),
                 summary_evidence_ids=reference.get("summary_evidence_ids") or (),
             )
+        placed, _departures = placement_findings(
+            ledger,
+            reference.get("unassigned_evidence_ids") or (),
+            reference.get("default_sections") or {},
+            self._unit_sections(run_id),
+        )
+        for module_id, module_findings in placed.items():
+            for target, finding in module_findings.items():
+                findings[module_id][target] = _combined(findings[module_id].get(target), finding)
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         see_also = see_also_by_row(dossiers, ledger)
         # Shared by every author's revision; each sees the other modules' lines.
@@ -632,13 +761,27 @@ class LedgerTools:
             ]
             for module_id, rows in ledger.items()
         }
-        ledger, dropped = checked_relations(
-            ledger, relation_names(self._relation_method(run_id))
-        )
+        names = relation_names(self._relation_method(run_id))
+        ledger, dropped = checked_relations(ledger, names)
+        reviews: dict[str, list[dict[str, Any]]] = {}
+        unreviewed: dict[str, list[str]] = {}
+        for module_id, chosen in (value.get("relations") or {}).items():
+            considered = list((_plain(chosen) or {}).get("considered") or [])
+            reviews[module_id] = considered
+            seen = {str(entry.get("relation", "")).strip() for entry in considered}
+            if missing := [name for name in names if name not in seen]:
+                unreviewed[module_id] = missing
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r1.json", dumped)
         self.store.write_json(
-            f"Work/runs/{run_id}/ledger/relations-r1.json", {"dropped_relations": dropped}
+            f"Work/runs/{run_id}/ledger/relations-r1.json",
+            {
+                "dropped_relations": dropped,
+                # Each author's decision on every relation the method lists.
+                "candidate_reviews": reviews,
+                "unreviewed_candidates": unreviewed,
+                "unlisted_relations": unlisted_relations(ledger, names),
+            },
         )
         reference = self._reference(run_id)
         readings = load_photo_readings(self.workspace, run_id)
@@ -766,9 +909,9 @@ class LedgerTools:
             if missing := [target for target in blocking if target not in answered]:
                 unanswered[module_id] = missing
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
-        ledger, dropped_relations = checked_relations(
-            ledger, relation_names(self._relation_method(run_id))
-        )
+        names = relation_names(self._relation_method(run_id))
+        ledger, dropped_relations = checked_relations(ledger, names)
+        self._write_knowledge_candidates(run_id, ledger, names)
         conflicts = [d for d in dossiers if d["kind"] == "conflict"]
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
@@ -796,7 +939,8 @@ class LedgerTools:
                     "title": module["title"],
                     "sections": [
                         _section_brief(sub, [row for row in rows if row.submodule_id == sub["id"]],
-                                       ledger=ledger, units=units, elsewhere=elsewhere)
+                                       ledger=ledger, units=units, elsewhere=elsewhere,
+                                       names=names)
                         for sub in module["submodules"]
                     ],
                 }
@@ -818,11 +962,73 @@ class LedgerTools:
             },
         }
 
+    def _write_knowledge_candidates(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]], names: Sequence[str]
+    ) -> None:
+        """What this run suggests the knowledge base may be missing.
+
+        Two kinds, both after review: relations the authors drew that the
+        relation method does not list, and records the field index left
+        unassigned, with the units and sections the authors chose.  They are
+        candidates for a person to confirm, never applied automatically.
+        """
+
+        try:
+            reference = self._reference(run_id)
+        except OSError:
+            reference = {}
+        unassigned = set(reference.get("unassigned_evidence_ids") or ())
+        index = ProjectEvidenceIndex(self.workspace, run_id)
+        all_fields = (
+            {item.id: item.checkpoint_field or "" for item in index.items()}
+            if index.path.is_file() else {}
+        )
+        fields = {e: all_fields.get(e, "") for e in unassigned}
+        placements = [
+            {
+                "field": fields.get(evidence_id, ""),
+                "evidence_id": evidence_id,
+                "row_id": row.id,
+                "submodule_id": row.submodule_id,
+                "rule_refs": list(row.rule_refs),
+            }
+            for rows in ledger.values()
+            for row in rows
+            for evidence_id in row.evidence_ids
+            if evidence_id in unassigned
+        ]
+        _found, departures = placement_findings(
+            ledger, sorted(unassigned), reference.get("default_sections") or {},
+            self._unit_sections(run_id),
+        )
+        for departure in departures:
+            departure["fields"] = sorted({all_fields.get(e, "") for e in departure["evidence_ids"]})
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/knowledge-candidates.json",
+            {
+                "note": (
+                    "本次运行提示知识库可能缺的内容，只是候选：须经人确认，并在多个项目里重复出现，"
+                    "才提议修订知识库；不自动写回。"
+                ),
+                "unlisted_relations": unlisted_relations(ledger, names),
+                "field_placements": placements,
+                "section_departures": departures,
+            },
+        )
+
     def _relation_method(self, run_id: str) -> str:
         try:
             return KnowledgeContextBuilder(
                 self.workspace, run_id, global_root=self.global_knowledge_root
             ).relation_method()
+        except (OSError, ValueError):
+            return ""
+
+    def _judgment_conditions(self, run_id: str) -> str:
+        try:
+            return KnowledgeContextBuilder(
+                self.workspace, run_id, global_root=self.global_knowledge_root
+            ).judgment_conditions()
         except (OSError, ValueError):
             return ""
 

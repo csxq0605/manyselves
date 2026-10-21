@@ -50,15 +50,17 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
 def test_cited_knowledge_units_reach_the_writer_as_standard_names() -> None:
     units = knowledge_units([KNOWLEDGE])
     # The knowledge base's own status line travels with its standards.
+    # The unit's limits travel too, as the boundary the judgment kept to.
     assert units["KU-2.1-01"] == {
         "title": "负荷率评估", "standards": "GB 50052-2009《供配电系统设计规范》",
-        "status": "相关标准仅为候选检索入口。",
+        "status": "相关标准仅为候选检索入口。", "limits": "未核实原标准条款。",
     }
     assert units["KU-2.1-02"]["standards"] == "GB/T 12747"  # list and bold form; "无" ignored
     rows = [_row("J-2.1-1", "concern", ["KU-2.1-01", "KU-9.9-99"]), _row("J-2.1-2", "no_concern", ["KU-2.1-01"])]
     (entry,) = section_standards(rows, units)
     assert entry == {"rule": "负荷率评估", "standards": "GB 50052-2009《供配电系统设计规范》",
-                     "status": "相关标准仅为候选检索入口。", "for_rows": ["J-2.1-1", "J-2.1-2"]}
+                     "status": "相关标准仅为候选检索入口。", "limits": "未核实原标准条款。",
+                     "for_rows": ["J-2.1-1", "J-2.1-2"]}
     coverage = standards_coverage({"2.1": rows}, units)
     assert coverage["units_with_standards"] == 1 and coverage["unresolved"] == ["KU-9.9-99"]
 

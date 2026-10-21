@@ -151,7 +151,7 @@ def test_a_row_keeps_only_listed_relations_to_existing_rows_of_other_modules() -
     assert {d["row_id"]: d["why"] for d in dropped["J-2.2-1"]} == {
         "J-2.2-1": "所引的是本模块的行",
         "J-2.3-9": "所引的行不存在",
-        "J-2.4-1": "不是关联方法里列出的候选关系",
+        "J-2.4-1": "知识库没有收录这种关联，又没有写机理和成立条件",
     }
     (entry,) = related_rows(kept["2.2"], kept)
     assert entry["row_id"] == "J-2.1-1" and entry["submodule_id"] == "2.1.1"

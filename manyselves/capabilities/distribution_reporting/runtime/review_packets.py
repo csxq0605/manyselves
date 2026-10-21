@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
+from .cross_module import in_knowledge_base, relation_names
 from .observation_ledger import shared_labels
 from .photo_reading import photo_reading_labels
 from .research.fact_context import render_fact_packet
@@ -97,6 +98,8 @@ class ReviewPackets:
             for path, sheet, columns in reference.get("column_headers") or []
         }
         self.units = tools._unit_bodies(run_id)
+        self.relation_names = relation_names(tools._relation_method(run_id))
+        self.conditions = tools._judgment_conditions(run_id)
 
     def packet(self, module_id: str) -> dict[str, Any]:
         rows = list(self.ledger.get(module_id, []))
@@ -125,6 +128,8 @@ class ReviewPackets:
             for unit in _cited_units(shown)
             if unit in self.units
         )
+        if rules and self.conditions:
+            rules += "\n\n## 判断条件（知识库）\n" + self.conditions
         owner_rows = self._owner_rows(rows)
         facts = {item.id: item.fact for item in items}
         return {
@@ -134,6 +139,15 @@ class ReviewPackets:
                     "for_row": row.id,
                     "relation": relation.relation,
                     "reason": relation.reason,
+                    **(
+                        {
+                            "in_knowledge_base": False,
+                            "mechanism": relation.mechanism,
+                            "condition": relation.condition,
+                        }
+                        if self.relation_names and not in_knowledge_base(relation, self.relation_names)
+                        else {}
+                    ),
                     "row": self.index[relation.row_id][1].model_dump(mode="json", exclude_none=True),
                 }
                 for row in rows

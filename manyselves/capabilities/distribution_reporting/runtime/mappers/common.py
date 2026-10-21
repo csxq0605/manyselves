@@ -54,6 +54,21 @@ def unbound_photo_gaps(workbook: Workbook, evidence: list[EvidenceItem]) -> list
 
 HEADER_ROWS = 3
 
+# A trailing unit in a header label, e.g. "剩余电流(A)" -> "剩余电流".
+_TRAILING_UNIT = re.compile(r"\s*[（(][^（）()]*[）)]\s*$")
+
+
+def field_name(label: Any) -> str:
+    """A table header label as a field name: without a trailing unit."""
+
+    return _TRAILING_UNIT.sub("", str(label or "").strip()).strip()
+
+
+def header_label(sheet: Any, row: int, column: int, fallback: str) -> str:
+    """The checkpoint name the table's own label row gives a column."""
+
+    return field_name(sheet.cell(row, column).value) or fallback
+
 
 def source_layout(
     path: Path, evidence: list[EvidenceItem], image_ids: set[str]
@@ -177,6 +192,7 @@ def make_evidence(
     needs_confirmation: bool = False,
     summary_entry: bool = False,
     program_note: str | None = None,
+    checkpoint_field: str | None = None,
 ) -> EvidenceItem:
     return EvidenceItem(
         id=evidence_id(file_id, sheet, cell, submodule_id, fact),
@@ -200,4 +216,5 @@ def make_evidence(
         photo_refs=photo_refs or [],
         summary_entry=summary_entry,
         program_note=program_note,
+        checkpoint_field=checkpoint_field,
     )

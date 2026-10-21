@@ -50,6 +50,14 @@ from manyselves.capabilities.distribution_reporting.runtime.research.project_evi
     ProjectEvidenceIndex,
     project_evidence_locator,
 )
+from manyselves.capabilities.distribution_reporting.runtime.knowledge_index import (
+    KnowledgeIndex,
+    build_index,
+    route_evidence,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
+    KnowledgeContextBuilder,
+)
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
@@ -92,12 +100,40 @@ class PreparationTools:
         snapshot_content: SnapshotContent,
         runtime_photo_ids: RuntimePhotoIDs,
         store: ReportingStore,
+        global_knowledge_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.input_snapshot = input_snapshot
         self.snapshot_content = snapshot_content
         self.runtime_photo_ids = runtime_photo_ids
         self.store = store
+        self.global_knowledge_root = global_knowledge_root
+
+    def _knowledge_index(self, run_id: str) -> KnowledgeIndex:
+        """The run's frozen knowledge base, read for its field index.
+
+        Kept with the run so the routing can be traced to the knowledge base
+        it came from.
+        """
+
+        try:
+            documents = KnowledgeContextBuilder(
+                self.workspace, run_id, global_root=self.global_knowledge_root
+            ).freeze_sources()
+        except (OSError, ValueError):
+            documents = ()
+        index = build_index(document.text for document in documents)
+        self.store.write_json(
+            f"Work/runs/{run_id}/knowledge-routing.json",
+            {
+                "sources": [
+                    {"logicalPath": d.relative_path, "sha256": d.content_sha256}
+                    for d in documents
+                ],
+                **index.to_json(),
+            },
+        )
+        return index
 
     def build_manifest(self, context: PreparationContext) -> PreparationContext:
         """Project the frozen ``Inputs`` inventory into the typed manifest."""
@@ -262,6 +298,7 @@ class PreparationTools:
         evidence: list[EvidenceItem] = []
         photo_assets: list[PhotoAsset] = []
         mapping_gaps: list[dict[str, Any]] = []
+        knowledge_index = self._knowledge_index(context.run_id)
         for result in sorted(
             context.preparation_worker_results,
             key=lambda item: item.manifest_order,
@@ -275,7 +312,8 @@ class PreparationTools:
                         "message": f"文件解析失败：{result.source_path.as_posix()}；{result.error or '未知原因'}",
                     })
                 continue
-            mapped_evidence = list(result.provisional_evidence)
+            # Fields the knowledge base indexes go to the sections it names.
+            mapped_evidence = route_evidence(list(result.provisional_evidence), knowledge_index)
             if any(item.photo_refs for item in mapped_evidence):
                 mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                     mapped_evidence,
@@ -366,6 +404,13 @@ class PreparationTools:
                 )
             )
 
+        if not knowledge_index.fields and any(
+            item.checkpoint_field and item.module_id is None for item in evidence
+        ):
+            mapping_gaps.append({
+                "code": "knowledge_field_index_missing",
+                "message": "知识库没有输入表字段到知识单元的索引；这些检查点由模块作者归属",
+            })
         evidence_id_map: dict[str, str] = {}
         normalized_evidence: list[EvidenceItem] = []
         for index, item in enumerate(evidence, start=1):
@@ -510,6 +555,7 @@ def build_preparation_tools(
     snapshot_content: SnapshotContent,
     runtime_photo_ids: RuntimePhotoIDs,
     store: ReportingStore,
+    global_knowledge_root: Path | None = None,
 ) -> PreparationTools:
     """Construct the capability Tool implementation bundle."""
 
@@ -519,6 +565,7 @@ def build_preparation_tools(
         snapshot_content=snapshot_content,
         runtime_photo_ids=runtime_photo_ids,
         store=store,
+        global_knowledge_root=global_knowledge_root,
     )
 
 
@@ -529,6 +576,7 @@ def build_preparation_tool_implementations(
     snapshot_content: SnapshotContent,
     runtime_photo_ids: RuntimePhotoIDs,
     store: ReportingStore,
+    global_knowledge_root: Path | None = None,
 ) -> dict[str, Any]:
     """Bind the nine file-declared preparation Tool implementation IDs."""
 
@@ -538,6 +586,7 @@ def build_preparation_tool_implementations(
         snapshot_content=snapshot_content,
         runtime_photo_ids=runtime_photo_ids,
         store=store,
+        global_knowledge_root=global_knowledge_root,
     )
     snapshots = PreparationSnapshotStore(store)
     return {

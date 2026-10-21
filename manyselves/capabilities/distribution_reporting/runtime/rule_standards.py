@@ -71,8 +71,19 @@ def knowledge_units(texts: Iterable[str]) -> dict[str, dict[str, str]]:
             "title": title,
             "standards": "；".join(dict.fromkeys(standards)),
             "status": "；".join(dict.fromkeys(statuses)),
+            **_boundary(body),
         }
     return units
+
+
+def _boundary(body: str) -> dict[str, str]:
+    """The unit's limits and conclusion criteria, with their qualifiers as written."""
+
+    from .knowledge_index import structure, unit_field
+
+    names = structure()["unit"]["fields"]
+    found = {key: unit_field(body, names[key]) for key in ("limits", "criteria") if key in names}
+    return {key: value for key, value in found.items() if value and value not in _EMPTY}
 
 
 def section_standards(
@@ -92,6 +103,9 @@ def section_standards(
                     "rule": unit.get("title", ""),
                     "standards": unit["standards"],
                     **({"status": unit["status"]} if unit.get("status") else {}),
+                    # The boundary the judgment kept to: for wording, not to recite.
+                    **({"limits": unit["limits"]} if unit.get("limits") else {}),
+                    **({"criteria": unit["criteria"]} if unit.get("criteria") else {}),
                     "for_rows": [],
                 },
             )

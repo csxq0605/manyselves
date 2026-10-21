@@ -70,11 +70,23 @@ class RowRelation(_Model):
 
     row_id: str = Field(pattern=r"^J-", description="别的模块的判断行编号（J-...）")
     relation: str = Field(
-        min_length=1, description="依据的候选关系，照抄 relation_method 表格第一列里的名称"
+        min_length=1,
+        description=(
+            "关系名称：知识库关联方法列出的候选关系照抄 relation_names 里的名称；"
+            "知识库没有收录的关联，自拟一个简短名称"
+        ),
     )
     reason: str = Field(
         min_length=1,
         description="一句话：两边的哪项事实满足这条关系要核实的条件，对本行结论有什么作用",
+    )
+    mechanism: str = Field(
+        default="",
+        description="知识库没有收录的关联必填：两边为什么相关的机理（例如什么物理过程把两者连起来）",
+    )
+    condition: str = Field(
+        default="",
+        description="知识库没有收录的关联必填：这条关联成立要满足的条件，以及两边哪项事实满足了它",
     )
 
 
@@ -88,7 +100,17 @@ class JudgmentRow(_Model):
     evidence_ids: list[str] = Field(default_factory=list)
     calculation_ids: list[str] = Field(default_factory=list)
     basis: str = Field(min_length=1)
-    rule_refs: list[str] = Field(default_factory=list)
+    rule_refs: list[str] = Field(
+        default_factory=list,
+        description="本行所依据的知识单元 KU 编号，一项一个；涉及几个知识单元就写几个",
+    )
+    placement_reason: str = Field(
+        default="",
+        description=(
+            "本行判断的事实在事实清单里默认属于别的小节，而你依据知识单元把它放在本小节判断时，"
+            "写一句理由；默认小节就是本小节、或只是引用别处的事实作参考时留空"
+        ),
+    )
     risk_level: RiskLevel | None = None
     hazard: str = ""
     hazard_sources: list[str] = Field(
@@ -126,12 +148,29 @@ class JudgmentSet(_Model):
     rows: list[JudgmentRow]
 
 
+class CandidateReview(_Model):
+    """An author's decision on one candidate relation the knowledge base lists."""
+
+    relation: str = Field(min_length=1, description="照抄 relation_names 里的一个名称")
+    decision: Literal["linked", "not_linked"] = Field(
+        description="linked=本模块有行按这条关系连了别的模块的行；not_linked=没有连"
+    )
+    reason: str = Field(
+        min_length=1,
+        description="连了：连了哪些行；没连：为什么（例如一边没有相关的行，或要核实的条件看不出来）",
+    )
+
+
 class RelationSet(_Model):
     """One author's cross-module relations, by its own row id."""
 
     relations: dict[str, list[RowRelation]] = Field(
         default_factory=dict,
         description="键是本模块的判断行编号，值是这一行的关联；不连的行不写",
+    )
+    considered: list[CandidateReview] = Field(
+        default_factory=list,
+        description="relation_names 里的每一种候选关系各写一条：连还是不连，以及理由",
     )
 
 

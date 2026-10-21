@@ -84,6 +84,12 @@ def render_fact_packet(
             "附加字段 程序说明=程序整理记录时加的说明（例如缺数时不能计算什么、还要核对什么），"
             "不是原记录的内容；正文不能写成“记录注明……”，只把它当作资料限制如实说明。"
         )
+    if any(item.knowledge_units or item.knowledge_note for item in items):
+        lines.append(
+            "附加字段 知识单元=知识库自己的“输入表字段→知识单元”索引给这个检查点列出的知识单元，"
+            "按它的限值、结论标准和依据状态判断；知识库索引说明=知识库对这个字段的说明"
+            "（例如需按实际检查内容匹配）。"
+        )
     if any(item.measurements for item in items):
         lines.append(
             "measurements 按 quantity 区分物理量：measured_temperature=测点温度，ambient_temperature=环境温度，"
@@ -112,6 +118,10 @@ def render_fact_packet(
                 extra["程序说明"] = item.program_note
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id
+            if item.knowledge_units:
+                extra["知识单元"] = item.knowledge_units
+            if item.knowledge_note:
+                extra["知识库索引说明"] = item.knowledge_note
             if (label := shared.get(item.id)) is not None:
                 extra["shared"] = label
             if readings := [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]:

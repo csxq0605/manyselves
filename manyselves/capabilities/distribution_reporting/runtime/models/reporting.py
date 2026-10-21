@@ -641,6 +641,18 @@ class EvidenceItem(ReportingModel):
             "不是原记录的内容，不能写成记录里注明的话"
         ),
     )
+    checkpoint_field: str | None = Field(
+        default=None,
+        description="The input table's header label of this record's checkpoint",
+    )
+    knowledge_units: list[str] = Field(
+        default_factory=list,
+        description="Knowledge units the knowledge base's own field index names for this field",
+    )
+    knowledge_note: str | None = Field(
+        default=None,
+        description="What the knowledge base's field index says about a field it leaves unassigned",
+    )
 
     @model_validator(mode="after")
     def submodule_matches_module(self) -> "EvidenceItem":

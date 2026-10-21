@@ -12,9 +12,10 @@ final ledger this module derives three views, without any model:
 - ``flagged_rows``: every flagged row (concern or undetermined) in one line,
   so an author can see what other modules found beyond its own objects;
 - ``checked_relations`` and ``related_rows``: the cross-module relations a
-  row records (``relations``: row, candidate relation, reason), kept only when
-  they name an existing row of another module under a relation the knowledge
-  base's method lists, and their content for the writer.
+  row records (``relations``: row, relation, reason), kept only when they
+  name an existing row of another module and either follow a relation the
+  knowledge base's method lists or state their own mechanism and condition
+  (marked as not in the knowledge base), and their content for the writer.
 
 The program only offers candidates it can tell from the fixed structure (the
 same fact or object) and checks that a cited row exists.  Whether two rows
@@ -164,15 +165,24 @@ def relation_names(method: str) -> list[str]:
     return names
 
 
+def in_knowledge_base(relation: Any, names: Sequence[str]) -> bool:
+    """Whether a relation is one the knowledge base's relation method lists."""
+
+    return relation.relation.strip() in set(names)
+
+
 def checked_relations(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     names: Sequence[str] = (),
 ) -> tuple[dict[str, list[JudgmentRow]], dict[str, list[dict[str, str]]]]:
-    """Keep only relations to an existing row of another module, under a listed relation.
+    """Keep only relations to an existing row of another module, with their grounds.
 
-    ``names`` are the candidate relations of the knowledge base's method; when
-    the method lists none, any named relation is kept.  Returns the ledger with
-    the other relations removed, and what was removed with why.
+    ``names`` are the candidate relations of the knowledge base's method.  A
+    relation under one of them rests on the knowledge base.  An author may
+    also relate rows the method does not cover; such a relation is kept only
+    when it states its mechanism and the condition it holds under, and it is
+    marked as not in the knowledge base.  Returns the ledger with the other
+    relations removed, and what was removed with why.
     """
 
     owner = {row.id: module_id for module_id, rows in ledger.items() for row in rows}
@@ -188,8 +198,12 @@ def checked_relations(
                     why = "所引的行不存在"
                 elif owner[relation.row_id] == module_id:
                     why = "所引的是本模块的行"
-                elif listed and relation.relation.strip() not in listed:
-                    why = "不是关联方法里列出的候选关系"
+                elif (
+                    listed
+                    and relation.relation.strip() not in listed
+                    and not (relation.mechanism.strip() and relation.condition.strip())
+                ):
+                    why = "知识库没有收录这种关联，又没有写机理和成立条件"
                 else:
                     good.append(relation)
                     continue
@@ -203,7 +217,9 @@ def checked_relations(
 
 
 def related_rows(
-    rows: Sequence[JudgmentRow], ledger: Mapping[str, Sequence[JudgmentRow]]
+    rows: Sequence[JudgmentRow],
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    names: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """The other modules' rows that this section's rows say bear on their conclusions."""
 
@@ -230,9 +246,48 @@ def related_rows(
                 },
             )
             entry["for_rows"].append(
-                {"row_id": row.id, "relation": relation.relation, "reason": relation.reason}
+                {
+                    "row_id": row.id,
+                    "relation": relation.relation,
+                    "reason": relation.reason,
+                    **(
+                        {}
+                        if not names or in_knowledge_base(relation, names)
+                        else {"in_knowledge_base": False}
+                    ),
+                }
             )
     return list(found.values())
+
+
+def unlisted_relations(
+    ledger: Mapping[str, Sequence[JudgmentRow]], names: Sequence[str]
+) -> list[dict[str, Any]]:
+    """Relations the authors drew that the knowledge base's method does not list.
+
+    They are kept with the run as candidates for the knowledge base's
+    maintenance, never written back automatically.
+    """
+
+    index = _row_index(ledger)
+    found = []
+    for module_id, rows in ledger.items():
+        for row in rows:
+            for relation in row.relations:
+                if in_knowledge_base(relation, names) or relation.row_id not in index:
+                    continue
+                other_module, other = index[relation.row_id]
+                found.append({
+                    "relation": relation.relation,
+                    "mechanism": relation.mechanism,
+                    "condition": relation.condition,
+                    "reason": relation.reason,
+                    "from": {"row_id": row.id, "submodule_id": row.submodule_id,
+                             "checkpoint": row.checkpoint, "rule_refs": list(row.rule_refs)},
+                    "to": {"row_id": other.id, "submodule_id": other.submodule_id,
+                           "checkpoint": other.checkpoint, "rule_refs": list(other.rule_refs)},
+                })
+    return found
 
 
 def conflict_summary(dossier: Mapping[str, Any]) -> dict[str, Any]:
@@ -252,6 +307,8 @@ def conflict_summary(dossier: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "checked_relations",
     "flagged_rows",
+    "in_knowledge_base",
+    "unlisted_relations",
     "relation_names",
     "conflict_summary",
     "object_chains",

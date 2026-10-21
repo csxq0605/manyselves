@@ -1,0 +1,36 @@
+# How the report capability reads its knowledge base.
+#
+# The knowledge base is input material of this capability, not of the kernel.
+# This file declares the knowledge base's own fixed structure: the fields of a
+# knowledge unit (listed in its "知识单元模版说明"), the keys of its index of
+# input-table fields (its appendix "诊断工作用表对应检测项索引"), and which
+# files play which role.  Code reads these names from here instead of guessing.
+
+unit:
+  # A knowledge unit starts with a heading "### KU-<part>-<n> <title>".
+  id_pattern: 'KU-\d[\d.]*-\d+'
+  fields:
+    category: 所属类别
+    input_sources: 输入来源
+    limits: 限值/阈值
+    criteria: 结论标准
+    standards: 相关标准
+    basis_status: 依据状态
+    topics: 检索关联主题
+
+# Index of input-table fields -> knowledge units.  Each entry is a block of
+# "key：value" lines; an entry whose unit cell names no unit (for example
+# "待按实际检查内容匹配") is a field the knowledge base leaves unassigned.
+field_index:
+  heading: 诊断工作用表对应检测项索引
+  field_key: S4-4表字段
+  units_key: 对应知识单元编号
+  note_key: 对应知识单元名称
+
+# Files by role, matched on the file name (glob, case-insensitive).
+roles:
+  # The method for relating findings across knowledge units.
+  relation_method: ["*跨KU关联*"]
+  # Conditions under which recorded quantities can be compared and judged
+  # (side, voltage level, denominator, what a status does not imply).
+  judgment_conditions: ["*表格数据填充*"]

@@ -41,6 +41,7 @@ def ledger_report_tool_implementations(
             snapshot_content=snapshot_content,
             runtime_photo_ids=runtime_photo_ids,
             store=store,
+            global_knowledge_root=global_knowledge_root,
         ),
         **build_evidence_readiness_tool_implementations(),
         **build_photo_reading_tool_implementations(workspace, store),
