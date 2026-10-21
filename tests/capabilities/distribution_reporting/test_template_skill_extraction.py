@@ -112,8 +112,11 @@ def test_declared_roles_resolve_on_the_template_and_keep_the_loading_order() -> 
         numbers = scope.numbers
         assert not numbers & covered, role.id  # no section belongs to two roles
         covered |= numbers
-    # Every template section with content belongs to some role.
-    assert {s.number for s in outline.sections if s.blocks} <= covered
+    # Every section with content belongs to some role, except chapter 4: its
+    # topics come from each run's input, so nothing in it is a general method.
+    with_content = {s.number for s in outline.sections if s.blocks}
+    assert {n for n in with_content if n.split(".")[0] != "4"} <= covered
+    assert not {n for n in covered if n.split(".")[0] == "4"}
 
 
 def _good_entries(packet: dict[str, Any]) -> list[dict[str, Any]]:
@@ -249,7 +252,7 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     backup = tmp_path / outcome["backup"] / "author-2.1/SKILL.md"
     assert backup.read_text(encoding="utf-8") == published_before
     chapter4 = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
-    assert "## 4.1 新工厂建厂时规划建议" in chapter4.read_text(encoding="utf-8")
+    assert "chief-editor-chapter-4: preserve" in chapter4.read_text(encoding="utf-8")
     source = json.loads(
         (tmp_path / "Inputs/report-template-role-skills/source.json").read_text(encoding="utf-8")
     )

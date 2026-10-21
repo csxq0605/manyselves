@@ -77,8 +77,6 @@ roles:
   uses: [synthesis, write, example, check]
   required_uses: [synthesis]
 - id: chief-editor-chapter-4
-  title: 第四章专项问题分析的方法
-  purpose: 总编写第四章时参考：专项话题怎样从委托要求和第二章结论展开，分析和建议怎样组织。第四章写哪些话题只看本轮的专题计划。
-  sections: [{number: "4", title: 专项问题分析}]
-  uses: [synthesis, write, example, check]
-  required_uses: [write]
+  title: 第四章专题分析的方法
+  purpose: 第四章写哪些专题由本轮输入的专题计划决定，没有通用写法，这个角色不从专家版提炼，沿用项目里现有的 Skill 文件。
+  extract: false
