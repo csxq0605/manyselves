@@ -1,5 +1,5 @@
 id: ledger_revision_input
-version: 1.1.0
+version: 1.2.0
 description: Blocking and minor findings an owner must answer
 adapter: json_schema
 schema:
@@ -18,3 +18,7 @@ schema:
         type: string
     relation_method:
       type: string
+    relation_names:
+      type: array
+      items:
+        type: string

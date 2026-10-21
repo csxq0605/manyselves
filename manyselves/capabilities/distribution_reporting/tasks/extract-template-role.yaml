@@ -1,5 +1,5 @@
 id: extract-template-role
-version: 2.2.0
+version: 2.3.0
 description: Extract one role's judgment, writing, synthesis, example and check entries from its template sections
 agent: method-curator
 objective: 下面是专家版模板里属于这个角色的小节，每段前面方括号里是来源坐标。按 uses 里的用途，逐节提炼这个角色可以迁移到别的项目的做法，逐条提交。
@@ -15,6 +15,7 @@ constraints:
 - 小节带 product_section 的，表示它在本产品里写在这一节下；条目按本产品这一节的含义写，不沿用模板的编号。
 - 全部写成建议。不用“必须、一律、务必、立即”这类词。模板里出现一次的写法不是规定，不要概括成所有项目都要做的事，例如不要从范例推出“所有缺陷都要分级”“都要预测劣化时间”。
 - applies_when 写这条在什么情况下用；源文没有说明就写“未明确”，不要自己补条件。双基准、TOP 数量、阶段期限、风险分级这类做法要保留源文的适用条件。
+- 条目写的是“某种现状会导致什么后果”时，states_consequence 填 true，applies_when 写出源文里这个后果成立的前提（要有哪些现状证据）；源文里找不到前提的，不提交这条。程序会退回没有前提的后果条目。
 - locator 填方括号里的坐标，quote 逐字摘录该坐标处的一段原文（至少六个字），用来让人反查出处。一条做法依据几段原文时，填最能说明它的那一段。
 - structure 一栏是程序数出来的结构，不用复述。写着“由系统生成”的表，不提炼表的列和格式，只提炼表前后的文字和表里内容的取舍。unavailable 里列的东西报告里没有，不要写进条目。
 - 每个有内容的小节至少提交一条；确实没有可迁移内容的小节（例如只有一句与项目相关的结论），放进 skipped 并写明原因。

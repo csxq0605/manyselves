@@ -5,11 +5,16 @@ submission is persisted and announced as the task's typed terminal.  An invalid
 one is reported as a recovery event and answered with correction feedback in
 the same conversation; a repeated defect or an exhausted budget ends the task
 with a persisted failure instead of guessing content.
+
+An Agent that produces several contracts can be given all of them.  The tool
+then shows one stable schema with one property per contract, so the tool list
+of a conversation stays the same from task to task and the provider's prompt
+cache keeps hitting; each task fills only the property of its own contract.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from manyselves.interfaces.types import AgentResultMessage
@@ -45,6 +50,8 @@ class SubmitResultTool(Tool):
         store: FileAgentResultStore,
         bus: Any,
         recovery_callback: RecoveryCallback | None = None,
+        all_contracts: Mapping[str, ContractAdapter] | None = None,
+        store_task_id: str | None = None,
     ) -> None:
         self.sender = sender
         self.workflow_id = workflow_id
@@ -60,19 +67,46 @@ class SubmitResultTool(Tool):
         self.store = store
         self.bus = bus
         self.recovery_callback = recovery_callback
-        self.input_schema = output_contract.json_schema()
-        if self.input_schema.get("type") != "object":
-            raise ValueError(
-                f"submit_result requires an object output contract: {output_contract_id}"
-            )
-        self.description = (
-            f"提交本任务的最终结构化结果（{output_contract_id}）。"
-            "参数直接按 schema 填写，不要包一层 payload，也不要传 JSON 字符串。"
+        self.store_task_id = store_task_id or task_id
+        self.keyed = bool(
+            all_contracts
+            and len(all_contracts) > 1
+            and output_contract_id in all_contracts
         )
+        if self.keyed:
+            assert all_contracts is not None
+            self.input_schema = keyed_schema(all_contracts)
+            self.description = (
+                "提交当前任务的最终结构化结果。参数只填当前任务指定的那一个"
+                "结果名，值按该结果的 schema 填写；不要填别的结果名，也不要传 JSON 字符串。"
+            )
+        else:
+            self.input_schema = output_contract.json_schema()
+            if self.input_schema.get("type") != "object":
+                raise ValueError(
+                    f"submit_result requires an object output contract: {output_contract_id}"
+                )
+            self.description = (
+                f"提交本任务的最终结构化结果（{output_contract_id}）。"
+                "参数直接按 schema 填写，不要包一层 payload，也不要传 JSON 字符串。"
+            )
         self._failures = 0
         self._seen_errors: dict[str, int] = {}
 
     async def __call__(self, **submission: Any) -> dict[str, Any]:
+        if self.keyed:
+            others = sorted(key for key in submission if key != self.output_contract_id)
+            if others or self.output_contract_id not in submission:
+                return await self._correction(
+                    f"本任务只提交 {self.output_contract_id} 这一项"
+                    + (f"，不要填 {'、'.join(others)}" if others else "")
+                    + "。"
+                )
+            submission = submission[self.output_contract_id]
+            if not isinstance(submission, Mapping):
+                return await self._correction(
+                    f"{self.output_contract_id} 的值必须是对象，不是字符串或列表。"
+                )
         try:
             result = self.output_contract.validate(dict(submission))
         except ContractValidationError as exc:
@@ -81,7 +115,7 @@ class SubmitResultTool(Tool):
             result = result.model_dump(mode="json")
         result_ref = self.store.save(
             conversation_id=self.conversation_id,
-            task_id=self.task_id,
+            task_id=self.store_task_id,
             agent_id=self.agent_id,
             input_value=self.input_value,
             status="completed",
@@ -131,7 +165,7 @@ class SubmitResultTool(Tool):
         reason = f"structured submission failed: {cause}; error={error}"
         result_ref = self.store.save(
             conversation_id=self.conversation_id,
-            task_id=self.task_id,
+            task_id=self.store_task_id,
             agent_id=self.agent_id,
             input_value=self.input_value,
             status="failed",
@@ -164,4 +198,51 @@ class SubmitResultTool(Tool):
         )
 
 
-__all__ = ["SubmitResultTool"]
+def keyed_schema(contracts: Mapping[str, ContractAdapter]) -> dict[str, Any]:
+    """One object schema with one optional property per contract id.
+
+    Each contract's ``$defs`` move to the root under ``<contract id>__<name>``
+    so that definitions of different contracts never collide.
+    """
+    properties: dict[str, Any] = {}
+    definitions: dict[str, Any] = {}
+    for contract_id in sorted(contracts):
+        schema = contracts[contract_id].json_schema()
+        if schema.get("type") != "object":
+            raise ValueError(
+                f"submit_result requires an object output contract: {contract_id}"
+            )
+        prefix = f"{contract_id}__"
+        schema = _prefixed_refs(dict(schema), prefix)
+        for name, definition in (schema.pop("$defs", None) or {}).items():
+            definitions[prefix + name] = definition
+        properties[contract_id] = schema
+    combined: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+        "minProperties": 1,
+        "maxProperties": 1,
+    }
+    if definitions:
+        combined["$defs"] = definitions
+    return combined
+
+
+def _prefixed_refs(value: Any, prefix: str) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "$ref" and isinstance(item, str) and item.startswith("#/$defs/"):
+                out[key] = "#/$defs/" + prefix + item[len("#/$defs/"):]
+            elif key == "$defs" and isinstance(item, dict):
+                out[key] = {name: _prefixed_refs(d, prefix) for name, d in item.items()}
+            else:
+                out[key] = _prefixed_refs(item, prefix)
+        return out
+    if isinstance(value, list):
+        return [_prefixed_refs(item, prefix) for item in value]
+    return value
+
+
+__all__ = ["SubmitResultTool", "keyed_schema"]

@@ -148,9 +148,10 @@ class DefinitionAgentInvoker:
             AgentRecoveryDriver(recovery_policy) if recovery_policy is not None else None
         )
         conversation_id = conversation.conversation_id
+        store_key = _store_key(task_id, task)
         completed = self.results.completed_for(
             conversation_id=conversation_id,
-            task_id=task_id,
+            task_id=store_key,
             input_value=input_value,
         )
         if completed is not None:
@@ -279,7 +280,7 @@ class DefinitionAgentInvoker:
         finally:
             self._save_history(conversation_id, session.loop)
         if mapped.status != "ok":
-            reason = self._failure_reason(conversation_id, task_id)
+            reason = self._failure_reason(conversation_id, store_key)
             if reason:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
@@ -346,6 +347,8 @@ class DefinitionAgentInvoker:
                 input_value=input_value,
                 output_contract_id=task.output_contract,
                 output_contract=output_contract,
+                all_contracts=self._produced_contracts(agent),
+                store_task_id=_store_key(task_id, task),
                 store=self.results,
                 bus=self.services.bus,
                 recovery_callback=(
@@ -367,6 +370,15 @@ class DefinitionAgentInvoker:
                 )
             )
         return registry
+
+    def _produced_contracts(self, agent: AgentDefinition) -> dict[str, ContractAdapter]:
+        """Every contract the Agent declares it produces, for one stable tool list."""
+
+        return {
+            contract_id: self.contracts[contract_id]
+            for contract_id in agent.produces
+            if contract_id in self.contracts
+        }
 
     def _restore(self, conversation: ConversationRecord) -> AgentSessionRestore | None:
         own = self.histories.load(conversation.conversation_id)
@@ -463,10 +475,8 @@ class DefinitionAgentInvoker:
         other_tools = [name for name in tools.get_all() if name != "submit_result"]
         if other_tools:
             parts.append("可用工具：" + "、".join(other_tools) + "。")
-        parts.append(
-            f"完成后调用 submit_result 提交 {task.output_contract}；"
-            "参数直接按 schema 填写。资料不足时如实写明，不要编造。"
-        )
+        submit = tools.get("submit_result")
+        parts.append(_submit_hint(task, bool(getattr(submit, "keyed", False))) + "资料不足时如实写明，不要编造。")
         return "\n\n".join(parts)
 
     @staticmethod
@@ -492,8 +502,32 @@ class DefinitionAgentInvoker:
             body = "上一轮只返回了自然语言，没有提交结构化结果。不要重复已经完成的分析。"
         return (
             f"<{tag}>\n{body}\n你仍是 {agent.id}，当前任务是 {task.id}。"
-            f"完成后立即调用 submit_result 提交 {task.output_contract}。\n</{tag}>"
+            f"完成后立即{_submit_hint(task, _keyed(agent, task))}\n</{tag}>"
         )
+
+
+def _store_key(task_id: str, task: TaskDefinition) -> str:
+    """Result-store key: the action id, plus the task id when they differ.
+
+    One conversation may run the same action id for different tasks (for
+    example two workflows that both name their step ``revise``); keeping the
+    task id in the key stops one result file from replacing the other.
+    """
+
+    return task_id if task_id == task.id else f"{task_id}--{task.id}"
+
+
+def _submit_hint(task: TaskDefinition, keyed: bool) -> str:
+    if keyed:
+        return (
+            f"完成后调用 submit_result，参数只填 {task.output_contract} 这一项，"
+            "值按它的 schema 填写。"
+        )
+    return f"完成后调用 submit_result 提交 {task.output_contract}；参数直接按 schema 填写。"
+
+
+def _keyed(agent: AgentDefinition, task: TaskDefinition) -> bool:
+    return len(set(agent.produces)) > 1 and task.output_contract in agent.produces
 
 
 class _ProgressObserver:

@@ -129,15 +129,32 @@ def test_authors_see_what_other_modules_flagged_and_the_relation_method(tmp_path
     assert merged["revision_input"]["relation_method"] == "候选关系与核实条件"
 
 
-def test_a_row_keeps_only_references_to_existing_rows_of_other_modules() -> None:
-    row = LEDGER["2.2"][0].model_copy(update={"related_row_ids": ["J-2.1-1", "J-2.2-1", "J-2.3-9"]})
+def test_a_row_keeps_only_listed_relations_to_existing_rows_of_other_modules() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import RowRelation
+    from manyselves.capabilities.distribution_reporting.runtime.cross_module import relation_names
+
+    method = "说明。\n\n| 候选关系 | 要核实的条件 |\n| --- | --- |\n| 甲—乙 | 同期数据 |\n| 丙—丁 | 接线 |\n"
+    names = relation_names(method)
+    assert names == ["甲—乙", "丙—丁"]
+
+    def rel(row_id: str, relation: str = "甲—乙") -> RowRelation:
+        return RowRelation(row_id=row_id, relation=relation, reason="两边事实满足条件。")
+
+    row = LEDGER["2.2"][0].model_copy(update={"relations": [
+        rel("J-2.1-1"), rel("J-2.2-1"), rel("J-2.3-9"), rel("J-2.4-1", "同一房间"),
+    ]})
     ledger = {**LEDGER, "2.2": [row]}
-    kept, dropped = checked_relations(ledger)
+    kept, dropped = checked_relations(ledger, names)
     assert kept["2.2"][0].related_row_ids == ["J-2.1-1"]
-    assert dropped == {"J-2.2-1": ["J-2.2-1", "J-2.3-9"]}
+    assert {d["row_id"]: d["why"] for d in dropped["J-2.2-1"]} == {
+        "J-2.2-1": "所引的是本模块的行",
+        "J-2.3-9": "所引的行不存在",
+        "J-2.4-1": "不是关联方法里列出的候选关系",
+    }
     (entry,) = related_rows(kept["2.2"], kept)
     assert entry["row_id"] == "J-2.1-1" and entry["submodule_id"] == "2.1.1"
-    assert entry["basis"] == "J-2.1-1 的依据" and entry["for_rows"] == ["J-2.2-1"]
+    assert entry["basis"] == "J-2.1-1 的依据"
+    assert entry["for_rows"] == [{"row_id": "J-2.2-1", "relation": "甲—乙", "reason": "两边事实满足条件。"}]
 
 
 def test_revisions_change_only_the_authors_own_rows(tmp_path: Path) -> None:

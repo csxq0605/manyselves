@@ -237,7 +237,6 @@ def _answer(message):
                     "actions": [
                         {
                             "priority": "重要，紧急",
-                            "content": "复测",
                             "problem": "温度偏高",
                             "hazard": "可能过热",
                             "solution": "复测温度",
@@ -549,7 +548,10 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         if task == "revise-judgments" and "J-2.2-1" in value.get("related", {}):
             seen["related"] = value["related"]
             row = _row("2.2", REPORT_MODULE_IDS.index("2.2") + 1)
-            row.update(basis="噪声记录完整；结合 2.4 的温度偏高需复测。", related_row_ids=["J-2.4-1", "J-9.9-9"])
+            row.update(relations=[
+                {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "2.4 记录的温度偏高与本行同期。"},
+                {"row_id": "J-9.9-9", "relation": "负荷—发热", "reason": "不存在的行。"},
+            ])
             return ("submit", [{"rows": [row]}])
         if task == "write-section" and value.get("related_rows"):
             seen["related_rows"] = value["related_rows"]
@@ -567,7 +569,7 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
     final = json.loads(
         (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
     )
-    assert final["2.2"][0]["related_row_ids"] == ["J-2.4-1"]
+    assert [r["row_id"] for r in final["2.2"][0]["relations"]] == ["J-2.4-1"]
     assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
     (chain,) = seen["chains"]
     assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}

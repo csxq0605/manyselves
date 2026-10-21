@@ -254,13 +254,22 @@ def _replay_checks(
         for item in built["review_items"]
     }
 
+    # Result files are named by the action id, plus "--<task id>" when the
+    # task id differs from it (runs after the store-key change).
+    def action_of(path: Path) -> str:
+        return path.stem.split("--", 1)[0]
+
     chief_dir = next(
-        (path.parent for path, _ in results if path.stem == "chapter-3"), None
+        (path.parent for path, _ in results if action_of(path) == "chapter-3"), None
     )
+    chief_files = {
+        action_of(path): path
+        for path in (sorted(chief_dir.glob("*.json")) if chief_dir is not None else ())
+    }
     chief_runs = {
-        action: _load(chief_dir / f"{action}.json")["result"]
+        action: _load(chief_files[action])["result"]
         for action in CHIEF_ACTIONS
-        if chief_dir is not None and (chief_dir / f"{action}.json").is_file()
+        if action in chief_files
     }
     final = {
         "run_id": run_id,

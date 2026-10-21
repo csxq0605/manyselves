@@ -398,3 +398,19 @@ def test_only_the_exemplars_own_facts_are_refused_never_ordinary_words(
     # Subheadings carry the exemplar's places and findings: only their count is shown.
     text = render_role_skill(outline, scope, result.accepted, source="示例", policy=PLAIN)
     assert variant["finding"] not in text and variant["other"] not in text
+
+
+def test_a_consequence_needs_the_premise_it_held_under(outline) -> None:
+    scope = role_scope(outline, _role())
+    lead = _locator(outline, "2.1", "抽查发现")
+
+    def entry(applies_when: str) -> dict:
+        return {"use": "method", "text": "树干开裂时说明可能倒伏伤人。", "applies_when": applies_when,
+                "states_consequence": True, "locator": lead, "quote": "抽查发现3株树干开裂"}
+
+    submission = ExemplarSubmission.model_validate(
+        {"entries": [entry("未明确"), entry("裂缝贯穿主干且树冠偏向通道时")]}
+    )
+    result = accept_submission(outline, scope, submission, POLICY)
+    assert [e.applies_when for e in result.accepted] == ["裂缝贯穿主干且树冠偏向通道时"]
+    assert "前提" in " ".join(result.rejected[0].reasons)

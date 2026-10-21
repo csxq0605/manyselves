@@ -176,6 +176,7 @@ def make_evidence(
     confidence: float = 1.0,
     needs_confirmation: bool = False,
     summary_entry: bool = False,
+    program_note: str | None = None,
 ) -> EvidenceItem:
     return EvidenceItem(
         id=evidence_id(file_id, sheet, cell, submodule_id, fact),
@@ -198,4 +199,5 @@ def make_evidence(
         submodule_id=submodule_id,
         photo_refs=photo_refs or [],
         summary_entry=summary_entry,
+        program_note=program_note,
     )

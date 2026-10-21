@@ -41,6 +41,7 @@ from ..domain.judgment_ledger import (
     cross_finding_findings,
     findings_overview_markdown,
     known_values_from_text,
+    layout_findings,
     ledger_findings,
     ledger_judgments,
     place_problem_table,
@@ -59,6 +60,7 @@ from .cross_module import (
     conflict_summary,
     flagged_rows,
     object_chains,
+    relation_names,
     related_rows,
     see_also_by_row,
 )
@@ -77,7 +79,7 @@ from .photo_reading import load_photo_readings, photo_reading_labels, reading_la
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
-from .rule_standards import knowledge_units, section_standards, standards_coverage
+from .rule_standards import knowledge_units, section_standards, standards_coverage, unit_bodies
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
@@ -237,6 +239,23 @@ def _supplement_lines(request: ReportRequest) -> list[str]:
     ]
 
 
+def _with_layout(
+    findings: dict[str, dict[str, Any]], layout: Mapping[str, Mapping[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    merged = dict(findings)
+    for section_id, finding in layout.items():
+        earlier = merged.get(section_id)
+        if earlier is None:
+            merged[section_id] = dict(finding)
+            continue
+        merged[section_id] = {
+            **earlier,
+            "problem": f"{earlier.get('problem', '')}；{finding['problem']}",
+            "suggestion": f"{earlier.get('suggestion', '')}；{finding['suggestion']}",
+        }
+    return merged
+
+
 def _with_table_terms(
     findings: dict[str, dict[str, Any]],
     sections: Mapping[str, str],
@@ -297,6 +316,8 @@ def _section_brief(
         "section_state": _section_state(rows),
         "rows": [row.model_dump(mode="json", exclude_none=True) for row in rows],
         "problem_table_marker": PROBLEM_TABLE_MARKER,
+        # Only concern rows make a problem table.
+        "has_problem_table": any(row.disposition == "concern" for row in rows),
         "related_rows": related_rows(rows, ledger),
         "rule_standards": section_standards(rows, units),
         "data_elsewhere": {row.id: list(elsewhere[row.id]) for row in rows if row.id in elsewhere},
@@ -447,6 +468,7 @@ class LedgerTools:
                 "subject_values": {
                     subject: sorted(set(pairs)) for subject, pairs in subject_values.items() if pairs
                 },
+                "cited_values": self._cited_values(run_id, items, calculations),
             },
         )
         return {
@@ -459,6 +481,47 @@ class LedgerTools:
             "has_special_topic": plan_value is not None,
             "chief_key": CHIEF_OWNER,
         }
+
+    def _cited_values(
+        self, run_id: str, items: Sequence[Any], calculations: Sequence[Any]
+    ) -> dict[str, list[tuple[float, str]]]:
+        """Values with units each citable id carries, for checking a row's numbers.
+
+        A fact carries its text, value, measurements and the readings of its
+        photos; a calculation its value and formula; a photo its reading; a
+        knowledge unit its own text.
+        """
+
+        readings = {
+            photo_id: reading_label(reading)
+            for photo_id, reading in load_photo_readings(self.workspace, run_id).items()
+        }
+        values: dict[str, set[tuple[float, str]]] = {}
+        for item in items:
+            texts = [item.fact, *(readings.get(ref, "") for ref in item.photo_refs)]
+            pairs = set(known_values_from_text(texts))
+            if isinstance(item.value, (int, float)) and item.unit:
+                pairs.add((float(item.value), item.unit))
+            pairs.update(
+                (float(m.value), m.unit) for m in item.measurements if m.value is not None
+            )
+            values[item.id] = pairs
+        for calc in calculations:
+            values[calc.id] = {(float(calc.value), calc.unit), *known_values_from_text([calc.formula])}
+        for photo_id, text in readings.items():
+            values[photo_id] = set(known_values_from_text([text]))
+        for unit_id, (_title, body) in self._unit_bodies(run_id).items():
+            values[unit_id] = set(known_values_from_text([body]))
+        return {key: sorted(pairs) for key, pairs in values.items() if pairs}
+
+    def _unit_bodies(self, run_id: str) -> dict[str, tuple[str, str]]:
+        try:
+            documents = KnowledgeContextBuilder(
+                self.workspace, run_id, global_root=self.global_knowledge_root
+            ).freeze_sources()
+        except (OSError, ValueError):
+            return {}
+        return unit_bodies(document.text for document in documents)
 
     def _length_reference(self, run_id: str, module_ids: Sequence[str]) -> str:
         template, _source = resolve_report_template(self.workspace, run_id)
@@ -493,6 +556,7 @@ class LedgerTools:
                 known_photo_ids=reference["photo_ids"],
                 known_calculation_ids=reference["calculation_ids"],
                 evidence_subjects=reference.get("evidence_subjects"),
+                cited_values=reference.get("cited_values"),
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         see_also = see_also_by_row(dossiers, ledger)
@@ -626,7 +690,9 @@ class LedgerTools:
             if missing := [target for target in blocking if target not in answered]:
                 unanswered[module_id] = missing
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
-        ledger, dropped_relations = checked_relations(ledger)
+        ledger, dropped_relations = checked_relations(
+            ledger, relation_names(self._relation_method(run_id))
+        )
         conflicts = [d for d in dossiers if d["kind"] == "conflict"]
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
@@ -689,9 +755,10 @@ class LedgerTools:
 
         path = self.workspace / f"Work/runs/{run_id}/ledger/relation-candidates.json"
         if not run_id or not module_id or not path.is_file():
-            return {"flagged_elsewhere": [], "relation_method": ""}
+            return {"flagged_elsewhere": [], "relation_method": "", "relation_names": []}
         data = json.loads(path.read_text(encoding="utf-8"))
         return {
+            "relation_names": relation_names(data.get("method", "")),
             "flagged_elsewhere": [
                 f"{entry['row_id']} {entry['line']}"
                 for entry in data.get("flagged", [])
@@ -792,9 +859,17 @@ class LedgerTools:
         for rows in ledger.values():
             for row in rows:
                 by_submodule.setdefault(row.submodule_id, []).append(row)
+        elsewhere = self._data_elsewhere(run_id, ledger)
+        cited_values = reference.get("cited_values") or {}
         items = []
         for module_id, sections in value["written"].items():
             texts = {section["submodule_id"]: section["text"] for section in sections}
+            layout = layout_findings(
+                sections=texts,
+                rows_by_submodule=by_submodule,
+                elsewhere=elsewhere,
+                cited_values=cited_values,
+            )
             cited = {
                 entry["row_id"]: entry
                 for row in ledger.get(module_id, [])
@@ -805,15 +880,18 @@ class LedgerTools:
                     "owner": module_id,
                     "sections": texts,
                     **({"cited_rows": list(cited.values())} if cited else {}),
-                    "program_findings": _with_table_terms(
-                        report_check_findings(
-                            sections=texts,
-                            rows_by_submodule=by_submodule,
-                            known_values=known,
-                            subject_values=reference.get("subject_values"),
+                    "program_findings": _with_layout(
+                        _with_table_terms(
+                            report_check_findings(
+                                sections=texts,
+                                rows_by_submodule=by_submodule,
+                                known_values=known,
+                                subject_values=reference.get("subject_values"),
+                            ),
+                            texts,
+                            by_submodule,
                         ),
-                        texts,
-                        by_submodule,
+                        layout,
                     ),
                 }
             )
@@ -989,6 +1067,16 @@ class LedgerTools:
                     chapter3["action_lead"],
                     [ChiefAction.model_validate(a) for a in chapter3["actions"]],
                     row_status,
+                    {
+                        row.id: (
+                            titles[module_id],
+                            REPORT_TAXONOMY[module_id].submodules[row.submodule_id].title,
+                            row.checkpoint,
+                        )
+                        for module_id, rows in ledger.items()
+                        for row in rows
+                        if row.submodule_id in REPORT_TAXONOMY[module_id].submodules
+                    },
                 ),
                 special_topic_plan=(
                     SpecialTopicPlan.model_validate(state["special_topic_plan"])

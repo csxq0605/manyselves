@@ -109,11 +109,18 @@ class ExemplarPolicy(_Model):
         return [use for use in self.uses if use.id in role.uses]
 
 
+UNSTATED = "未明确"
+
+
 class ExemplarEntry(_Model):
     use: str = Field(min_length=1, description="这条内容的用途，取资料 uses 里的 id")
     text: str = Field(min_length=1, description="内容本身，一条只写一个要点")
     applies_when: str = Field(
         min_length=1, description="什么情况下用这条写法；源文没有说明就写“未明确”"
+    )
+    states_consequence: bool = Field(
+        default=False,
+        description="这条写的是“某种现状会导致什么后果”时填 true；这时 applies_when 要写出后果成立的前提",
     )
     locator: str = Field(min_length=1, description="来源坐标，取自资料里方括号中的编号，如 p-75")
     quote: str = Field(min_length=1, description="该坐标处的一段原文，逐字摘录")
@@ -459,6 +466,13 @@ def accept_submission(
                 + "；改成通用说法"
                 + ("，或换成" + policy.placeholder_open + policy.placeholder_close + "占位" if use and use.placeholders else "")
             )
+        if entry.states_consequence and _normal(entry.applies_when) in {"", UNSTATED}:
+            # A consequence held in the template's project; without its premise
+            # another project would take it as given.
+            reasons.append(
+                "写后果的条目没有写出后果成立的前提；applies_when 写明要有哪些现状证据，"
+                "源文里找不到前提的就删掉这条"
+            )
         for word, why in policy.unavailable.items():
             if word in entry.text or word in entry.applies_when:
                 reasons.append(f"提到了“{word}”：{why}")
@@ -595,10 +609,11 @@ def render_role_skill(
             lines.append(f"{use.title}：")
             for entry in chosen:
                 condition = entry.applies_when.strip()
-                show = not use.placeholders and condition and condition != "未明确"
+                show = not use.placeholders and condition and condition != UNSTATED
+                label = "前提" if entry.states_consequence else "适用"
                 lines.append(
                     f"- {entry.text.strip()}"
-                    + (f"（适用：{condition}）" if show else "")
+                    + (f"（{label}：{condition}）" if show else "")
                     + f" 〔模板 {entry.locator.strip()}〕"
                 )
         if not found:

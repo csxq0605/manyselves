@@ -22,6 +22,7 @@ STANDARD_FIELDS = ("相关标准", "参考标准", "依据标准", "标准依据
 _FIELD = re.compile(
     r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?(" + "|".join(STANDARD_FIELDS) + r")(?:\*\*)?\s*[：:]\s*(.+?)\s*$"
 )
+_STATUS = re.compile(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?依据状态(?:\*\*)?\s*[：:]\s*(.+?)\s*$")
 _EMPTY = {"", "无", "暂无", "—", "-", "/"}
 _UNIT_ID = re.compile(r"KU-\d[\d.]*-\d+")
 
@@ -32,10 +33,10 @@ def unit_ids(ref: str) -> list[str]:
     return list(dict.fromkeys(_UNIT_ID.findall(ref)))
 
 
-def knowledge_units(texts: Iterable[str]) -> dict[str, dict[str, str]]:
-    """KU id -> its title and standards, from knowledge texts; the first definition wins."""
+def unit_bodies(texts: Iterable[str]) -> dict[str, tuple[str, str]]:
+    """KU id -> (title, body text); the first definition wins."""
 
-    units: dict[str, dict[str, str]] = {}
+    bodies: dict[str, tuple[str, str]] = {}
     for text in texts:
         heads = list(_UNIT.finditer(text))
         for index, head in enumerate(heads):
@@ -43,15 +44,34 @@ def knowledge_units(texts: Iterable[str]) -> dict[str, dict[str, str]]:
             body = text[head.end():end]
             # The unit ends at the next heading of any level.
             body = re.split(r"(?m)^#{1,4}\s", body, maxsplit=1)[0]
-            standards = [
-                match.group(2).strip()
-                for match in _FIELD.finditer(body)
-                if match.group(2).strip() not in _EMPTY
-            ]
-            units.setdefault(
-                head.group(1),
-                {"title": head.group(2).strip(), "standards": "；".join(dict.fromkeys(standards))},
-            )
+            bodies.setdefault(head.group(1), (head.group(2).strip(), body))
+    return bodies
+
+
+def knowledge_units(texts: Iterable[str]) -> dict[str, dict[str, str]]:
+    """KU id -> its title, standards and the knowledge base's own status line.
+
+    The status (``依据状态``) says how far the knowledge base vouches for the
+    standards, e.g. that they are only candidates; it travels with them.
+    """
+
+    units: dict[str, dict[str, str]] = {}
+    for unit_id, (title, body) in unit_bodies(texts).items():
+        standards = [
+            match.group(2).strip()
+            for match in _FIELD.finditer(body)
+            if match.group(2).strip() not in _EMPTY
+        ]
+        statuses = [
+            match.group(1).strip()
+            for match in _STATUS.finditer(body)
+            if match.group(1).strip() not in _EMPTY
+        ]
+        units[unit_id] = {
+            "title": title,
+            "standards": "；".join(dict.fromkeys(standards)),
+            "status": "；".join(dict.fromkeys(statuses)),
+        }
     return units
 
 
@@ -68,7 +88,12 @@ def section_standards(
                 continue
             entry = found.setdefault(
                 unit_id,
-                {"rule": unit.get("title", ""), "standards": unit["standards"], "for_rows": []},
+                {
+                    "rule": unit.get("title", ""),
+                    "standards": unit["standards"],
+                    **({"status": unit["status"]} if unit.get("status") else {}),
+                    "for_rows": [],
+                },
             )
             entry["for_rows"].append(row.id)
     return list(found.values())
@@ -96,4 +121,11 @@ def standards_coverage(
     }
 
 
-__all__ = ["STANDARD_FIELDS", "knowledge_units", "section_standards", "standards_coverage", "unit_ids"]
+__all__ = [
+    "STANDARD_FIELDS",
+    "knowledge_units",
+    "section_standards",
+    "standards_coverage",
+    "unit_bodies",
+    "unit_ids",
+]

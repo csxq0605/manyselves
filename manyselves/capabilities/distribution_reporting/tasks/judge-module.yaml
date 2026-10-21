@@ -1,5 +1,5 @@
 id: judge-module
-version: 1.0.3
+version: 1.1.0
 description: Judge every object and checkpoint of one module as structured rows, before any prose
 agent: report-consultant
 objective: 你现在是下面这个模块的责任专家。逐个对象、逐个检查点给出判断，提交判断行。这一步只做判断，不写正文。
@@ -21,7 +21,10 @@ constraints:
 - photo_reading 是照片抄写和程序比对，不是结论。程序比对写“不一致”时以表格记录为准，判断里写“照片读数待核”，不能用照片读数否定记录，也不据此加重或减轻风险。
 - 照片里记录表的空白栏，若对应日期晚于照片日期，不算漏检或断档。照片与记录对同一位置的叫法不同（楼号与房间名、简称与全称）不算冲突。
 - 有计算结果可用时引用 calculation_ids；数值只用事实和计算结果里的值。
-- related_row_ids 这一步留空，审查后才看别的模块的判断。
+- basis、hazard、checkpoint 里写的测量值（带单位的数值）只能取自本行所引的事实、计算、照片或知识单元；要用某个值，就把它的出处写进 evidence_ids、calculation_ids、photo_ids 或 rule_refs。程序会核对，对不上的退回。
+- 事实上的“程序说明”是程序整理记录时加的说明，不是原记录写的；需要时当作资料限制写，不写成“记录注明……”。
+- 专家版方法里的后果（某种现状会导致什么），是那个项目的证据支持的；只有本项目的事实支持它的前提（方法里写的“前提”）时才写进 hazard，前提没有证据的，hazard 写成待核实的可能后果。
+- relations 这一步留空，审查后才看别的模块的判断。
 - 行编号用 J-模块-序号，例如 J-2.4-01；module_id 填本模块。
 tools: []
 recovery: typed-turn-recovery

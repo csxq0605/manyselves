@@ -107,9 +107,26 @@ def test_evidence_status_reaches_the_problem_and_action_tables() -> None:
          "gap": {"missing": "资质证书", "impact": "不能判断", "requested_input": "资质证书"}}
     )
     assert problem_table([row]) == "另有 1 个对象资料不足，不能判定，见数据缺口表。"
-    action = ChiefAction(priority="一般", content="补资料", problem="资质未提供", hazard="待定",
+    action = ChiefAction(priority="一般", problem="资质未提供", hazard="待定",
                          solution="提供资质证书", row_ids=["J-2.5-1"])
-    assert "依据：资料未提供" in action_table_markdown("措施如下。", [action], {"J-2.5-1": "资料未提供"})
+    table = action_table_markdown(
+        "措施如下。", [action], {"J-2.5-1": "资料未提供"},
+        {"J-2.5-1": ("运维管理", "运维单位资质", "资质")},
+    )
+    assert "依据：资料未提供" in table
+    # The program fills 评估内容 from titles, without section numbers.
+    assert "| 运维管理＞运维单位资质＞资质 |" in table
+
+
+def test_action_content_merges_rows_of_one_section_and_keeps_one_shared_checkpoint() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        action_content,
+    )
+
+    places = {"J-1": ("A", "a", "温升"), "J-2": ("A", "a", "温升"), "J-3": ("A", "b", "门锁"),
+              "J-4": ("A", "b", "照明")}
+    assert action_content(["J-1", "J-2"], places) == "A＞a＞温升"
+    assert action_content(["J-1", "J-3", "J-4"], places) == "A＞a＞温升；A＞b"
 
 
 def test_humidity_remainders_and_medians_are_known_values() -> None:
@@ -209,3 +226,63 @@ def test_problem_table_merges_objects_with_the_same_finding() -> None:
     assert len(lines) == 3  # header, the merged row, the different finding
     assert "| 1#柜、2#柜 | 接地 | 柜门未接地 | 中 | 补接地线 | P-1、P-2 |" in table
     assert "4#柜" not in table and "另有 2 个对象资料不足" in table
+
+
+def test_a_row_writes_only_values_found_in_what_it_cites() -> None:
+    def row(row_id: str, basis: str, **refs) -> dict:
+        return {"id": row_id, "submodule_id": "2.4.1", "object": "1#", "checkpoint": "温升",
+                "disposition": "concern", "evidence_status": "现场确认", "basis": basis,
+                "risk_level": "中", "hazard": "h", "evidence_ids": ["E-1"],
+                "rule_refs": ["KU-2.4-01"],
+                "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}, **refs}
+
+    judgment = JudgmentSet.model_validate({"module_id": "2.4", "rows": [
+        row("J-2.4-1", "测点 65.2℃，温差 12.3K，超过 40K 的限值的 3 倍以内"),
+        row("J-2.4-2", "测点 65.2℃，温差 15K", calculation_ids=["K-1"]),
+    ]})
+    findings = ledger_findings(
+        judgment, submodule_ids=["2.4.1"], module_evidence_ids=["E-1"],
+        known_evidence_ids=["E-1"], known_photo_ids=[], known_calculation_ids=["K-1"],
+        cited_values={"E-1": [(65.2, "℃")], "K-1": [(12.3, "K")], "KU-2.4-01": [(40, "K")]},
+    )
+    # 12.3K belongs to a calculation the first row does not cite; the second
+    # row cites it but writes 15K.  Counts and ratios are not checked here.
+    assert "12.3K" in findings["J-2.4-1"]["problem"]
+    assert "40K" not in findings["J-2.4-1"]["problem"]
+    assert "15K" in findings["J-2.4-2"]["problem"]
+    assert findings["J-2.4-2"]["severity"] == "blocking"
+
+
+def test_prose_pointing_to_a_missing_table_or_repeating_data_shown_elsewhere_is_minor() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        layout_findings,
+    )
+
+    def row(row_id: str, disposition: str, section: str) -> JudgmentRow:
+        value = {"id": row_id, "submodule_id": section, "object": "1#", "checkpoint": "负荷",
+                 "disposition": disposition, "evidence_status": "现场确认", "basis": "b",
+                 "evidence_ids": ["E-1"]}
+        if disposition == "concern":
+            value |= {"risk_level": "中", "hazard": "h",
+                      "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+        return JudgmentRow.model_validate(value)
+
+    rows = {"2.1.1": [row("J-2.1-1", "no_concern", "2.1.1")],
+            "2.4.4": [row("J-2.4-1", "concern", "2.4.4")]}
+    values = {"E-1": [(320, "A"), (41.5, "%")]}
+    findings = layout_findings(
+        sections={
+            "2.1.1": "负荷情况见下表。1# 运行电流 320A，负荷率 41.5%（数据见 2.4.4）。",
+            "2.4.4": "1# 运行电流 320A，负荷率 41.5%，问题见下表。",
+        },
+        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, cited_values=values,
+    )
+    assert set(findings) == {"2.1.1"}
+    problem = findings["2.1.1"]["problem"]
+    assert "没有问题表" in problem and "320A" in problem and "41.5%" in problem
+    assert findings["2.1.1"]["severity"] == "minor"
+    one_value = layout_findings(
+        sections={"2.1.1": "1# 负荷率 41.5%（数据见 2.4.4），负荷正常。"},
+        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, cited_values=values,
+    )
+    assert one_value == {}

@@ -65,6 +65,19 @@ class JudgmentGap(_Model):
     )
 
 
+class RowRelation(_Model):
+    """Another module's row that bears on this row's conclusion, and why."""
+
+    row_id: str = Field(pattern=r"^J-", description="别的模块的判断行编号（J-...）")
+    relation: str = Field(
+        min_length=1, description="依据的候选关系，照抄 relation_method 表格第一列里的名称"
+    )
+    reason: str = Field(
+        min_length=1,
+        description="一句话：两边的哪项事实满足这条关系要核实的条件，对本行结论有什么作用",
+    )
+
+
 class JudgmentRow(_Model):
     id: str = Field(pattern=r"^J-")
     submodule_id: str = Field(min_length=1)
@@ -81,10 +94,14 @@ class JudgmentRow(_Model):
     action: JudgmentAction | None = None
     gap: JudgmentGap | None = None
     photo_ids: list[str] = Field(default_factory=list)
-    related_row_ids: list[str] = Field(
+    relations: list[RowRelation] = Field(
         default_factory=list,
-        description="别的模块的判断行中，加重、解释或改变了本行结论的那些行（J-...）",
+        description="别的模块的判断行中，加重、解释或改变了本行结论的那些行，每条写明依据的候选关系和理由",
     )
+
+    @property
+    def related_row_ids(self) -> list[str]:
+        return [relation.row_id for relation in self.relations]
 
     @model_validator(mode="after")
     def disposition_carries_its_fields(self) -> JudgmentRow:
@@ -128,11 +145,16 @@ def ledger_findings(
     known_photo_ids: Iterable[str],
     known_calculation_ids: Iterable[str] = (),
     evidence_subjects: Mapping[str, str] | None = None,
+    cited_values: Mapping[str, Iterable[Sequence[Any]]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Return program findings keyed by row id or by the uncovered fact id.
 
     A concern or undetermined row covers one object: when its facts name
     several objects it must be split, so counts and groups stay per object.
+    With ``cited_values`` (id of a fact, calculation, photo or knowledge unit
+    -> its values with units), a measured value written in a row's
+    checkpoint, basis or hazard must be one of the values of what the row
+    cites; counts and ratios are left to the report check.
     """
 
     submodules = set(submodule_ids)
@@ -164,6 +186,11 @@ def ledger_findings(
             problems.append(
                 "一行判断写了多个对象（" + "、".join(objects) + "），关注项和不能判定项要一行一个对象"
             )
+        if cited_values is not None and (stray := _uncited_values(row, cited_values)):
+            problems.append(
+                "判断行里的数值不在它所引的事实、计算、照片或知识单元里："
+                + "、".join(stray)
+            )
         covered.update(row.evidence_ids)
         texts = [row.checkpoint, row.basis, row.hazard]
         if row.action is not None:
@@ -178,7 +205,8 @@ def ledger_findings(
         if problems:
             findings[row.id] = _finding(
                 "；".join(problems),
-                "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号。判断本身不变。",
+                "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号；"
+                "数值补引它的出处（事实、计算、照片或知识单元），没有出处的删去。判断本身不变。",
             )
         elif leaked:
             # An id alone is easy to drop in writing; it does not hold up a revision.
@@ -201,6 +229,32 @@ def ledger_findings(
             "补一行判断（可以是正常、关注、不能判定或不适用），或并入已有的同一对象判断行。",
         )
     return findings
+
+
+# Counts and ratios are derived in writing and checked against the report.
+_DERIVED_UNITS = {"个", "倍"}
+
+
+def _uncited_values(
+    row: JudgmentRow, cited_values: Mapping[str, Iterable[Sequence[Any]]]
+) -> list[str]:
+    refs = [
+        *row.evidence_ids,
+        *row.calculation_ids,
+        *row.photo_ids,
+        *(unit for ref in row.rule_refs for unit in _UNIT_REF.findall(ref)),
+    ]
+    allowed: dict[str, set[float]] = {}
+    for ref in refs:
+        for value, unit in cited_values.get(ref, ()):
+            allowed.setdefault(_UNIT_ALIASES.get(unit, unit), set()).add(float(value))
+    stray = [
+        f"{value}{unit}"
+        for text in (row.checkpoint, row.basis, row.hazard)
+        for value, unit in sorted(numbers_with_units(text))
+        if unit not in _DERIVED_UNITS and not _matches_known(value, unit, allowed)
+    ]
+    return list(dict.fromkeys(stray))
 
 
 def ledger_judgments(
@@ -311,7 +365,6 @@ def place_problem_table(prose: str, rows: Sequence[JudgmentRow]) -> str:
 
 class ChiefAction(_Model):
     priority: Priority
-    content: str = Field(min_length=1, description="评估内容，写成“维度＞小节＞子项”")
     problem: str = Field(min_length=1, description="发现问题，写明对象；合并几条行动时覆盖全部对象")
     hazard: str = Field(min_length=1, description="风险与危害")
     solution: str = Field(
@@ -320,6 +373,15 @@ class ChiefAction(_Model):
     )
     note: str = Field(default="", description="备注；模块之间对同一对象结论不同时，在这里说明以负责模块为准")
     row_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_content(cls, value: Any) -> Any:
+        # 评估内容 is filled by the program from the cited rows; an older run
+        # or a model that still writes it is not an error.
+        if isinstance(value, dict) and "content" in value:
+            value = {k: v for k, v in value.items() if k != "content"}
+        return value
 
 
 class DimensionHealth(_Model):
@@ -416,14 +478,38 @@ def _status_note(row_ids: Sequence[str], row_status: Mapping[str, str] | None) -
     return "依据：" + "、".join(statuses) if statuses else ""
 
 
+def action_content(row_ids: Sequence[str], row_places: Mapping[str, Sequence[str]]) -> str:
+    """The 评估内容 column: where the cited rows sit, by title and without numbers.
+
+    ``row_places`` maps a row id to its place, e.g. (dimension title,
+    section title, checkpoint).  Rows of one section share one entry; the
+    checkpoint is kept only when all of them check the same thing.
+    """
+
+    sections: dict[tuple[str, ...], list[str]] = {}
+    for row_id in row_ids:
+        place = tuple(row_places.get(row_id, ()))
+        if len(place) < 2:
+            continue
+        checks = sections.setdefault(place[:2], [])
+        if len(place) > 2 and place[2] not in checks:
+            checks.append(place[2])
+    return "；".join(
+        "＞".join([*section, *checks]) if len(checks) == 1 else "＞".join(section)
+        for section, checks in sections.items()
+    )
+
+
 def action_table_markdown(
     lead: str,
     actions: Sequence[ChiefAction],
     row_status: Mapping[str, str] | None = None,
+    row_places: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
     """3.2: a lead sentence, then one five-column table per priority group.
 
-    The note column carries the evidence status of the cited rows when any
+    The 评估内容 column is filled by the program from the cited rows' places;
+    the note column carries the evidence status of the cited rows when any
     of them is not confirmed on site.
     """
 
@@ -438,7 +524,7 @@ def action_table_markdown(
                 ACTION_TABLE_HEADERS,
                 (
                     [
-                        a.content,
+                        action_content(a.row_ids, row_places or {}),
                         a.problem,
                         a.hazard,
                         a.solution,
@@ -777,7 +863,60 @@ def report_check_findings(
     return findings
 
 
+_TABLE_POINTER = re.compile(r"(?:见|如|参见|详见)下表|下表(?:所示|列出|汇总)")
+
+
+def layout_findings(
+    *,
+    sections: Mapping[str, str],
+    rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
+    elsewhere: Mapping[str, Sequence[str]],
+    cited_values: Mapping[str, Iterable[Sequence[Any]]],
+) -> dict[str, dict[str, str]]:
+    """Minor findings on where the prose points and what it repeats.
+
+    The prose points to a table below although the section has no problem
+    table; or a row whose data another section presents (``elsewhere``) has
+    two or more of its facts' values written again in this section, where one
+    key value with the section reference is enough.
+    """
+
+    findings: dict[str, dict[str, str]] = {}
+    for section_id, text in sections.items():
+        rows = rows_by_submodule.get(section_id, ())
+        problems: list[str] = []
+        # Only concern rows make a table; the rest is one sentence at most.
+        if _TABLE_POINTER.search(text) and not any(row.disposition == "concern" for row in rows):
+            problems.append("正文写了“见下表”一类的话，但本节没有问题表")
+        written = numbers_with_units(text)
+        for row in rows:
+            if row.id not in elsewhere:
+                continue
+            own = {
+                (_UNIT_ALIASES.get(unit, unit), float(value))
+                for evidence_id in row.evidence_ids
+                for value, unit in cited_values.get(evidence_id, ())
+            }
+            repeated = sorted(
+                f"{value}{unit}" for value, unit in written if (unit, float(value)) in own
+            )
+            if len(repeated) >= 2:
+                problems.append(
+                    f"{row.object} 的数据由 " + "、".join(elsewhere[row.id])
+                    + " 呈现，本节又写了 " + "、".join(repeated)
+                )
+        if problems:
+            findings[section_id] = _finding(
+                "；".join(problems),
+                "没有问题表就删去指向表格的话；数据在别的小节呈现的，只留一个关键值并标“（数据见 2.x.x）”。",
+                severity="minor",
+            )
+    return findings
+
+
 __all__ = [
+    "action_content",
+    "layout_findings",
     "SpecialTopicAnalysis",
     "SectionText",
     "SectionSet",
@@ -795,6 +934,7 @@ __all__ = [
     "JudgmentAction",
     "JudgmentGap",
     "JudgmentRow",
+    "RowRelation",
     "JudgmentSet",
     "KeyRisk",
     "Phase",

@@ -67,8 +67,12 @@ def collect_findings(workspace: Path, source_run_id: str) -> list[dict[str, Any]
     found: list[dict[str, Any]] = []
     for conversation in sorted(root.iterdir()) if root.is_dir() else ():
         for action in FINDING_ACTIONS:
-            path = conversation / f"{action}.json"
-            if not path.is_file():
+            # Result files are named by the action id, plus "--<task id>"
+            # when the task id differs from it.
+            paths = [conversation / f"{action}.json"]
+            paths += sorted(conversation.glob(f"{action}--*.json"))
+            path = next((p for p in paths if p.is_file()), None)
+            if path is None:
                 continue
             record = json.loads(path.read_text(encoding="utf-8"))
             result = record.get("result") or {}

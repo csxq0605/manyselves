@@ -11,9 +11,10 @@ final ledger this module derives three views, without any model:
   judged differently by two modules);
 - ``flagged_rows``: every flagged row (concern or undetermined) in one line,
   so an author can see what other modules found beyond its own objects;
-- ``checked_relations`` and ``related_rows``: the cross-module references a
-  row records (``related_row_ids``), kept only when they name an existing row
-  of another module, and their content for the writer.
+- ``checked_relations`` and ``related_rows``: the cross-module relations a
+  row records (``relations``: row, candidate relation, reason), kept only when
+  they name an existing row of another module under a relation the knowledge
+  base's method lists, and their content for the writer.
 
 The program only offers candidates it can tell from the fixed structure (the
 same fact or object) and checks that a cited row exists.  Whether two rows
@@ -146,24 +147,57 @@ def flagged_rows(ledger: Mapping[str, Sequence[JudgmentRow]]) -> list[dict[str, 
     return found
 
 
+def relation_names(method: str) -> list[str]:
+    """The candidate relations a relation method lists: the first column of its tables."""
+
+    names: list[str] = []
+    table: list[list[str]] = []
+    for line in [*method.splitlines(), ""]:
+        if line.strip().startswith("|"):
+            table.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+            continue
+        # A table is a header row, a separator row and its data rows.
+        for cells in table[2:]:
+            if cells and cells[0] and cells[0] not in names:
+                names.append(cells[0])
+        table = []
+    return names
+
+
 def checked_relations(
     ledger: Mapping[str, Sequence[JudgmentRow]],
-) -> tuple[dict[str, list[JudgmentRow]], dict[str, list[str]]]:
-    """Keep only related rows that exist and belong to another module.
+    names: Sequence[str] = (),
+) -> tuple[dict[str, list[JudgmentRow]], dict[str, list[dict[str, str]]]]:
+    """Keep only relations to an existing row of another module, under a listed relation.
 
-    Returns the ledger with the other references removed, and what was removed.
+    ``names`` are the candidate relations of the knowledge base's method; when
+    the method lists none, any named relation is kept.  Returns the ledger with
+    the other relations removed, and what was removed with why.
     """
 
     owner = {row.id: module_id for module_id, rows in ledger.items() for row in rows}
+    listed = set(names)
     kept: dict[str, list[JudgmentRow]] = {}
-    dropped: dict[str, list[str]] = {}
+    dropped: dict[str, list[dict[str, str]]] = {}
     for module_id, rows in ledger.items():
         kept[module_id] = []
         for row in rows:
-            good = [r for r in row.related_row_ids if owner.get(r) not in (None, module_id)]
-            if bad := [r for r in row.related_row_ids if r not in good]:
-                dropped[row.id] = bad
-                row = row.model_copy(update={"related_row_ids": good})
+            good = []
+            for relation in row.relations:
+                if owner.get(relation.row_id) is None:
+                    why = "所引的行不存在"
+                elif owner[relation.row_id] == module_id:
+                    why = "所引的是本模块的行"
+                elif listed and relation.relation.strip() not in listed:
+                    why = "不是关联方法里列出的候选关系"
+                else:
+                    good.append(relation)
+                    continue
+                dropped.setdefault(row.id, []).append(
+                    {"row_id": relation.row_id, "relation": relation.relation, "why": why}
+                )
+            if len(good) != len(row.relations):
+                row = row.model_copy(update={"relations": good})
             kept[module_id].append(row)
     return kept, dropped
 
@@ -176,7 +210,8 @@ def related_rows(
     index = _row_index(ledger)
     found: dict[str, dict[str, Any]] = {}
     for row in rows:
-        for row_id in row.related_row_ids:
+        for relation in row.relations:
+            row_id = relation.row_id
             if row_id not in index:
                 continue
             _module, other = index[row_id]
@@ -194,7 +229,9 @@ def related_rows(
                     "for_rows": [],
                 },
             )
-            entry["for_rows"].append(row.id)
+            entry["for_rows"].append(
+                {"row_id": row.id, "relation": relation.relation, "reason": relation.reason}
+            )
     return list(found.values())
 
 
@@ -215,6 +252,7 @@ def conflict_summary(dossier: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "checked_relations",
     "flagged_rows",
+    "relation_names",
     "conflict_summary",
     "object_chains",
     "related_rows",
