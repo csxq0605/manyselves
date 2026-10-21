@@ -8,6 +8,7 @@ import httpx
 from anthropic import AsyncAnthropic
 from loguru import logger
 
+from ..runtime_errors import MalformedModelOutputError
 from .base import (
     LLMProvider,
     LLMResponse,
@@ -561,6 +562,17 @@ class AnthropicProvider(LLMProvider):
                             stream_iter.__anext__(),
                             timeout=idle_timeout,
                         )
+                    except ValueError as exc:
+                        # The SDK parses streamed tool input as it arrives; a
+                        # model that writes broken JSON fails here.  Keep what
+                        # was received and let the loop retry a fresh sample.
+                        raw = _received_output(stream)
+                        if raw is None:
+                            raise
+                        raise MalformedModelOutputError(
+                            f"模型返回的工具参数不是合法 JSON：{exc}",
+                            raw_output=raw,
+                        ) from exc
                     except StopAsyncIteration:
                         iterator_exhausted = True
                         logger.debug(
@@ -749,3 +761,32 @@ class AnthropicProvider(LLMProvider):
             }
             for tool in tools
         ]
+
+
+def _received_output(stream: Any) -> str | None:
+    """What the stream had received when a tool input failed to parse.
+
+    Returns None unless a tool input was being received, so other errors
+    keep their own type.  The chunk that failed to parse is not included:
+    the SDK drops it with the error.
+    """
+
+    try:
+        snapshot = stream.current_message_snapshot
+    except Exception:
+        return None
+    blocks = list(getattr(snapshot, "content", None) or [])
+    if not blocks or getattr(blocks[-1], "type", None) not in {"tool_use", "server_tool_use"}:
+        return None
+    parts: list[str] = []
+    for block in blocks:
+        kind = getattr(block, "type", None)
+        if kind == "text":
+            parts.append(str(getattr(block, "text", "")))
+        elif kind == "thinking":
+            parts.append(f"<thinking>{getattr(block, 'thinking', '')}</thinking>")
+        elif kind in {"tool_use", "server_tool_use"}:
+            buffer = getattr(block, "__json_buf", b"") or b""
+            text = buffer.decode("utf-8", "replace") if isinstance(buffer, bytes) else str(buffer)
+            parts.append(f"<tool_use name=\"{getattr(block, 'name', '')}\">{text}</tool_use>")
+    return "\n".join(parts)

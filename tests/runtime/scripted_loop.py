@@ -4,7 +4,7 @@ Each user turn is answered by the next step of ``script`` (a list, or a
 callable receiving the UserMessage):
 
 - ``("submit", [args, ...])`` calls ``submit_result`` until one is accepted
-  (wrapped under the contract name when the tool is keyed);
+  (the arguments are the result object itself);
 - ``("tool_then_submit", tool_args, submit_args)`` calls ``lookup`` first;
 - ``("say", text)``, ``("max_tokens", text)``, ``("tool_slice", text)`` end the
   turn with that response; a non-empty text is added to the history.
@@ -68,13 +68,7 @@ class ScriptedLoop:
             )
             kind = step[0]
             if kind == "submit":
-                submit = self.tools.get("submit_result")
                 for arguments in step[1]:
-                    if getattr(submit, "keyed", False) and set(arguments) != {
-                        submit.output_contract_id
-                    }:
-                        # A keyed tool takes the result under its contract name.
-                        arguments = {submit.output_contract_id: arguments}
                     self.history.append(
                         LLMMessage(
                             role="assistant",

@@ -515,3 +515,47 @@ async def test_repeated_tool_results_inject_replan_into_real_tool_loop(tmp_path:
     )
     notices = [item for item in list(loop.bus._queue._queue) if isinstance(item, SystemNotice)]
     assert any("重新规划" in notice.content for notice in notices)
+
+
+class MalformedThenGoodProvider(LLMProvider):
+    """The first stream breaks in the middle of a tool argument."""
+
+    def __init__(self):
+        super().__init__("key", model="malformed-model")
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("streaming path should be used")
+
+    async def chat_stream(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        from manyselves.runtime.runtime_errors import MalformedModelOutputError
+
+        self.calls += 1
+        if self.calls == 1:
+            raise MalformedModelOutputError(
+                "模型返回的工具参数不是合法 JSON：expected `:`",
+                raw_output='<tool_use name="submit_result">{"a"</tool_use>',
+            )
+        yield LLMStreamChunk(delta="recovered", done=True)
+
+
+@pytest.mark.asyncio
+async def test_malformed_model_output_is_retried_and_its_raw_text_kept(
+    tmp_path: Path, monkeypatch
+):
+    provider = MalformedThenGoodProvider()
+    loop = _loop(tmp_path, provider)
+
+    async def no_wait(_delay: float) -> bool:
+        return False
+
+    monkeypatch.setattr(loop, "_wait_before_retry", no_wait)
+
+    response = await loop._chat_with_retries([], None, "message-1")
+
+    assert response.content == "recovered"
+    assert provider.calls == 2
+    rows = UsageLedger(tmp_path, "main").rows()
+    assert [row["retry_decision"] for row in rows] == ["automatic_retry", "completed"]
+    assert rows[0]["raw_output"] == '<tool_use name="submit_result">{"a"</tool_use>'
+    assert "raw_output" not in rows[1]

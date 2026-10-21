@@ -45,3 +45,12 @@ def test_conflict_requires_reconciliation_instead_of_automatic_retry():
     assert policy.category == "conflict"
     assert policy.retryable is False
     assert policy.delay_seconds == 0
+
+
+def test_malformed_model_output_is_retried_but_plain_value_errors_are_not():
+    from manyselves.runtime.runtime_errors import MalformedModelOutputError
+
+    malformed = classify_runtime_error(MalformedModelOutputError("bad json", raw_output="{"))
+    assert malformed.category == "malformed_output"
+    assert malformed.retryable is True
+    assert classify_runtime_error(ValueError("bad evidence")).retryable is False

@@ -3109,6 +3109,7 @@ class AgentLoop:
                     error_class=type(failure.original).__name__,
                     tool_definitions=provider_tool_definitions,
                     duration_ms=int((time.monotonic() - attempt_started) * 1000),
+                    raw_output=getattr(failure.original, "raw_output", None),
                 )
                 await self._notify_provider_attempt_record(self._last_usage_record)
                 if not can_retry:
@@ -4096,8 +4097,13 @@ class AgentLoop:
         error_class: str | None = None,
         tool_definitions: list[dict] | None = None,
         duration_ms: int | None = None,
+        raw_output: str | None = None,
     ) -> dict[str, Any]:
-        """Append one provider-round usage record, marking estimates explicitly."""
+        """Append one provider-round usage record, marking estimates explicitly.
+
+        ``raw_output`` is what a failed attempt had received when its output
+        could not be parsed; it is kept only on that attempt's record.
+        """
 
         raw_usage = getattr(response, "usage", None)
         usage = raw_usage if isinstance(raw_usage, dict) else {}
@@ -4391,6 +4397,8 @@ class AgentLoop:
             "agent_cumulative_input_tokens": self._usage_totals["input_tokens"],
             "agent_cumulative_output_tokens": self._usage_totals["output_tokens"],
         }
+        if raw_output is not None:
+            record["raw_output"] = raw_output
         return UsageLedger(self.workspace, run_id).record_attempt(**record)
 
     def _format_tool_result(

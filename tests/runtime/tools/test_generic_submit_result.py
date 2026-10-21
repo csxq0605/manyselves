@@ -1,4 +1,4 @@
-"""An Agent that produces several contracts gets one stable submit_result schema."""
+"""An Agent that produces several contracts gets one small, stable submit_result."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import ContractDefinition
-from manyselves.runtime.tools.submit_result import SubmitResultTool, keyed_schema
+from manyselves.runtime.tools.submit_result import GENERIC_SCHEMA, SubmitResultTool
 
 
 def _contract(contract_id: str, schema: dict[str, Any]):
@@ -75,32 +75,36 @@ def _tool(contract_id: str, store: _Store, **extra: Any) -> SubmitResultTool:
         output_contract=CONTRACTS[contract_id],
         store=store,  # type: ignore[arg-type]
         bus=_Bus(),
-        all_contracts=CONTRACTS,
+        generic=True,
         **extra,
     )
 
 
-def test_every_task_of_the_agent_sees_the_same_schema_with_separate_definitions() -> None:
-    first = _tool("alpha", _Store()).input_schema
-    second = _tool("beta", _Store()).input_schema
-    assert first == second == keyed_schema(CONTRACTS)
-    assert list(first["properties"]) == ["alpha", "beta"]
-    assert set(first["$defs"]) == {"alpha__Item", "beta__Item"}
-    assert first["properties"]["alpha"]["properties"]["item"]["$ref"] == "#/$defs/alpha__Item"
-    assert "$defs" not in first["properties"]["beta"]
+def test_every_task_of_the_agent_sees_the_same_small_schema() -> None:
+    first = _tool("alpha", _Store())
+    second = _tool("beta", _Store())
+    assert first.input_schema == second.input_schema == GENERIC_SCHEMA
+    assert first.description == second.description
 
 
 @pytest.mark.asyncio
-async def test_a_task_submits_only_under_its_own_contract_name() -> None:
+async def test_the_flat_result_is_validated_against_the_task_contract() -> None:
     store = _Store()
     tool = _tool("alpha", store, store_task_id="revise--revise-judgments")
-    wrong = await tool(beta={"items": []})
+    wrong = await tool(items=[])
     assert wrong["status"] == "correction_required"
-    assert "alpha" in wrong["error"] and "beta" in wrong["error"]
-    accepted = await tool(alpha={"item": {"x": "ok"}})
+    assert wrong["output_contract"] == "alpha"
+    accepted = await tool(item={"x": "ok"})
     assert accepted["accepted"] is True
     assert store.saved[-1]["result"] == {"item": {"x": "ok"}}
     assert store.saved[-1]["task_id"] == "revise--revise-judgments"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_submission_gets_a_correction() -> None:
+    tool = _tool("alpha", _Store())
+    result = await tool()
+    assert result["status"] == "correction_required"
 
 
 def test_an_agent_with_one_contract_keeps_the_plain_schema() -> None:
@@ -109,7 +113,25 @@ def test_an_agent_with_one_contract_keeps_the_plain_schema() -> None:
         session_id="sess", conversation_id="c", agent_id="agent", input_value={},
         output_contract_id="alpha", output_contract=CONTRACTS["alpha"],
         store=_Store(), bus=_Bus(),  # type: ignore[arg-type]
-        all_contracts={"alpha": CONTRACTS["alpha"]},
     )
-    assert tool.keyed is False
+    assert tool.generic is False
     assert tool.input_schema == CONTRACTS["alpha"].json_schema()
+
+
+def test_the_task_message_carries_the_task_schema_when_the_tool_is_generic() -> None:
+    import json
+
+    from manyselves.kernel.definitions import TaskDefinition
+    from manyselves.runtime.definition_agent import DefinitionAgentInvoker
+    from manyselves.runtime.tools.registry import ToolRegistry
+
+    task = TaskDefinition(
+        id="t", version="1.0.0", description="t", agent="agent", objective="do it",
+        input_contract="alpha", output_contract="beta",
+    )
+    tools = ToolRegistry()
+    tools.register(_tool("beta", _Store()))
+    prompt = DefinitionAgentInvoker._prompt(task, {}, tools)
+    schema = json.dumps(CONTRACTS["beta"].json_schema(), ensure_ascii=False, separators=(",", ":"))
+    assert f'<output_schema contract="beta">\n{schema}\n</output_schema>' in prompt
+    assert "output_schema 填写" in prompt

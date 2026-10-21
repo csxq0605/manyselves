@@ -347,7 +347,7 @@ class DefinitionAgentInvoker:
                 input_value=input_value,
                 output_contract_id=task.output_contract,
                 output_contract=output_contract,
-                all_contracts=self._produced_contracts(agent),
+                generic=_generic(agent, task),
                 store_task_id=_store_key(task_id, task),
                 store=self.results,
                 bus=self.services.bus,
@@ -370,15 +370,6 @@ class DefinitionAgentInvoker:
                 )
             )
         return registry
-
-    def _produced_contracts(self, agent: AgentDefinition) -> dict[str, ContractAdapter]:
-        """Every contract the Agent declares it produces, for one stable tool list."""
-
-        return {
-            contract_id: self.contracts[contract_id]
-            for contract_id in agent.produces
-            if contract_id in self.contracts
-        }
 
     def _restore(self, conversation: ConversationRecord) -> AgentSessionRestore | None:
         own = self.histories.load(conversation.conversation_id)
@@ -476,7 +467,20 @@ class DefinitionAgentInvoker:
         if other_tools:
             parts.append("可用工具：" + "、".join(other_tools) + "。")
         submit = tools.get("submit_result")
-        parts.append(_submit_hint(task, bool(getattr(submit, "keyed", False))) + "资料不足时如实写明，不要编造。")
+        generic = bool(getattr(submit, "generic", False))
+        if generic:
+            # The generic tool declares only "an object"; the task's own schema
+            # travels here, after the shared prefix, so the cache still hits.
+            parts.append(
+                f"<output_schema contract=\"{task.output_contract}\">\n"
+                + json.dumps(
+                    submit.output_contract.json_schema(),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n</output_schema>"
+            )
+        parts.append(_submit_hint(task, generic) + "资料不足时如实写明，不要编造。")
         return "\n\n".join(parts)
 
     @staticmethod
@@ -502,7 +506,7 @@ class DefinitionAgentInvoker:
             body = "上一轮只返回了自然语言，没有提交结构化结果。不要重复已经完成的分析。"
         return (
             f"<{tag}>\n{body}\n你仍是 {agent.id}，当前任务是 {task.id}。"
-            f"完成后立即{_submit_hint(task, _keyed(agent, task))}\n</{tag}>"
+            f"完成后立即{_submit_hint(task, _generic(agent, task))}\n</{tag}>"
         )
 
 
@@ -517,16 +521,18 @@ def _store_key(task_id: str, task: TaskDefinition) -> str:
     return task_id if task_id == task.id else f"{task_id}--{task.id}"
 
 
-def _submit_hint(task: TaskDefinition, keyed: bool) -> str:
-    if keyed:
+def _submit_hint(task: TaskDefinition, generic: bool) -> str:
+    if generic:
         return (
-            f"完成后调用 submit_result，参数只填 {task.output_contract} 这一项，"
-            "值按它的 schema 填写。"
+            "完成后调用 submit_result，参数直接按本任务消息里的 output_schema 填写，"
+            "不要包一层。"
         )
     return f"完成后调用 submit_result 提交 {task.output_contract}；参数直接按 schema 填写。"
 
 
-def _keyed(agent: AgentDefinition, task: TaskDefinition) -> bool:
+def _generic(agent: AgentDefinition, task: TaskDefinition) -> bool:
+    """An Agent with several contracts gets the generic submit tool."""
+
     return len(set(agent.produces)) > 1 and task.output_contract in agent.produces
 
 
