@@ -1,0 +1,7 @@
+id: lesson_triage_packet
+version: 1.0.0
+description: Review findings of one run, the writing roles and the adopted lessons
+adapter: json_schema
+schema:
+  type: object
+  required: [findings, roles, adopted_lessons]

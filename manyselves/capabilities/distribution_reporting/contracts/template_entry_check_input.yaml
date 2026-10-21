@@ -1,0 +1,7 @@
+id: template_entry_check_input
+version: 1.0.0
+description: One role's packet, its submission and the frozen template
+adapter: json_schema
+schema:
+  type: object
+  required: [item, submission, template_ref]

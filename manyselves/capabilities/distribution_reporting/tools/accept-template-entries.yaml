@@ -1,0 +1,10 @@
+id: accept-template-entries
+version: 1.0.0
+description: Check one role's entries against the template (locator, quote, numbers, names, mandatory words)
+implementation: capability:distribution-reporting:accept-template-entries
+input_contract: template_entry_check_input
+output_contract: template_entry_check
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,7 @@
+id: lesson_triage_revision
+version: 1.0.0
+description: Refused triage items with reasons and the findings not yet routed
+adapter: json_schema
+schema:
+  type: object
+  required: [problems, unrouted_findings]

@@ -1,0 +1,7 @@
+id: lesson_triage_check_input
+version: 1.0.0
+description: The triage context and the submitted triage
+adapter: json_schema
+schema:
+  type: object
+  required: [context, triage]

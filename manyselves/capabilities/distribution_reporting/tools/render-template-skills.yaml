@@ -1,0 +1,10 @@
+id: render-template-skills
+version: 1.0.0
+description: Render candidate role Skills and their diff against the published Skills
+implementation: capability:distribution-reporting:render-template-skills
+input_contract: template_render_input
+output_contract: template_skill_candidates
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,18 @@
+id: extract-template-role
+version: 1.0.0
+description: Extract one role's writing methods and examples from its template sections
+agent: method-curator
+objective: 下面是专家版模板里属于这个角色的小节，每段前面方括号里是来源坐标。为这个角色提炼可迁移的写法，逐条提交。
+input_contract: template_role_packet
+output_contract: exemplar_submission
+constraints:
+- 每一条只写一个要点。kind=method 写组织方式或写法（例如一节分哪几段、表格前后怎样引出和收尾、风险和建议怎样对应、资料不足时怎样表述）；kind=example 写一句可以套用的范例句式。
+- method 里不写模板的任何数值、编号、设备或区域名称、单位名称；范例里这些事实都换成〈〉占位，例如“〈对象〉〈指标〉达〈数值〉，超过〈参考值〉”。
+- 方法写成建议。不用“必须、一律、务必、立即”这类词，也不要把模板里出现一次的写法概括成所有项目都要做的事。
+- applies_when 写这条写法在什么情况下用；源文没有说明就写“未明确”，不要自己补条件。
+- locator 填方括号里的坐标，quote 逐字摘录该坐标处的一段原文（至少六个字），用来让人反查出处。
+- structure 一栏是程序数出来的结构，不用复述；要提炼的是结构背后的写法。
+- 每个有内容的小节至少提交一条；确实没有可迁移写法的小节（例如只有一句与项目相关的结论），放进 skipped 并写明原因。
+- 判断阈值、标准限值、风险等级和处置期限属于专业知识或项目事实，不作为写法提炼。
+tools: []
+recovery: typed-turn-recovery

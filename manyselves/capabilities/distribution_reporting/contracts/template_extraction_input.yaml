@@ -1,0 +1,9 @@
+id: template_extraction_input
+version: 1.0.0
+description: Which template to extract role Skills from; empty means the project's report template
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    template_ref:
+      type: string

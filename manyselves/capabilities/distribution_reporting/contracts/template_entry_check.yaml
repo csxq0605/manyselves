@@ -1,0 +1,7 @@
+id: template_entry_check
+version: 1.0.0
+description: The program's acceptance of one role's entries
+adapter: json_schema
+schema:
+  type: object
+  required: [role_id, passed, revision_input, record]

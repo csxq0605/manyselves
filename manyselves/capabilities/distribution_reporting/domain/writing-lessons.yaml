@@ -1,0 +1,9 @@
+# General writing lessons learned from reviews, merged into role Skills on load.
+#
+# A lesson is an error type and a general rule; it names no object, value or
+# count of the run it came from.  Candidates come from the
+# triage-writing-lessons workflow (Work/runs/<run>/lessons/candidates.yaml);
+# a person adopts them here.  The fixed-structure variant test checks that
+# every active lesson's trigger fires on at least one variant.  To withdraw a
+# lesson set status: revoked and give revoked_reason; never reuse an id.
+lessons: []

@@ -1,0 +1,5 @@
+id: exemplar_submission
+version: 1.0.0
+description: Writing methods and examples for one role, each with its template locator and quote
+adapter: pydantic
+model: manyselves.runtime.exemplar.extraction:ExemplarSubmission

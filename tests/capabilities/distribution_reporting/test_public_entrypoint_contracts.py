@@ -17,6 +17,8 @@ PUBLIC_ENTRYPOINTS = (
     "aggregate-existing",
     "render-existing",
     "distill-template-skill",
+    "extract-template-skills",
+    "triage-writing-lessons",
 )
 
 

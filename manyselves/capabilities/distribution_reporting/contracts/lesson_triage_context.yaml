@@ -1,0 +1,7 @@
+id: lesson_triage_context
+version: 1.0.0
+description: The findings packet and where the run's object names are kept
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, source_run_id, packet, terms_ref]

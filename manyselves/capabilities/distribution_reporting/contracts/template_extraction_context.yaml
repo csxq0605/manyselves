@@ -1,0 +1,7 @@
+id: template_extraction_context
+version: 1.0.0
+description: The frozen template and one packet per extracted role
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, template_ref, roles]

@@ -8,19 +8,12 @@ for how much the expert version writes per section, never an output limit.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from docx import Document
-from docx.oxml.ns import qn
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-
-_CJK = re.compile(r"[一-鿿]")
-_HEADING = re.compile(r"^(?:Heading|标题)\s*(\d)$", re.IGNORECASE)
+from manyselves.runtime.exemplar.outline import document_outline
 
 
 @dataclass(frozen=True)
@@ -31,38 +24,13 @@ class TemplateSection:
     tables: int
 
 
-def _level(paragraph: Paragraph) -> int | None:
-    match = _HEADING.match(paragraph.style.name if paragraph.style is not None else "")
-    return int(match.group(1)) if match else None
-
-
 def template_sections(path: Path) -> list[TemplateSection]:
     """Every non-empty heading with the characters and tables directly under it."""
 
-    document = Document(str(path))
-    counters: list[int] = []
-    sections: list[dict] = []
-    for element in document.element.body.iterchildren():
-        if element.tag == qn("w:p"):
-            paragraph = Paragraph(element, document)
-            level = _level(paragraph)
-            text = paragraph.text.strip()
-            if level is not None:
-                if not text:
-                    continue
-                counters = counters[:level] + [0] * max(0, level - len(counters))
-                counters[level - 1] += 1
-                sections.append(
-                    {"number": ".".join(map(str, counters)), "title": text, "chars": 0, "tables": 0}
-                )
-            elif sections:
-                sections[-1]["chars"] += len(_CJK.findall(text))
-        elif element.tag == qn("w:tbl") and sections:
-            table = Table(element, document)
-            cells = {id(cell._tc): cell.text for row in table.rows for cell in row.cells}
-            sections[-1]["chars"] += sum(len(_CJK.findall(text)) for text in cells.values())
-            sections[-1]["tables"] += 1
-    return [TemplateSection(**section) for section in sections]
+    return [
+        TemplateSection(section.number, section.title, section.chars, section.tables)
+        for section in document_outline(path).sections
+    ]
 
 
 def _similar(left: str, right: str) -> float:

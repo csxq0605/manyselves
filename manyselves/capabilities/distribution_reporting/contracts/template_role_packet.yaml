@@ -1,0 +1,7 @@
+id: template_role_packet
+version: 1.0.0
+description: One role's template sections with located blocks and program-counted structure
+adapter: json_schema
+schema:
+  type: object
+  required: [role_id, title, purpose, sections]

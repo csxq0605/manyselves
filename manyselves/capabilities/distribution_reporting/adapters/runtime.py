@@ -65,6 +65,9 @@ from manyselves.capabilities.distribution_reporting.runtime.template_distillatio
 from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
     TemplateDistillationProviderRuntime,
 )
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
+    build_template_skill_binding,
+)
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
@@ -241,9 +244,14 @@ class DistributionReportingRuntimeBinding:
             snapshot_content=partial(snapshot_content, self.workspace, content_store),
             execution=self._execution,
         )
-        self._providers = (*self._providers, ledger_report)
+        template_skills = build_template_skill_binding(
+            self.workspace, services, execution=self._execution
+        )
+        self._providers = (*self._providers, ledger_report, template_skills)
         self._runtimes: dict[str, DetachedRuntime] = {
             "full-report": ledger_report,
+            "extract-template-skills": template_skills,
+            "triage-writing-lessons": template_skills,
             "module-report": public,
             "revise-report": public,
             "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
@@ -264,6 +272,8 @@ class DistributionReportingRuntimeBinding:
         }
         self._start_stores = {
             "full-report": ledger_report.state_store,
+            "extract-template-skills": template_skills.state_store,
+            "triage-writing-lessons": template_skills.state_store,
             "module-report": public_state_store,
             "revise-report": public_state_store,
             "aggregate-existing": aggregate_state_store,

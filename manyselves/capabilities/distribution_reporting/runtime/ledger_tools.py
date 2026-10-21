@@ -68,18 +68,9 @@ from .research.project_evidence import ProjectEvidenceIndex
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
+from .template_skills import plain_value, skill_order, skills_with_lessons
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
-_SKILL_ORDER = (
-    "author-2.1",
-    "author-2.2",
-    "author-2.3",
-    "author-2.4",
-    "author-2.5",
-    "chief-editor-chapter-1",
-    "chief-editor-chapter-3",
-    "chief-editor-chapter-4",
-)
 CHIEF_OWNER = "chief"
 CHIEF_SECTIONS = {
     "1.1": "assessment_background",
@@ -285,7 +276,12 @@ class LedgerTools:
                         ],
                     }
                 )
-            skills = state.get("template_skill_text") or {}
+            skills = skills_with_lessons(
+                state.get("template_skill_text") or {},
+                items=items,
+                mapping_gaps=[plain_value(gap) for gap in state.get("mapping_gaps") or []],
+                calculation_gaps=calculation_gaps,
+            )
             plan = state.get("special_topic_plan")
             plan_value = (
                 SpecialTopicPlan.model_validate(plan).model_dump(mode="json")
@@ -314,7 +310,7 @@ class LedgerTools:
                     "# 写作方法与专家版范例\n"
                     + "\n\n".join(
                         f"## {skill_id}\n{skills[skill_id]}"
-                        for skill_id in _SKILL_ORDER
+                        for skill_id in skill_order()
                         if skills.get(skill_id)
                     ),
                 ]

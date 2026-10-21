@@ -1,0 +1,7 @@
+id: lesson_triage_check
+version: 1.0.0
+description: The program's check of a triage
+adapter: json_schema
+schema:
+  type: object
+  required: [passed, revision_input, record]

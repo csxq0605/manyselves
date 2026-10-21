@@ -1,0 +1,7 @@
+id: template_role_result
+version: 1.0.0
+description: One role's accepted entries, refused entries and uncovered sections
+adapter: json_schema
+schema:
+  type: object
+  required: [role_id, accepted, rejected, uncovered]

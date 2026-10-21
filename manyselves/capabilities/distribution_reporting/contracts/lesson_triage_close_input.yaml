@@ -1,0 +1,7 @@
+id: lesson_triage_close_input
+version: 1.0.0
+description: The triage context, its first check and the optional revision
+adapter: json_schema
+schema:
+  type: object
+  required: [context, checked]

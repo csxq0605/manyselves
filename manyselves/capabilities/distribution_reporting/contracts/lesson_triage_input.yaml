@@ -1,0 +1,12 @@
+id: lesson_triage_input
+version: 1.0.0
+description: The finished report run to triage, and optional review notes in the project
+adapter: json_schema
+schema:
+  type: object
+  required: [source_run_id]
+  properties:
+    source_run_id:
+      type: string
+    notes_ref:
+      type: string

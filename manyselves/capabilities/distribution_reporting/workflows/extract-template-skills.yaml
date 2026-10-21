@@ -1,0 +1,54 @@
+id: extract-template-skills
+version: 1.0.0
+description: Outline the report template, extract each declared role's writing methods, check and render candidate Skills
+tasks: []
+recovery:
+- typed-turn-recovery
+input_contract: template_extraction_input
+input_variable: request
+output_contract: template_skill_candidates
+state:
+  run-id: ''
+  request: {}
+  context: {}
+actions:
+- id: prepare
+  kind: invoke_tool
+  tool: prepare-template-extraction
+  input_variables:
+    run_id: run-id
+    request: request
+  output_variable: context
+- id: template-ref
+  kind: set_variable
+  variable: template_ref
+  value_variable: context
+  field: template_ref
+- id: roles
+  kind: set_variable
+  variable: roles
+  value_variable: context
+  field: roles
+- id: extract-roles
+  kind: map
+  items_variable: roles
+  key_field: role_id
+  workflow: template-role-extraction
+  key_input_variable: item_key
+  input_variables:
+    template_ref: template_ref
+  output_variable: extractions
+  errors_variable: extraction_errors
+  max_concurrency: 4
+- id: render
+  kind: invoke_tool
+  tool: render-template-skills
+  input_variables:
+    context: context
+    extractions: extractions
+    errors: extraction_errors
+  output_variable: candidates
+- id: finish
+  kind: end_workflow
+  output_variable: candidates
+  output_name: result

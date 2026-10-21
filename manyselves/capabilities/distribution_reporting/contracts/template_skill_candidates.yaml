@@ -1,0 +1,7 @@
+id: template_skill_candidates
+version: 1.0.0
+description: Candidate role Skills, their diff against the published ones and per-role counts
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, candidates, roles, diff_ref]

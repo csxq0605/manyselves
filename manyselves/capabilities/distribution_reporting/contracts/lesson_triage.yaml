@@ -1,0 +1,5 @@
+id: lesson_triage
+version: 1.0.0
+description: Where each review finding goes, with lesson drafts for writing problems
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.lesson_triage:LessonTriage
