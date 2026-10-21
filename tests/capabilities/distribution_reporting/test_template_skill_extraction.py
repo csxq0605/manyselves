@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -27,13 +29,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.capabilities.distribution_reporting.runtime.module_authoring_preparation import (
     load_template_skill,
 )
-from manyselves.capabilities.distribution_reporting.runtime.template_resolver import (
-    resolve_report_template,
-)
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
     build_template_skill_binding,
 )
 from manyselves.capabilities.distribution_reporting.runtime.template_skills import (
+    EXPERT_REPORT_REF,
     publish_template_skills,
     skill_order,
     skills_with_lessons,
@@ -57,7 +57,42 @@ from tests.capabilities.distribution_reporting.test_public_reporting_runtime imp
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 
-TEMPLATE = resolve_report_template(Path("/nonexistent"))[0]
+EXPERT_TEXT = Path(
+    "docs/research/session-records/2026-10-10_to_2026-10-15/audit_manyselves/"
+    "配电安全专家咨询报告(专家优化版).docx.txt"
+)
+_TOC = re.compile(r"^(\d+(?:\.\d+)*)\.\s+(.+?)\d+$")
+
+
+def _expert_report(path: Path) -> Path:
+    """A DOCX with the expert report's headings, built from its table of contents.
+
+    Each section gets one paragraph so it has something to cite; 3.2 also
+    gets a table.  The expert report itself is not in the repository.
+    """
+
+    from docx import Document
+
+    document = Document()
+    for line in EXPERT_TEXT.read_text(encoding="utf-8").splitlines():
+        match = _TOC.match(line.strip())
+        if not match:
+            continue
+        number, title = match.groups()
+        document.add_heading(title, level=number.count(".") + 1)
+        if number == "2":
+            continue  # chapter 2 opens straight into 2.1, as in the expert report
+        document.add_paragraph(f"本节先说明{title}的现状，再分析风险并给出建议。")
+        if number == "3.2":
+            table = document.add_table(rows=2, cols=5)
+            for cell, value in zip(table.rows[0].cells, ("评估内容", "发现问题", "风险与危害", "解决方案", "备注"), strict=True):
+                cell.text = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(str(path))
+    return path
+
+
+TEMPLATE = _expert_report(Path(tempfile.mkdtemp()) / "expert.docx")
 
 
 def test_declared_roles_resolve_on_the_template_and_keep_the_loading_order() -> None:
@@ -167,6 +202,8 @@ async def _run(workspace: Path, workflow_id: str, values: dict[str, Any], answer
 @pytest.mark.asyncio
 async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_path: Path) -> None:
     _write_complete_template_skill_fixture(tmp_path)
+    (tmp_path / EXPERT_REPORT_REF).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(TEMPLATE, tmp_path / EXPERT_REPORT_REF)
     published_before = (tmp_path / "Inputs/report-template-role-skills/author-2.1/SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -196,7 +233,6 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     candidate = (tmp_path / result["candidates"]["author-2.1"]).read_text(encoding="utf-8")
     assert "## 2.1.1 电力系统负荷分配与过载风险" in candidate
     assert "110kV" not in candidate
-    assert "分段小标题：现状描述" in candidate
     assert "判断方法：" in candidate and "写法：" in candidate
     comparison = (tmp_path / result["compare_ref"]).read_text(encoding="utf-8")
     assert "## author-2.1" in comparison and "| 结果 | 现用版条目 |" in comparison
@@ -212,9 +248,8 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     assert published.read_text(encoding="utf-8") == candidate
     backup = tmp_path / outcome["backup"] / "author-2.1/SKILL.md"
     assert backup.read_text(encoding="utf-8") == published_before
-    # The role without a template chapter keeps its file.
     chapter4 = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
-    assert "chief-editor-chapter-4: preserve" in chapter4.read_text(encoding="utf-8")
+    assert "## 4.1 新工厂建厂时规划建议" in chapter4.read_text(encoding="utf-8")
     source = json.loads(
         (tmp_path / "Inputs/report-template-role-skills/source.json").read_text(encoding="utf-8")
     )
@@ -223,6 +258,29 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     state: dict[str, Any] = {}
     assert load_template_skill(tmp_path, state)
     assert state["template_skill_text"]["author-2.1"] == candidate
+
+
+@pytest.mark.asyncio
+async def test_extraction_can_redo_only_some_roles_and_needs_the_expert_report(tmp_path: Path) -> None:
+    _write_complete_template_skill_fixture(tmp_path)
+    # Without the expert report in Templates/ nothing falls back to the style template.
+    with pytest.raises(ValueError, match="expert report"):
+        await _run(tmp_path, "extract-template-skills", {}, _extraction_answer, 2)
+
+    (tmp_path / EXPERT_REPORT_REF).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(TEMPLATE, tmp_path / EXPERT_REPORT_REF)
+    roles = ["chief-editor-chapter-1", "chief-editor-chapter-3"]
+    binding, accepted, loops = await _run(
+        tmp_path, "extract-template-skills", {"roles": roles}, _extraction_answer, 3
+    )
+    result = next(
+        item["value"] for item in binding.get_outputs(accepted["run_id"])["outputs"] if item["id"] == "result"
+    )
+    assert sorted(result["candidates"]) == roles and len(loops) == 2
+    chapter1 = (tmp_path / result["candidates"]["chief-editor-chapter-1"]).read_text(encoding="utf-8")
+    assert "## 1.2 健康度总览" in chapter1 and "章节综合：" in chapter1
+    chapter3 = (tmp_path / result["candidates"]["chief-editor-chapter-3"]).read_text(encoding="utf-8")
+    assert "表（行动表由系统按结构化字段生成" in chapter3 and "评估内容" not in chapter3
 
 
 def _item(index: int, subject: str, **update: Any) -> EvidenceItem:

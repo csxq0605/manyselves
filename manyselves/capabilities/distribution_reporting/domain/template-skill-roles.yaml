@@ -1,4 +1,5 @@
-# Method roles distilled from the expert report template.
+# Method roles distilled from the expert report (专家优化版), not from the
+# style template that rendering uses.
 #
 # Each role names the template sections it learns from (by number, checked by
 # title).  The extraction workflow makes one model call per role with only
@@ -59,29 +60,25 @@ roles:
   required_uses: [judge, write]
 - id: author-2.5
   title: 2.5 运维管理与风险管控的方法
-  purpose: 判断和撰写第二章 2.5 各小节时参考。模板把备件管理放在了第三章标题之后，内容属于 2.5。
-  sections:
-  - {number: "2.5", title: 运维管理与风险管控}
-  - {number: "3.0.1", title: 备件管理}
+  purpose: 判断和撰写第二章 2.5 各小节时参考。
+  sections: [{number: "2.5", title: 运维管理与风险管控}]
   uses: [judge, write, example, check]
   required_uses: [judge, write]
 - id: chief-editor-chapter-1
   title: 第一章评估概述的方法
-  purpose: 总编写第一章时参考：评估背景交代哪些要素，问题概览怎样从第二章结论归纳。概览表格由系统按结构化字段生成，文字里不画表。
-  sections:
-  - {number: "1.1", title: 评估背景}
-  - {number: "1.2", title: 待提升问题与建议概览, generated: 概览表由系统按结构化字段生成}
+  purpose: 总编写第一章时参考：评估背景交代哪些要素，健康度总览和各区域摘要怎样从第二章结论归纳。第一章的表由系统按结构化字段生成，文字里不画表。
+  sections: [{number: "1", title: 配电评估概述, generated: 表由系统按结构化字段生成}]
   uses: [synthesis, write, example, check]
   required_uses: [synthesis]
 - id: chief-editor-chapter-3
   title: 第三章结论与建议的方法
   purpose: 总编写第三章时参考：风险汇总怎样归纳第二章结论，改善行动怎样归并、排列和说明优先级。行动表由系统按结构化字段生成，文字里不画表。
-  sections:
-  - {number: "3.1", title: 风险/问题汇总与概览}
-  - {number: "3.2", title: 改善行动列表与优先级, generated: 行动表由系统按结构化字段生成，列以任务合同为准}
+  sections: [{number: "3", title: 结论与建议, generated: 行动表由系统按结构化字段生成，列以任务合同为准}]
   uses: [synthesis, write, example, check]
   required_uses: [synthesis]
 - id: chief-editor-chapter-4
-  title: 第四章专题分析的方法
-  purpose: 专家版模板没有第四章，这个角色不从模板提炼，沿用项目里现有的 Skill 文件。
-  extract: false
+  title: 第四章专项问题分析的方法
+  purpose: 总编写第四章时参考：专项话题怎样从委托要求和第二章结论展开，分析和建议怎样组织。第四章写哪些话题只看本轮的专题计划。
+  sections: [{number: "4", title: 专项问题分析}]
+  uses: [synthesis, write, example, check]
+  required_uses: [write]

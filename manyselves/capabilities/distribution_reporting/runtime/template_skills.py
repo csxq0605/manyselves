@@ -47,7 +47,7 @@ from manyselves.runtime.exemplar.outline import DocumentOutline, document_outlin
 
 from ..domain.calculations import compute
 from ..domain.lesson_triage import TriggerKind
-from .template_resolver import resolve_report_template
+from .template_access import FORBIDDEN_AGENT_DOCUMENT_NAME
 from .template_skill_paths import TEMPLATE_SKILL_ROOT, TEMPLATE_SKILL_SOURCE, template_skill_ref
 
 _CAPABILITY = Path(__file__).resolve().parents[1]
@@ -55,6 +55,9 @@ _DOMAIN = _CAPABILITY / "domain"
 ROLES_FILE = _DOMAIN / "template-skill-roles.yaml"
 LESSONS_FILE = _DOMAIN / "writing-lessons.yaml"
 TRIGGER_KINDS: tuple[str, ...] = get_args(TriggerKind)
+# The finished expert report the methods are learned from; rendering uses a
+# separate style template, which has none of this content.
+EXPERT_REPORT_REF = f"Templates/{FORBIDDEN_AGENT_DOCUMENT_NAME}"
 FACT_FLAGS = ("needs_confirmation", "summary_entry")
 
 
@@ -184,15 +187,17 @@ class TemplateSkillTools:
 
         run_id = str(value["run_id"])
         request = value.get("request") or {}
-        requested = str(request.get("template_ref") or "").strip()
-        if requested:
-            source = (self.workspace / requested).resolve()
-            if not source.is_relative_to(self.workspace) or not source.is_file():
-                raise ValueError(f"template must be a DOCX file inside the project: {requested}")
-            origin = requested
-        else:
-            source, kind = resolve_report_template(self.workspace)
-            origin = f"{kind}:{source.name}"
+        requested = str(request.get("template_ref") or "").strip() or EXPERT_REPORT_REF
+        source = (self.workspace / requested).resolve()
+        if not source.is_relative_to(self.workspace) or not source.is_file():
+            raise ValueError(
+                f"the expert report must be a DOCX file inside the project: {requested}"
+            )
+        origin = requested
+        wanted = [str(role) for role in request.get("roles") or []]
+        unknown = sorted(set(wanted) - {role.id for role in template_roles() if role.extract})
+        if unknown:
+            raise ValueError("unknown or non-extracted template roles: " + ", ".join(unknown))
         root = run_root(run_id)
         template_ref = f"{root}/template.docx"
         target = self.workspace / template_ref
@@ -202,7 +207,7 @@ class TemplateSkillTools:
         packets: list[dict[str, Any]] = []
         missing: dict[str, list[str]] = {}
         for role in template_roles():
-            if not role.extract:
+            if not role.extract or (wanted and role.id not in wanted):
                 continue
             scope = role_scope(outline, role)
             if scope.missing:
@@ -454,6 +459,7 @@ def compare_with_published(
 
 
 __all__ = [
+    "EXPERT_REPORT_REF",
     "FACT_FLAGS",
     "compare_with_published",
     "stated_rules",

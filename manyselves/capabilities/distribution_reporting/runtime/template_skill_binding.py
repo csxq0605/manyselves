@@ -17,7 +17,7 @@ from .lesson_triage import LessonTriageTools
 from .template_skills import TemplateSkillTools
 
 _INPUT_FIELDS = {
-    "extract-template-skills": {"template_ref"},
+    "extract-template-skills": {"template_ref", "roles"},
     "triage-writing-lessons": {"source_run_id", "notes_ref"},
 }
 
