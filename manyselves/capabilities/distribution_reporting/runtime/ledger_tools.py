@@ -29,6 +29,7 @@ from ..domain.calculations import compute, render_calculations, render_statistic
 from ..domain.judgment_ledger import (
     PROBLEM_TABLE_MARKER,
     ChiefAction,
+    CrossFinding,
     DimensionHealth,
     JudgmentRow,
     JudgmentSet,
@@ -37,6 +38,7 @@ from ..domain.judgment_ledger import (
     action_table_markdown,
     apply_revisions,
     chief_findings,
+    cross_finding_findings,
     findings_overview_markdown,
     known_values_from_text,
     ledger_findings,
@@ -50,6 +52,13 @@ from ..domain.taxonomy import (
     reset_report_taxonomy,
 )
 from .assets import runtime_photo_ids
+from .cross_module import (
+    checked_relations,
+    conflict_summary,
+    object_chains,
+    related_rows,
+    see_also_by_row,
+)
 from .delivery_tools import DeliveryTools
 from .joint_dossiers import build_dossiers
 from .models.agentic import (
@@ -184,6 +193,12 @@ def _combined(
 
 def _blocking(findings: Mapping[str, Mapping[str, Any]]) -> bool:
     return any(finding.get("severity") == "blocking" for finding in findings.values())
+
+
+def _foreign_row(target: str, module_id: str) -> bool:
+    """A judgment row id (J-<module>-n) that belongs to another module."""
+
+    return target.startswith("J-") and not target.startswith(f"J-{module_id}-")
 
 
 def _rows(values: Sequence[Any]) -> list[JudgmentRow]:
@@ -410,6 +425,7 @@ class LedgerTools:
                 evidence_subjects=reference.get("evidence_subjects"),
             )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
+        see_also = see_also_by_row(dossiers, ledger)
         readings = load_photo_readings(self.workspace, run_id)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r0.json", dumped)
@@ -425,11 +441,17 @@ class LedgerTools:
                     "dossiers": [
                         dossier
                         for dossier in dossiers
-                        if module["module_id"] in dossier["module_ids"]
+                        if dossier["kind"] == "conflict"
+                        and module["module_id"] in dossier["module_ids"]
                     ],
                     "photos": photos_to_check(
                         ledger[module["module_id"]], reference, readings
                     ),
+                    "related": {
+                        row.id: others
+                        for row in ledger[module["module_id"]]
+                        if (others := see_also.get(row.id))
+                    },
                 }
                 for module in context["modules"]
             ],
@@ -444,15 +466,26 @@ class LedgerTools:
 
         item = value["item"]
         reviewed = dict((value.get("review") or {}).get("findings") or {})
+        foreign: dict[str, Any] = {}
+        if module_id := item.get("module_id"):
+            # Rows of another module are revised only by that module's author;
+            # its own reviewer sees the same conflict dossier.
+            foreign = {t: f for t, f in reviewed.items() if _foreign_row(t, module_id)}
+            reviewed = {t: f for t, f in reviewed.items() if t not in foreign}
         program = dict(item.get("program_findings") or {})
         findings = {
             target: _combined(program.get(target), reviewed.get(target))
             for target in dict.fromkeys([*program, *reviewed])
         }
+        related = dict(item.get("related") or {})
         return {
             "findings": findings,
+            "foreign_findings": foreign,
             "blocking": _blocking(findings),
+            # The author also weighs other modules' judgments on its objects.
+            "revise": _blocking(findings) or bool(related),
             "revision_input": {
+                "related": related,
                 "findings": {
                     target: finding
                     for target, finding in findings.items()
@@ -494,8 +527,14 @@ class LedgerTools:
                 if blocking:
                     unanswered[module_id] = blocking
                 continue
-            revised = _rows(revision.get("rows") or [])
-            dropped = list(revision.get("removed_row_ids") or [])
+            revised = [
+                row for row in _rows(revision.get("rows") or [])
+                if not _foreign_row(row.id, module_id)
+            ]
+            dropped = [
+                row_id for row_id in revision.get("removed_row_ids") or []
+                if not _foreign_row(row_id, module_id)
+            ]
             ledger[module_id] = apply_revisions(ledger[module_id], revised, dropped)
             changed.extend({"module_id": module_id, **row} for row in _dump_rows(revised))
             removed.extend(dropped)
@@ -507,9 +546,21 @@ class LedgerTools:
             )
             if missing := [target for target in blocking if target not in answered]:
                 unanswered[module_id] = missing
+        dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
+        ledger, dropped_relations = checked_relations(ledger, see_also_by_row(dossiers, ledger))
+        conflicts = [d for d in dossiers if d["kind"] == "conflict"]
+        chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments.json", dumped)
         self._write_gaps(run_id, ledger)
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/cross-module.json",
+            {
+                "unresolved_conflicts": conflicts,
+                "object_chains": chains,
+                "dropped_relations": dropped_relations,
+            },
+        )
         writing_items = []
         for module in context["modules"]:
             rows = ledger[module["module_id"]]
@@ -527,6 +578,9 @@ class LedgerTools:
                                 if row.submodule_id == sub["id"]
                             ],
                             "problem_table_marker": PROBLEM_TABLE_MARKER,
+                            "related_rows": related_rows(
+                                [row for row in rows if row.submodule_id == sub["id"]], ledger
+                            ),
                         }
                         for sub in module["submodules"]
                     ],
@@ -538,6 +592,8 @@ class LedgerTools:
             "unanswered_findings": unanswered,
             "writing_items": writing_items,
             "chief_input": {
+                "object_chains": chains,
+                "unresolved_conflicts": [conflict_summary(d) for d in conflicts],
                 "changed_rows": changed,
                 "removed_row_ids": removed,
                 "action_row_ids": [
@@ -584,6 +640,13 @@ class LedgerTools:
         )
         if not chapter1:
             findings.pop("1.2", None)
+            findings.update(
+                cross_finding_findings(
+                    [CrossFinding.model_validate(c) for c in chapter3.get("cross_findings") or []],
+                    rows_by_module=ledger,
+                    overview=str(chapter3.get("risk_overview") or ""),
+                )
+            )
         return {"findings": findings, "blocking": _blocking(findings)}
 
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -598,10 +661,16 @@ class LedgerTools:
         items = []
         for module_id, sections in value["written"].items():
             texts = {section["submodule_id"]: section["text"] for section in sections}
+            cited = {
+                entry["row_id"]: entry
+                for row in ledger.get(module_id, [])
+                for entry in related_rows([row], ledger)
+            }
             items.append(
                 {
                     "owner": module_id,
                     "sections": texts,
+                    **({"cited_rows": list(cited.values())} if cited else {}),
                     "program_findings": report_check_findings(
                         sections=texts,
                         rows_by_submodule=by_submodule,
@@ -632,7 +701,11 @@ class LedgerTools:
                 counts.update({float(len(picked)), float(len({row.object for row in picked}))})
         cited = {
             row_id
-            for entry in [*actions, *(chief["chapter1"].get("key_risks") or [])]
+            for entry in [
+                *actions,
+                *(chief["chapter3"].get("cross_findings") or []),
+                *(chief["chapter1"].get("key_risks") or []),
+            ]
             for row_id in entry.get("row_ids") or []
         }
         items.append(

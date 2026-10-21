@@ -288,11 +288,12 @@ def _answer(message):
     raise AssertionError(f"unexpected task {task}")
 
 
-async def run_ledger_report(tmp_path: Path):
+async def run_ledger_report(tmp_path: Path, answer=None, evidence=None):
     """Run the ledger report with scripted agents; return binding, run id and loops."""
 
+    answer = answer or _answer
     _write_complete_template_skill_fixture(tmp_path)
-    evidence = _evidence()
+    evidence = evidence or _evidence()
     evidence_path = tmp_path / f"Work/runs/{RUN_ID}/preparation/evidence.jsonl"
     evidence_path.parent.mkdir(parents=True)
     evidence_path.write_text(
@@ -309,7 +310,7 @@ async def run_ledger_report(tmp_path: Path):
     loops: list[ScriptedLoop] = []
 
     def build(**kwargs: Any) -> ScriptedLoop:
-        loop = ScriptedLoop(bus, _answer, kwargs)
+        loop = ScriptedLoop(bus, answer, kwargs)
         loops.append(loop)
         return loop
 
@@ -517,3 +518,48 @@ def test_review_gets_the_original_images_only_for_doubtful_readings() -> None:
     assert [(p["photo_id"], p["row_ids"], p["path"]) for p in photos] == [
         ("P-1", ["J-2.4-1"], "Work/a/P-1.png")
     ]
+
+
+@pytest.mark.asyncio
+async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_writer(
+    tmp_path: Path,
+) -> None:
+    """2.2 and 2.4 judge the same object from different checkpoints: they complement."""
+
+    evidence = _evidence()
+    shared = REPORT_MODULE_IDS.index("2.4")
+    evidence[REPORT_MODULE_IDS.index("2.2")] = evidence[REPORT_MODULE_IDS.index("2.2")].model_copy(
+        update={"subject": evidence[shared].subject}
+    )
+    seen: dict[str, Any] = {}
+
+    def answer(message):
+        task = _task(message.content)
+        value = _input_of(message.content)
+        if task == "review-judgments":
+            seen.setdefault("dossiers", {})[value["module_id"]] = value["dossiers"]
+        if task == "revise-judgments" and "J-2.2-1" in value.get("related", {}):
+            seen["related"] = value["related"]
+            row = _row("2.2", REPORT_MODULE_IDS.index("2.2") + 1)
+            row.update(basis="噪声记录完整；结合 2.4 的温度偏高需复测。", related_row_ids=["J-2.4-1", "J-9.9-9"])
+            return ("submit", [{"rows": [row]}])
+        if task == "write-section" and value.get("related_rows"):
+            seen["related_rows"] = value["related_rows"]
+        if task in {"chief-chapter-3", "revise-chief-actions"}:
+            seen["chains"] = value.get("object_chains")
+        return _answer(message)
+
+    binding, accepted, _loops = await run_ledger_report(tmp_path, answer, evidence)
+    run = binding.get_run(accepted["run_id"])
+    assert run["run"]["status"] == "completed", run["state"].get("error")
+    # Different checkpoints are not a conflict, so the reviewers get no dossier.
+    assert all(not dossiers for dossiers in seen["dossiers"].values())
+    assert [entry["row_id"] for entry in seen["related"]["J-2.2-1"]] == ["J-2.4-1"]
+    # The reference to a row that is not on this object is dropped.
+    final = json.loads(
+        (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
+    )
+    assert final["2.2"][0]["related_row_ids"] == ["J-2.4-1"]
+    assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
+    (chain,) = seen["chains"]
+    assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}

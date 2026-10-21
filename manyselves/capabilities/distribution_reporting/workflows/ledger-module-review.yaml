@@ -1,6 +1,6 @@
 id: ledger-module-review
-version: 1.0.0
-description: Review one module's rows on the ledger; the author revises only the named rows
+version: 1.1.0
+description: Review one module's rows on the ledger; the author revises the named rows and weighs other modules' judgments on the same objects
 tasks:
 - review-judgments
 - revise-judgments
@@ -34,15 +34,15 @@ actions:
     item: item
     review: review
   output_variable: merged
-- id: blocking
+- id: revise-needed
   kind: set_variable
-  variable: blocking
+  variable: revise
   value_variable: merged
-  field: blocking
+  field: revise
 - id: route
   kind: if
   condition:
-    variable: blocking
+    variable: revise
     operator: eq
     value: true
   then: resume-author

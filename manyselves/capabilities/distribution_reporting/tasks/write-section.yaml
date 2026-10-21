@@ -1,5 +1,5 @@
 id: write-section
-version: 1.0.1
+version: 1.1.0
 description: Write one submodule's prose from the settled judgment rows, in the judging conversation
 agent: report-consultant
 objective: 判断已经定下来。现在按专家版的写法写下面这个小节的正文。
@@ -12,6 +12,7 @@ constraints:
 - 有数据时按对象给出结论和数值；同类对象用一句结论概括，不逐段重复论证。数值只用事实和计算结果里的值；数量、分组和“几倍”只用“程序统计”的结果，对象和数值要配对正确。
 - 措辞不能强于判断行的 evidence_status：资料未提供只写“未取得/未提供”，不写成“缺失/没有”；来源作者意见写明是谁的意见；推断写“可能”；照片待核写“照片读数待核”。
 - 资料缺失只写一句“资料未提供，见数据缺口表”，不展开证据边界或口径论证。
+- 行里写了 related_row_ids 的，related_rows 是它所引的别的模块的判断。在风险分析里把这层关联写出来，并标出处“（详见 2.x.x）”，例如“负荷率仅 6.44%（详见 2.1.1），可排除过载致噪”。只写判断行已经记下的关联，不复述别的模块的论证，措辞不强于所引行的 evidence_status。
 - 不写小节编号标题，不写 E-、K-、R-、P- 编号。
 - submodule_id 填本小节编号。
 tools: []

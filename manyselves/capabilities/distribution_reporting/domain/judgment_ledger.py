@@ -81,6 +81,10 @@ class JudgmentRow(_Model):
     action: JudgmentAction | None = None
     gap: JudgmentGap | None = None
     photo_ids: list[str] = Field(default_factory=list)
+    related_row_ids: list[str] = Field(
+        default_factory=list,
+        description="别的模块对同一对象的判断行中，加重、解释或改变了本行结论的那些行（J-...）",
+    )
 
     @model_validator(mode="after")
     def disposition_carries_its_fields(self) -> JudgmentRow:
@@ -316,11 +320,25 @@ class Phase(_Model):
     effect: str = Field(min_length=1, description="预期效果")
 
 
+class CrossFinding(_Model):
+    subject: str = Field(min_length=1, description="对象，用对象证据链里的写法")
+    conclusion: str = Field(
+        min_length=1,
+        description="跨模块综合结论，一到两句：几个模块的判断合起来说明什么（相互印证、可排除的原因、"
+        "共同指向的根因或处置先后），原样写进 risk_overview",
+    )
+    row_ids: list[str] = Field(min_length=2, description="结论依据的判断行，至少来自两个模块")
+
+
 class ChiefChapter3(_Model):
     risk_overview: str = Field(
         min_length=1,
         description="3.1 正文：先用几条总体结论概括全报告的主要风险（条数按实际，每条一句），"
         "再写“详述见下”，按评估维度各列几条短要点，每条一句，能定位到第二章小节",
+    )
+    cross_findings: list[CrossFinding] = Field(
+        default_factory=list,
+        description="对象证据链得出的跨模块综合结论；能合起来说明问题的对象各写一条，不凑数",
     )
     action_lead: str = Field(min_length=1, description="3.2 表前导语，一句话")
     actions: list[ChiefAction] = Field(
@@ -457,6 +475,44 @@ def findings_overview_markdown(
             )
         )
     return "\n\n".join(block for block in blocks if block)
+
+
+def cross_finding_findings(
+    findings: Sequence[CrossFinding],
+    *,
+    rows_by_module: Mapping[str, Sequence[JudgmentRow]],
+    overview: str,
+    section: str = "3.1",
+    own_row_ids: Iterable[str] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Each cross-module conclusion cites existing rows of two or more modules and is in the text.
+
+    In a chapter 2 section (``own_row_ids`` given) it also cites a row of that section.
+    """
+
+    own = set(own_row_ids) if own_row_ids is not None else None
+
+    module_of = {row.id: module_id for module_id, rows in rows_by_module.items() for row in rows}
+    problems = []
+    for finding in findings:
+        unknown = [row_id for row_id in finding.row_ids if row_id not in module_of]
+        if unknown:
+            problems.append(f"{finding.subject}：引用了不存在的判断行 {'、'.join(unknown)}")
+            continue
+        if len({module_of[row_id] for row_id in finding.row_ids}) < 2:
+            problems.append(f"{finding.subject}：所引判断行只来自一个模块，不是跨模块结论")
+        if own is not None and not own & set(finding.row_ids):
+            problems.append(f"{finding.subject}：没有引用本小节的判断行")
+        if " ".join(finding.conclusion.split()) not in " ".join(overview.split()):
+            problems.append(f"{finding.subject}：综合结论没有原样写进正文")
+    if not problems:
+        return {}
+    return {
+        section: _finding(
+            "；".join(problems),
+            "跨模块结论只引用台账里的行，至少来自两个模块，并把 conclusion 原样写进正文",
+        )
+    }
 
 
 def chief_findings(
@@ -673,6 +729,8 @@ __all__ = [
     "SectionSet",
     "JudgmentRevision",
     "ChiefChapter3",
+    "CrossFinding",
+    "cross_finding_findings",
     "ChiefChapter1",
     "DISPOSITION_LABELS",
     "EVIDENCE_STATUS_HELP",

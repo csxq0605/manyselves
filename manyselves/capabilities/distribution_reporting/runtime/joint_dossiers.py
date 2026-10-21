@@ -28,6 +28,9 @@ from .research.project_evidence import ProjectEvidenceIndex
 
 EXCERPT_CHARS = 240
 ATTENTION = {"concern", "undetermined"}
+# Reasons that need the modules to agree; the others mark judgments that
+# complement each other on one object.
+CONFLICT_REASONS = {"same_fact_differs", "same_quantity_differs", "photo_conflicts_record"}
 UNIDENTIFIED_PREFIXES = ("未注明",)
 
 
@@ -68,6 +71,33 @@ def _differing_quantities(found: _Dossier) -> list[dict]:
                 "values_by_sheet": {sheet: sorted(vals) for sheet, vals in sorted(by_sheet.items())},
             })
     return differing
+
+
+def _conflicting_facts(found: _Dossier) -> list[dict]:
+    """One fact judged by two or more modules with different dispositions.
+
+    Only this is a conflict.  Different modules judging different facts of
+    one object differently is normal: each looks at its own checkpoint, and
+    those judgments complement each other.
+    """
+
+    conflicting = []
+    for evidence_id in sorted(found.facts):
+        by_module: dict[str, set[str]] = {}
+        cited = []
+        for judgment in found.judgments:
+            if evidence_id in judgment["evidence_ids"]:
+                by_module.setdefault(judgment["module_id"], set()).add(judgment["disposition"])
+                cited.append(judgment)
+        if len(by_module) >= 2 and len({frozenset(v) for v in by_module.values()}) > 1:
+            conflicting.append({
+                "evidence_id": evidence_id,
+                "judgments": [
+                    {key: judgment[key] for key in ("module_id", "row_id", "disposition") if key in judgment}
+                    for judgment in cited
+                ],
+            })
+    return conflicting
 
 
 def _excerpt(narrative: str, anchor: str) -> str:
@@ -198,6 +228,9 @@ def build_dossiers(
             reasons.append("modules_disagree")
         if sum(1 for values in by_module.values() if values & ATTENTION) >= 2:
             reasons.append("several_modules_raise_attention")
+        conflicting = _conflicting_facts(found)
+        if conflicting:
+            reasons.append("same_fact_differs")
         differing = _differing_quantities(found)
         if differing:
             reasons.append("same_quantity_differs")
@@ -229,6 +262,9 @@ def build_dossiers(
             "facts": sorted(found.facts.values(), key=lambda fact: fact["evidence_id"]),
             "judgments": found.judgments,
         }
+        dossier["kind"] = "conflict" if set(reasons) & CONFLICT_REASONS else "complement"
+        if conflicting:
+            dossier["conflicting_facts"] = conflicting
         if len(found.subjects) > 1:
             dossier["subject_spellings"] = sorted(found.subjects)
         if differing:
@@ -247,4 +283,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]
+__all__ = ["CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]
