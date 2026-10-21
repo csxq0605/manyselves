@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 
-from tests.capabilities.distribution_reporting.test_ledger_report import run_ledger_report
+from tests.capabilities.distribution_reporting.test_ledger_report import (
+    RUN_ID,
+    run_ledger_report,
+)
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts/maintenance/replay_ledger_checks.py"
 
@@ -25,6 +30,17 @@ async def test_replay_reruns_checks_and_delivery_on_a_copy(tmp_path: Path) -> No
     project.mkdir()
     binding, accepted, _loops = await run_ledger_report(project)
     assert binding.get_run(accepted["run_id"])["run"]["status"] == "completed"
+    # Facts recorded by an older code version lack fields added since.
+    run_dir = project / "Work/runs" / RUN_ID
+    ledger = json.loads((run_dir / "ledgers/sources.json").read_text(encoding="utf-8"))
+    for record in ledger:
+        if record["kind"] == "project_evidence":
+            content = json.loads((run_dir / f"sources/{record['id']}.txt").read_text("utf-8"))
+            content.pop("summary_entry")
+            old = json.dumps(content, ensure_ascii=False)
+            (run_dir / f"sources/{record['id']}.txt").write_text(old, encoding="utf-8")
+            record["content_sha256"] = hashlib.sha256(old.encode("utf-8")).hexdigest()
+    (run_dir / "ledgers/sources.json").write_text(json.dumps(ledger), encoding="utf-8")
     before = {p: p.stat().st_mtime_ns for p in project.rglob("*") if p.is_file()}
 
     summary = _replay_module().replay(project, accepted["run_id"], tmp_path / "replay", None)

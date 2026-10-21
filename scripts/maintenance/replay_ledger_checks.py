@@ -99,6 +99,34 @@ def _rebind_trusted_blobs(workspace: Path) -> int:
     return count
 
 
+def _refresh_evidence_sources(workspace: Path, run_id: str, items: list[EvidenceItem]) -> int:
+    """Store the current serialization of each fact in the copy's source ledger.
+
+    The ledger keeps every fact's JSON and its digest.  A fact field added since
+    the run (summary_entry) changes that JSON, which the ledger would reject as
+    a conflicting fact id.  The replay re-records the facts it now uses.
+    """
+
+    root = workspace / "Work/runs" / run_id
+    ledger = root / "ledgers/sources.json"
+    if not ledger.is_file():
+        return 0
+    by_id = {item.id: item for item in items}
+    records = _load(ledger)
+    count = 0
+    for record in records:
+        item = by_id.get(record.get("id"))
+        if record.get("kind") != "project_evidence" or item is None:
+            continue
+        content = item.model_dump_json()
+        (root / "sources").mkdir(exist_ok=True)
+        (root / "sources" / f"{item.id}.txt").write_text(content, encoding="utf-8")
+        record["content_sha256"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        count += 1
+    ledger.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return count
+
+
 def _remark_summary_rows(workspace: Path, run_dir: Path) -> tuple[int, list[EvidenceItem]]:
     """Mark summary-sheet rows by re-running the summary-sheet mapper on its input."""
 
@@ -366,6 +394,7 @@ def replay(project: Path, run_id: str, output: Path, knowledge_root: Path | None
         by_id[item["id"]].model_dump(mode="json") if item.get("id") in by_id else item
         for item in state.get("evidence_items", [])
     ]
+    _refresh_evidence_sources(output, state["run_id"], items)
     photos = _recompare_photos(output, state["run_id"], items, results)
     tools = LedgerTools(output, global_knowledge_root=knowledge_root)
     replayed = _replay_checks(tools, reporting_dir, state, results)
