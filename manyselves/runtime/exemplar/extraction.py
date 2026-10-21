@@ -23,8 +23,8 @@ When the capability passes its own section headings (``targets``), every
 exemplar section is aligned to the product section with the most similar
 title under the same parent; a section with no counterpart folds into its
 parent.  The Skill is then headed by the product's sections, not by the
-exemplar's numbering.  Structure lines show the shape of a section; a label
-carrying one of the exemplar's facts is only counted.
+exemplar's numbering.  Structure lines show the shape of a section and only
+count its subheadings, which name the exemplar's own places and findings.
 
 Every section of the role that has content is either cited or skipped with a
 reason, and every use the role requires has at least one entry.  The accepted
@@ -326,15 +326,14 @@ def structure_line(
     *,
     policy: ExemplarPolicy | None = None,
     generated: str = "",
-    hidden: Iterable[str] = (),
 ) -> str:
     """The program-counted shape of one section, in words.
 
     With a ``policy`` (for a published Skill) row counts are left out, a
     table's columns are shown only when they carry no number and no
     organisation name, since a first row can hold the exemplar's own facts,
-    and a label carrying a number, an organisation name or one of ``hidden``
-    (the exemplar's own instances) is only counted.
+    and subheadings are only counted: they carry the exemplar's own places
+    and conclusions.
     When the product draws the section's tables itself (``generated``), the
     exemplar's tables are named but their columns are not shown.
     """
@@ -344,16 +343,8 @@ def structure_line(
     if labels and policy is None:
         parts.append("分段小标题：" + " → ".join(labels))
     elif labels:
-        own = {*organisation_names(outline, policy.organisation_suffixes), *hidden}
-        shown = [
-            label for label in labels
-            if not _NUMBER.search(label) and not any(word in _normal(label) for word in own)
-        ]
-        others = len(labels) - len(shown)
-        if shown:
-            parts.append("分段标签：" + " → ".join(shown))
-        if others:
-            parts.append(f"另有 {others} 个小标题带专家版项目的实际，未列出")
+        # Subheadings name the exemplar's own places and findings; only their count is shape.
+        parts.append(f"分段小标题 {len(labels)} 个（按本项目的发现自拟）")
     blocks = [b for b in (outline.block(locator) for locator in section.blocks) if b is not None]
     names = organisation_names(outline, policy.organisation_suffixes) if policy else set()
     tables = [block for block in blocks if block.kind == "table"]
@@ -554,7 +545,6 @@ def render_role_skill(
         if block is not None and block.section is not None:
             by_section.setdefault(block.section, []).append(entry)
     reasons = {skip.section: skip.reason for skip in skipped}
-    instances = instance_terms(outline, scope)
     role = scope.role
     uses = policy.role_uses(role)
     lines = [
@@ -590,7 +580,6 @@ def render_role_skill(
                     text := structure_line(
                         outline, section, policy=policy,
                         generated=scope.generated.get(section.number, ""),
-                        hidden=instances,
                     )
                 )
             )

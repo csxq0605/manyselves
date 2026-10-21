@@ -343,8 +343,8 @@ def test_sections_are_aligned_to_our_titles_and_unknown_ones_fold(tmp_path: Path
     # One heading per product section; the exemplar's numbering is gone.
     assert text.count("## 1.2 浇水与灌溉情况") == 1 and "## 1.1.1" not in text
     assert text.index("## 1.2 浇水") < text.index("## 1.1 修剪情况")  # exemplar order kept
-    # A generic subheading stays in the structure line.
-    assert "喷头堵塞较多" in text
+    # Subheadings are the exemplar's own findings: counted, never quoted.
+    assert "喷头堵塞较多" not in text and "分段小标题" in text
 
 
 def _site_report(path: Path, *, topic: str, place: str, other: str, finding: str) -> Path:
@@ -395,9 +395,6 @@ def test_only_the_exemplars_own_facts_are_refused_never_ordinary_words(
     assert f"{variant['place']}（专家版独有的小节标题）" in reasons[0]
     assert "7" in reasons[1]
     assert [e.text for e in result.accepted] == entries[2:]
-    # A subheading naming the exemplar's own place is counted, not shown; a generic one is shown.
+    # Subheadings carry the exemplar's places and findings: only their count is shown.
     text = render_role_skill(outline, scope, result.accepted, source="示例", policy=PLAIN)
-    if variant["place"] in variant["finding"]:
-        assert variant["finding"] not in text and "带专家版项目的实际" in text
-    else:
-        assert variant["finding"] in text
+    assert variant["finding"] not in text and variant["other"] not in text
