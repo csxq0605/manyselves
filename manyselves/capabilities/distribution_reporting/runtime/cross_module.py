@@ -387,12 +387,52 @@ def unlisted_relations(
     return found
 
 
+# Lenses that read the dossiers of facts judged differently.
+DOSSIER_LENSES = ("module", "object")
+
+
+def unresolved_conflicts(
+    dossiers: Sequence[Mapping[str, Any]],
+    findings_by_row: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> list[Mapping[str, Any]]:
+    """The conflicts still open after revision.
+
+    The ones the table shows (a quantity read twice with two values, a photo
+    against its record) always count.  Facts several modules still judge
+    differently count only when a reviewer reading them raised a blocking
+    finding on one of the rows that judge them.
+    """
+
+    def reviewed_blocking(row_id: str) -> bool:
+        by_lens = findings_by_row.get(row_id) or {}
+        return any(
+            (by_lens.get(lens) or {}).get("severity") == "blocking" for lens in DOSSIER_LENSES
+        )
+
+    open_ = []
+    for dossier in dossiers:
+        if dossier["kind"] == "conflict":
+            open_.append(dossier)
+        elif dossier["kind"] == "judged_differently" and any(
+            reviewed_blocking(judgment["row_id"])
+            for fact in dossier.get("facts_judged_differently") or ()
+            for judgment in fact["judgments"]
+            if judgment.get("row_id")
+        ):
+            open_.append(dossier)
+    return open_
+
+
 def conflict_summary(dossier: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "dossier_id": dossier["dossier_id"],
         "subject": dossier["subject"],
         "reasons": list(dossier.get("reasons", [])),
-        "conflicting_facts": list(dossier.get("conflicting_facts", [])),
+        **(
+            {"facts_judged_differently": dossier["facts_judged_differently"]}
+            if dossier.get("facts_judged_differently")
+            else {}
+        ),
         **(
             {"differing_quantities": dossier["differing_quantities"]}
             if dossier.get("differing_quantities")
@@ -408,6 +448,7 @@ __all__ = [
     "unlisted_relations",
     "relation_names",
     "conflict_summary",
+    "unresolved_conflicts",
     "object_chains",
     "related_rows",
     "same_observation_findings",

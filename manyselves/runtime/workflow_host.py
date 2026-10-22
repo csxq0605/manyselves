@@ -456,6 +456,12 @@ class WorkflowRuntimeHost:
         saved_states = deepcopy(state.map_states.get(action.id, {}))
         item_states: dict[str, dict[str, Any]] = deepcopy(saved_states)
         semaphore = asyncio.Semaphore(action.max_concurrency or max(len(items), 1))
+        pending = [
+            key for key, _item in items
+            if (saved_states.get(key) or {}).get("status") != WorkflowStatus.COMPLETED
+        ]
+        lead_key = pending[0] if action.lead_seconds and len(pending) > 1 else None
+        lead_done = asyncio.Event()
 
         def checkpoint_item(key: str, current: WorkflowState) -> None:
             item_states[key] = current.model_dump(mode="json")
@@ -465,6 +471,20 @@ class WorkflowRuntimeHost:
             saved = saved_states.get(key)
             if saved is not None and saved.get("status") == WorkflowStatus.COMPLETED:
                 return WorkflowState.model_validate(saved)
+            if lead_key is not None and key != lead_key:
+                # The others wait for the lead's head start, or for the lead
+                # to finish if it is quicker.
+                try:
+                    await asyncio.wait_for(lead_done.wait(), timeout=action.lead_seconds)
+                except TimeoutError:
+                    pass
+            try:
+                return await run_item(key, item, saved)
+            finally:
+                if key == lead_key:
+                    lead_done.set()
+
+        async def run_item(key: str, item: Any, saved: dict[str, Any] | None) -> WorkflowState:
             async with semaphore:
                 if saved is not None:
                     child_state = WorkflowState.model_validate(saved)

@@ -1,5 +1,5 @@
 id: report-ledger
-version: 2.0.0
+version: 2.0.1
 description: Judge into a ledger from object dossiers, link across modules, review through three lenses, plan the story lines, write once, then check and deliver
 tasks:
 - plan-storyline
@@ -186,6 +186,9 @@ actions:
   key_input_variable: item_key
   output_variable: module_reviews
   max_concurrency: 5
+  # Every module's review opens with the same conflict dossiers; the first
+  # goes ahead so the others can reuse that cached prefix.
+  lead_seconds: 30
 - id: modules-done
   kind: goto
   target: join-review

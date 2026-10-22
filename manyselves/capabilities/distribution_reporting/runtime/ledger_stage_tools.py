@@ -204,7 +204,14 @@ class LedgerStageTools:
         packets = ReviewPackets(self, run_id, ledger, reference, elsewhere)
         sites = self._sites(run_id)
         render = self._renderer(run_id)
-        dossiers = related.get("dossiers") or []
+        # Every module's reviewer reads the same dossiers, ahead of its own
+        # material, so the requests share one prefix the provider can cache:
+        # the conflicts the table shows, and the facts several modules judged
+        # differently, laid side by side for the reviewers to weigh.
+        conflicts = [
+            d for d in related.get("dossiers") or []
+            if d["kind"] in {"conflict", "judged_differently"}
+        ]
         review_items = [
             {
                 "run_id": run_id,
@@ -213,11 +220,7 @@ class LedgerStageTools:
                 "program_findings": (related.get("program_findings") or {}).get(
                     module["module_id"], {}
                 ),
-                "dossiers": [
-                    dossier
-                    for dossier in dossiers
-                    if dossier["kind"] == "conflict" and module["module_id"] in dossier["module_ids"]
-                ],
+                "dossiers": conflicts,
                 "photos": self._photos_to_check(ledger[module["module_id"]], reference, readings),
                 **packets.packet(module["module_id"]),
             }

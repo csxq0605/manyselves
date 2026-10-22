@@ -651,7 +651,9 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         task = _task(message.content)
         value = _input_of(message.content)
         if task == "review-judgments":
-            seen.setdefault("dossiers", {})[value["module_id"]] = value["dossiers"]
+            # The dossiers come first, as context shared by every module's reviewer.
+            match = re.search(r'<context name="dossiers">\n(.*?)\n</context>', message.content, re.S)
+            seen.setdefault("dossiers", {})[value["module_id"]] = json.loads(match.group(1))
         if task == "relate-judgments" and "J-2.2-1" in value.get("related", {}):
             seen["related"] = value["related"]
             return ("submit", [{"relations": {"J-2.2-1": [

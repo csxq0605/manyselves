@@ -312,6 +312,9 @@ class MapAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
     errors_variable: str | None = Field(default=None, min_length=1)
     max_concurrency: int | None = Field(default=None, ge=1)
+    # The first item starts alone and the others this many seconds later, so
+    # requests that open with the same text can reuse what the first sent.
+    lead_seconds: float | None = Field(default=None, gt=0, le=300)
 
 
 class UpsertRecordsAction(ResolvedActionBase):

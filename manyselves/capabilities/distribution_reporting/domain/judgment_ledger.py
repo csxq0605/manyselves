@@ -541,6 +541,53 @@ def apply_revisions(
     return merged
 
 
+def relation_pairs(ledger: Mapping[str, Sequence[JudgmentRow]]) -> set[tuple[str, str]]:
+    """Every recorded relation as (row holding it, row it points to)."""
+
+    return {
+        (row.id, relation.row_id)
+        for rows in ledger.values() for row in rows for relation in row.relations
+    }
+
+
+def drop_mirrored_relations(
+    before: Mapping[str, Sequence[JudgmentRow]],
+    after: Mapping[str, Sequence[JudgmentRow]],
+    judged_invalid: Iterable[str],
+) -> tuple[dict[str, list[JudgmentRow]], list[dict[str, str]]]:
+    """A relation found not to hold goes from both ends.
+
+    ``judged_invalid`` are the rows whose relations a reviewer judged not to
+    hold (a blocking finding on the relations).  When such a row's revision
+    drops its relation to B, B's relation back to it is dropped as well, and
+    each removal is listed.  A relation an author dropped without that
+    finding stays on the other end, which still holds it.
+    """
+
+    invalid = set(judged_invalid)
+    given_up = {
+        (a, b) for a, b in relation_pairs(before) - relation_pairs(after) if a in invalid
+    }
+    gone = {(b, a) for a, b in given_up}
+    removed: list[dict[str, str]] = []
+    result: dict[str, list[JudgmentRow]] = {}
+    for module_id, rows in after.items():
+        kept_rows = []
+        for row in rows:
+            dropped = [r for r in row.relations if (row.id, r.row_id) in gone]
+            if dropped:
+                removed.extend(
+                    {"row_id": row.id, "other_row_id": r.row_id, "relation": r.relation}
+                    for r in dropped
+                )
+                row = row.model_copy(
+                    update={"relations": [r for r in row.relations if r not in dropped]}
+                )
+            kept_rows.append(row)
+        result[module_id] = kept_rows
+    return result, removed
+
+
 def _cell(text: str) -> str:
     return " ".join(str(text).replace("|", "｜").split())
 
@@ -1360,6 +1407,8 @@ def layout_findings(
 
 
 __all__ = [
+    "drop_mirrored_relations",
+    "relation_pairs",
     "DeclinedProposal",
     "LinkProposal",
     "LinkProposals",

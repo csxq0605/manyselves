@@ -9,6 +9,7 @@ from manyselves.capabilities.distribution_reporting.domain.judgment_ledger impor
     CrossFinding,
     JudgmentRow,
     cross_finding_findings,
+    drop_mirrored_relations,
 )
 from manyselves.capabilities.distribution_reporting.runtime.cross_module import (
     checked_relations,
@@ -16,10 +17,11 @@ from manyselves.capabilities.distribution_reporting.runtime.cross_module import 
     related_rows,
     section_see_also,
     see_also_by_row,
+    unresolved_conflicts,
 )
 from manyselves.capabilities.distribution_reporting.runtime.joint_dossiers import (
-    _conflicting_facts,
     _Dossier,
+    _facts_judged_differently,
 )
 from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
 
@@ -55,13 +57,52 @@ def test_only_one_fact_judged_differently_is_a_conflict() -> None:
     found.facts = {e: {"evidence_id": e} for e in ("E-1", "E-2", "E-3")}
     found.judgments = [_judgment(m, rows[0]) for m, rows in LEDGER.items()]
     # Three modules, three checkpoints, different conclusions: they complement each other.
-    assert _conflicting_facts(found) == []
+    assert _facts_judged_differently(found) == []
 
     same_fact = _row("J-2.4-2", "2.4.1", "concern", evidence="E-1")
     found.judgments.append(_judgment("2.4", same_fact))
-    (conflict,) = _conflicting_facts(found)
+    (conflict,) = _facts_judged_differently(found)
     assert conflict["evidence_id"] == "E-1"
     assert {j["row_id"] for j in conflict["judgments"]} == {"J-2.1-1", "J-2.4-2"}
+
+
+def test_facts_judged_differently_stay_open_only_on_a_reviewers_blocking_finding() -> None:
+    differently = {
+        "dossier_id": "D-001", "kind": "judged_differently",
+        "facts_judged_differently": [{"evidence_id": "E-1", "judgments": [
+            {"module_id": "2.1", "row_id": "J-2.1-1", "disposition": "no_concern"},
+            {"module_id": "2.4", "row_id": "J-2.4-1", "disposition": "concern"},
+        ]}],
+    }
+    shown = {"dossier_id": "D-002", "kind": "conflict"}
+    assert unresolved_conflicts([differently, shown], {}) == [shown]
+    # A relation-lens finding is not about the dossier.
+    relation_only = {"J-2.4-1": {"relation": {"severity": "blocking"}}}
+    assert unresolved_conflicts([differently], relation_only) == []
+    flagged = {"J-2.4-1": {"object": {"severity": "blocking"}}}
+    assert unresolved_conflicts([differently], flagged) == [differently]
+
+
+def test_a_relation_judged_not_to_hold_goes_from_both_ends() -> None:
+    def related(row_id: str, *others: str) -> JudgmentRow:
+        row = _row(row_id, row_id.split("-")[1] + ".1", "concern", evidence="E-1")
+        return JudgmentRow.model_validate({**row.model_dump(), "relations": [
+            {"row_id": other, "relation": "r", "reason": "x"} for other in others
+        ]})
+
+    before = {
+        "2.1": [related("J-2.1-1", "J-2.4-1"), related("J-2.1-2", "J-2.4-2")],
+        "2.4": [related("J-2.4-1", "J-2.1-1"), related("J-2.4-2", "J-2.1-2")],
+    }
+    # Both 2.1 rows drop their relation; only J-2.1-1's was judged not to hold.
+    after = {
+        "2.1": [related("J-2.1-1"), related("J-2.1-2")],
+        "2.4": before["2.4"],
+    }
+    ledger, removed = drop_mirrored_relations(before, after, ["J-2.1-1"])
+    assert removed == [{"row_id": "J-2.4-1", "other_row_id": "J-2.1-1", "relation": "r"}]
+    assert ledger["2.4"][0].relations == []
+    assert [r.row_id for r in ledger["2.4"][1].relations] == ["J-2.1-2"]
 
 
 def test_chains_and_see_also_join_the_modules_on_one_object() -> None:

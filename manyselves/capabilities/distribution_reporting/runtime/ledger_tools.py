@@ -45,6 +45,7 @@ from ..domain.judgment_ledger import (
     apply_revisions,
     chief_findings,
     cross_finding_findings,
+    drop_mirrored_relations,
     findings_overview_markdown,
     grouped_actions,
     known_values_from_text,
@@ -92,6 +93,7 @@ from .cross_module import (
     same_observation_rows,
     see_also_by_row,
     unlisted_relations,
+    unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
 from .grounds import grounded
@@ -1283,6 +1285,7 @@ class LedgerTools(LedgerStageTools):
             module_id: _rows(rows) for module_id, rows in value["ledger"]["ledger"].items()
         }
         reviews = value.get("reviews") or {}
+        settled_before = dict(ledger)
         changed: list[dict[str, Any]] = []
         removed: list[str] = []
         unanswered: dict[str, list[str]] = {}
@@ -1328,12 +1331,25 @@ class LedgerTools(LedgerStageTools):
             )
             if missing := [target for target in blocking if target not in answered]:
                 unanswered[module_id] = missing
+        lens_path = self.workspace / f"Work/runs/{run_id}/ledger/review-lens-findings.json"
+        lens_findings = (
+            json.loads(lens_path.read_text(encoding="utf-8")) if lens_path.is_file() else {}
+        )
+        ledger, mirrored = drop_mirrored_relations(
+            settled_before,
+            ledger,
+            [
+                row_id
+                for row_id, by_lens in (lens_findings.get("by_row") or {}).items()
+                if (by_lens.get("relation") or {}).get("severity") == "blocking"
+            ],
+        )
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         names = relation_names(self._relation_method(run_id))
         observation_of, _owners = self._observation_map(run_id)
         ledger, dropped_relations = checked_relations(ledger, names, observation_of)
         self._write_knowledge_candidates(run_id, ledger, names)
-        conflicts = [d for d in dossiers if d["kind"] == "conflict"]
+        conflicts = unresolved_conflicts(dossiers, lens_findings.get("by_row") or {})
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments.json", dumped)
@@ -1344,6 +1360,8 @@ class LedgerTools(LedgerStageTools):
                 "unresolved_conflicts": conflicts,
                 "object_chains": chains,
                 "dropped_relations": dropped_relations,
+                # Relations one end gave up in revision, dropped from the other end.
+                "mirrored_removals": mirrored,
             },
         )
         units = self._knowledge_units(run_id)

@@ -1,5 +1,6 @@
 """Map, keyed record and conversation fork primitives on the generic Runtime."""
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +171,32 @@ async def test_map_runs_one_child_per_selected_item_keyed_by_field(
     assert completed.outputs["result"] == {"a": {"total": 10}, "c": {"total": 30}}
     assert sorted(calls) == ["a", "c"]
     assert completed.map_states == {}
+
+
+@pytest.mark.asyncio
+async def test_map_lead_item_starts_before_the_others(tmp_path: Path) -> None:
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(registry, _map_parent(lead_seconds=60))
+    started: dict[str, float] = {}
+    finished: dict[str, float] = {}
+
+    def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        started[arguments["key"]] = time.monotonic()
+        finished[arguments["key"]] = time.monotonic()
+        return {"total": arguments["item"]["n"]}
+
+    host, _store = _host(tmp_path)
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("map-lead", plan),
+        RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    # The second item waited for the lead, which finished well within its head start.
+    assert started["c"] >= finished["a"]
+    assert started["c"] - started["a"] < 30
 
 
 @pytest.mark.asyncio
