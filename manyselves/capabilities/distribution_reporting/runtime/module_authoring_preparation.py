@@ -24,7 +24,6 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    TEMPLATE_ROLE_SKILL_IDS,
     ModuleDispatchPlan,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
@@ -109,12 +108,14 @@ def _dispatch(value: Any) -> Any:
 
 
 def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
-    """Load a complete user-managed template Skill package from Inputs."""
+    """Load the template Skill package from Inputs: the roles the capability declares."""
+
+    from .template_skills import skill_order
 
     workspace = Path(workspace).resolve()
     refs = {
         skill_id: template_skill_ref(skill_id)
-        for skill_id in TEMPLATE_ROLE_SKILL_IDS
+        for skill_id in skill_order()
     }
     boundary_ref = TEMPLATE_SKILL_BOUNDARY
     required = [*refs.values(), boundary_ref]

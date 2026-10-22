@@ -257,12 +257,20 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     assert published.read_text(encoding="utf-8") == candidate
     backup = tmp_path / outcome["backup"] / "author-2.1/SKILL.md"
     assert backup.read_text(encoding="utf-8") == published_before
-    chapter4 = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
-    assert "chief-editor-chapter-4: preserve" in chapter4.read_text(encoding="utf-8")
-    source = json.loads(
-        (tmp_path / "Inputs/report-template-role-skills/source.json").read_text(encoding="utf-8")
-    )
+    # The directory is replaced as a whole: roles the flow does not declare are gone
+    # from Inputs (they stay in the backup beside the run).
+    skills_root = tmp_path / "Inputs/report-template-role-skills"
+    assert sorted(p.name for p in skills_root.iterdir() if p.is_dir()) == sorted(extracted)
+    assert (tmp_path / outcome["backup"] / "chief-editor-chapter-4/SKILL.md").is_file()
+    source = json.loads((skills_root / "source.json").read_text(encoding="utf-8"))
     assert source["last_extraction"]["run_id"] == accepted["run_id"]
+    assert source["source"] == "program-extraction" and source["roles"] == list(extracted)
+    boundary = json.loads((skills_root / "boundary.json").read_text(encoding="utf-8"))
+    assert "专家版" in boundary["boundary_statement"]
+    # Publishing again keeps the first backup.
+    again = publish_template_skills(tmp_path, accepted["run_id"])
+    assert again["backup"] != outcome["backup"]
+    assert (tmp_path / outcome["backup"] / "chief-editor-chapter-4/SKILL.md").is_file()
     # The published package still loads for a report run.
     state: dict[str, Any] = {}
     assert load_template_skill(tmp_path, state)

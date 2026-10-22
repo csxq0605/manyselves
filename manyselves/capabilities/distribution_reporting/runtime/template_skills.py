@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -472,53 +472,113 @@ def plain_value(value: Any) -> Any:
     return value
 
 
-def publish_template_skills(
-    workspace: Path, run_id: str, *, roles: Iterable[str] | None = None
-) -> dict[str, Any]:
-    """Copy a run's candidate Skills into Inputs, keeping the replaced files beside the run."""
+BOUNDARY_STATEMENT = (
+    "程序从专家版报告提炼的方法资料：只迁移判断、写法、章节综合和核对的做法，"
+    "每条带专家版出处坐标；不迁移专家版项目的客户、地点、对象、数值、阈值、发现和结论，"
+    "这些只能来自本项目的表格、照片和知识库。任务合同决定范围，Skill 只是参考。"
+)
+
+
+def skill_boundary() -> dict[str, Any]:
+    """The boundary every published package carries: method only, no exemplar facts."""
+
+    from .models.agentic import (
+        TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
+        TEMPLATE_SKILL_TRANSFER_CATEGORIES,
+    )
+
+    return {
+        "policy_version": 1,
+        "transferred_categories": sorted(TEMPLATE_SKILL_TRANSFER_CATEGORIES),
+        "excluded_categories": sorted(TEMPLATE_SKILL_EXCLUSION_CATEGORIES),
+        "boundary_statement": BOUNDARY_STATEMENT,
+    }
+
+
+def publish_template_skills(workspace: Path, run_id: str) -> dict[str, Any]:
+    """Replace the published package with exactly the declared roles.
+
+    The Skills directory is emptied first, so nothing a past flow or a manual
+    edition left behind stays in it; what was there is moved beside the run.
+    Each declared role takes this run's candidate, or, when this run redid
+    only some roles, the copy published before (itself a program output).
+    """
 
     workspace = Path(workspace).resolve()
     root = workspace / run_root(run_id)
     summary_path = root / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    wanted = set(roles) if roles is not None else set(summary["candidates"])
-    unknown = wanted - set(summary["candidates"])
-    if unknown:
-        raise ValueError("no candidate for: " + ", ".join(sorted(unknown)))
-    published: dict[str, str] = {}
-    for role_id in [r for r in skill_order() if r in wanted]:
+    candidates: dict[str, str] = summary["candidates"]
+    target_root = workspace / TEMPLATE_SKILL_ROOT
+    previous = root / "previous"
+    texts: dict[str, str] = {}
+    origins: dict[str, str] = {}
+    old_source: dict[str, Any] = {}
+    if (workspace / TEMPLATE_SKILL_SOURCE).is_file():
+        old_source = json.loads((workspace / TEMPLATE_SKILL_SOURCE).read_text(encoding="utf-8"))
+    missing: list[str] = []
+    for role_id in skill_order():
+        if role_id in candidates:
+            texts[role_id] = (workspace / candidates[role_id]).read_text(encoding="utf-8")
+            origins[role_id] = run_id
+            continue
+        kept = workspace / template_skill_ref(role_id)
+        origin = (old_source.get("extracted_roles") or {}).get(role_id, {}).get("run_id")
+        if kept.is_file() and origin:
+            texts[role_id] = kept.read_text(encoding="utf-8")
+            origins[role_id] = origin
+        else:
+            missing.append(role_id)
+    if missing:
+        raise ValueError(
+            "这些角色既没有本次提炼的结果，也没有程序提炼过的现用版本：" + "、".join(missing)
+        )
+    if target_root.exists():
+        # A second publish of the same run keeps the first backup too.
+        number = 1
+        while previous.exists():
+            number += 1
+            previous = root / f"previous-{number}"
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target_root), str(previous))
+    for role_id, text in texts.items():
         target = workspace / template_skill_ref(role_id)
-        if target.is_file():
-            backup = root / "previous" / role_id / "SKILL.md"
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            if not backup.exists():
-                shutil.copyfile(target, backup)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(workspace / summary["candidates"][role_id], target)
-        published[role_id] = template_skill_ref(role_id).as_posix()
-    source_path = workspace / TEMPLATE_SKILL_SOURCE
-    source: dict[str, Any] = {}
-    if source_path.is_file():
-        source = json.loads(source_path.read_text(encoding="utf-8"))
-    extracted = dict(source.get("extracted_roles") or {})
-    for role_id in published:
-        extracted[role_id] = {"run_id": run_id, "date": date.today().isoformat()}
-    source.update(
-        {
-            "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
-            "extracted_roles": extracted,
-            "last_extraction": {
-                "run_id": run_id,
-                "template": summary.get("template_origin", ""),
-                "roles": sorted(published),
-            },
-        }
+        target.write_text(text, encoding="utf-8")
+    (target_root / "boundary.json").write_text(
+        json.dumps(skill_boundary(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    summary["published"] = sorted(published)
+    today = date.today().isoformat()
+    source = {
+        "source": "program-extraction",
+        "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
+        "boundary_ref": (TEMPLATE_SKILL_ROOT / "boundary.json").as_posix(),
+        "roles": list(texts),
+        "extracted_roles": {
+            role_id: (
+                {"run_id": run_id, "date": today}
+                if origin == run_id
+                else (old_source.get("extracted_roles") or {})[role_id]
+            )
+            for role_id, origin in origins.items()
+        },
+        "last_extraction": {
+            "run_id": run_id,
+            "template": summary.get("template_origin", ""),
+            "roles": sorted(candidates),
+        },
+    }
+    (workspace / TEMPLATE_SKILL_SOURCE).write_text(
+        json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    published = {role_id: template_skill_ref(role_id).as_posix() for role_id in texts}
+    summary["published"] = sorted(candidates)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"published": published, "backup": (root / "previous").relative_to(workspace).as_posix()}
+    return {
+        "published": published,
+        "from_this_run": sorted(candidates),
+        "backup": previous.relative_to(workspace).as_posix(),
+    }
 
 
 # -- comparison with the Skills in use -------------------------------------

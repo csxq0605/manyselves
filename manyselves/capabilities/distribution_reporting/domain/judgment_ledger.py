@@ -536,15 +536,15 @@ class ChiefAction(_Model):
 
 class DimensionHealth(_Model):
     module_id: str = Field(min_length=1)
-    status: str = Field(min_length=1, description="健康状态，一句话，例如〈保护定值不匹配，越级跳闸风险高〉")
+    status: str = Field(min_length=1, description="健康状态，一句话，例如〈主要问题〉，〈后果〉风险〈高低〉")
     key_indicators: str = Field(
-        min_length=1, description="关键异常指标，写明所在小节，例如〈变压器速断未躲涌流；见〈小节〉〉"
+        min_length=1, description="关键异常指标，写明所在小节，例如〈对象〉〈异常指标〉；见〈小节〉"
     )
     risk_level: Literal["高", "中", "低", "待定"]
 
 
 class KeyRisk(_Model):
-    description: str = Field(min_length=1, description="风险描述，例如〈保护定值不匹配→越级跳闸〉")
+    description: str = Field(min_length=1, description="风险描述，例如〈问题〉→〈后果〉")
     hazard: str = Field(min_length=1, description="危害")
     action: str = Field(min_length=1, description="行动建议，与第三章的行动一致")
     row_ids: list[str] = Field(min_length=1)

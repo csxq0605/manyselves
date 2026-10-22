@@ -1,5 +1,5 @@
 id: review-judgments
-version: 2.2.0
+version: 2.3.0
 description: Review one module's judgment rows against exactly what each row cites
 agent: report-consultant
 objective: 你现在是下面这个模块的审查人。上面是这些判断行所引的事实（facts）、知识单元（rules）和本模块的专家版判断方法（method）；输入里是判断行、所引计算、跨模块关联、程序挑出要看的行、冲突卷宗和读图有疑问的照片。逐行核对判断是否由它所引的资料推出。
@@ -22,7 +22,7 @@ constraints:
 - program_checks 是程序按结构挑出来、需要你判断的行（与负责小节结论不同、原表 OK/NG 与判断方向相反、缺资料却判为没有问题），逐条看；理由不成立的判 blocking，成立的不用提。
 - dossiers 只收真正的冲突：同一条事实被几个模块判成不同结论，同一数量在两张表里读数不同，或照片与记录冲突。冲突时写清两边各自的依据，并说明应以哪一边为准、为什么；只对本模块的行提意见。
 - photos 里的原图按顺序附在这条消息里，都是读图有疑问的照片。核对 row_ids 这些判断行里与照片有关的说法；用照片读数否定了表格记录、或把看不清的内容写成事实的，判为 blocking。照片与记录不一致时以记录为准，照片标“读数待核”。
-- 以下情况也判为 blocking：把未取得的资料或没有记录当作降级理由；数值的含义与表头说明不符；“补填”没有区分追溯已有凭据和重新检查。
+- 以下情况也判为 blocking：把未取得的资料或没有记录当作降级理由；数值的含义与表头说明不符。
 - findings 的键是被点名的本模块判断行编号（J-...）。severity：blocking=结论、风险等级、措施、后果或缺口说明错了，必须改；minor=可以更好但结论不变。
 - method 是建议，不是硬规定。program_findings 是程序已经查出的问题，不用重复写。
 - 没有问题时提交空的 findings。

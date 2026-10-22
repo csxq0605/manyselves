@@ -1,10 +1,11 @@
 """Publish candidate role Skills from an extract-template-skills run into Inputs.
 
-Read ``Work/runs/<run>/template-skills/diff.md`` first.  The replaced files are
-kept under ``Work/runs/<run>/template-skills/previous/``; nothing is deleted.
+Read ``Work/runs/<run>/template-skills/diff.md`` first.  The Skills directory
+is replaced as a whole by the declared roles; what was in it is moved to
+``Work/runs/<run>/template-skills/previous/``.
 
     uv run python scripts/maintenance/publish_template_skills.py \\
-        --project /path/to/project --run-id extract-template-skills-<id> [--role author-2.1 ...]
+        --project /path/to/project --run-id extract-template-skills-<id>
 """
 
 from __future__ import annotations
@@ -25,9 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--role", action="append", help="publish only these roles")
     args = parser.parse_args(argv)
-    result = publish_template_skills(args.project, args.run_id, roles=args.role)
+    result = publish_template_skills(args.project, args.run_id)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

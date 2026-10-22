@@ -10,14 +10,17 @@ entries that:
 - name a use the role may fill;
 - cite a locator inside the role's sections, with a quote found at that
   locator;
-- in a use without placeholders, carry none of the exemplar's numbers, codes
-  or organisation names and none of the declared mandatory words (hard rules
-  belong to the task contract, not to a method);
-- in a use with placeholders, put every exemplar fact in placeholders;
-- mention none of the features the capability declares unavailable;
+- carry none of the exemplar's numbers or codes, not even inside a
+  placeholder: a placeholder names the kind of fact (for example 〈数值〉),
+  never the exemplar's value;
 - carry none of the exemplar's own instances, taken from its structure: the
-  titles of its sections that the product has no section for.  Ordinary
-  words are never refused; only the exemplar's facts are.
+  lines of its front matter (the cover, which names the exemplar's client and
+  place) and the titles of its sections that the product has no section for.
+  Ordinary words are never refused; only the exemplar's facts are.
+
+How a method is worded (advice rather than hard rules, no features the
+product does not produce) is asked of the model in its packet, not checked
+against a word list.
 
 When the capability passes its own section headings (``targets``), every
 exemplar section is aligned to the product section with the most similar
@@ -91,14 +94,12 @@ class ExemplarRole(_Model):
 
 
 class ExemplarPolicy(_Model):
-    mandatory_words: list[str] = Field(default_factory=list)
-    organisation_suffixes: list[str] = Field(default_factory=list)
     placeholder_open: str = "〈"
     placeholder_close: str = "〉"
     uses: list[ExemplarUse] = Field(default_factory=lambda: list(DEFAULT_USES))
     unavailable: dict[str, str] = Field(
         default_factory=dict,
-        description="Words naming what the product does not produce, with the reason",
+        description="What the product does not produce, with the reason; shown to the model",
     )
     def use(self, use_id: str) -> ExemplarUse | None:
         return next((use for use in self.uses if use.id == use_id), None)
@@ -255,14 +256,15 @@ def role_scope(
 def instance_terms(outline: DocumentOutline, scope: RoleScope) -> dict[str, str]:
     """The exemplar's own instances an entry may not carry, each with where it came from.
 
-    Taken from the exemplar's structure alone, with no word list: the titles
+    Taken from the exemplar's structure alone, with no word list: the lines
+    of its front matter (the cover names its client and place) and the titles
     of its sections that have no product counterpart (its own places, objects
-    or topics).  Ordinary words are not refused; numbers, codes and
-    organisation names are checked separately.  A term inside a product
-    section title is the product's own word and is not refused.
+    or topics).  Ordinary words are not refused; numbers and codes are
+    checked separately.  A term inside a product section title is the
+    product's own word and is not refused.
     """
 
-    terms: dict[str, str] = {}
+    terms: dict[str, str] = dict.fromkeys(front_matter_terms(outline), "专家版封面上的名称")
     for number in scope.folded:
         section = outline.section(number)
         if section is not None:
@@ -272,6 +274,12 @@ def instance_terms(outline: DocumentOutline, scope: RoleScope) -> dict[str, str]
         term: why for term, why in terms.items()
         if len(term) >= 2 and not _NUMBER.fullmatch(term) and not any(term in title for title in own)
     }
+
+
+def front_matter_terms(outline: DocumentOutline) -> set[str]:
+    """The exemplar's cover lines: by position they name its client and place."""
+
+    return {term for line in outline.front_matter if len(term := _normal(line)) >= 2}
 
 
 def role_packet(
@@ -337,8 +345,8 @@ def structure_line(
     """The program-counted shape of one section, in words.
 
     With a ``policy`` (for a published Skill) row counts are left out, a
-    table's columns are shown only when they carry no number and no
-    organisation name, since a first row can hold the exemplar's own facts,
+    table's columns are shown only when they carry no number and no line of
+    the exemplar's cover, since a first row can hold the exemplar's own facts,
     and subheadings are only counted: they carry the exemplar's own places
     and conclusions.
     When the product draws the section's tables itself (``generated``), the
@@ -353,7 +361,7 @@ def structure_line(
         # Subheadings name the exemplar's own places and findings; only their count is shape.
         parts.append(f"分段小标题 {len(labels)} 个（按本项目的发现自拟）")
     blocks = [b for b in (outline.block(locator) for locator in section.blocks) if b is not None]
-    names = organisation_names(outline, policy.organisation_suffixes) if policy else set()
+    names = front_matter_terms(outline) if policy else set()
     tables = [block for block in blocks if block.kind == "table"]
     if tables and generated:
         parts.append(f"表（{generated}）")
@@ -380,23 +388,6 @@ def _normal(text: str) -> str:
     return _SPACE.sub("", text)
 
 
-def organisation_names(outline: DocumentOutline, suffixes: Sequence[str]) -> set[str]:
-    """Organisation names in the exemplar: two to four characters before a suffix."""
-
-    texts = [*outline.front_matter, *(block.text for block in outline.blocks)]
-    names: set[str] = set()
-    for suffix in suffixes:
-        pattern = re.compile(r"([一-鿿A-Za-z]{2,4})" + re.escape(suffix))
-        for text in texts:
-            names.update(match.group(0) for match in pattern.finditer(_normal(text)))
-    return names
-
-
-def _strip_placeholders(text: str, policy: ExemplarPolicy) -> str:
-    pattern = re.escape(policy.placeholder_open) + r"[^" + re.escape(policy.placeholder_close) + r"]*" + re.escape(policy.placeholder_close)
-    return re.sub(pattern, "", text)
-
-
 def _numbers(text: str, allowed: set[str]) -> list[str]:
     return [token for token in dict.fromkeys(_NUMBER.findall(text)) if token not in allowed]
 
@@ -410,7 +401,6 @@ def accept_submission(
     """Accept the entries that pass every program check; name what fails."""
 
     numbers_allowed = outline.section_numbers()
-    organisations = organisation_names(outline, policy.organisation_suffixes)
     instances = instance_terms(outline, scope)
     in_scope = scope.numbers
     allowed_uses = {use.id: use for use in policy.role_uses(scope.role)}
@@ -432,30 +422,21 @@ def accept_submission(
             block.text
         ):
             reasons.append(f"原文片段在 {entry.locator} 处找不到，要逐字摘录")
-        if use is None or not use.placeholders:
-            checked = f"{entry.text}\n{entry.applies_when}"
-            numbers = _numbers(checked, numbers_allowed)
-            if numbers:
-                reasons.append("方法里有模板的数值或编号：" + "、".join(numbers) + "；方法不带具体数值")
-            words = [word for word in policy.mandatory_words if word in checked]
-            if words:
-                reasons.append(
-                    "方法里有强制词：" + "、".join(words) + "；改成建议写法，硬规定只由任务合同给出"
-                )
-        else:
-            checked = _strip_placeholders(f"{entry.text}\n{entry.applies_when}", policy)
-            numbers = _numbers(checked, numbers_allowed)
-            if numbers:
-                reasons.append(
-                    "范例里的数值或编号没有换成"
-                    + policy.placeholder_open
-                    + policy.placeholder_close
-                    + "占位："
-                    + "、".join(numbers)
-                )
-        names = [name for name in organisations if name in _normal(checked)]
-        if names:
-            reasons.append("含模板里的单位名称：" + "、".join(sorted(names)))
+        # Placeholders included: a placeholder names a kind of fact, not the exemplar's value.
+        checked = f"{entry.text}\n{entry.applies_when}"
+        numbers = _numbers(checked, numbers_allowed)
+        if numbers and use is not None and use.placeholders:
+            reasons.append(
+                "范例里有模板的数值或编号："
+                + "、".join(numbers)
+                + "；换成"
+                + policy.placeholder_open
+                + "说明是什么量"
+                + policy.placeholder_close
+                + "，占位里也不写模板的值"
+            )
+        elif numbers:
+            reasons.append("方法里有模板的数值或编号：" + "、".join(numbers) + "；方法不带具体数值")
         found = sorted(term for term in instances if term in _normal(checked))
         # Report the longest names only: a tail of one found name adds nothing.
         found = [term for term in found if not any(term != other and term in other for other in found)]
@@ -473,9 +454,6 @@ def accept_submission(
                 "写后果的条目没有写出后果成立的前提；applies_when 写明要有哪些现状证据，"
                 "源文里找不到前提的就删掉这条"
             )
-        for word, why in policy.unavailable.items():
-            if word in entry.text or word in entry.applies_when:
-                reasons.append(f"提到了“{word}”：{why}")
         # The same method may hold in several sections; repeat it only once per section.
         key = (block.section if block is not None else None, entry.use.strip(), _normal(entry.text))
         if not reasons and key in seen:
@@ -670,7 +648,7 @@ __all__ = [
     "accept_submission",
     "acceptance_record",
     "instance_terms",
-    "organisation_names",
+    "front_matter_terms",
     "parse_roles",
     "render_role_skill",
     "revision_request",

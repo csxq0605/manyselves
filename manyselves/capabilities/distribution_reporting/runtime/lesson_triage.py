@@ -32,7 +32,6 @@ from ..domain.taxonomy import REPORT_TAXONOMY
 from .models.reporting import EvidenceItem
 from .template_skills import (
     plain_value,
-    template_policy,
     template_roles,
     trigger_fires,
     trigger_problem,
@@ -199,7 +198,6 @@ class LessonTriageTools:
                         trigger=draft.trigger.model_dump(),
                         known_roles=role_ids,
                         run_terms=terms,
-                        mandatory_words=template_policy().mandatory_words,
                         trigger_problem=trigger_problem,
                     )
                 )
@@ -328,7 +326,6 @@ def lesson_admission(
             trigger=lesson.trigger,
             known_roles=role_ids,
             run_terms=run_terms,
-            mandatory_words=template_policy().mandatory_words,
             trigger_problem=trigger_problem,
         )
         fires = [

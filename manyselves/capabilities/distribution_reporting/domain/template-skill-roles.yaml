@@ -8,18 +8,14 @@
 # and then by use.  All Skills go into the report's shared context in the
 # order listed here; each use names the report step that reads it.
 policy:
-  # Hard rules come from task contracts; a method using these words is refused.
-  mandatory_words: [必须, 一律, 务必, 立即, 均须, 均应, 一定要, 不允许]
-  # An organisation name in the template is two to four characters before one of these.
-  organisation_suffixes: [有限公司, 股份公司, 集团, 公司]
-  # What the product does not produce; an entry that mentions it is refused.
+  # What the product does not produce; the model is told, nothing is refused by word.
   unavailable:
     附件: 报告不带附件，不能让读者去看附件
     附录: 报告不带附录，不能让读者去看附录
   uses:
   - id: judge
     title: 判断方法
-    description: 判断台账时用。专家怎样判断这一节的检查点：看哪些证据、和什么对照、怎样从现状推出风险和影响、按什么理由定优先级和时限、资料不足时怎样处理
+    description: 判断台账时用。专家怎样判断这一节的检查点：看哪些证据、和什么对照、怎样从现状推出风险和影响、按什么理由定优先级和时限、资料不足时怎样处理。只是思路参考，限值、结论标准和适用条件以知识库为准，按本项目的事实分析
   - id: write
     title: 写法
     description: 逐节写正文时用。这一节分哪几段、表和图怎样引出和收尾、现状、风险与建议怎样衔接
@@ -28,7 +24,7 @@ policy:
     description: 总编写第一章和第三章时用。怎样把第二章各节的结论归并成概览、汇总和行动，怎样排列和说明优先级
   - id: example
     title: 范例
-    description: 写正文和总编时用。可以套用的句式，模板的数值、对象和单位都换成〈〉
+    description: 写正文和总编时用。可以套用的句式，模板的数值、对象和单位都换成〈说明是什么量〉；写正文时表格里的数值和数量按任务合同用程序给的占位符，不自己填
     placeholders: true
   - id: check
     title: 核对要点
