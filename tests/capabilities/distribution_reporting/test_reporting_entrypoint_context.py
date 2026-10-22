@@ -30,9 +30,8 @@ from manyselves.kernel.definitions import DefinitionKind, ToolDefinition
 
 def _request() -> ReportRequest:
     return ReportRequest(
-        operation="module_report",
+        operation="full_report",
         instruction="Generate only module 2.4 from current project evidence.",
-        target_modules=["2.4"],
         missing_evidence_policy="draft",
         preparation_mode="serial",
     )
@@ -99,8 +98,8 @@ def test_entrypoint_context_projects_preparation_without_legacy_runner_state() -
         reporting_state["preparation_completion_ref"]
         == prepared.preparation_completion_ref
     )
-    assert reporting_state["requested_modules"] == ("2.4",)
-    assert reporting_state["full_report"] is False
+    assert reporting_state["requested_modules"] == ("2.1", "2.2", "2.3", "2.4", "2.5")
+    assert reporting_state["full_report"] is True
 
 
 def test_full_report_context_uses_the_fixed_module_set() -> None:

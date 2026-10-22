@@ -28,6 +28,11 @@ from manyselves.capabilities.distribution_reporting.runtime.intake.special_topic
 from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
     canonicalize_photo_bindings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.knowledge_index import (
+    KnowledgeIndex,
+    build_index,
+    route_evidence,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     FilePreparationResult,
     ManifestFile,
@@ -35,7 +40,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     ProjectManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    REPORT_MODULE_IDS,
     EvidenceItem,
     PhotoAsset,
 )
@@ -45,17 +49,12 @@ from manyselves.capabilities.distribution_reporting.runtime.preparation import (
 from manyselves.capabilities.distribution_reporting.runtime.preparation_snapshot import (
     PreparationSnapshotStore,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
+    KnowledgeContextBuilder,
+)
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
     project_evidence_locator,
-)
-from manyselves.capabilities.distribution_reporting.runtime.knowledge_index import (
-    KnowledgeIndex,
-    build_index,
-    route_evidence,
-)
-from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
-    KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.source_ledger import SourceLedger
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
@@ -322,7 +321,7 @@ class PreparationTools:
                     / "Work"
                     / "runs"
                     / context.run_id
-                    / ("assets/current-inputs" if context.request.operation == "revise_report" else "assets")
+                    / "assets"
                     / result.file_id
                 )
                 for asset in normalized_assets:
@@ -471,9 +470,6 @@ class PreparationTools:
         """Evaluate coverage from normalized evidence without readiness policy."""
 
         request = context.request
-        if request.operation == "revise_report":
-            # Cross and delivery still cover the complete report after a local edit.
-            request = request.model_copy(update={"target_modules": list(REPORT_MODULE_IDS)})
         coverage = evaluate_coverage(
             request,
             context.evidence_items,
@@ -486,7 +482,7 @@ class PreparationTools:
     def load_special_topic_plan(self, context: PreparationContext) -> PreparationContext:
         """Load the optional Chapter 4 plan for full-report preparation only."""
 
-        if context.request.operation in {"full_report", "revise_report"}:
+        if context.request.operation == "full_report":
             frozen_root = self.workspace / "Work/runs" / context.run_id / "frozen-project"
             context.special_topic_plan = load_special_topic_plan(frozen_root)
         else:

@@ -106,6 +106,14 @@ from .photo_reading import (
     unread_agree,
     unread_labels,
 )
+from .report_revision import (
+    SECTION_NOTE,
+    base_dir,
+    chief_revision,
+    module_revision_brief,
+    plan_revision,
+    splice_kept_rows,
+)
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
@@ -494,6 +502,14 @@ def _section_brief(
     }
 
 
+def _with_instruction(brief: dict[str, Any], instructions: Sequence[str] | None) -> dict[str, Any]:
+    """Add a revision's wording change to one section's writing brief."""
+
+    if not instructions:
+        return brief
+    return {**brief, "revision_note": SECTION_NOTE, "revision_instruction": "；".join(instructions)}
+
+
 class LedgerTools:
     """Tool implementations bound to one project workspace."""
 
@@ -630,6 +646,44 @@ class LedgerTools:
                     ),
                 ]
             )
+        revision_plan = None
+        if request.revision is not None:
+            base = base_dir(self.workspace, run_id, request.revision.base_version)
+            with _taxonomy(state):
+                revision_plan = plan_revision(
+                    request.revision,
+                    base=base,
+                    items=items,
+                    sections={
+                        module["module_id"]: [sub["id"] for sub in module["submodules"]]
+                        for module in modules
+                    },
+                )
+                changed = set(revision_plan["changed_evidence_ids"])
+                for module in modules:
+                    module_id = module["module_id"]
+                    own = [
+                        item for item in items
+                        if item.id in changed and item.module_id in (module_id, None)
+                    ]
+                    brief = module_revision_brief(
+                        revision_plan,
+                        module_id,
+                        render_fact_packet(
+                            own, module_id, shared=shared, photo_readings=readings,
+                            column_headers=headers,
+                        ) if own else "",
+                    )
+                    if brief is not None:
+                        module["revision"] = brief
+            base_project = base / "ledger" / "shared-context.md"
+            if base_project.is_file():
+                # Every conversation starts from the shared reading; keeping the
+                # base version's text lets unchanged steps be reused.  What
+                # changed reaches the reopened modules in their briefs.
+                project = base_project.read_text(encoding="utf-8")
+            revision_plan = {k: v for k, v in revision_plan.items() if k != "base_rows"}
+            self.store.write_json(f"Work/runs/{run_id}/ledger/revision-plan.json", revision_plan)
         self.store.write_text(f"Work/runs/{run_id}/ledger/shared-context.md", project)
         transcribed = [
             str(entry.get("text", ""))
@@ -723,6 +777,7 @@ class LedgerTools:
             "special_topic_input": {"plan": plan_value},
             "has_special_topic": plan_value is not None,
             "chief_key": CHIEF_OWNER,
+            **({"revision": revision_plan} if revision_plan is not None else {}),
         }
 
     def _cited_values(
@@ -799,7 +854,15 @@ class LedgerTools:
         findings: dict[str, dict[str, Any]] = {}
         for module in context["modules"]:
             module_id = module["module_id"]
-            judgment = JudgmentSet.model_validate(value["judgments"][module_id])
+            submitted = _plain(value["judgments"][module_id])
+            plan = context.get("revision")
+            if plan is not None:
+                previous = (module.get("revision") or {}).get("previous_rows") or []
+                plan = {**plan, "base_rows": {module_id: previous}}
+            submitted["rows"] = splice_kept_rows(
+                module_id, submitted.get("rows") or [], plan
+            )
+            judgment = JudgmentSet.model_validate(submitted)
             judgment = judgment.model_copy(update={"rows": settle_evidence_status(
                 judgment.rows, reference.get("summary_evidence_ids") or ()
             )})
@@ -1175,6 +1238,8 @@ class LedgerTools:
         groups = action_groups(ledger, reference.get("checkpoint_of") or {})
         counts = self._write_ledger_counts(run_id, ledger, groups, context["module_titles"])
         slots = {**(reference.get("slots") or {}), **counts}
+        revision = context.get("revision") or {}
+        text_instructions = revision.get("text_instructions") or {}
         writing_items = []
         for module in context["modules"]:
             rows = ledger[module["module_id"]]
@@ -1183,14 +1248,28 @@ class LedgerTools:
                     "module_id": module["module_id"],
                     "title": module["title"],
                     "sections": [
-                        _section_brief(sub, [row for row in rows if row.submodule_id == sub["id"]],
-                                       ledger=ledger, units=units, elsewhere=elsewhere,
-                                       names=names, slots=slots,
-                                       fact_texts=reference.get("fact_texts") or {})
+                        _with_instruction(
+                            _section_brief(
+                                sub, [row for row in rows if row.submodule_id == sub["id"]],
+                                ledger=ledger, units=units, elsewhere=elsewhere,
+                                names=names, slots=slots,
+                                fact_texts=reference.get("fact_texts") or {},
+                            ),
+                            text_instructions.get(sub["id"]),
+                        )
                         for sub in module["submodules"]
                     ],
                 }
             )
+        chief_input_revision = (
+            chief_revision(
+                revision,
+                base=base_dir(self.workspace, run_id, revision["base_version"]),
+                final_ledger=dumped,
+            )
+            if revision
+            else None
+        )
         return {
             "run_id": run_id,
             "ledger": dumped,
@@ -1234,6 +1313,7 @@ class LedgerTools:
                     slots,
                 ),
                 "module_titles": context["module_titles"],
+                **({"revision": chief_input_revision} if chief_input_revision else {}),
             },
         }
 
@@ -1692,6 +1772,10 @@ class LedgerTools:
         state = dict(value["state"])
         run_id = str(state["run_id"])
         ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
+        # A later revision starts its chapters 1 and 3 from these.
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/chief-outputs.json", _plain(value["chief"])
+        )
         # The program writes every value slot now, in the prose and in the
         # chief's structured fields alike.
         slots = self._slots(run_id)

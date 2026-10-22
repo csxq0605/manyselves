@@ -149,6 +149,29 @@ class DistributionReportingRuntimeBinding:
             operation=runtime.resume(command_id, run_id),
         )
 
+    async def rerun(
+        self,
+        command_id: UUID,
+        run_id: str,
+        values: Any = None,
+    ) -> dict[str, Any]:
+        """Run a report again in place as its next version (same run id)."""
+
+        runtime, _store = self._runtime_and_store_for_run(run_id)
+        rerun = getattr(runtime, "rerun", None)
+        if not callable(rerun):
+            raise ValueError(f"run {run_id} cannot be run again in place")
+        return await rerun(command_id, run_id, values)
+
+    def versions(self, run_id: str) -> list[dict[str, Any]]:
+        runtime, _store = self._runtime_and_store_for_run(run_id)
+        versions = getattr(runtime, "versions", None)
+        return list(versions(run_id)) if callable(versions) else []
+
+    def add_settled_listener(self, listener: Any) -> None:
+        for provider in self._providers:
+            provider.add_settled_listener(listener)
+
     def cancel(self, run_id: str) -> Awaitable[Any] | None:
         """Request a stop of this process's in-flight execution of one Run."""
 

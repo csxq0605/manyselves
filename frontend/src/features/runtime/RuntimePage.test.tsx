@@ -58,7 +58,7 @@ const activeWorkflowRun: WorkflowRunResponse = {
     workflowId: "full-report",
   },
   state: {
-    next_action_id: "run-module-cohort",
+    next_action_id: "run-report-ledger",
     next_action_index: 9,
     status: "running",
   },
@@ -111,7 +111,7 @@ describe("RuntimePage", () => {
     expect(screen.getByText("声明式运行")).toBeVisible();
     expect(screen.getByText("1 个运行进行中")).toBeVisible();
     expect(screen.getByText("配电安全报告")).toBeVisible();
-    expect(screen.getByText("模块协同与写作")).toBeVisible();
+    expect(screen.getByText("判断、关联、审查、写作与总编")).toBeVisible();
     expect(screen.getByText("已完成 9 个顶层步骤")).toBeVisible();
     expect(screen.getByText("full-report-live")).toBeVisible();
     expect(screen.getByText("当前没有对话协作任务")).toBeVisible();

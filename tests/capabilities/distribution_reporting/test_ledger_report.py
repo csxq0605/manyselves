@@ -306,19 +306,21 @@ def _answer(message):
     raise AssertionError(f"unexpected task {task}")
 
 
-async def run_ledger_report(tmp_path: Path, answer=None, evidence=None, extra_state=None):
+async def run_ledger_report(
+    tmp_path: Path, answer=None, evidence=None, extra_state=None, run_id: str = RUN_ID
+):
     """Run the ledger report with scripted agents; return binding, run id and loops."""
 
     answer = answer or _answer
     _write_complete_template_skill_fixture(tmp_path)
     evidence = evidence or _evidence()
-    evidence_path = tmp_path / f"Work/runs/{RUN_ID}/preparation/evidence.jsonl"
+    evidence_path = tmp_path / f"Work/runs/{run_id}/preparation/evidence.jsonl"
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
     evidence_path.write_text(
         "".join(item.model_dump_json() + "\n" for item in evidence), encoding="utf-8"
     )
     state = {
-        "run_id": RUN_ID,
+        "run_id": run_id,
         "request": ReportRequest(instruction="写一份完整报告。").model_dump(mode="json"),
         "evidence_items": [item.model_dump(mode="json") for item in evidence],
         "photo_assets": [],

@@ -369,7 +369,7 @@ describe("ConversationWorkspace", () => {
           run: { active: false, capabilityId: "distribution-reporting", runId: "full-report-2", status: "failed", taskId: null, workflowId: "full-report" },
           state: {
             error: "source='public-reporting:module-2.1-specialist' message='网络连接失败，已自动重试2次仍失败；服务端接收状态未确认：Connection error.' details={'attempt_disposition': 'accepted_or_unknown'}",
-            error_action_id: "run-module-cohort",
+            error_action_id: "run-report-ledger",
             status: "failed",
           },
           waitingInput: [],
@@ -389,7 +389,7 @@ describe("ConversationWorkspace", () => {
 
     expect(await screen.findByText("配电安全报告失败")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "处理运行（1）" }));
-    expect(screen.getByText("失败阶段 · 模块协同与写作")).toBeVisible();
+    expect(screen.getByText("失败阶段 · 判断、关联、审查、写作与总编")).toBeVisible();
     expect(screen.getByText("网络连接失败，已自动重试2次仍失败；服务端接收状态未确认：Connection error.")).toBeVisible();
     expect(screen.queryByText("配电安全报告运行中")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看运行态" })).toHaveAttribute(
@@ -418,7 +418,7 @@ describe("ConversationWorkspace", () => {
         runs: [{
           run: { active: true, capabilityId: "distribution-reporting", runId: "full-report-3", status: "running", taskId: null, workflowId: "full-report" },
           state: {
-            next_action_id: "run-module-cohort",
+            next_action_id: "run-report-ledger",
             next_action_index: 9,
             status: "running",
           },
@@ -438,8 +438,8 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("region", { name: "运行交互" }).parentElement)
       .toHaveClass("conversation-workspace__run");
     expect(screen.getByText("配电安全报告运行中")).toHaveAttribute("title", "full-report-3");
-    expect(screen.getByText("模块协同与写作")).toBeVisible();
-    expect(screen.getByText("模块协同与写作")).toHaveAttribute("title", "已完成 9 个顶层步骤");
+    expect(screen.getByText("判断、关联、审查、写作与总编")).toBeVisible();
+    expect(screen.getByText("判断、关联、审查、写作与总编")).toHaveAttribute("title", "已完成 9 个顶层步骤");
     await userEvent.click(screen.getByRole("button", { name: "处理运行（1）" }));
     expect(screen.getByRole("link", { name: "查看全部运行记录" })).toHaveAttribute(
       "href",

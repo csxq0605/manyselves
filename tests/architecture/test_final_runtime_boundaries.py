@@ -356,8 +356,14 @@ def test_main_reporting_entrypoint_is_capability_owned_not_runtime_owned() -> No
     assert "RunReportingWorkflowTool" not in manager_source
     assert "RunReportingWorkflowTool" not in loop_source
     assert 'name = "run_reporting_workflow"' in capability_adapter_source
-    assert "_WORKFLOW_BY_OPERATION" in capability_adapter_source
-    assert "run_reporting_workflow" in prompt_source
+    # The kernel's Main prompt stays generic; the report part lives in the
+    # Capability and is appended by the prompt loader.
+    assert "run_reporting_workflow" not in prompt_source
+    assert "配电" not in prompt_source
+    capability_prompt = (REPORTING_CAPABILITY_ROOT / "main_agent.md").read_text(
+        encoding="utf-8"
+    )
+    assert "run_reporting_workflow" in capability_prompt
     assert "ProjectSkillEvolutionTool" not in manager_source
     assert "RunProductSkillMaintainerTool" not in manager_source
     assert "load_packaged_agents" not in manager_source

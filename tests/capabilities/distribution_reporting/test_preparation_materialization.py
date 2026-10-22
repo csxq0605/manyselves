@@ -34,8 +34,8 @@ def _context(
         "operation": operation,
         "instruction": "characterize preparation materialization",
     }
-    if operation == "module_report":
-        request_kwargs["target_modules"] = ["2.1"]
+    if operation == "render_existing":
+        request_kwargs["source_markdown_ref"] = Path("Outputs/a.md")
     return PreparationContext(
         run_id=run_id,
         request=ReportRequest(**request_kwargs),
@@ -106,7 +106,7 @@ def test_full_report_loads_special_topic_plan_before_persist(
     assert result.special_topic_plan.sections[0].title == "运行约束"
 
     unchanged = _tools(tmp_path).load_special_topic_plan(
-        _context(operation="module_report")
+        _context(operation="render_existing")
     )
     assert unchanged.special_topic_plan is None
 

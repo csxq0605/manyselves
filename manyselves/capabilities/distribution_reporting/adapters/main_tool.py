@@ -1,4 +1,17 @@
-"""Distribution Reporting commands exposed by the dedicated Demo Main Agent."""
+"""Distribution Reporting commands exposed to the Main Agent.
+
+Five operations, one per user-facing flow:
+
+- ``full_report``: a new report from the project's inputs (a new run);
+- ``revise_report``: change an existing report as its next version, under
+  the same run id; unchanged steps are reused, not redone;
+- ``extract_skills``: distill the writing Skills from the report template;
+- ``publish_skills``: show what publishing a distillation would change, and
+  publish it only with ``confirm=true`` after the person agreed;
+- ``render_existing``: render an existing Markdown report to DOCX.
+
+Resuming a stopped run is not here: Main's generic ``resume_run`` does it.
+"""
 
 from __future__ import annotations
 
@@ -13,28 +26,30 @@ from manyselves.capabilities.distribution_reporting.runtime.models.entrypoint im
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
-    CostControlMode,
     UserSupplement,
+)
+from manyselves.capabilities.distribution_reporting.runtime.template_skills import (
+    preview_template_skills,
+    publish_template_skills,
 )
 from manyselves.runtime.tools.registry import Tool
 
 ReportOperation = Literal[
     "full_report",
+    "revise_report",
+    "extract_skills",
+    "publish_skills",
     "render_existing",
 ]
 
-_WORKFLOW_BY_OPERATION: dict[ReportOperation, str] = {
-    "full_report": "full-report",
-    "render_existing": "render-existing",
-}
 
+class WorkflowPort(Protocol):
+    workspace: Path
 
-class WorkflowStartPort(Protocol):
-    async def start(
-        self,
-        command_id: UUID,
-        workflow_id: str,
-        values: Any,
+    async def start(self, command_id: UUID, workflow_id: str, values: Any) -> dict[str, Any]: ...
+
+    async def rerun(
+        self, command_id: UUID, run_id: str, values: Any = None
     ) -> dict[str, Any]: ...
 
 
@@ -47,24 +62,26 @@ class ConversationRunPort(Protocol):
 
 
 class RunReportingWorkflowTool(Tool):
-    """Expose the five Distribution Reporting operations to Main."""
+    """Expose the Distribution Reporting operations to Main."""
 
     name = "run_reporting_workflow"
     description = (
-        "Start one Distribution Reporting operation selected from "
-        "full_report, module_report, aggregate_existing, "
-        "render_existing, or revise_report. revise_report copies baseline_run_id into a "
-        "new Run; requested_changes maps subsection IDs to initial edits; impact_mode=auto "
-        "builds an impact list from current inputs then continues; impact_mode=confirm "
-        "waits for user acceptance of that list. Cross still links consistency revisions. "
-        "NOT interruption resume."
+        "Distribution report operations. full_report: new report from Inputs. "
+        "revise_report: change the report of run_id as its next version under the same "
+        "run id (changes: [{target: section id like 2.3.1, a module 2.3, 1, 3 or 全文; "
+        "instruction; scope: text (wording only) or judgment}], new_inputs=true re-reads "
+        "the current input files); only affected rows, sections and chapter 1/3 entries "
+        "are redone. extract_skills: distill writing Skills from the template (a run). "
+        "publish_skills: with run_id of an extraction run, returns what would change; "
+        "publish only with confirm=true after the user agreed. render_existing: render "
+        "source_markdown_ref to DOCX. To continue a stopped run use resume_run instead."
     )
     side_effect = "ordered_state"
 
     def __init__(
         self,
         *,
-        projection_resolver: Callable[[], WorkflowStartPort],
+        projection_resolver: Callable[[], WorkflowPort],
         conversation_resolver: Callable[[], ConversationRunPort],
     ) -> None:
         self._projection_resolver = projection_resolver
@@ -72,68 +89,76 @@ class RunReportingWorkflowTool(Tool):
 
     async def __call__(
         self,
-        instruction: str,
         operation: ReportOperation,
-        target_modules: list[str] | None = None,
-        source_module_refs: dict[str, str] | None = None,
+        instruction: str = "",
+        run_id: str | None = None,
+        changes: list[dict[str, Any]] | None = None,
+        new_inputs: bool = False,
+        roles: list[str] | None = None,
+        confirm: bool = False,
         source_markdown_ref: str | None = None,
         output_filename: str | None = None,
-        baseline_run_id: str | None = None,
-        requested_changes: dict[str, str] | None = None,
-        impact_mode: Literal["none", "auto", "confirm"] = "none",
         execution_requirements: list[str] | None = None,
         user_supplements: list[dict[str, Any]] | None = None,
         missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
-        cost_control_mode: CostControlMode = "observe",
-        max_provider_attempts: int = 600,
-        max_total_tokens: int = 30_000_000,
-        preparation_mode: Literal["serial", "deterministic_workers"] = (
-            "deterministic_workers"
-        ),
-        preparation_concurrency: int = 5,
     ) -> dict[str, Any]:
-        """Start the selected report operation through its public Workflow root."""
+        """Run one report operation; see the tool description."""
 
-        workflow_id = _WORKFLOW_BY_OPERATION[operation]
-        values = {
-            "instruction": instruction,
-            "target_modules": (
-                target_modules
-                if target_modules is not None
-                else list(REPORT_MODULE_IDS)
-            ),
-            "source_module_refs": source_module_refs,
-            "source_markdown_ref": (
-                Path(source_markdown_ref) if source_markdown_ref is not None else None
-            ),
+        projection = self._projection_resolver()
+        if operation == "publish_skills":
+            if not run_id:
+                raise ValueError("publish_skills needs the run_id of an extraction run")
+            workspace = Path(projection.workspace)
+            if not confirm:
+                return {"status": "preview", **preview_template_skills(workspace, run_id)}
+            return {"status": "published", **publish_template_skills(workspace, run_id)}
+        if operation == "revise_report":
+            if not run_id:
+                raise ValueError("revise_report needs the run_id of the report to change")
+            accepted = await projection.rerun(
+                uuid4(),
+                run_id,
+                {
+                    "instruction": instruction or "按修改要求修改报告。",
+                    "changes": changes or [],
+                    "new_inputs": new_inputs,
+                },
+            )
+            return self._bound(accepted)
+        if operation == "extract_skills":
+            values = {"roles": roles} if roles else {}
+            accepted = await projection.start(uuid4(), "extract-template-skills", values)
+            return self._bound(accepted)
+        common = {
+            "instruction": instruction or "生成报告。",
             "output_filename": output_filename,
-            "baseline_run_id": baseline_run_id,
-            "requested_changes": requested_changes or {},
-            "impact_mode": impact_mode,
             "execution_requirements": execution_requirements or [],
             "user_supplements": [
-                UserSupplement.model_validate(item)
-                for item in (user_supplements or [])
+                UserSupplement.model_validate(item) for item in (user_supplements or [])
             ],
             "missing_evidence_policy": missing_evidence_policy,
-            "cost_control_mode": cost_control_mode,
-            "max_provider_attempts": max_provider_attempts,
-            "max_total_tokens": max_total_tokens,
-            "preparation_mode": preparation_mode,
-            "preparation_concurrency": preparation_concurrency,
         }
-        request_type = {
-            "full_report": PublicFullReportRequest,
-            "render_existing": PublicRenderExistingRequest,
-        }[operation]
-        request = request_type.model_validate(values)
-
-        public_input = request.model_dump(mode="json", exclude={"operation"})
-        accepted = await self._projection_resolver().start(
-            uuid4(),
-            workflow_id,
-            public_input,
+        if operation == "render_existing":
+            request = PublicRenderExistingRequest.model_validate(
+                {
+                    **common,
+                    "source_markdown_ref": (
+                        Path(source_markdown_ref) if source_markdown_ref else None
+                    ),
+                }
+            )
+            workflow_id = "render-existing"
+        else:
+            request = PublicFullReportRequest.model_validate(
+                {**common, "target_modules": list(REPORT_MODULE_IDS)}
+            )
+            workflow_id = "full-report"
+        accepted = await projection.start(
+            uuid4(), workflow_id, request.model_dump(mode="json", exclude={"operation"})
         )
+        return self._bound(accepted)
+
+    def _bound(self, accepted: dict[str, Any]) -> dict[str, Any]:
         run_id = str(accepted["run_id"])
         conversation_id = self._conversation_resolver().bind_run_to_active_conversation(
             run_id
@@ -144,10 +169,10 @@ class RunReportingWorkflowTool(Tool):
 def attach_main_reporting_tool(
     runtime_host: Any,
     *,
-    projection_resolver: Callable[[], WorkflowStartPort],
+    projection_resolver: Callable[[], WorkflowPort],
     conversation_resolver: Callable[[], ConversationRunPort],
 ) -> bool:
-    """Attach the Demo-specific Main command without moving it into Kernel."""
+    """Attach the report command to Main without moving it into the kernel."""
 
     def factory() -> RunReportingWorkflowTool:
         return RunReportingWorkflowTool(

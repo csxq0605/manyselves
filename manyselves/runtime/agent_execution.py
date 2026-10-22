@@ -561,6 +561,13 @@ class AgentExecutionService:
 
         await session.loop.wait_until_turn_complete()
 
+    async def close_session(self, workflow_id: str, conversation_key: str) -> None:
+        """Stop and forget one live session, if there is one."""
+
+        cached = self._sessions.pop((workflow_id, conversation_key), None)
+        if cached is not None:
+            await cached[0].stop()
+
     async def close_workflow(self, workflow_id: str) -> None:
         """Stop and forget every live session owned by one workflow."""
 

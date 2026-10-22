@@ -90,13 +90,15 @@ def chapter_section_ids(
             raise ValueError("Chapter 4 lane requires an active special_topic_plan")
         return tuple(section.section_id for section in special_topic_plan.sections)
     raise ValueError(f"unsupported Chief/Final chapter lane: {chapter_id}")
-ReportOperation = Literal[
-    "full_report",
-    "module_report",
-    "aggregate_existing",
-    "render_existing",
-    "revise_report",
-]
+ReportOperation = Literal["full_report", "render_existing"]
+# Request fields of the retired module/aggregate/copy-revision operations.  Runs
+# saved before carry them; they are dropped when such a request is read.
+_RETIRED_REQUEST_FIELDS = (
+    "source_module_refs",
+    "baseline_run_id",
+    "requested_changes",
+    "impact_mode",
+)
 CostControlMode = Literal["observe", "warn", "pause_at_boundary"]
 
 
@@ -378,25 +380,50 @@ class UserSupplement(ReportingModel):
         return self
 
 
+class RevisionChange(ReportingModel):
+    """One change asked of an existing report.
+
+    ``target`` is a section id of chapter 2 as the run's table numbers it, or
+    ``1`` / ``3`` for the chief's chapters, or ``全文``.  ``scope`` says whether
+    only the wording changes (``text``) or the judgment behind it may change
+    too (``judgment``).
+    """
+
+    target: str = Field(min_length=1)
+    instruction: str = Field(min_length=1)
+    scope: Literal["text", "judgment"] = "judgment"
+
+
+class ReportRevision(ReportingModel):
+    """Revise the report of an existing run as its next version.
+
+    The run keeps its id.  The base version's judgments, prose and chief
+    entries are kept where nothing they rest on changed; only rows citing
+    changed facts and the sections named in ``changes`` are redone.
+    """
+
+    base_version: int = Field(ge=1)
+    instruction: str = Field(min_length=1)
+    changes: list[RevisionChange] = Field(default_factory=list)
+    new_inputs: bool = Field(
+        default=False,
+        description="Re-read the project's current input files instead of the base version's.",
+    )
+
+    @model_validator(mode="after")
+    def asks_for_something(self) -> "ReportRevision":
+        if not self.changes and not self.new_inputs:
+            raise ValueError("a revision needs changes or new inputs")
+        return self
+
+
 class ReportRequest(ReportingModel):
     operation: ReportOperation = "full_report"
     instruction: str = Field(min_length=1)
     target_modules: list[str] = Field(default_factory=lambda: list(REPORT_MODULE_IDS))
-    source_module_refs: dict[str, Path] | None = None
     source_markdown_ref: Path | None = None
     output_filename: str | None = None
-    baseline_run_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
-    requested_changes: dict[str, str] = Field(
-        default_factory=dict,
-        description="For revise_report: exact module subsection id to verbatim requested change.",
-    )
-    impact_mode: Literal["none", "auto", "confirm"] = Field(
-        default="none",
-        description=(
-            "revise_report only: none uses explicit requested_changes; auto builds the "
-            "impact list and continues; confirm waits for user acceptance of the list."
-        ),
-    )
+    revision: ReportRevision | None = None
     execution_requirements: list[str] = Field(default_factory=list)
     user_supplements: list[UserSupplement] = Field(
         default_factory=list,
@@ -413,6 +440,15 @@ class ReportRequest(ReportingModel):
     ] = "deterministic_workers"
     preparation_concurrency: int = Field(default=5, ge=1, le=16)
 
+    @model_validator(mode="before")
+    @classmethod
+    def drop_retired_fields(cls, value: Any) -> Any:
+        if isinstance(value, dict) and any(key in value for key in _RETIRED_REQUEST_FIELDS):
+            value = {
+                key: item for key, item in value.items() if key not in _RETIRED_REQUEST_FIELDS
+            }
+        return value
+
     @field_validator("target_modules")
     @classmethod
     def target_modules_are_fixed(cls, values: list[str]) -> list[str]:
@@ -425,28 +461,8 @@ class ReportRequest(ReportingModel):
 
     @model_validator(mode="after")
     def operation_inputs_are_complete(self) -> "ReportRequest":
-        if self.operation == "revise_report":
-            if not self.baseline_run_id:
-                raise ValueError("revise_report requires baseline_run_id")
-            if self.impact_mode == "none" and not self.requested_changes:
-                raise ValueError(
-                    "revise_report requires requested_changes unless impact_mode is auto or confirm"
-                )
-            for target, instruction in self.requested_changes.items():
-                resolve_submodule(target)
-                if not instruction.strip():
-                    raise ValueError("requested change must not be empty")
-            if self.impact_mode == "none":
-                self.target_modules = sorted(
-                    {".".join(target.split(".")[:2]) for target in self.requested_changes}
-                )
-            else:
-                # Impact analysis may discover additional subsections; compile all lanes.
-                self.target_modules = list(REPORT_MODULE_IDS)
-        elif self.baseline_run_id is not None or self.requested_changes:
-            raise ValueError("baseline_run_id and requested_changes are only valid for revise_report")
-        elif self.impact_mode != "none":
-            raise ValueError("impact_mode is only valid for revise_report")
+        if self.revision is not None and self.operation != "full_report":
+            raise ValueError("only a full report can be revised")
         supplement_ids = [item.id for item in self.user_supplements]
         if len(supplement_ids) != len(set(supplement_ids)):
             raise ValueError("user supplement ids must be unique")
@@ -457,35 +473,14 @@ class ReportRequest(ReportingModel):
         )
         if unknown_superseded:
             raise ValueError(f"supplements supersede unknown ids: {unknown_superseded}")
-        requested = set(self.target_modules)
-        all_modules = set(REPORT_MODULE_IDS)
-        if self.operation == "full_report" and requested != all_modules:
+        if self.operation == "full_report" and set(self.target_modules) != set(
+            REPORT_MODULE_IDS
+        ):
             raise ValueError("full_report requires exactly modules 2.1-2.5")
-        if self.operation == "module_report" and not requested:
-            raise ValueError("module_report requires at least one target module")
-        if self.operation == "module_report" and requested == all_modules:
-            raise ValueError("module_report must be a proper subset of modules 2.1-2.5")
-        existing_module_operations = {"aggregate_existing"}
-        if self.operation in existing_module_operations and requested != all_modules:
-            raise ValueError(f"{self.operation} requires exactly modules 2.1-2.5")
         if self.operation == "render_existing" and self.source_markdown_ref is None:
             raise ValueError("render_existing requires source_markdown_ref")
         if self.operation != "render_existing" and self.source_markdown_ref is not None:
             raise ValueError("source_markdown_ref is only valid for render_existing")
-        if self.operation not in existing_module_operations and self.source_module_refs is not None:
-            raise ValueError("source_module_refs is only valid for aggregate_existing")
-        if self.source_module_refs is not None:
-            if set(self.source_module_refs) != all_modules:
-                raise ValueError("source_module_refs requires exactly modules 2.1-2.5")
-            for module_id, path in self.source_module_refs.items():
-                if path.is_absolute() or ".." in path.parts:
-                    raise ValueError(
-                        f"source module {module_id} must stay inside the project workspace"
-                    )
-                if path.suffix.casefold() not in {".md", ".markdown", ".json"}:
-                    raise ValueError(
-                        f"source module {module_id} must be Markdown or a structured module JSON"
-                    )
         if self.source_markdown_ref is not None:
             if self.source_markdown_ref.is_absolute() or ".." in self.source_markdown_ref.parts:
                 raise ValueError("source_markdown_ref must stay inside the project workspace")

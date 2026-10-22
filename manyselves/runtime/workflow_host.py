@@ -319,14 +319,13 @@ class WorkflowRuntimeHost:
                         checkpoint_results[branch_id] = {
                             variable: deepcopy(current.variables[variable])
                         }
-                    parallel_state = state.model_copy(deep=True)
-                    parallel_state.parallel_states[action.id] = deepcopy(
-                        checkpoint_states
+                    checkpoint(
+                        _checkpoint_view(
+                            state,
+                            parallel_states={action.id: dict(checkpoint_states)},
+                            parallel_results={action.id: dict(checkpoint_results)},
+                        )
                     )
-                    parallel_state.parallel_results[action.id] = deepcopy(
-                        checkpoint_results
-                    )
-                    checkpoint(parallel_state)
 
                 completed = await self._execute_nested(
                     plan,
@@ -450,9 +449,7 @@ class WorkflowRuntimeHost:
 
         def checkpoint_item(key: str, current: WorkflowState) -> None:
             item_states[key] = current.model_dump(mode="json")
-            parent_state = state.model_copy(deep=True)
-            parent_state.map_states[action.id] = deepcopy(item_states)
-            checkpoint(parent_state)
+            checkpoint(_checkpoint_view(state, map_states={action.id: dict(item_states)}))
 
         async def execute_item(key: str, item: Any) -> WorkflowState:
             saved = saved_states.get(key)
@@ -583,11 +580,12 @@ class WorkflowRuntimeHost:
                     }
                 )
         def checkpoint_child(current: WorkflowState) -> None:
-            parent_state = state.model_copy(deep=True)
-            parent_state.subworkflow_states[action.id] = current.model_dump(
-                mode="json"
+            checkpoint(
+                _checkpoint_view(
+                    state,
+                    subworkflow_states={action.id: current.model_dump(mode="json")},
+                )
             )
-            checkpoint(parent_state)
 
         completed = await self._execute_nested(
             child_plan,
@@ -875,3 +873,18 @@ def _prepend_waiting_path(
     waiting = deepcopy(waiting_input or {})
     waiting["path"] = [segment, *waiting.get("path", [])]
     return waiting
+
+
+def _checkpoint_view(state: WorkflowState, **children: dict[str, Any]) -> WorkflowState:
+    """The parent state with one nested entry replaced, for saving only.
+
+    A checkpoint is serialized at once, so the view shares the parent's
+    variables instead of deep-copying the whole state on every nested step.
+    """
+
+    return state.model_copy(
+        update={
+            field: {**getattr(state, field), **entries}
+            for field, entries in children.items()
+        }
+    )

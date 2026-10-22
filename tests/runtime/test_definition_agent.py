@@ -611,3 +611,72 @@ async def test_listed_images_are_all_sent_and_an_empty_list_sends_none(
     assert [image["path"] for image in harness.loops[0].received[0].images or []] == [
         str((tmp_path / "photos" / name).resolve()) for name in names
     ]
+
+
+def _archive(tmp_path: Path, name: str) -> None:
+    """Move results and histories aside, as an in-place re-execution does."""
+
+    run_dir = tmp_path / "Work" / "runs" / RUN_ID
+    target = run_dir / "versions" / name
+    target.mkdir(parents=True)
+    for part in ("agent-results", "conversations"):
+        if (run_dir / part).exists():
+            (run_dir / part).rename(target / part)
+
+
+@pytest.mark.asyncio
+async def test_re_execution_replays_unchanged_turns_and_reruns_changed_ones(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(
+        tmp_path,
+        [
+            ("submit", [{"answer": "shared"}]),
+            ("submit", [{"answer": "forked"}]),
+            ("submit", [{"answer": "forked again"}]),
+        ],
+        [],
+    )
+    source = _conversation("shared")
+    fork = _conversation("shared:item-1", forked_from=source.conversation_id)
+    task = _task()
+
+    async def chain(item: str):
+        invoker = harness.invoker()
+        try:
+            shared = await invoker.invoke(
+                harness.agent, task, {"text": "context"}, source, task_id="read"
+            )
+            judged = await invoker.invoke(
+                harness.agent, task, {"text": item}, fork, task_id="judge"
+            )
+            return shared, judged
+        finally:
+            await invoker.close()
+
+    async def steps():
+        first = await chain("item")
+        _archive(tmp_path, "v1")
+        same = await chain("item")
+        loops_after_same = len(harness.loops)
+        _archive(tmp_path, "v2")
+        changed = await chain("changed item")
+        return first, same, loops_after_same, changed
+
+    first, same, loops_after_same, changed = await _run(harness, steps)
+
+    assert [outcome.result for outcome in first] == [
+        {"answer": "shared"},
+        {"answer": "forked"},
+    ]
+    # Nothing changed: no model session at all, same results.
+    assert loops_after_same == 2
+    assert [outcome.result for outcome in same] == [o.result for o in first]
+    # Only the changed turn reached the model; it continued the replayed source.
+    assert changed[0].result == {"answer": "shared"}
+    assert changed[1].result == {"answer": "forked again"}
+    assert len(harness.loops) == 3
+    restored = harness.loops[-1].restored[0]
+    assert '"text": "context"' in restored[0].content
+    history = tmp_path / "Work" / "runs" / RUN_ID / "conversations"
+    assert len(list(history.glob("*.json"))) == 2

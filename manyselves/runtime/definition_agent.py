@@ -43,9 +43,10 @@ from .agent_execution import (
     AgentSessionRestore,
     AgentTurnRequest,
 )
+from .agent_memo import FileAgentTurnMemo, file_digest, turn_key
 from .agent_recovery import AgentRecoveryDriver
 from .agent_results import FileAgentResultStore
-from .conversation_history import FileConversationHistoryStore
+from .conversation_history import FileConversationHistoryStore, serialize_message
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
 from .tools.registry import ToolRegistry
@@ -96,6 +97,7 @@ class DefinitionAgentInvoker:
         self.loop_builder = loop_builder
         self.results = FileAgentResultStore(self.workspace, run_id)
         self.histories = FileConversationHistoryStore(self.workspace, run_id)
+        self.memo = FileAgentTurnMemo(self.workspace, run_id)
 
     async def close(self) -> None:
         await self.execution.close_workflow(self.workflow_id)
@@ -192,11 +194,38 @@ class DefinitionAgentInvoker:
             persist_handoff_summary=False,
         )
         existing = self.execution.session(self.workflow_id, conversation_id)
-        restore = None
+        restore = None if existing is not None else self._restore(conversation)
+        try:
+            images = self._images(task, input_value)
+        except ValueError as exc:
+            return AgentInvocationOutcome(
+                status="failed", session_id=conversation.external_session_id, error=str(exc)
+            )
+        prompt = self._prompt(task, input_value, tools)
+        before = _history_of(existing, restore)
+        memo_key = turn_key(
+            system_prompt=agent.instructions,
+            prompt=prompt,
+            tool_schemas=tools.get_definitions(),
+            output_schema=output_contract.json_schema(),
+            image_digests=[file_digest(image["path"]) for image in images],
+            history=before,
+        )
+        replayed = await self._replay(
+            memo_key,
+            before=before,
+            output_contract=output_contract,
+            conversation=conversation,
+            agent=agent,
+            task=task,
+            store_key=store_key,
+            input_value=input_value,
+            live=existing is not None,
+        )
+        if replayed is not None:
+            return replayed
         if existing is not None:
             factory.reconfigure(existing.loop)
-        else:
-            restore = self._restore(conversation)
         turn = TypedAgentTurn(
             execution=self.execution,
             workflow_id=self.workflow_id,
@@ -224,14 +253,8 @@ class DefinitionAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
-        try:
-            images = self._images(task, input_value)
-        except ValueError as exc:
-            return AgentInvocationOutcome(
-                status="failed", session_id=session.session_id, error=str(exc)
-            )
         request = AgentTurnRequest(
-            content=self._prompt(task, input_value, tools),
+            content=prompt,
             images=images,
             message_id=f"{attempt_id}:initial",
             workflow_id=self.workflow_id,
@@ -279,11 +302,96 @@ class DefinitionAgentInvoker:
                 )
         finally:
             self._save_history(conversation_id, session.loop)
+        if mapped.status == "ok" and not task.tools:
+            self._remember(
+                memo_key,
+                result=mapped.result,
+                before=before,
+                loop=session.loop,
+                detail={
+                    "agent_id": agent.id,
+                    "task_id": task.id,
+                    "store_key": store_key,
+                    "conversation_id": conversation_id,
+                },
+            )
         if mapped.status != "ok":
             reason = self._failure_reason(conversation_id, store_key)
             if reason:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
+
+    async def _replay(
+        self,
+        memo_key: str,
+        *,
+        before: list[dict[str, Any]],
+        output_contract: ContractAdapter,
+        conversation: ConversationRecord,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        store_key: str,
+        input_value: Any,
+        live: bool,
+    ) -> AgentInvocationOutcome | None:
+        """Replay a turn the model already completed for exactly this context."""
+
+        if task.tools:
+            # Turns that call Capability Tools have side effects; replaying
+            # the reply alone would skip them.
+            return None
+        record = self.memo.load(memo_key)
+        if record is None:
+            return None
+        try:
+            result = _json_value(output_contract.validate(record.get("result")))
+        except Exception:  # noqa: BLE001 - a stale record is simply not reused
+            return None
+        conversation_id = conversation.conversation_id
+        self.histories.save(conversation_id, self.memo.history_after(record, before))
+        if live:
+            # The next turn restores from the saved history, so the live
+            # session must not keep the pre-replay conversation.
+            await self.execution.close_session(self.workflow_id, conversation_id)
+        self.results.save(
+            conversation_id=conversation_id,
+            task_id=store_key,
+            agent_id=agent.id,
+            input_value=input_value,
+            status="completed",
+            result=result,
+        )
+        self.memo.log_hit(
+            {
+                "key": memo_key,
+                "conversation_id": conversation_id,
+                "task_id": task.id,
+                "store_key": store_key,
+            }
+        )
+        return AgentInvocationOutcome(
+            status="ok", result=result, session_id=conversation.external_session_id
+        )
+
+    def _remember(
+        self,
+        memo_key: str,
+        *,
+        result: Any,
+        before: list[dict[str, Any]],
+        loop: AgentSessionLoop,
+        detail: Mapping[str, Any],
+    ) -> None:
+        messages = getattr(loop, "conversation_messages", None)
+        if not callable(messages):
+            return
+        self.memo.save(
+            memo_key,
+            result=_json_value(result),
+            before=before,
+            after=messages(),
+            detail=detail,
+        )
 
     async def _reuse(
         self,
@@ -577,6 +685,21 @@ def _event_digests(loop: AgentSessionLoop) -> set[str]:
         )
         digests.add(event)
     return digests
+
+
+def _history_of(
+    existing: Any, restore: AgentSessionRestore | None
+) -> list[dict[str, Any]]:
+    """The conversation the next turn starts from, as JSON messages."""
+
+    if existing is not None:
+        messages = getattr(existing.loop, "conversation_messages", None)
+        if callable(messages):
+            return [serialize_message(message) for message in messages()]
+        return []
+    if restore is None:
+        return []
+    return [serialize_message(message) for message in restore.messages]
 
 
 def _json_value(value: Any) -> Any:

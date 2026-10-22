@@ -37,7 +37,7 @@ def _normalize(tmp_path, path):
     worker = prepare_manifest_file(tmp_path, "fidelity", manifest, 0)
     context = PreparationContext(
         run_id="fidelity",
-        request=ReportRequest(operation="module_report", instruction="test", target_modules=["2.4"]),
+        request=ReportRequest(operation="full_report", instruction="test"),
         project_manifest=ProjectManifest(files=[manifest]),
         preparation_worker_results=[worker], parsed_artifacts=worker.parsed_artifacts,
     )

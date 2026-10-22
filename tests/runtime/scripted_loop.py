@@ -45,7 +45,17 @@ class ScriptedLoop:
         restored = [
             message
             if isinstance(message, LLMMessage)
-            else LLMMessage(role=message["role"], content=message["content"])
+            else LLMMessage(
+                role=message["role"],
+                content=message["content"],
+                tool_calls=[
+                    LLMToolCall(call["id"], call["name"], call["arguments"])
+                    for call in message.get("tool_calls") or ()
+                ]
+                or None,
+                tool_call_id=message.get("tool_call_id"),
+                is_tool_result=bool(message.get("is_tool_result", False)),
+            )
             for message in messages
         ]
         self.restored.append(restored)

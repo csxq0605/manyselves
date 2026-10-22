@@ -100,6 +100,14 @@ class RuntimeBindingCatalog:
     def active(self) -> bool:
         return any(binding.active for binding in self._bindings.values())
 
+    def add_settled_listener(self, listener: Any) -> None:
+        """Tell every binding that reports stopped executions about ``listener``."""
+
+        for binding in self._bindings.values():
+            add = getattr(binding, "add_settled_listener", None)
+            if callable(add):
+                add(listener)
+
     def locate_run(
         self,
         run_id: str,

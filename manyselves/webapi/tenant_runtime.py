@@ -13,6 +13,7 @@ from uuid import uuid4
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.global_knowledge_service import GlobalKnowledgeService
+from ..application.main_run_tools import attach_main_run_tools
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
@@ -82,6 +83,10 @@ class TenantRuntime:
             self.runtime_host,
             projection_resolver=lambda: self.workflow_projection,
             conversation_resolver=lambda: self.conversation_service,
+        )
+        attach_main_run_tools(
+            self.runtime_host,
+            projection_resolver=lambda: self.workflow_projection,
         )
 
 
@@ -226,6 +231,10 @@ async def start_tenant_runtime(
         host,
         projection_resolver=lambda: runtime.workflow_projection,
         conversation_resolver=lambda: runtime.conversation_service,
+    )
+    attach_main_run_tools(
+        host,
+        projection_resolver=lambda: runtime.workflow_projection,
     )
     return runtime
 

@@ -495,6 +495,54 @@ def skill_boundary() -> dict[str, Any]:
     }
 
 
+def preview_template_skills(workspace: Path, run_id: str) -> dict[str, Any]:
+    """What ``publish_template_skills`` would change, without changing anything.
+
+    For each role: ``new`` (no published copy), ``changed`` (with a unified
+    diff, cut to a readable length), ``same``, or ``kept`` (this run did not
+    redo the role; the published copy stays).
+    """
+
+    import difflib
+
+    workspace = Path(workspace).resolve()
+    summary = json.loads(
+        (workspace / run_root(run_id) / "summary.json").read_text(encoding="utf-8")
+    )
+    candidates: dict[str, str] = summary["candidates"]
+    roles: list[dict[str, Any]] = []
+    for role_id in skill_order():
+        published = workspace / template_skill_ref(role_id)
+        old = published.read_text(encoding="utf-8") if published.is_file() else None
+        if role_id not in candidates:
+            roles.append({"role": role_id, "status": "kept" if old else "missing"})
+            continue
+        new = (workspace / candidates[role_id]).read_text(encoding="utf-8")
+        if old is None:
+            roles.append({"role": role_id, "status": "new", "lines": len(new.splitlines())})
+            continue
+        if old == new:
+            roles.append({"role": role_id, "status": "same"})
+            continue
+        diff = list(
+            difflib.unified_diff(
+                old.splitlines(), new.splitlines(), "published", "candidate", lineterm="", n=1
+            )
+        )
+        added = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+        roles.append(
+            {
+                "role": role_id,
+                "status": "changed",
+                "added_lines": added,
+                "removed_lines": removed,
+                "diff": "\n".join(diff[:120]),
+            }
+        )
+    return {"run_id": run_id, "roles": roles}
+
+
 def publish_template_skills(workspace: Path, run_id: str) -> dict[str, Any]:
     """Replace the published package with exactly the declared roles.
 
@@ -659,6 +707,7 @@ __all__ = [
     "ROLES_FILE",
     "TRIGGER_KINDS",
     "TemplateSkillTools",
+    "preview_template_skills",
     "publish_template_skills",
     "skill_order",
     "align_skill_sections",

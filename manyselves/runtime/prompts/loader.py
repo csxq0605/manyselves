@@ -1,7 +1,7 @@
 """Prompt loader — loads complete agent prompts with shared context."""
 
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from loguru import logger
 
@@ -18,8 +18,9 @@ class PromptLoader:
     # Template directory paths
     _BASE_DIR: Final = Path(__file__).parent.parent.parent / "templates"
     _AGENTS_DIR: Final = _BASE_DIR / "agents"
+    _CAPABILITIES_DIR: Final = Path(__file__).parent.parent.parent / "capabilities"
 
-    def __init__(self, agents_dir: Path | None = None):
+    def __init__(self, agents_dir: Path | None = None, capabilities_dir: Path | None = None):
         """Initialize prompt loader.
 
         Args:
@@ -27,7 +28,13 @@ class PromptLoader:
                        Defaults to manyselves/templates/agents/.
         """
         self._agents_dir = Path(agents_dir) if agents_dir else self._AGENTS_DIR
-        self._cache: dict[str, tuple[int | None, str]] = {}
+        # Custom agent directories (tests) get no Capability parts unless asked.
+        self._capabilities_dir = (
+            Path(capabilities_dir)
+            if capabilities_dir
+            else (None if agents_dir else self._CAPABILITIES_DIR)
+        )
+        self._cache: dict[str, tuple[Any, str]] = {}
         self._shared_cache: tuple[int | None, str | None] | None = None
 
     def load_prompt(self, agent_type: str) -> str:
@@ -44,10 +51,14 @@ class PromptLoader:
         """
         filename = self._get_filename(agent_type)
         filepath = self._agents_dir / filename
-        mtime_ns = filepath.stat().st_mtime_ns if filepath.exists() else None
+        fragments = self._capability_fragments(filename)
+        signature = (
+            filepath.stat().st_mtime_ns if filepath.exists() else None,
+            tuple((str(path), path.stat().st_mtime_ns) for path in fragments),
+        )
 
         cached = self._cache.get(agent_type)
-        if cached and cached[0] == mtime_ns:
+        if cached and cached[0] == signature:
             return cached[1]
 
         if not filepath.exists():
@@ -56,9 +67,18 @@ class PromptLoader:
         else:
             content = filepath.read_text(encoding="utf-8")
             prompt = content.strip()
+        # Each installed Capability may add its own part for this Agent, in a
+        # file of the same name in its package; the kernel file stays generic.
+        parts = [path.read_text(encoding="utf-8").strip() for path in fragments]
+        prompt = "\n\n".join([prompt, *(part for part in parts if part)])
 
-        self._cache[agent_type] = (mtime_ns, prompt)
+        self._cache[agent_type] = (signature, prompt)
         return prompt
+
+    def _capability_fragments(self, filename: str) -> list[Path]:
+        if self._capabilities_dir is None or not self._capabilities_dir.is_dir():
+            return []
+        return sorted(self._capabilities_dir.glob(f"*/{filename}"))
 
     def load_shared_context(self) -> str | None:
         """Load shared prompts for all agents.
