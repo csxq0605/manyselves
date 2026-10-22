@@ -1643,6 +1643,15 @@ class PhotoTranscribedItem(StrictModel):
     legible: bool = Field(description="False when the characters cannot be read with certainty.")
 
 
+class PhotoQuantityReading(StrictModel):
+    """One declared quantity as the photo shows it."""
+
+    quantity: str = Field(min_length=1, description="The quantity key from quantities.")
+    value: float | None = Field(default=None, description="The number shown; null when not legible.")
+    unit: str = Field(default="", max_length=20, description="The unit shown, as written.")
+    legible: bool = Field(description="False when the number cannot be read with certainty.")
+
+
 class PhotoReadingSubmission(StrictModel):
     """What one project photo visibly shows, copied without judging it."""
 
@@ -1664,6 +1673,11 @@ class PhotoReadingSubmission(StrictModel):
         default=None,
         max_length=40,
         description="Date or time printed on the photo (watermark or screen), as written.",
+    )
+    readings: list[PhotoQuantityReading] = Field(
+        default_factory=list,
+        max_length=40,
+        description="Each quantity from quantities that the photo shows, read off the photo.",
     )
     needs_review: bool = Field(
         description="True when a person should look at the photo (unclear, unsafe-looking).",

@@ -1,0 +1,10 @@
+id: apply-photo-reread
+version: 1.0.0
+description: Compare second photo readings with the first and redraw the review packets
+implementation: capability:distribution-reporting:apply-photo-reread
+input_contract: ledger_reread_input
+output_contract: ledger_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,5 +1,5 @@
 id: revise-sections
-version: 1.0.0
+version: 1.1.0
 description: Revise only the sections the editor named, in the conversation that wrote them
 agent: report-consultant
 objective: 编辑和程序对你写的成稿提出了意见。只修改被点名的小节，提交改好后的完整小节正文。
@@ -8,6 +8,7 @@ output_contract: ledger_section_set
 constraints:
 - sections 的键是被点名的小节编号，值是改好后的完整正文；没被点名的小节不要提交。
 - 写法要求与前面写作时相同；不在正文里改判断结论。
+- 正文里的占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留；数值和数量只用占位符，不改写成数字。
 - minor 意见可以顺手改，也可以不改。
 tools: []
 recovery: typed-turn-recovery

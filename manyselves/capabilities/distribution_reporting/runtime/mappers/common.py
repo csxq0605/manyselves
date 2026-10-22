@@ -64,6 +64,19 @@ def field_name(label: Any) -> str:
     return _TRAILING_UNIT.sub("", str(label or "").strip()).strip()
 
 
+_DECLARED_UNIT = re.compile(r"[（(]([^（）()]+)[）)]\s*$")
+
+
+def header_unit(sheet: Any, row: int, column: int, fallback: str) -> str:
+    """The unit a column's own header declares, e.g. "剩余电流(A)" -> "A".
+
+    A header that declares none keeps the mapper's unit for that column.
+    """
+
+    match = _DECLARED_UNIT.search(str(sheet.cell(row, column).value or "").strip())
+    return match.group(1).strip() if match else fallback
+
+
 def header_label(sheet: Any, row: int, column: int, fallback: str) -> str:
     """The checkpoint name the table's own label row gives a column."""
 

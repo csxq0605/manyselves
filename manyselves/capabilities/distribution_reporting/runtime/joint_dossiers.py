@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,6 +48,22 @@ def object_key(subject: str) -> str:
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"(\d)号", r"\1#", text)
     return text.lower()
+
+
+SAME_RECORD_ROW = "同一记录行"
+SAME_NAME = "同一对象名称"
+
+
+def object_level(facts: Iterable[Mapping[str, Any]]) -> str:
+    """How far facts grouped under one object name are known to be one unit.
+
+    Facts on one record row of the table describe one unit; facts that only
+    share the object's name (different sheets or rows) may be one unit or only
+    entries of one place with the same name.
+    """
+
+    rows = {fact.get("record_row") for fact in facts}
+    return SAME_RECORD_ROW if len(rows) == 1 and None not in rows else SAME_NAME
 
 
 @dataclass
@@ -185,6 +202,9 @@ def build_dossiers(
             if item.observed_at:
                 fact["observed_at"] = item.observed_at
             fact["sheet"] = sheet
+            if item.source.row:
+                # The table's own record row: facts on one row describe one unit.
+                fact["record_row"] = f"{item.source.file_id}:{sheet}!{item.source.row}"
             if item.photo_refs:
                 fact["photo_ids"] = list(item.photo_refs)
                 read = [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]
@@ -263,6 +283,7 @@ def build_dossiers(
             "judgments": found.judgments,
         }
         dossier["kind"] = "conflict" if set(reasons) & CONFLICT_REASONS else "complement"
+        dossier["level"] = object_level(found.facts.values())
         if conflicting:
             dossier["conflicting_facts"] = conflicting
         if len(found.subjects) > 1:
@@ -283,4 +304,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]
+__all__ = ["SAME_NAME", "SAME_RECORD_ROW", "object_level", "CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]

@@ -1,11 +1,11 @@
 id: revise-chief-overview
-version: 1.0.0
+version: 1.1.0
 description: Correct chapter 1 after the program check
 agent: report-consultant
 objective: 程序核对了你提交的第一章，下面是要改的问题。改好后重新提交完整的第一章。
 input_contract: ledger_chief_check
 output_contract: ledger_chief_chapter_1
 constraints:
-- 只改 findings 指出的问题，其余内容保持不变。
+- 只改 findings 指出的问题，其余内容保持不变。占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留，数值和数量只用占位符。
 tools: []
 recovery: typed-turn-recovery

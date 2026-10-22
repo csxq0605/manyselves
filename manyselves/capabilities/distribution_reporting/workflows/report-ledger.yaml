@@ -1,5 +1,5 @@
 id: report-ledger
-version: 1.1.0
+version: 1.2.0
 description: Judge into a ledger first, relate across modules, review each row with what it cites, write once, then check and deliver
 tasks:
 - read-project
@@ -79,6 +79,33 @@ actions:
     context: context
     ledger: built
     relations: relations
+  output_variable: related
+- id: plan-reread
+  kind: invoke_tool
+  tool: plan-photo-reread
+  input_variables:
+    ledger: related
+  output_variable: reread_plan
+- id: reread-items
+  kind: set_variable
+  variable: reread_items
+  value_variable: reread_plan
+  field: reread_items
+- id: reread-photos
+  kind: map
+  items_variable: reread_items
+  key_field: photo_id
+  workflow: ledger-photo-reread
+  key_input_variable: item_key
+  output_variable: rereads
+  errors_variable: reread_errors
+  max_concurrency: 4
+- id: apply-reread
+  kind: invoke_tool
+  tool: apply-photo-reread
+  input_variables:
+    ledger: related
+    rereads: rereads
   output_variable: ledger
 - id: ledger-snapshot
   kind: set_variable

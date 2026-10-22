@@ -24,6 +24,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .action_table import ACTION_PRIORITY_GROUPS, ACTION_TABLE_HEADERS
+from .value_slots import (
+    SLOT,
+    fill_slots,
+    mispaired_slots,
+    quote_findings,
+    slot_findings,
+    strip_slots,
+)
 
 Disposition = Literal["concern", "no_concern", "undetermined", "not_applicable"]
 Priority = Literal["重要，紧急", "重要，不紧急", "一般"]
@@ -120,6 +128,19 @@ class JudgmentRow(_Model):
             "没有出处的后果写成“可能……，待核实”"
         ),
     )
+    hazard_mechanism: str = Field(
+        default="", description="后果怎样发生：从现状到后果经过什么过程，一句话"
+    )
+    hazard_conditions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "关注行必填：后果成立要满足的条件，一条一项；能由本行所引事实看出已满足的写明是哪项事实，"
+            "看不出的写成待核实的条件"
+        ),
+    )
+    hazard_checks: list[str] = Field(
+        default_factory=list, description="要确认后果还需核实的事项，一条一项；没有就不写"
+    )
     action: JudgmentAction | None = None
     gap: JudgmentGap | None = None
     photo_ids: list[str] = Field(default_factory=list)
@@ -149,16 +170,17 @@ class JudgmentSet(_Model):
 
 
 class CandidateReview(_Model):
-    """An author's decision on one candidate relation the knowledge base lists."""
+    """A candidate relation the author looked at and found not to hold here.
 
-    relation: str = Field(min_length=1, description="照抄 relation_names 里的一个名称")
-    decision: Literal["linked", "not_linked"] = Field(
-        description="linked=本模块有行按这条关系连了别的模块的行；not_linked=没有连"
+    The knowledge base's relations are references, not a list to satisfy:
+    a relation that does not hold for this case is simply not linked.
+    """
+
+    relation: str = Field(min_length=1, description="考虑过、但在本次情况下不成立的关系名称")
+    decision: Literal["not_linked"] = Field(
+        default="not_linked", description="只记考虑过、不成立"
     )
-    reason: str = Field(
-        min_length=1,
-        description="连了：连了哪些行；没连：为什么（例如一边没有相关的行，或要核实的条件看不出来）",
-    )
+    reason: str = Field(default="", description="可不写")
 
 
 class RelationSet(_Model):
@@ -170,7 +192,7 @@ class RelationSet(_Model):
     )
     considered: list[CandidateReview] = Field(
         default_factory=list,
-        description="relation_names 里的每一种候选关系各写一条：连还是不连，以及理由",
+        description="可选：考虑过、但本次不成立的候选关系名称；不用逐条覆盖，也不用写理由",
     )
 
 
@@ -212,8 +234,9 @@ def ledger_findings(
     checkpoint, basis or hazard must be one of the values of what the row
     cites; counts and ratios are left to the report check.
     A concern row names the sources of its hazard among what it cites, or
-    marks the hazard as 待核实.  A row resting only on summary-sheet entries
-    (another author's assessment) is not 现场确认.
+    marks the hazard as 待核实, and states the conditions under which it holds.
+    (A row resting only on summary-sheet entries is set to 来源作者意见 by
+    ``settle_evidence_status``; ``summary_evidence_ids`` is kept for callers.)
     """
 
     submodules = set(submodule_ids)
@@ -251,13 +274,6 @@ def ledger_findings(
                 + "、".join(stray)
             )
         problems.extend(_hazard_problems(row))
-        summaries = set(summary_evidence_ids)
-        if (
-            row.evidence_status == "现场确认"
-            and row.evidence_ids
-            and set(row.evidence_ids) <= summaries
-        ):
-            problems.append("所引事实都来自汇总表里的既有评估，证据状态应是“来源作者意见”，不是“现场确认”")
         covered.update(row.evidence_ids)
         texts = [row.checkpoint, row.basis, row.hazard]
         if row.action is not None:
@@ -301,6 +317,27 @@ def ledger_findings(
 UNVERIFIED_MARK = "待核实"
 
 
+def settle_evidence_status(
+    rows: Sequence[JudgmentRow], summary_evidence_ids: Iterable[str]
+) -> list[JudgmentRow]:
+    """A row resting only on summary-sheet entries is another author's opinion.
+
+    The summary sheet's rows are the source author's own assessment, a fixed
+    property of the table: the program sets the status instead of asking the
+    author to.  Only the stronger claim 现场确认 is lowered.
+    """
+
+    summaries = set(summary_evidence_ids)
+    return [
+        row.model_copy(update={"evidence_status": "来源作者意见"})
+        if row.evidence_status == "现场确认"
+        and row.evidence_ids
+        and set(row.evidence_ids) <= summaries
+        else row
+        for row in rows
+    ]
+
+
 def _hazard_problems(row: JudgmentRow) -> list[str]:
     if row.disposition != "concern":
         return []
@@ -312,6 +349,8 @@ def _hazard_problems(row: JudgmentRow) -> list[str]:
     }
     stray = [source for source in row.hazard_sources if source not in cited]
     problems = []
+    if not any(condition.strip() for condition in row.hazard_conditions):
+        problems.append("hazard 没有写成立条件（hazard_conditions）；写明后果要在什么条件下才会发生")
     if stray:
         problems.append("hazard 的出处不在本行所引的资料里：" + "、".join(stray) + "；出处先写进本行的引用")
     if not row.hazard_sources and UNVERIFIED_MARK not in row.hazard:
@@ -414,12 +453,17 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
     if not concerns:
         return note or None
     groups: dict[tuple[str, ...], dict[str, list[str]]] = {}
+    # A finding not confirmed on site is said once, under the table.
+    unconfirmed: dict[str, list[str]] = {}
     for row in concerns:
         problem = row.basis
         if row.evidence_status != "现场确认":
-            problem = f"（{row.evidence_status}）{problem}"
+            objects = unconfirmed.setdefault(row.evidence_status, [])
+            if row.object not in objects:
+                objects.append(row.object)
         key = (
             row.checkpoint,
+            row.evidence_status,
             problem,
             row.risk_level or "",
             row.action.measure if row.action else "",
@@ -431,12 +475,17 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
     has_photos = any(group["photos"] for group in groups.values())
     headers = PROBLEM_TABLE_HEADERS if has_photos else PROBLEM_TABLE_HEADERS[:-1]
     body = []
-    for (checkpoint, problem, level, measure), group in groups.items():
+    for (checkpoint, _status, problem, level, measure), group in groups.items():
         values = ["、".join(group["objects"]), checkpoint, problem, level, measure]
         if has_photos:
             values.append("、".join(group["photos"]))
         body.append(values)
     table = _table(headers, body)
+    if unconfirmed:
+        status_note = "；".join(
+            f"{'、'.join(objects)}的证据状态为{status}" for status, objects in unconfirmed.items()
+        ) + "。"
+        note = status_note + note
     return table + ("\n\n" + note if note else "")
 
 
@@ -502,25 +551,47 @@ class CrossFinding(_Model):
     subject: str = Field(min_length=1, description="对象，用对象证据链里的写法")
     conclusion: str = Field(
         min_length=1,
-        description="跨模块综合结论，一到两句：几个模块的判断合起来说明什么（相互印证、可排除的原因、"
-        "共同指向的根因或处置先后），原样写进 risk_overview",
+        description="跨模块综合结论，一句、一行：几个模块的判断合起来说明什么（相互印证、可排除的原因、"
+        "共同指向的根因或处置先后）；程序把它作为 3.1 风险汇总的一条写进去",
     )
     row_ids: list[str] = Field(min_length=2, description="结论依据的判断行，至少来自两个模块")
 
 
-class ChiefChapter3(_Model):
-    risk_overview: str = Field(
+class ActionText(_Model):
+    """The chief's words for one action group the program formed."""
+
+    group_id: str = Field(pattern=r"^G-", description="action_groups 里的组编号")
+    problem: str = Field(min_length=1, description="发现问题：写明对象，覆盖本组全部对象（可用对象清单占位符）")
+    hazard: str = Field(min_length=1, description="风险与危害：写成“若〈条件〉，可能〈后果〉”，条件和后果取自本组判断行")
+    solution: str = Field(
         min_length=1,
-        description="3.1 正文：先用几条总体结论概括全报告的主要风险（条数按实际，每条一句），"
-        "再写“详述见下”，按评估维度各列几条短要点，每条一句，能定位到第二章小节",
+        description="解决方案：对象上的动作，建议时限写在动作里（如“建议〈时限〉内…”），有依据时末尾写“依据：…”",
+    )
+    note: str = Field(default="", description="备注；模块之间对同一对象结论不同时，在这里说明以负责模块为准")
+
+
+class DimensionPoints(_Model):
+    module_id: str = Field(min_length=1)
+    points: list[str] = Field(min_length=1, description="本维度的要点，每条一句、一行，能定位到第二章小节")
+
+
+class ChiefChapter3(_Model):
+    risk_summary: list[str] = Field(
+        default_factory=list,
+        description="3.1“风险汇总如下”：全报告的主要风险，每条一句、一行，条数按实际；"
+        "跨对象综合结论由程序从 cross_findings 加进来，不在这里重写",
+    )
+    risk_details: list[DimensionPoints] = Field(
+        default_factory=list,
+        description="3.1“详述见下”：按评估维度各列几条短要点，每条一句、一行",
     )
     cross_findings: list[CrossFinding] = Field(
         default_factory=list,
         description="对象证据链得出的跨模块综合结论；能合起来说明问题的对象各写一条，不凑数",
     )
     action_lead: str = Field(min_length=1, description="3.2 表前导语，一句话")
-    actions: list[ChiefAction] = Field(
-        description="3.2 行动速查表的行，系统按优先级分组生成五列表格"
+    actions: list[ActionText] = Field(
+        description="3.2 速查表：action_groups 里每组写一条，组由程序按优先级和检查项分好、排好"
     )
 
 
@@ -609,7 +680,10 @@ def action_table_markdown(
         members = [action for action in actions if action.priority == group]
         if not members:
             continue
-        blocks.append(f"**{group}**")
+        notes = [_status_note(a.row_ids, row_status) for a in members]
+        # A note every row of the group shares is stated once, by the group.
+        shared = notes[0] if len(members) > 1 and notes[0] and len(set(notes)) == 1 else ""
+        blocks.append(f"**{group} · 以下各项{shared}**" if shared else f"**{group}**")
         blocks.append(
             _table(
                 ACTION_TABLE_HEADERS,
@@ -620,14 +694,159 @@ def action_table_markdown(
                         a.hazard,
                         a.solution,
                         "；".join(
-                            text for text in (a.note, _status_note(a.row_ids, row_status)) if text
+                            text for text in (a.note, "" if shared else note) if text
                         ),
                     ]
-                    for a in members
+                    for a, note in zip(members, notes, strict=True)
                 ),
             )
         )
     return "\n\n".join(block for block in blocks if block)
+
+
+_RISK_ORDER = {"高": 0, "中": 1, "低": 2}
+
+
+def action_groups(
+    rows_by_module: Mapping[str, Sequence[JudgmentRow]],
+    checkpoint_of: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """3.2's rows, formed and ordered by the program.
+
+    Rows with an action are grouped by priority and checkpoint.  The
+    checkpoint is the declared column (or summary-sheet row) of the row's
+    facts, given in ``checkpoint_of`` (fact id -> checkpoint); a row whose
+    facts declare none keeps its own checkpoint text.  Groups follow the
+    priority order, then the highest risk level, then first appearance.
+    """
+
+    declared = checkpoint_of or {}
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    order = 0
+    for rows in rows_by_module.values():
+        for row in rows:
+            if row.action is None:
+                continue
+            fields = sorted({declared[e] for e in row.evidence_ids if declared.get(e)})
+            checkpoint = "、".join(fields) if fields else row.checkpoint
+            group = groups.setdefault(
+                (row.action.priority, checkpoint),
+                {
+                    "priority": row.action.priority,
+                    "checkpoint": checkpoint,
+                    "row_ids": [],
+                    "objects": [],
+                    "risk_levels": [],
+                    "measures": [],
+                    "timeframes": [],
+                    "first": order,
+                },
+            )
+            order += 1
+            group["row_ids"].append(row.id)
+            for key, value in (
+                ("objects", row.object),
+                ("risk_levels", row.risk_level),
+                ("measures", row.action.measure),
+                ("timeframes", row.action.timeframe),
+            ):
+                if value and value not in group[key]:
+                    group[key].append(value)
+    ordered = sorted(
+        groups.values(),
+        key=lambda g: (
+            ACTION_PRIORITY_GROUPS.index(g["priority"]),
+            min((_RISK_ORDER.get(level, 3) for level in g["risk_levels"]), default=3),
+            g["first"],
+        ),
+    )
+    return [
+        {"group_id": f"G-{index:02d}", **{k: v for k, v in group.items() if k != "first"}}
+        for index, group in enumerate(ordered, 1)
+    ]
+
+
+def grouped_actions(
+    groups: Sequence[Mapping[str, Any]], texts: Sequence[ActionText]
+) -> list[ChiefAction]:
+    """Join the program's groups with the chief's words, in the program's order.
+
+    A group the chief left unwritten keeps its rows' own words, so no action
+    row drops out of 3.2.
+    """
+
+    by_group = {text.group_id: text for text in texts}
+    actions = []
+    for group in groups:
+        text = by_group.get(group["group_id"]) or ActionText(
+            group_id=group["group_id"],
+            problem=f"{'、'.join(group['objects'])}：{group['checkpoint']}",
+            hazard="见第二章相应小节",
+            solution="；".join(
+                f"{measure}（{'、'.join(group['timeframes'])}）" if group["timeframes"] else measure
+                for measure in group["measures"]
+            ),
+        )
+        actions.append(
+            ChiefAction(
+                priority=group["priority"],
+                problem=text.problem,
+                hazard=text.hazard,
+                solution=text.solution,
+                note=text.note,
+                row_ids=list(group["row_ids"]),
+            )
+        )
+    return actions
+
+
+def risk_overview_markdown(
+    chapter3: ChiefChapter3,
+    module_titles: Mapping[str, str],
+    conflicts: Sequence[str] = (),
+) -> str:
+    """3.1 in the expert version's two layers, one line per item.
+
+    The summary layer holds the chief's risks, then each cross-object
+    conclusion and each unresolved conflict as its own line; the detail layer
+    lists each dimension's points.
+    """
+
+    summary = [
+        *(line.strip() for line in chapter3.risk_summary if line.strip()),
+        *(f.conclusion.strip() for f in chapter3.cross_findings),
+        *(line.strip() for line in conflicts if line.strip()),
+    ]
+    blocks = []
+    if summary:
+        blocks.append("风险汇总如下：")
+        blocks.append("\n".join(f"{index}. {line}" for index, line in enumerate(summary, 1)))
+    details = [d for d in chapter3.risk_details if d.points]
+    if details:
+        blocks.append("详述见下：")
+        for dimension in details:
+            blocks.append(f"**{module_titles.get(dimension.module_id, dimension.module_id)}**")
+            blocks.append("\n".join(f"- {point.strip()}" for point in dimension.points))
+    return "\n\n".join(blocks)
+
+
+def action_group_findings(
+    groups: Sequence[Mapping[str, Any]], texts: Sequence[ActionText]
+) -> dict[str, dict[str, str]]:
+    """Every program group gets the chief's words once; no other group is named."""
+
+    known = [group["group_id"] for group in groups]
+    written = [text.group_id for text in texts]
+    problems = []
+    if missing := [g for g in known if g not in written]:
+        problems.append("以下行动组没有写：" + "、".join(missing))
+    if unknown := sorted(set(written) - set(known)):
+        problems.append("以下组编号不存在：" + "、".join(unknown))
+    if repeated := sorted({g for g in written if written.count(g) > 1}):
+        problems.append("以下组写了不止一次：" + "、".join(repeated))
+    if not problems:
+        return {}
+    return {"3.2": _finding("；".join(problems), "action_groups 里每组写一条，组编号照抄。")}
 
 
 def findings_overview_markdown(
@@ -787,8 +1006,6 @@ _UNIT_ALIASES = {
     "°C": "℃", "%RH": "%", "×": "倍",
     "处": "个", "台": "个", "面": "个", "组": "个", "只": "个",
 }
-# "其余 N 个" is a known count less another known count.
-_REMAINDER = re.compile(r"(?:其余|其他|另外|余下|剩余)(?:的)?\s*(\d+)\s*(?:个|处|台|面|组|只)")
 
 
 def numbers_with_units(text: str) -> set[tuple[str, str]]:
@@ -818,51 +1035,6 @@ def known_values_from_text(texts: Iterable[str]) -> list[tuple[float, str]]:
     ]
 
 
-_SENTENCE = re.compile(r"[^。；;\n]+")
-
-
-def _object_names(subject: str) -> list[str]:
-    parts = [part.strip() for part in subject.split("/") if part.strip()]
-    return list(dict.fromkeys([subject, *parts[1:]]))
-
-
-def _mispaired(
-    text: str, subject_values: Mapping[str, Iterable[tuple[float, str]]]
-) -> list[str]:
-    """Values written next to one object that belong to a different object."""
-
-    values = {
-        subject: {(_UNIT_ALIASES.get(unit, unit), float(value)) for value, unit in pairs}
-        for subject, pairs in subject_values.items()
-    }
-    owners: dict[tuple[str, float], set[str]] = {}
-    for subject, pairs in values.items():
-        for pair in pairs:
-            owners.setdefault(pair, set()).add(subject)
-    problems: list[str] = []
-    for sentence in _SENTENCE.findall(text):
-        named = {
-            subject
-            for subject in values
-            if any(name in sentence for name in _object_names(subject))
-        }
-        if len(named) != 1:
-            continue
-        (subject,) = named
-        written_values = numbers_with_units(sentence)
-        for written, unit in written_values:
-            if sum(1 for _, other in written_values if other == unit) > 1:
-                continue  # a comparison between objects
-            if (unit, float(written)) in values[subject]:
-                continue
-            others = owners.get((unit, float(written)), set())
-            if others and any(u == unit for u, _ in values[subject]):
-                problems.append(
-                    f"{subject} 旁写的 {written}{unit} 是 " + "、".join(sorted(others)) + " 的值"
-                )
-    return problems
-
-
 # Words of this product's own workflow that a reader of the report cannot know.
 # Ordinary trade words with another meaning (设备台账, 返修) are not listed.
 PROCESS_TERMS = (
@@ -888,54 +1060,47 @@ def report_check_findings(
     *,
     sections: Mapping[str, str],
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
-    known_values: Iterable[tuple[float, str]],
-    subject_values: Mapping[str, Iterable[tuple[float, str]]] | None = None,
+    slots: Mapping[str, Mapping[str, Any]],
+    names: Iterable[str] = (),
+    section_ids: Iterable[str] = (),
+    digit_texts: Mapping[str, Iterable[str]] | None = None,
+    quote_sources: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Program check of the written sections against the ledger and facts.
+    """Program check of the written sections against the slots and the ledger.
 
-    A number written with a unit must be a fact or calculation value at the
-    written precision; a count (个/处/台…) must be a program count or a count
-    of this section's rows, or "其余 N 个" where N is one known count less
-    another; in a sentence naming exactly one known object, a
-    value must be that object's own value (all blocking).  A concern row whose object the section
-    never names is reported as minor, because wording may differ.
+    Values are written as slots the program fills (``value_slots``): a slot
+    must exist, no Arabic numeral may stand outside one except in what the
+    program knows carries digits, a value slot next to one object must be that
+    object's own, and text in 「」 must be the source author's recorded words
+    (all blocking).  A concern row whose object the section never names is
+    minor, because wording may differ.
     """
 
-    known: dict[str, set[float]] = {}
-    for value, unit in known_values:
-        known.setdefault(_UNIT_ALIASES.get(unit, unit), set()).add(float(value))
+    names = list(names)
+    section_ids = list(section_ids)
     findings: dict[str, dict[str, str]] = {}
     for section_id, text in sections.items():
-        rows = rows_by_submodule.get(section_id, ())
-        local = {unit: set(values) for unit, values in known.items()}
-        # A count of this section's own rows is also a known count.
-        counts = local.setdefault("个", set())
-        for disposition in ("concern", "undetermined", "no_concern", "not_applicable"):
-            counts.add(float(len({r.object for r in rows if r.disposition == disposition})))
-        counts.add(float(len({r.object for r in rows})))
-        remainders = {
-            float(number)
-            for number in _REMAINDER.findall(text)
-            if any(a - b == float(number) for a in counts for b in counts)
-        }
-        unknown = sorted(
-            f"{value}{unit}"
-            for value, unit in numbers_with_units(text)
-            if not _matches_known(value, unit, local)
-            and not (unit == "个" and float(value) in remainders)
+        problems = slot_findings(
+            text,
+            slots,
+            names=names,
+            section_ids=section_ids,
+            digit_texts=(digit_texts or {}).get(section_id, ()),
         )
-        mispaired = _mispaired(text, subject_values or {})
-        if mispaired:
-            unknown.extend(mispaired)
+        problems.extend(mispaired_slots(text, slots))
+        if quoted := quote_findings(text, (quote_sources or {}).get(section_id, ())):
+            problems.append("「」里的话不是来源记录的原话：" + "、".join(quoted))
+        filled = fill_slots(text, slots)
         missing = [
             row.id
             for row in rows_by_submodule.get(section_id, ())
-            if row.disposition == "concern" and row.object not in text
+            if row.disposition == "concern" and row.object not in filled
         ]
-        if unknown:
+        if problems:
             findings[section_id] = _finding(
-                "正文中的数值或数量对不上事实、程序统计或本节判断行：" + "、".join(unknown),
-                "数值、数量和对象—数值配对改为事实或程序统计里的值，或删去没有依据的数值。",
+                "；".join(problems),
+                "数值、数量和对象清单改用对应的占位符（〔V-…〕〔K-…〕〔S-…〕），不自己写数字；"
+                "「」里只放来源记录的原话。",
             )
         elif missing:
             findings[section_id] = _finding(
@@ -943,7 +1108,7 @@ def report_check_findings(
                 "在正文里点名这些对象。",
                 severity="minor",
             )
-        if leaked := process_terms(text):
+        if leaked := process_terms(strip_slots(text)):
             problem = "正文里出现了内部流程用语或编号：" + "、".join(leaked)
             earlier = findings.get(section_id)
             findings[section_id] = _finding(
@@ -962,7 +1127,7 @@ def layout_findings(
     sections: Mapping[str, str],
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
     elsewhere: Mapping[str, Sequence[str]],
-    cited_values: Mapping[str, Iterable[Sequence[Any]]],
+    slots: Mapping[str, Mapping[str, Any]],
     row_sections: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Minor findings on where the prose points and what it repeats.
@@ -973,8 +1138,8 @@ def layout_findings(
 
     The prose points to a table below although the section has no problem
     table; or a row whose data another section presents (``elsewhere``) has
-    two or more of its facts' values written again in this section, where one
-    key value with the section reference is enough.
+    two or more of its facts' value slots written again in this section, where
+    one key value with the section reference is enough.
     """
 
     findings: dict[str, dict[str, str]] = {}
@@ -984,18 +1149,17 @@ def layout_findings(
         # Only concern rows make a table; the rest is one sentence at most.
         if _TABLE_POINTER.search(text) and not any(row.disposition == "concern" for row in rows):
             problems.append("正文写了“见下表”一类的话，但本节没有问题表")
-        written = numbers_with_units(text)
+        written = list(dict.fromkeys(m.group(1) for m in SLOT.finditer(text)))
         for row in rows:
             if row.id not in elsewhere:
                 continue
-            own = {
-                (_UNIT_ALIASES.get(unit, unit), float(value))
-                for evidence_id in row.evidence_ids
-                for value, unit in cited_values.get(evidence_id, ())
-            }
-            repeated = sorted(
-                f"{value}{unit}" for value, unit in written if (unit, float(value)) in own
-            )
+            own = set(row.evidence_ids)
+            repeated = [
+                f"〔{slot_id}〕"
+                for slot_id in written
+                if slot_id.startswith("V-")
+                and own & set((slots.get(slot_id) or {}).get("evidence_ids") or ())
+            ]
             if len(repeated) >= 2:
                 problems.append(
                     f"{row.object} 的数据由 " + "、".join(elsewhere[row.id])
@@ -1032,7 +1196,14 @@ __all__ = [
     "SectionText",
     "SectionSet",
     "JudgmentRevision",
+    "ActionText",
     "ChiefChapter3",
+    "DimensionPoints",
+    "action_group_findings",
+    "action_groups",
+    "grouped_actions",
+    "risk_overview_markdown",
+    "settle_evidence_status",
     "CrossFinding",
     "cross_finding_findings",
     "ChiefChapter1",

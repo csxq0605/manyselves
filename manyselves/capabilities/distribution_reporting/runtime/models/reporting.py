@@ -611,6 +611,9 @@ class EvidenceMeasurement(ReportingModel):
     quantity: str = Field(min_length=1)
     value: float | None
     unit: str
+    label: str | None = Field(
+        default=None, description="The input table's header label of this quantity's column"
+    )
     source_cell: str | None = None
     derived_from: list[str] = Field(default_factory=list)
     missing_reason: str | None = None

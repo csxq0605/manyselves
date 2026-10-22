@@ -16,12 +16,25 @@ class RecordValue(StrictModel):
     unit: str = ""
 
 
+class PhotoQuantity(StrictModel):
+    """A quantity the table declares for the photo's object: what to look for."""
+
+    quantity: str = Field(min_length=1, description="Key to report a reading under.")
+    label: str = Field(description="The table's header label of the quantity.")
+    unit: str = ""
+
+
 class PhotoReadingRecord(StrictModel):
-    """One table record a photo is bound to; the primary record comes first."""
+    """One table record a photo is bound to; the primary record comes first.
+
+    The reader is told where the photo sits and what the column checks, not
+    the recorded values, so a reading is never copied from the record.
+    """
 
     evidence_id: str = Field(min_length=1)
     subject: str
-    fact: str
+    checkpoint: str = ""
+    fact: str = ""
     sheet: str | None = None
     cell: str | None = None
     submodule_id: str | None = None
@@ -45,6 +58,10 @@ class PhotoReadingInput(StrictModel):
         description="Header text of the photo's column: why and when the photo is attached.",
     )
     records: list[PhotoReadingRecord] = Field(min_length=1)
+    quantities: list[PhotoQuantity] = Field(
+        default_factory=list,
+        description="Quantities the table declares for this object, to read off the photo if shown.",
+    )
 
 
 class PhotoReading(StrictModel):
@@ -60,9 +77,17 @@ class PhotoReading(StrictModel):
     visible: str
     transcription: list[dict[str, Any]] = Field(default_factory=list)
     photo_date: str | None = None
+    readings: list[dict[str, Any]] = Field(
+        default_factory=list, description="Structured readings of declared quantities."
+    )
     record_match: Literal["matches", "conflicts", "cannot_tell"]
     reason: str
     needs_review: bool
+    reread_agrees: bool | None = Field(
+        default=None,
+        description="A second, independent reading agreed (True) or not (False); None = not re-read.",
+    )
+    reread_reason: str = ""
 
 
 class PhotoReadingPlan(StrictModel):
@@ -93,6 +118,7 @@ __all__ = [
     "PhotoReading",
     "PhotoReadingInput",
     "PhotoReadingPlan",
+    "PhotoQuantity",
     "PhotoReadingRecord",
     "RecordValue",
     "PhotoReadingSummary",

@@ -277,13 +277,15 @@ async def test_provider_sends_the_image_and_reuses_a_completed_reading(tmp_path:
         bus.shutdown()
         await bus_task
 
-    assert outcome.status == "ok" and outcome.result == SUBMISSION
-    assert reused.status == "ok" and reused.result == SUBMISSION
+    assert outcome.status == "ok" and outcome.result == {**SUBMISSION, "readings": []}
+    assert reused.status == "ok" and reused.result == {**SUBMISSION, "readings": []}
     assert [message.images for message in received] == [
         [{"path": str((tmp_path / "Work/assets/P-0001.png").resolve()), "media_type": "image/png"}],
         [{"path": str((tmp_path / "Work/assets/P-0002.png").resolve()), "media_type": "image/png"}],
     ]
-    assert "E-0001" in received[0].content and "进线端子温度=35℃" in received[0].content
+    # The reader is told where the photo sits and what to look for, never the recorded value.
+    assert "E-0001" in received[0].content and "35℃" not in received[0].content
+    assert '"quantity": "记录值"' in received[0].content
     assert other.status == "ok"
     # The lane session is reused, but the next photo starts with an empty history.
     assert () in restored
@@ -312,13 +314,14 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
             {"label": "最高温度", "text": "60.2℃", "legible": True},
             {"label": "柜号", "text": "D1701", "legible": False},
         ],
+        "readings": [{"quantity": "记录值", "value": 60.2, "unit": "℃", "legible": True}],
     }
     await _run_workflow(tmp_path, context, _Invoker(conflict))
 
     packet = prepare_module_fact_context(tmp_path, RUN_ID, "2.2").inline_context
     assert '"photo_reading":"P-0001：柜内进线端子' in packet
     assert "抄写：最高温度=60.2℃，柜号=D1701（看不清）；照片日期：2025-06-12 10:31" in packet
-    assert "以表格记录为准，照片读数待核（记录值 35℃；照片可见 60.2℃）；需人工复核" in packet
+    assert "以表格记录为准，照片读数或归属待核（记录值 照片 60.2，记录 35）；需人工复核" in packet
     assert "逐张读图结果" in packet
 
     [dossier] = build_joint_dossiers(tmp_path, RUN_ID, modules)
@@ -329,31 +332,24 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     assert fact["photo_conflicts"] is True and fact["photo_readings"][0].startswith("P-0001：")
 
 
-def test_program_compares_only_legible_numbers_and_never_names_or_dates() -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
-        PhotoReadingRecord,
-    )
+def test_program_compares_structured_readings_by_quantity_and_names_another_record() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
-        compare_with_records,
+        compare_readings,
+        readings_agree,
     )
 
-    record = [PhotoReadingRecord(evidence_id="E-1", subject="14#柜", fact="11.3A",
-                                 values=[{"value": 11.3, "unit": "A"}])]
+    bound = {"residual_current": [11.3]}
+    others = {"residual_current": [[2.9, "E-7"]]}
 
-    def items(*pairs):
-        return [{"label": "x", "text": text, "legible": legible} for text, legible in pairs]
+    def read(value, legible=True, quantity="residual_current"):
+        return [{"quantity": quantity, "value": value, "unit": "A", "legible": legible}]
 
-    assert compare_with_records(record, items(("11.27A", True)))[0] == "matches"
-    assert compare_with_records(record, items(("OL", True)))[0] == "cannot_tell"
-    assert compare_with_records(record, items(("2.9", False)))[0] == "cannot_tell"
-    assert compare_with_records(record, items(("2025-06-12", True), ("D1601", True)))[0] == (
-        "cannot_tell"
-    )
-    assert compare_with_records(record, items(("2.9A", True)))[0] == "conflicts"
-    assert compare_with_records(record, items(("11.3", True)))[0] == "matches"
-    # A watermark temperature and a code beside the screen are not readings.
-    assert compare_with_records(
-        record, items(("23℃", True), ("防伪码 8234 2", True), ("-19.9", False))
-    )[0] == "cannot_tell"
-    no_value = [PhotoReadingRecord(evidence_id="E-2", subject="17号楼", fact="NG")]
-    assert compare_with_records(no_value, items(("16号楼", True)))[0] == "cannot_tell"
+    assert compare_readings(read(11.27), bound)[0] == "matches"
+    assert compare_readings(read(None, False), bound)[0] == "cannot_tell"
+    # A quantity the bound records do not declare is not compared.
+    assert compare_readings(read(23, quantity="ambient_temperature"), bound)[0] == "cannot_tell"
+    match, reason = compare_readings(read(2.9), bound, others)
+    assert match == "conflicts" and "E-7" in reason
+    assert readings_agree(read(11.3), read(11.27))[0] is True
+    agrees, why = readings_agree(read(11.3), read(2.9))
+    assert agrees is False and "读数待核" in why

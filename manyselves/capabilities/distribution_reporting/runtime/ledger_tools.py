@@ -28,18 +28,22 @@ import yaml
 from ..domain.calculations import compute, render_calculations, render_statistics, statistics
 from ..domain.judgment_ledger import (
     PROBLEM_TABLE_MARKER,
-    ChiefAction,
+    ActionText,
+    ChiefChapter3,
     CrossFinding,
     DimensionHealth,
     JudgmentRow,
     JudgmentSet,
     KeyRisk,
     Phase,
+    action_group_findings,
+    action_groups,
     action_table_markdown,
     apply_revisions,
     chief_findings,
     cross_finding_findings,
     findings_overview_markdown,
+    grouped_actions,
     known_values_from_text,
     layout_findings,
     ledger_findings,
@@ -48,9 +52,22 @@ from ..domain.judgment_ledger import (
     problem_table,
     process_terms,
     report_check_findings,
+    risk_overview_markdown,
+    settle_evidence_status,
 )
 from ..domain.taxonomy import (
     REPORT_TAXONOMY,
+)
+from ..domain.value_slots import (
+    SLOT,
+    fill_slots,
+    format_value,
+    object_names,
+    slot_findings,
+    slot_lines,
+    slot_table,
+    slots_for_evidence,
+    strip_slots,
 )
 from .assets import runtime_photo_ids
 from .cross_module import (
@@ -74,7 +91,16 @@ from .models.agentic import (
 from .models.reporting import EvidenceItem, PhotoAsset, ReportRequest, SpecialTopicPlan
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import build_observation_ledger, shared_labels
-from .photo_reading import load_photo_readings, photo_reading_labels, reading_label
+from .models.agentic import PhotoReadingSubmission
+from .models.photo_reading import PhotoReadingInput
+from .photo_reading import (
+    load_photo_readings,
+    photo_reading_labels,
+    photo_readings_ref,
+    photo_records,
+    reading_label,
+    readings_agree,
+)
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
@@ -95,6 +121,8 @@ from .template_skills import plain_value, skill_order, skills_for_run, skills_wi
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
 CHIEF_OWNER = "chief"
+# Chief sections the edit pass reads as text; 3.1 is drawn from its two
+# structured layers first.
 CHIEF_SECTIONS = {
     "1.1": "assessment_background",
     "1.2": "overall_assessment",
@@ -198,6 +226,46 @@ def _combined(
             if text
         ),
     }
+
+
+def _filled(value: Any, slots: Mapping[str, Mapping[str, Any]]) -> Any:
+    if isinstance(value, str):
+        return fill_slots(value, slots)
+    if isinstance(value, Mapping):
+        return {key: _filled(item, slots) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_filled(item, slots) for item in value]
+    return value
+
+
+def _section_ids() -> list[str]:
+    """Every section number the report has: the run's chapter 2 tree and the chief's."""
+
+    return [
+        *CHIEF_SECTION_TITLES,
+        *REPORT_TAXONOMY,
+        *(sub_id for module in REPORT_TAXONOMY.values() for sub_id in module.submodules),
+    ]
+
+
+def _strings(value: Any) -> list[str]:
+    """Every text a structured chief output holds, ids aside."""
+
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Mapping):
+        return [
+            text
+            for key, item in value.items()
+            # Ids, fixed labels, object names and timeframes (taken from the rows).
+            if key not in {
+                "row_ids", "group_id", "module_id", "priority", "risk_level", "subject", "time",
+            }
+            for text in _strings(item)
+        ]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _strings(item)]
+    return []
 
 
 def _blocking(findings: Mapping[str, Mapping[str, Any]]) -> bool:
@@ -381,7 +449,22 @@ def _section_brief(
     units: Mapping[str, Mapping[str, str]],
     elsewhere: Mapping[str, Sequence[str]],
     names: Sequence[str] = (),
+    slots: Mapping[str, Mapping[str, Any]] | None = None,
+    fact_texts: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    related = related_rows(rows, ledger, names)
+    by_id = {other.id: other for others in ledger.values() for other in others}
+    cited = {e for row in rows for e in row.evidence_ids} | {
+        e
+        for row in rows
+        for relation in row.relations
+        if relation.row_id in by_id
+        for e in by_id[relation.row_id].evidence_ids
+    }
+    slot_ids = [
+        *(c for row in rows for c in row.calculation_ids),
+        *slots_for_evidence(cited, slots or {}),
+    ]
     return {
         "submodule_id": sub["id"],
         "title": sub["title"],
@@ -390,9 +473,17 @@ def _section_brief(
         "problem_table_marker": PROBLEM_TABLE_MARKER,
         # Only concern rows make a problem table.
         "has_problem_table": any(row.disposition == "concern" for row in rows),
-        "related_rows": related_rows(rows, ledger, names),
+        "related_rows": related,
         "rule_standards": section_standards(rows, units),
         "data_elsewhere": {row.id: list(elsewhere[row.id]) for row in rows if row.id in elsewhere},
+        # What each value slot holds; the prose names the slot, the program writes the value.
+        "value_slots": slot_lines(slot_ids, slots or {}),
+        # The recorded words of rows that rest on another author's opinion.
+        "source_quotes": {
+            row.id: [(fact_texts or {}).get(e, "") for e in row.evidence_ids if (fact_texts or {}).get(e)]
+            for row in rows
+            if row.evidence_status == "来源作者意见"
+        },
     }
 
 
@@ -422,7 +513,9 @@ class LedgerTools:
                 self.workspace, run_id, global_root=self.global_knowledge_root
             )
             calculations, calculation_gaps = compute(items)
-            counted, statistic_lines = statistics(items, start=len(calculations) + 1)
+            counted, statistic_lines, statistic_lists = statistics(
+                items, start=len(calculations) + 1
+            )
             roles = yaml.safe_load(_ROLES_FILE.read_text(encoding="utf-8"))
             fact_blocks: list[str] = []
             knowledge_blocks: list[str] = []
@@ -515,8 +608,9 @@ class LedgerTools:
                     *knowledge_blocks,
                     *(
                         ["# 判断条件（知识库）\n"
-                         "知识库对各类记录能否比较、怎样判断的适用条件。判断以知识单元的限值、结论标准、"
-                         "依据状态和这里的条件为准；专家版方法里的判断方法只作思路参考，与这里冲突时以这里为准。\n\n"
+                         "知识库对各类记录能否比较、怎样判断的适用条件。知识单元的限值、结论标准、依据状态和这里的条件"
+                         "是判断的参考，通常准确有效；结论按本项目的实际情况分析，适用才照它判断。"
+                         "专家版方法里的判断方法只作思路参考，与这里冲突时以这里为准。\n\n"
                          + conditions]
                         if (conditions := knowledge.judgment_conditions())
                         else []
@@ -547,6 +641,7 @@ class LedgerTools:
                     known_values.append((float(measurement.value), measurement.unit))
         calculations = [*calculations, *counted]
         known_values.extend((calc.value, calc.unit) for calc in calculations)
+        slots = slot_table(items, calculations, statistic_lists)
         subject_values: dict[str, list[tuple[float, str]]] = {}
         for item in items:
             pairs = subject_values.setdefault(item.subject, [])
@@ -594,6 +689,17 @@ class LedgerTools:
                 "default_sections": {
                     item.id: item.submodule_id for item in items if item.submodule_id
                 },
+                # Values the program writes into the prose, by slot.
+                "slots": slots,
+                "object_names": object_names(item.subject for item in items),
+                # The checkpoint a record's column (or summary-sheet row) declares.
+                "checkpoint_of": {
+                    item.id: (item.subject if item.summary_entry else item.checkpoint_field)
+                    for item in items
+                    if item.summary_entry or item.checkpoint_field
+                },
+                "fact_texts": {item.id: item.fact for item in items},
+                "request_texts": requirements,
             },
         )
         return {
@@ -667,6 +773,8 @@ class LedgerTools:
 
     def _reference(self, run_id: str) -> dict[str, Any]:
         path = self.workspace / f"Work/runs/{run_id}/ledger/reference-values.json"
+        if not path.is_file():
+            return {}
         return json.loads(path.read_text(encoding="utf-8"))
 
     # -- ledger -------------------------------------------------------------
@@ -680,6 +788,9 @@ class LedgerTools:
         for module in context["modules"]:
             module_id = module["module_id"]
             judgment = JudgmentSet.model_validate(value["judgments"][module_id])
+            judgment = judgment.model_copy(update={"rows": settle_evidence_status(
+                judgment.rows, reference.get("summary_evidence_ids") or ()
+            )})
             ledger[module_id] = list(judgment.rows)
             findings[module_id] = ledger_findings(
                 judgment,
@@ -763,23 +874,23 @@ class LedgerTools:
         }
         names = relation_names(self._relation_method(run_id))
         ledger, dropped = checked_relations(ledger, names)
-        reviews: dict[str, list[dict[str, Any]]] = {}
-        unreviewed: dict[str, list[str]] = {}
-        for module_id, chosen in (value.get("relations") or {}).items():
-            considered = list((_plain(chosen) or {}).get("considered") or [])
-            reviews[module_id] = considered
-            seen = {str(entry.get("relation", "")).strip() for entry in considered}
-            if missing := [name for name in names if name not in seen]:
-                unreviewed[module_id] = missing
+        # Candidates an author looked at and found not to hold.  The method's
+        # relations are references: nothing requires every one to be decided.
+        considered_not_valid = {
+            module_id: [
+                str(entry.get("relation", "")).strip()
+                for entry in (_plain(chosen) or {}).get("considered") or []
+                if str(entry.get("relation", "")).strip()
+            ]
+            for module_id, chosen in (value.get("relations") or {}).items()
+        }
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-r1.json", dumped)
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/relations-r1.json",
             {
                 "dropped_relations": dropped,
-                # Each author's decision on every relation the method lists.
-                "candidate_reviews": reviews,
-                "unreviewed_candidates": unreviewed,
+                "considered_not_valid": considered_not_valid,
                 "unlisted_relations": unlisted_relations(ledger, names),
             },
         )
@@ -811,6 +922,95 @@ class LedgerTools:
                 for module in context["modules"]
             ],
         }
+
+    # -- photo re-read ------------------------------------------------------
+
+    def plan_reread(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The photos a problem or a gap rests on, to be read once more, independently.
+
+        Only photos the rows cite themselves, and that the first reading read
+        any declared quantity from: a second reading can then confirm or
+        contradict those numbers.  The reader again gets no recorded values.
+        """
+
+        state = value["ledger"]
+        run_id = state["run_id"]
+        reference = self._reference(run_id)
+        assets = reference.get("photos") or {}
+        readings = load_photo_readings(self.workspace, run_id)
+        ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
+        cited = list(dict.fromkeys(
+            photo_id
+            for rows in ledger.values()
+            for row in rows
+            if row.disposition in {"concern", "undetermined"}
+            for photo_id in row.photo_ids
+        ))
+        index = ProjectEvidenceIndex(self.workspace, run_id)
+        items = index.items() if index.path.is_file() else []
+        by_id = {item.id: item for item in items}
+        planned = []
+        for photo_id in cited:
+            reading = readings.get(photo_id)
+            asset = assets.get(photo_id)
+            if reading is None or asset is None or not reading.readings:
+                continue
+            bound = [by_id[e] for e in reading.evidence_ids if e in by_id]
+            if not bound:
+                continue
+            records, quantities = photo_records(bound, items)
+            planned.append(
+                PhotoReadingInput(
+                    run_id=run_id,
+                    photo_id=photo_id,
+                    photo_path=asset["path"],
+                    media_type=asset["media_type"],
+                    records=records,
+                    quantities=quantities,
+                ).model_dump(mode="json")
+            )
+        return {"reread_items": planned}
+
+    def apply_reread(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Compare each second reading with the first; disagreeing numbers are to be checked.
+
+        The review packets are drawn again so a reviewer sees a photo whose
+        two readings disagree.
+        """
+
+        state = dict(value["ledger"])
+        run_id = state["run_id"]
+        readings = load_photo_readings(self.workspace, run_id)
+        changed = False
+        for photo_id, result in (value.get("rereads") or {}).items():
+            reading = readings.get(photo_id)
+            if reading is None or not result:
+                continue
+            second = PhotoReadingSubmission.model_validate(_plain(result))
+            agrees, reason = readings_agree(
+                reading.readings, [r.model_dump(mode="json") for r in second.readings]
+            )
+            readings[photo_id] = reading.model_copy(update={
+                "reread_agrees": agrees,
+                "reread_reason": reason,
+                "needs_review": reading.needs_review or not agrees,
+            })
+            changed = True
+        if changed:
+            self.store.write_json(photo_readings_ref(run_id), {
+                "run_id": run_id,
+                "readings": [
+                    r.model_dump(mode="json")
+                    for r in sorted(readings.values(), key=lambda r: r.photo_id)
+                ],
+            })
+            reference = self._reference(run_id)
+            ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
+            state["review_items"] = [
+                {**item, "photos": photos_to_check(ledger[item["module_id"]], reference, readings)}
+                for item in state.get("review_items") or []
+            ]
+        return state
 
     def merge_findings(self, value: dict[str, Any]) -> dict[str, Any]:
         """Keep program and reviewer findings side by side.
@@ -897,6 +1097,10 @@ class LedgerTools:
                 row_id for row_id in revision.get("removed_row_ids") or []
                 if not _foreign_row(row_id, module_id)
             ]
+            reference = self._reference(run_id)
+            revised = settle_evidence_status(
+                revised, reference.get("summary_evidence_ids") or ()
+            )
             ledger[module_id] = apply_revisions(ledger[module_id], revised, dropped)
             changed.extend({"module_id": module_id, **row} for row in _dump_rows(revised))
             removed.extend(dropped)
@@ -930,6 +1134,10 @@ class LedgerTools:
             f"Work/runs/{run_id}/ledger/rule-standards.json", standards_coverage(ledger, units)
         )
         elsewhere = self._data_elsewhere(run_id, ledger)
+        reference = self._reference(run_id)
+        groups = action_groups(ledger, reference.get("checkpoint_of") or {})
+        counts = self._write_ledger_counts(run_id, ledger, groups, context["module_titles"])
+        slots = {**(reference.get("slots") or {}), **counts}
         writing_items = []
         for module in context["modules"]:
             rows = ledger[module["module_id"]]
@@ -940,7 +1148,8 @@ class LedgerTools:
                     "sections": [
                         _section_brief(sub, [row for row in rows if row.submodule_id == sub["id"]],
                                        ledger=ledger, units=units, elsewhere=elsewhere,
-                                       names=names)
+                                       names=names, slots=slots,
+                                       fact_texts=reference.get("fact_texts") or {})
                         for sub in module["submodules"]
                     ],
                 }
@@ -950,6 +1159,7 @@ class LedgerTools:
             "ledger": dumped,
             "unanswered_findings": unanswered,
             "writing_items": writing_items,
+            "action_groups": groups,
             "chief_input": {
                 "object_chains": chains,
                 "unresolved_conflicts": [conflict_summary(d) for d in conflicts],
@@ -958,9 +1168,104 @@ class LedgerTools:
                 "action_row_ids": [
                     row.id for rows in ledger.values() for row in rows if row.action is not None
                 ],
+                # 3.2's rows, formed and ordered by the program; the chief writes each once.
+                "action_groups": groups,
+                # Counts over the settled ledger, and the values of the rows
+                # with a problem or a gap, by slot.
+                "value_slots": slot_lines(
+                    [
+                        *counts,
+                        *(
+                            c for rows in ledger.values() for row in rows
+                            if row.disposition in {"concern", "undetermined"}
+                            for c in row.calculation_ids
+                        ),
+                        *slots_for_evidence(
+                            {
+                                e for rows in ledger.values() for row in rows
+                                if row.disposition in {"concern", "undetermined"}
+                                for e in row.evidence_ids
+                            },
+                            slots,
+                        ),
+                    ],
+                    slots,
+                ),
                 "module_titles": context["module_titles"],
             },
         }
+
+    def _write_ledger_counts(
+        self,
+        run_id: str,
+        ledger: Mapping[str, Sequence[JudgmentRow]],
+        groups: Sequence[Mapping[str, Any]],
+        titles: Mapping[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        """Counts over the settled ledger the chief may cite, as slots after the calculations."""
+
+        reference = self._reference(run_id)
+        start = len(reference.get("calculation_ids") or ()) + 1
+        counts: dict[str, dict[str, Any]] = {}
+
+        def add(label: str, value: int) -> None:
+            counts[f"K-{start + len(counts):04d}"] = {
+                "text": format_value(value, "个"), "label": label, "evidence_ids": [],
+            }
+
+        scopes = [("全部维度", [r for rows in ledger.values() for r in rows])]
+        scopes += [(titles.get(m, m), list(rows)) for m, rows in ledger.items()]
+        for scope, rows in scopes:
+            for disposition, word in (("concern", "有问题"), ("undetermined", "不能判定")):
+                objects = {row.object for row in rows if row.disposition == disposition}
+                add(f"{scope}{word}的对象数", len(objects))
+        add("改善行动项数", len(groups))
+        for priority in dict.fromkeys(group["priority"] for group in groups):
+            add(f"“{priority}”行动项数", sum(1 for g in groups if g["priority"] == priority))
+        self.store.write_json(f"Work/runs/{run_id}/ledger/ledger-counts.json", counts)
+        return counts
+
+    def _final_rows(self, run_id: str) -> dict[str, list[JudgmentRow]]:
+        path = self.workspace / f"Work/runs/{run_id}/ledger/judgments.json"
+        if not path.is_file():
+            return {}
+        return {
+            module_id: _rows(rows)
+            for module_id, rows in json.loads(path.read_text(encoding="utf-8")).items()
+        }
+
+    def _slots(self, run_id: str) -> dict[str, dict[str, Any]]:
+        slots = dict(self._reference(run_id).get("slots") or {})
+        path = self.workspace / f"Work/runs/{run_id}/ledger/ledger-counts.json"
+        if path.is_file():
+            slots.update(json.loads(path.read_text(encoding="utf-8")))
+        return slots
+
+    def _digit_texts(
+        self, run_id: str, rows: Sequence[JudgmentRow], *, with_facts: bool = False
+    ) -> list[str]:
+        """Texts the prose may repeat with their digits as they are.
+
+        The request, the rows' objects, checkpoints, measures, timeframes and
+        gaps, and the standards their knowledge units name; for the chief's
+        background (``with_facts``) also the facts themselves.
+        """
+
+        reference = self._reference(run_id)
+        units = self._knowledge_units(run_id)
+        texts = [str(text) for text in reference.get("request_texts") or ()]
+        for row in rows:
+            texts += [row.object, row.checkpoint]
+            if row.action is not None:
+                texts += [row.action.measure, row.action.timeframe]
+            if row.gap is not None:
+                texts += [row.gap.missing, row.gap.requested_input]
+        for entry in section_standards(rows, units):
+            standards = entry.get("standards")
+            texts += [str(s) for s in standards] if isinstance(standards, list) else [str(standards)]
+        if with_facts:
+            texts += list((reference.get("fact_texts") or {}).values())
+        return texts
 
     def _write_knowledge_candidates(
         self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]], names: Sequence[str]
@@ -1106,43 +1411,73 @@ class LedgerTools:
     # -- chief and checks --------------------------------------------------
 
     def check_chief(self, value: dict[str, Any]) -> dict[str, Any]:
-        ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
-        chapter3 = value["chapter3"]
+        final = value["ledger"]
+        ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        groups = final.get("action_groups") or []
+        chapter3 = ChiefChapter3.model_validate(value["chapter3"])
         chapter1 = value.get("chapter1") or {}
         findings = chief_findings(
-            actions=[ChiefAction.model_validate(a) for a in chapter3["actions"]],
+            actions=grouped_actions(groups, chapter3.actions),
             health=[DimensionHealth.model_validate(h) for h in chapter1.get("dimension_health", [])],
             risks=[KeyRisk.model_validate(r) for r in chapter1.get("key_risks", [])],
             rows_by_module=ledger,
             # Each check reviews the chapter just written, which its revision can fix.
             texts={
                 field: text
-                for field, text in (chapter1 or chapter3).items()
+                for field, text in (chapter1 or value["chapter3"]).items()
                 if isinstance(text, str)
             },
         )
         if not chapter1:
             findings.pop("1.2", None)
+            findings.update(action_group_findings(groups, chapter3.actions))
             findings.update(
                 cross_finding_findings(
-                    [CrossFinding.model_validate(c) for c in chapter3.get("cross_findings") or []],
+                    chapter3.cross_findings,
                     rows_by_module=ledger,
-                    overview=str(chapter3.get("risk_overview") or ""),
+                    overview=risk_overview_markdown(chapter3, {}),
                 )
             )
+        # Every value the chief writes is a slot; the structured fields too.
+        run_id = final.get("run_id")
+        if run_id:
+            slots = self._slots(run_id)
+            all_rows = [row for rows in ledger.values() for row in rows]
+            digit_texts = self._digit_texts(run_id, all_rows, with_facts=bool(chapter1))
+            names = self._reference(run_id).get("object_names") or []
+            sections = _section_ids()
+            problems = slot_findings(
+                "\n".join(_strings(chapter1 or value["chapter3"])),
+                slots,
+                names=names,
+                section_ids=sections,
+                digit_texts=digit_texts,
+            )
+            if problems:
+                key = "1.2" if chapter1 else "3.1"
+                findings[key] = _combined(
+                    findings.get(key),
+                    {
+                        "problem": "；".join(problems),
+                        "severity": "blocking",
+                        "suggestion": "数量和数值改用 value_slots 里对应的占位符，不自己写数字。",
+                    },
+                )
         return {"findings": findings, "blocking": _blocking(findings)}
 
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
         run_id = value["ledger"]["run_id"]
         reference = self._reference(run_id)
-        known = [tuple(pair) for pair in reference["known_values"]]
+        slots = self._slots(run_id)
+        names = reference.get("object_names") or []
+        section_ids = _section_ids()
+        fact_texts = reference.get("fact_texts") or {}
         ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
         by_submodule: dict[str, list[JudgmentRow]] = {}
         for rows in ledger.values():
             for row in rows:
                 by_submodule.setdefault(row.submodule_id, []).append(row)
         elsewhere = self._data_elsewhere(run_id, ledger)
-        cited_values = reference.get("cited_values") or {}
         row_sections = {row.id: row.submodule_id for rows in ledger.values() for row in rows}
         items = []
         for module_id, sections in value["written"].items():
@@ -1151,7 +1486,7 @@ class LedgerTools:
                 sections=texts,
                 rows_by_submodule=by_submodule,
                 elsewhere=elsewhere,
-                cited_values=cited_values,
+                slots=slots,
                 row_sections=row_sections,
             )
             cited = {
@@ -1161,6 +1496,7 @@ class LedgerTools:
             }
             items.append(
                 {
+                    "run_id": run_id,
                     "owner": module_id,
                     "sections": texts,
                     **({"cited_rows": list(cited.values())} if cited else {}),
@@ -1169,8 +1505,21 @@ class LedgerTools:
                             report_check_findings(
                                 sections=texts,
                                 rows_by_submodule=by_submodule,
-                                known_values=known,
-                                subject_values=reference.get("subject_values"),
+                                slots=slots,
+                                names=names,
+                                section_ids=section_ids,
+                                digit_texts={
+                                    sid: self._digit_texts(run_id, by_submodule.get(sid, []))
+                                    for sid in texts
+                                },
+                                quote_sources={
+                                    sid: [
+                                        fact_texts.get(e, "")
+                                        for row in by_submodule.get(sid, [])
+                                        for e in row.evidence_ids
+                                    ]
+                                    for sid in texts
+                                },
                             ),
                             texts,
                             by_submodule,
@@ -1180,29 +1529,13 @@ class LedgerTools:
                 }
             )
         chief = value["chief"]
-        chief_texts = {
-            section_id: chief["chapter1" if section_id.startswith("1.") else "chapter3"][field]
-            for section_id, field in CHIEF_SECTIONS.items()
-        }
-        # Chapter 1 and 3 count across the whole ledger and their own actions.
+        chief_texts = self._chief_texts(chief, value["ledger"])
         all_rows = [row for rows in ledger.values() for row in rows]
-        actions = chief["chapter3"].get("actions") or []
-        counts = {
-            float(len(actions)),
-            float(len(chief["chapter1"].get("key_risks") or [])),
-            *(
-                float(len([a for a in actions if a.get("priority") == p]))
-                for p in {a.get("priority") for a in actions}
-            ),
-        }
-        for scope in [all_rows, *ledger.values()]:
-            for disposition in ("concern", "undetermined"):
-                picked = [row for row in scope if row.disposition == disposition]
-                counts.update({float(len(picked)), float(len({row.object for row in picked}))})
+        groups = value["ledger"].get("action_groups") or []
         cited = {
             row_id
             for entry in [
-                *actions,
+                *groups,
                 *(chief["chapter3"].get("cross_findings") or []),
                 *(chief["chapter1"].get("key_risks") or []),
             ]
@@ -1210,6 +1543,7 @@ class LedgerTools:
         }
         items.append(
             {
+                "run_id": run_id,
                 "owner": CHIEF_OWNER,
                 "sections": chief_texts,
                 "cited_rows": [
@@ -1230,14 +1564,39 @@ class LedgerTools:
                     report_check_findings(
                         sections=chief_texts,
                         rows_by_submodule={},
-                        known_values=[*known, *((count, "个") for count in counts)],
-                        subject_values=reference.get("subject_values"),
+                        slots=slots,
+                        names=names,
+                        section_ids=section_ids,
+                        digit_texts={
+                            section_id: self._digit_texts(
+                                run_id, all_rows, with_facts=section_id == "1.1"
+                            )
+                            for section_id in chief_texts
+                        },
+                        quote_sources={
+                            section_id: list(fact_texts.values()) for section_id in chief_texts
+                        },
                     ),
                     chief_texts,
                 ),
             }
         )
         return {"edit_items": items}
+
+    @staticmethod
+    def _chief_texts(chief: Mapping[str, Any], final: Mapping[str, Any]) -> dict[str, str]:
+        """The chief's text sections; 3.1 is drawn from its two structured layers."""
+
+        texts = {
+            section_id: chief["chapter1"][field]
+            for section_id, field in CHIEF_SECTIONS.items()
+            if section_id.startswith("1.")
+        }
+        chapter3 = ChiefChapter3.model_validate(chief["chapter3"])
+        texts["3.1"] = risk_overview_markdown(
+            chapter3, (final.get("chief_input") or {}).get("module_titles") or {}
+        )
+        return texts
 
     @staticmethod
     def _chief_text_findings(
@@ -1272,9 +1631,10 @@ class LedgerTools:
     def recheck_edit(self, value: dict[str, Any]) -> dict[str, Any]:
         """Program checks on the sections a revision changed, which nothing reviewed after it.
 
-        Only the checks that need no reference data run here: workflow words
-        and ids in the prose, and, for the chief, tables written into prose
-        that the program draws itself.  A finding sends the owner back once.
+        Workflow words and ids in the prose, slots that do not exist and
+        numerals written outside slots, and, for the chief, tables written
+        into prose that the program draws itself.  A finding sends the owner
+        back once.
         """
 
         item = value["item"]
@@ -1285,12 +1645,33 @@ class LedgerTools:
             if key in (revision.get("sections") or {})
         }
         findings: dict[str, dict[str, Any]] = {}
+        run_id = item.get("run_id")
+        slots = self._slots(run_id) if run_id else {}
+        reference = self._reference(run_id) if run_id else {}
+        rows = (
+            [row for rows in self._final_rows(run_id).values() for row in rows] if run_id else []
+        )
         for section_id, text in changed.items():
-            if leaked := process_terms(text):
+            problems = []
+            if leaked := process_terms(strip_slots(text)):
+                problems.append("修订后的正文里出现了内部流程用语或编号：" + "、".join(leaked))
+            if run_id:
+                problems += slot_findings(
+                    text,
+                    slots,
+                    names=reference.get("object_names") or [],
+                    section_ids=_section_ids(),
+                    digit_texts=self._digit_texts(
+                        run_id,
+                        [r for r in rows if item["owner"] == CHIEF_OWNER or r.submodule_id == section_id],
+                        with_facts=section_id == "1.1",
+                    ),
+                )
+            if problems:
                 findings[section_id] = {
-                    "problem": "修订后的正文里出现了内部流程用语或编号：" + "、".join(leaked),
+                    "problem": "；".join(problems),
                     "severity": "blocking",
-                    "suggestion": "删去这些用语，只写结论和依据本身。",
+                    "suggestion": "删去这些用语；数值和数量改用占位符，不自己写数字。",
                 }
         if item["owner"] == CHIEF_OWNER and changed:
             findings = self._chief_text_findings(findings, changed)
@@ -1319,8 +1700,14 @@ class LedgerTools:
         state = dict(value["state"])
         run_id = str(state["run_id"])
         ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
-        edits = {edit["owner"]: edit["sections"] for edit in value["edits"].values()}
-        chief = value["chief"]
+        # The program writes every value slot now, in the prose and in the
+        # chief's structured fields alike.
+        slots = self._slots(run_id)
+        edits = {
+            edit["owner"]: {key: fill_slots(text, slots) for key, text in edit["sections"].items()}
+            for edit in value["edits"].values()
+        }
+        chief = _filled(value["chief"], slots)
         with _taxonomy(state):
             submissions = {
                 module_id: self._module_submission(module_id, rows, edits[module_id])
@@ -1349,7 +1736,10 @@ class LedgerTools:
                 risk_summary=chief_texts["3.1"],
                 improvement_action_plan=action_table_markdown(
                     chapter3["action_lead"],
-                    [ChiefAction.model_validate(a) for a in chapter3["actions"]],
+                    grouped_actions(
+                        value["ledger"].get("action_groups") or [],
+                        [ActionText.model_validate(a) for a in chapter3["actions"]],
+                    ),
                     row_status,
                     {
                         row.id: (
@@ -1462,6 +1852,8 @@ class LedgerTools:
             "prepare-ledger-context": self.prepare_context,
             "build-judgment-ledger": self.build_ledger,
             "apply-judgment-relations": self.apply_relations,
+            "plan-photo-reread": self.plan_reread,
+            "apply-photo-reread": self.apply_reread,
             "merge-review-findings": self.merge_findings,
             "close-review": self.close_review,
             "finalize-judgment-ledger": self.finalize_ledger,

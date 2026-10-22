@@ -250,7 +250,7 @@ class PhotoReaderProviderRuntime:
             {
                 "evidence_id": record.evidence_id,
                 "对象": record.subject,
-                "表格记录": record.fact,
+                "检查项": record.checkpoint,
                 "位置": f"{record.sheet or ''}!{record.cell or ''}",
                 "小节": record.submodule_id,
                 "主记录": record.primary,
@@ -261,6 +261,8 @@ class PhotoReaderProviderRuntime:
             f"任务：{task.objective}",
             f"图片 {item.photo_id} 已随本消息发送。它绑定的表格记录（主记录在前）：",
             json.dumps(records, ensure_ascii=False, indent=2),
+            "表格为这个对象声明的量（图中能看到的写进 readings）：",
+            json.dumps([q.model_dump(mode="json") for q in item.quantities], ensure_ascii=False),
             "看完图片后调用 submit_result 提交 photo_reading_submission。",
         ))
 

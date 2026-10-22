@@ -35,7 +35,7 @@ def test_status_counts_name_objects_and_numbers_are_ordered_with_ratios() -> Non
         _item(6, "B房/3#", "剩余电流=3.1A", 3.1, "A"),
     ]
 
-    calculations, lines = statistics(items, start=5)
+    calculations, lines, _lists = statistics(items, start=5)
 
     ng = next(c for c in calculations if c.quantity == "ng_count")
     assert (ng.id, ng.value, ng.formula) == ("K-0008", 2, "NG 对象：A房/2#、B房/3#")
@@ -49,29 +49,33 @@ def test_status_counts_name_objects_and_numbers_are_ordered_with_ratios() -> Non
     assert "按数值从大到小 A房/2#=11.3A、B房/3#=3.1A、A房/1#=2.9A" in lines[1]
 
 
-def test_counts_and_object_value_pairs_in_prose_must_match() -> None:
+def test_prose_values_are_slots_and_a_concern_object_is_named() -> None:
     rows = [
         JudgmentRow.model_validate(
             {"id": f"J-2.4-{n}", "submodule_id": "2.4.1", "object": obj, "checkpoint": "SPD",
              "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": [f"E-{n}"], "basis": "NG",
-             "risk_level": "中", "hazard": "h",
+             "risk_level": "中", "hazard": "h", "hazard_conditions": ["雷击浪涌"],
              "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
         )
         for n, obj in ((1, "2#"), (2, "3#"))
     ]
-    known = [(11.3, "A"), (3.1, "A"), (9, "个"), (3.6, "倍")]
-    pairs = {"A房/2#": [(11.3, "A")], "B房/3#": [(3.1, "A")]}
+    slots = {
+        "V-0001": {"text": "11.3A", "subject": "A房/2#", "evidence_ids": ["E-1"]},
+        "V-0002": {"text": "3.1A", "subject": "B房/3#", "evidence_ids": ["E-2"]},
+        "K-0009": {"text": "9个", "label": "object_count", "evidence_ids": ["E-1", "E-2"]},
+    }
 
     def check(text: str):
         return report_check_findings(
-            sections={"2.4.1": text}, rows_by_submodule={"2.4.1": rows},
-            known_values=known, subject_values=pairs,
+            sections={"2.4.1": text}, rows_by_submodule={"2.4.1": rows}, slots=slots,
+            names=["A房/2#", "B房/3#", "2#", "3#"],
         )
 
-    assert check("2#、3# 等共 9 个 SPD，其中 2 处需更换；1个月内完成。") == {}
-    assert "10个" in check("2#、3# 等共 10 个 SPD。")["2.4.1"]["problem"]
-    assert "3# 旁写的 11.3A" in check("3# 柜剩余电流 11.3A。")["2.4.1"]["problem"]
-    assert check("2# 柜 11.3A，约为 3# 柜 3.1A 的 3.6 倍。") == {}
+    assert check("2#、3# 等共〔K-0009〕SPD；2# 柜〔V-0001〕，约为 3# 柜〔V-0002〕的几倍。") == {}
+    assert "10" in check("2#、3# 等共 10 个 SPD。")["2.4.1"]["problem"]
+    assert "3# 旁写的〔V-0001〕" in check("3# 柜剩余电流〔V-0001〕。")["2.4.1"]["problem"].replace(" 〔", "〔")
+    minor = check("2# 柜〔V-0001〕。")["2.4.1"]
+    assert minor["severity"] == "minor" and "J-2.4-2" in minor["problem"]
 
 
 def test_a_concern_row_covers_one_object() -> None:
@@ -127,36 +131,6 @@ def test_action_content_merges_rows_of_one_section_and_keeps_one_shared_checkpoi
               "J-4": ("A", "b", "照明")}
     assert action_content(["J-1", "J-2"], places) == "A＞a＞温升"
     assert action_content(["J-1", "J-3", "J-4"], places) == "A＞a＞温升；A＞b"
-
-
-def test_humidity_remainders_and_medians_are_known_values() -> None:
-    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
-        known_values_from_text,
-    )
-
-    rows = [
-        JudgmentRow.model_validate(
-            {"id": f"J-2.2-{n}", "submodule_id": "2.2.1", "object": f"{n}#", "checkpoint": "湿度",
-             "disposition": "no_concern", "evidence_status": "现场确认", "evidence_ids": [f"E-{n}"],
-             "basis": "b"}
-            if n > 1 else
-            {"id": "J-2.2-1", "submodule_id": "2.2.1", "object": "1#", "checkpoint": "湿度",
-             "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"],
-             "basis": "偏高", "risk_level": "中", "hazard": "h",
-             "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
-        )
-        for n in range(1, 4)
-    ]
-    known = known_values_from_text(["相对湿度=39%RH"]) + [(13, "个"), (0.55, "A")]
-
-    def check(text: str):
-        return report_check_findings(
-            sections={"2.2.1": text}, rows_by_submodule={"2.2.1": rows}, known_values=known,
-        )
-
-    assert check("1# 相对湿度 39%，中位数 0.55A。") == {}
-    assert check("共 13 个回路，1# 偏高，其余 12 个正常。") == {}
-    assert "9个" in check("1# 偏高，其余 9 个正常。")["2.2.1"]["problem"]
 
 
 def test_gap_measure_is_written_once_and_chief_text_holds_no_table() -> None:
@@ -269,21 +243,22 @@ def test_prose_pointing_to_a_missing_table_or_repeating_data_shown_elsewhere_is_
 
     rows = {"2.1.1": [row("J-2.1-1", "no_concern", "2.1.1")],
             "2.4.4": [row("J-2.4-1", "concern", "2.4.4")]}
-    values = {"E-1": [(320, "A"), (41.5, "%")]}
+    slots = {"V-0001": {"text": "320A", "subject": "1#", "evidence_ids": ["E-1"]},
+             "V-0002": {"text": "41.5%", "subject": "1#", "evidence_ids": ["E-1"]}}
     findings = layout_findings(
         sections={
-            "2.1.1": "负荷情况见下表。1# 运行电流 320A，负荷率 41.5%（数据见 2.4.4）。",
-            "2.4.4": "1# 运行电流 320A，负荷率 41.5%，问题见下表。",
+            "2.1.1": "负荷情况见下表。1# 运行电流〔V-0001〕，负荷率〔V-0002〕（数据见 2.4.4）。",
+            "2.4.4": "1# 运行电流〔V-0001〕，负荷率〔V-0002〕，问题见下表。",
         },
-        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, cited_values=values,
+        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, slots=slots,
     )
     assert set(findings) == {"2.1.1"}
     problem = findings["2.1.1"]["problem"]
-    assert "没有问题表" in problem and "320A" in problem and "41.5%" in problem
+    assert "没有问题表" in problem and "V-0001" in problem and "V-0002" in problem
     assert findings["2.1.1"]["severity"] == "minor"
     one_value = layout_findings(
-        sections={"2.1.1": "1# 负荷率 41.5%（数据见 2.4.4），负荷正常。"},
-        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, cited_values=values,
+        sections={"2.1.1": "1# 负荷率〔V-0002〕（数据见 2.4.4），负荷正常。"},
+        rows_by_submodule=rows, elsewhere={"J-2.1-1": ["2.4.4"]}, slots=slots,
     )
     assert one_value == {}
 
@@ -292,6 +267,7 @@ def _concern(row_id: str, **extra) -> dict:
     value = {"id": row_id, "submodule_id": "2.4.1", "object": "1#", "checkpoint": "温升",
              "disposition": "concern", "evidence_status": "现场确认", "basis": "温升偏高",
              "risk_level": "中", "hazard": "可能加速绝缘老化", "evidence_ids": ["E-1"],
+             "hazard_conditions": ["温升持续偏高"],
              "rule_refs": ["KU-2.4-01"],
              "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
     return value | extra
@@ -303,26 +279,30 @@ def test_a_hazard_names_its_sources_or_says_it_is_unverified() -> None:
         _concern("J-2.4-2", hazard_sources=["KU-2.4-01"]),
         _concern("J-2.4-3", hazard="可能加速绝缘老化，待核实"),
         _concern("J-2.4-4", hazard_sources=["E-9"]),
+        _concern("J-2.4-5", hazard_sources=["E-1"], hazard_conditions=[]),
     ]})
     findings = ledger_findings(
         judgment, submodule_ids=["2.4.1"], module_evidence_ids=["E-1"],
         known_evidence_ids=["E-1", "E-9"], known_photo_ids=[],
     )
-    assert set(findings) == {"J-2.4-1", "J-2.4-4"}
+    assert set(findings) == {"J-2.4-1", "J-2.4-4", "J-2.4-5"}
+    assert "hazard_conditions" in findings["J-2.4-5"]["problem"]
     assert "hazard_sources" in findings["J-2.4-1"]["problem"]
     assert "E-9" in findings["J-2.4-4"]["problem"]
 
 
-def test_a_row_on_summary_entries_only_is_not_confirmed_on_site() -> None:
+def test_a_row_on_summary_entries_only_is_set_to_the_source_authors_opinion() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        settle_evidence_status,
+    )
+
     row = {"id": "J-2.5-1", "submodule_id": "2.5.1", "object": "台账", "checkpoint": "完整性",
            "disposition": "no_concern", "evidence_status": "现场确认", "basis": "评估表写完整",
            "evidence_ids": ["E-5"]}
-    judgment = JudgmentSet.model_validate({"module_id": "2.5", "rows": [row]})
-    findings = ledger_findings(
-        judgment, submodule_ids=["2.5.1"], module_evidence_ids=["E-5"],
-        known_evidence_ids=["E-5"], known_photo_ids=[], summary_evidence_ids=["E-5"],
-    )
-    assert "来源作者意见" in findings["J-2.5-1"]["problem"]
+    settled = settle_evidence_status([JudgmentRow.model_validate(row)], ["E-5"])
+    assert settled[0].evidence_status == "来源作者意见"
+    mixed = settle_evidence_status([JudgmentRow.model_validate(row | {"evidence_ids": ["E-5", "E-6"]})], ["E-5"])
+    assert mixed[0].evidence_status == "现场确认"
 
 
 def test_program_picks_rows_for_the_reviewer_without_judging_them() -> None:
@@ -360,8 +340,8 @@ def test_a_recorded_relation_must_show_in_the_prose() -> None:
         {"row_id": "J-2.1-3", "relation": "负荷—发热", "reason": "负荷率低，可排除过载"}]))
     sections = {"2.4.1": "1# 温升偏高，可排除过载致热。"}
     found = layout_findings(sections=sections, rows_by_submodule={"2.4.1": [row]},
-                            elsewhere={}, cited_values={}, row_sections={"J-2.1-3": "2.1.1"})
+                            elsewhere={}, slots={}, row_sections={"J-2.1-3": "2.1.1"})
     assert "1#↔2.1.1" in found["2.4.1"]["problem"]
     sections = {"2.4.1": "1# 温升偏高，负荷率低（详见 2.1.1），可排除过载致热。"}
     assert layout_findings(sections=sections, rows_by_submodule={"2.4.1": [row]},
-                           elsewhere={}, cited_values={}, row_sections={"J-2.1-3": "2.1.1"}) == {}
+                           elsewhere={}, slots={}, row_sections={"J-2.1-3": "2.1.1"}) == {}

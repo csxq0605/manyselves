@@ -41,6 +41,7 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
     }
     if disposition == "concern":
         value |= {"risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
+                  "hazard_conditions": ["负荷持续偏高"],
                   "action": {"measure": "核查", "priority": "一般", "timeframe": "一月"}}
     if disposition == "undetermined":
         value |= {"gap": {"missing": "m", "impact": "i", "requested_input": "补资料"}}
@@ -87,7 +88,7 @@ def test_internal_workflow_words_in_prose_are_found_by_the_program() -> None:
     assert process_terms("设备台账完整，故障件已返修，详见 2.4.3.1。") == []
     findings = report_check_findings(
         sections={"2.1.1": "两个模块结论不同，已提交联合审查。"},
-        rows_by_submodule={}, known_values=[],
+        rows_by_submodule={}, slots={},
     )
     assert "联合审查" in findings["2.1.1"]["problem"]
     assert findings["2.1.1"]["severity"] == "blocking"

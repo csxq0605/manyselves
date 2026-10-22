@@ -39,14 +39,17 @@ from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import 
     LedgerTools,
 )
 from manyselves.capabilities.distribution_reporting.runtime.mappers import map_s4_6
+from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+    JudgmentRow,
+    action_groups,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
     PhotoReading,
-    PhotoReadingRecord,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import EvidenceItem
 from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
-    _record_values,
-    compare_with_records,
+    compare_readings,
+    expected_values,
     photo_readings_ref,
 )
 
@@ -198,18 +201,11 @@ def _recompare_photos(
     readings = []
     for raw in payload.get("readings", []):
         old = PhotoReading.model_validate(raw)
-        records = [
-            PhotoReadingRecord(
-                evidence_id=evidence_id,
-                subject=by_id[evidence_id].subject,
-                fact=by_id[evidence_id].fact,
-                submodule_id=by_id[evidence_id].submodule_id,
-                values=_record_values(by_id[evidence_id]),
-            )
-            for evidence_id in old.evidence_ids
-            if evidence_id in by_id
-        ]
-        match, reason = compare_with_records(records, old.transcription)
+        # Only structured readings are compared; a run read before they
+        # existed has none, so its photos come out as "no comparable value".
+        bound = [by_id[e] for e in old.evidence_ids if e in by_id]
+        expected = expected_values(bound, list(by_id.values()))
+        match, reason = compare_readings(old.readings, expected["bound"], expected["same_subject"])
         flagged = reader_flag.get(old.photo_id, old.needs_review and old.record_match != "conflicts")
         new = old.model_copy(update={
             "record_match": match,
@@ -276,6 +272,13 @@ def _replay_checks(
         "ledger": _load(run_dir / "ledger/judgments.json"),
         "unanswered_findings": {},
     }
+    rows = {m: [JudgmentRow.model_validate(r) for r in rs] for m, rs in final["ledger"].items()}
+    reference = _load(run_dir / "ledger/reference-values.json")
+    final["action_groups"] = action_groups(rows, reference.get("checkpoint_of") or {})
+    final["chief_input"] = {"module_titles": context.get("module_titles") or {}}
+    for action in ("chapter-3", "revise-3"):
+        if action in chief_runs:
+            chief_runs[action] = _chapter3_now(chief_runs[action], final["action_groups"])
     chief_checks = {}
     if "chapter-3" in chief_runs:
         chief_checks["chapter3_first"] = tools.check_chief(
@@ -335,6 +338,31 @@ def _replay_checks(
         "ledger_checks": ledger_checks,
         "chief_checks": chief_checks,
         "edit_checks": edit_checks,
+    }
+
+
+def _chapter3_now(chapter3: Mapping[str, Any], groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """An older chapter 3 in today's shape: its overview as one summary line, and
+    each program group worded by the old action that covered its first row."""
+
+    if "risk_summary" in chapter3:
+        return dict(chapter3)
+    old = list(chapter3.get("actions") or [])
+    texts = []
+    for group in groups:
+        action = next((a for a in old if set(a.get("row_ids") or ()) & set(group["row_ids"])), None)
+        if action is not None:
+            texts.append({
+                "group_id": group["group_id"],
+                **{k: action[k] for k in ("problem", "hazard", "solution") if k in action},
+                "note": action.get("note", ""),
+            })
+    return {
+        "risk_summary": [chapter3.get("risk_overview") or ""],
+        "risk_details": [],
+        "cross_findings": chapter3.get("cross_findings") or [],
+        "action_lead": chapter3.get("action_lead") or "",
+        "actions": texts,
     }
 
 

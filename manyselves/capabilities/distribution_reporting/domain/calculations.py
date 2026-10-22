@@ -95,6 +95,7 @@ def compute(items: Iterable[Any]) -> tuple[list[Calculation], list[CalculationGa
 
 
 _STATUS = re.compile(r"^(OK|NG)", re.IGNORECASE)
+_COLUMN = re.compile(r"^[A-Z]+")
 
 
 def _label_and_value(fact: str) -> tuple[str, str] | None:
@@ -105,26 +106,74 @@ def _label_and_value(fact: str) -> tuple[str, str] | None:
     return label.strip(), value.strip()
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def primary_measurement(item: Any) -> Any | None:
+    """The measurement the record's own value comes from, if the mapper declared one."""
+
+    value = _number(item.value)
+    if value is None:
+        return None
+    return next(
+        (
+            m for m in item.measurements
+            if m.value is not None and float(m.value) == value and m.unit == item.unit
+        ),
+        None,
+    )
+
+
+def _checkpoint(item: Any) -> tuple[str, str, str] | None:
+    """(sheet, column, label) of the column the record's value was read from.
+
+    The column and its header label come from the mapper's declaration of the
+    measurement that holds the value; a record without one keeps its own
+    source column and checkpoint field.
+    """
+
+    parsed = _label_and_value(item.fact)
+    if parsed is None:
+        return None
+    sheet = item.source.sheet or ""
+    primary = primary_measurement(item)
+    if primary is not None and (match := _COLUMN.match(primary.source_cell or "")):
+        return sheet, match.group(0), primary.label or item.checkpoint_field or parsed[0]
+    return sheet, item.source.column or "", item.checkpoint_field or parsed[0]
+
+
+def _cell(item: Any) -> tuple[str, str, str]:
+    source = item.source
+    return source.file_id, source.sheet or "", source.cell or item.id
+
+
 def statistics(
     items: Iterable[Any], *, start: int = 1
-) -> tuple[list[Calculation], list[str]]:
+) -> tuple[list[Calculation], list[str], dict[str, dict[str, Any]]]:
     """Counts, object lists and orderings per checkpoint, for the writers to cite.
 
     A checkpoint is one labelled column of one source sheet. Status columns get
     OK/NG counts with the objects named; numeric columns get the objects sorted
     by value, the largest-to-smallest ratio and each value as a multiple of the
     median. No threshold is applied.
+
+    A record routed to several sections is one source cell: it is counted
+    once.  Each group also gets an object list (S-id) the program writes into
+    the prose where a writer places it.
     """
 
-    groups: dict[tuple[str, str, str], list[Any]] = {}
+    groups: dict[tuple[str, str, str], dict[tuple[str, str, str], list[Any]]] = {}
     for item in items:
-        parsed = _label_and_value(item.fact)
-        if parsed is None:
+        key = _checkpoint(item)
+        if key is None:
             continue
-        key = (item.source.sheet or "", item.source.column or "", parsed[0])
-        groups.setdefault(key, []).append(item)
+        groups.setdefault(key, {}).setdefault(_cell(item), []).append(item)
     calculations: list[Calculation] = []
     lines: list[str] = []
+    lists: dict[str, dict[str, Any]] = {}
 
     def add(subject, quantity, value, unit, evidence_ids, formula) -> str:
         calc = Calculation(
@@ -139,37 +188,53 @@ def statistics(
         calculations.append(calc)
         return calc.id
 
-    for (sheet, column, label), members in groups.items():
+    def listed(name: str, spec: dict[str, Any]) -> str:
+        list_id = f"S-{len(lists) + 1:04d}"
+        lists[list_id] = {"name": name, **spec}
+        return list_id
+
+    for (sheet, column, label), cells in groups.items():
         name = f"{label}（{sheet} {column}列）" if column else f"{label}（{sheet}）"
+        # One record per source cell; every copy's id stays traceable.
+        copies = {cell: [item.id for item in group] for cell, group in cells.items()}
+        members = [group[0] for group in cells.values()]
+
+        def ids(chosen: Iterable[Any]) -> list[str]:
+            return [i for item in chosen for i in copies[_cell(item)]]
+
         by_status: dict[str, list[Any]] = {"OK": [], "NG": []}
         for item in members:
             _, value = _label_and_value(item.fact) or ("", "")
             if match := _STATUS.match(value):
                 by_status[match.group(1).upper()].append(item)
         objects = list(dict.fromkeys(item.subject for item in members))
-        member_ids = [item.id for item in members]
         if any(by_status.values()):
-            records_id = add(name, "record_count", len(members), "个", member_ids, "记录条数")
-            objects_id = add(name, "object_count", len(objects), "个", member_ids, "对象个数")
+            records_id = add(name, "record_count", len(members), "个", ids(members), "记录条数")
+            objects_id = add(name, "object_count", len(objects), "个", ids(members), "对象个数")
+            list_id = listed(name, {
+                "kind": "status",
+                "evidence_ids": ids(members),
+                "status": {
+                    status: list(dict.fromkeys(item.subject for item in chosen))
+                    for status, chosen in by_status.items()
+                },
+            })
             parts = [
-                f"{name}：共 {len(members)} 条记录[{records_id}]、"
+                f"{name}[{list_id}]：共 {len(members)} 条记录[{records_id}]、"
                 f"{len(objects)} 个对象[{objects_id}]"
             ]
-            for status, listed in by_status.items():
-                subjects = list(dict.fromkeys(item.subject for item in listed))
-                if not listed:
+            for status, chosen in by_status.items():
+                subjects = list(dict.fromkeys(item.subject for item in chosen))
+                if not chosen:
                     continue
                 calc_id = add(
                     name, f"{status.lower()}_count", len(subjects), "个",
-                    [item.id for item in listed], f"{status} 对象：" + "、".join(subjects),
+                    ids(chosen), f"{status} 对象：" + "、".join(subjects),
                 )
                 parts.append(f"{status} {len(subjects)} 个[{calc_id}]：" + "、".join(subjects))
             lines.append("；".join(parts))
             continue
-        numeric = [
-            item for item in members
-            if isinstance(item.value, (int, float)) and not isinstance(item.value, bool) and item.unit
-        ]
+        numeric = [item for item in members if _number(item.value) is not None and item.unit]
         units = {item.unit for item in numeric}
         if len(numeric) < 2 or len(units) != 1:
             continue
@@ -181,48 +246,53 @@ def statistics(
         ) / 2
         table = "、".join(f"{item.subject}={float(item.value):g}{unit}" for item in ordered)
         counted = list(dict.fromkeys(item.subject for item in numeric))
-        objects_id = add(
-            name, "object_count", len(counted), "个", [item.id for item in numeric], "对象个数"
-        )
-        line = f"{name}：{len(counted)} 个对象[{objects_id}]，按数值从大到小 {table}"
+        list_id = listed(name, {
+            "kind": "numeric",
+            "evidence_ids": ids(numeric),
+            "unit": unit,
+            "entries": [
+                {"subject": item.subject, "value": float(item.value), "evidence_id": item.id}
+                for item in ordered
+            ],
+        })
+        objects_id = add(name, "object_count", len(counted), "个", ids(numeric), "对象个数")
+        line = f"{name}[{list_id}]：{len(counted)} 个对象[{objects_id}]，按数值从大到小 {table}"
         if values[-1] > 0:
             calc_id = add(
                 name, "max_to_min_ratio", round(values[0] / values[-1], 1), "倍",
-                [ordered[0].id, ordered[-1].id],
+                ids([ordered[0], ordered[-1]]),
                 f"{ordered[0].subject} {values[0]:g}{unit} / {ordered[-1].subject} {values[-1]:g}{unit}",
             )
             line += f"；最大/最小≈{values[0] / values[-1]:.1f} 倍[{calc_id}]"
         if values[1] > 0:
             calc_id = add(
                 name, "max_to_second_ratio", round(values[0] / values[1], 1), "倍",
-                [ordered[0].id, ordered[1].id],
+                ids([ordered[0], ordered[1]]),
                 f"{ordered[0].subject} {values[0]:g}{unit} / {ordered[1].subject} {values[1]:g}{unit}",
             )
             line += f"；最大/次大≈{values[0] / values[1]:.1f} 倍[{calc_id}]"
-        median_id = add(
-            name, "median", round(median, 6), unit, [item.id for item in ordered], "中位数"
-        )
+        median_id = add(name, "median", round(median, 6), unit, ids(ordered), "中位数")
         line += f"；中位数 {median:g}{unit}[{median_id}]"
         if median > 0:
             multiples = []
             for item, value in zip(ordered, values, strict=True):
                 calc_id = add(
                     item.subject, "multiple_of_median", round(value / median, 1), "倍",
-                    [item.id], f"{value:g}{unit} / 中位数 {median:g}{unit}",
+                    ids([item]), f"{value:g}{unit} / 中位数 {median:g}{unit}",
                 )
                 multiples.append(f"{item.subject}≈{value / median:.1f} 倍[{calc_id}]")
             line += "；相对中位数：" + "、".join(multiples)
         lines.append(line)
-    return calculations, lines
+    return calculations, lines, lists
 
 
 def render_statistics(lines: list[str]) -> str:
     return "\n".join(
         [
             "# 程序统计（按检查项）",
-            "以下数量、对象名单、排序和倍数由程序从事实逐条算出；正文写数量、分组、"
-            "“几倍”“最高/最低”时只用这里的结果；方括号里的计算编号填进 calculation_ids，"
-            "不写进正文。",
+            "以下数量、对象名单、排序和倍数由程序从事实逐条算出，同一源单元格只计一次。"
+            "判断行写数量、分组、“几倍”“最高/最低”时只用这里的结果，计算编号填进 calculation_ids；"
+            "正文里用占位符引用（见写作要求），不自己抄数。S- 是这一检查项的对象—数值清单。",
             *(lines or ["（无）"]),
         ]
     ) + "\n"
@@ -256,6 +326,7 @@ def render_calculations(
 
 
 __all__ = [
+    "primary_measurement",
     "Calculation",
     "CalculationGap",
     "compute",

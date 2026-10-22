@@ -193,6 +193,7 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
             disposition="concern",
             risk_level="中",
             hazard="可能过热，待核实。",
+            hazard_conditions=["温度持续偏高"],
             action={"measure": "复测温度", "priority": "重要，紧急", "timeframe": "一周内"},
         )
     return row
@@ -236,16 +237,17 @@ def _answer(message):
             "submit",
             [
                 {
-                    "risk_overview": "总体风险可控。",
+                    "risk_summary": ["总体风险可控。"],
+                    "risk_details": [{"module_id": "2.4", "points": ["温度偏高，需复测。"]}],
                     "action_lead": "建议措施如下。",
                     "actions": [
                         {
-                            "priority": "重要，紧急",
+                            "group_id": group["group_id"],
                             "problem": "温度偏高",
-                            "hazard": "可能过热",
+                            "hazard": "若温度持续偏高，可能过热",
                             "solution": "复测温度",
-                            "row_ids": ["J-2.4-1"],
                         }
+                        for group in (value.get("action_groups") or [])
                     ],
                 }
             ],

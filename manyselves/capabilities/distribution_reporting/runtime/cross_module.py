@@ -29,6 +29,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
+from .joint_dossiers import object_level
 
 ATTENTION = {"concern", "undetermined"}
 
@@ -58,10 +59,16 @@ def object_chains(
         rows = [index[row_id] for row_id in _row_ids(dossier) if row_id in index]
         if not any(row.disposition in ATTENTION for _module, row in rows):
             continue
+        cited = {e for _module, row in rows for e in row.evidence_ids}
         chains.append(
             {
                 "dossier_id": dossier["dossier_id"],
                 "subject": dossier["subject"],
+                # Same record row = one unit; same name only = maybe one unit,
+                # maybe only entries of one place: the wording follows the level.
+                "level": object_level(
+                    fact for fact in dossier.get("facts") or () if fact["evidence_id"] in cited
+                ),
                 "in_conflict": dossier.get("kind") == "conflict",
                 "rows": [
                     {

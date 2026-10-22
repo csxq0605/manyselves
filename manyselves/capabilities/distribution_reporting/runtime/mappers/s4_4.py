@@ -16,7 +16,13 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceMeasurement,
 )
 
-from .common import dispimg_refs, header_label, make_evidence, unbound_photo_gaps
+from .common import (
+    dispimg_refs,
+    header_label,
+    header_unit,
+    make_evidence,
+    unbound_photo_gaps,
+)
 
 # Row of the low/total distribution sheets that names each column's checkpoint.
 _LABEL_ROW = 2
@@ -50,6 +56,31 @@ def _subject(room: Any, cabinet: Any = None) -> str:
     room_text = _text(room) or "未注明配电房"
     cabinet_text = _text(cabinet)
     return f"{room_text}/{cabinet_text}" if cabinet_text else room_text
+
+
+def _measure(
+    sheet: Any,
+    column: int,
+    row: int,
+    quantity: str,
+    value: float | None,
+    unit: str,
+    fallback: str,
+    **extra: Any,
+) -> EvidenceMeasurement:
+    """One quantity of a record, named and united by its column's own header.
+
+    ``unit`` and ``fallback`` are used only when the header declares none.
+    """
+
+    return EvidenceMeasurement(
+        quantity=quantity,
+        value=value,
+        unit=header_unit(sheet, _LABEL_ROW, column, unit),
+        label=header_label(sheet, _LABEL_ROW, column, fallback),
+        source_cell=f"{get_column_letter(column)}{row}",
+        **extra,
+    )
 
 
 def _numeric_value(sheet: Any, value_sheet: Any, row: int, column: int) -> Any:
@@ -133,26 +164,26 @@ def _map_low_voltage(
         current = _numeric_value(sheet, value_sheet, row, 3)
         capacity = _numeric_value(sheet, value_sheet, row, 4)
         if isinstance(current, (int, float)):
+            running = _measure(sheet, 3, row, "running_current", float(current), "A", "运行电流")
             value = float(current)
-            unit = "A"
-            fact = f"运行电流={current:g}A"
-            measurements = [EvidenceMeasurement(
-                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
-            )]
+            unit = running.unit
+            fact = f"{running.label}={current:g}{running.unit}"
+            measurements = [running]
             if isinstance(capacity, (int, float)) and capacity:
-                fact += f"；变压器容量={capacity:g}kVA"
-                measurements.append(EvidenceMeasurement(
-                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
-                    source_cell=f"D{row}",
-                ))
+                rated = _measure(
+                    sheet, 4, row, "transformer_capacity", float(capacity), "kVA", "变压器容量"
+                )
+                fact += f"；{rated.label}={capacity:g}{rated.unit}"
+                measurements.append(rated)
                 reported_fact, note, load_rate = _source_load_rate(
                     sheet, value_sheet, row, gaps
                 )
                 fact += reported_fact
                 if load_rate is not None:
+                    # Percent: _source_load_rate reads the cell's own number format.
                     value, unit = load_rate, "%"
-                    measurements.append(EvidenceMeasurement(
-                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    measurements.append(_measure(
+                        sheet, 5, row, "load_rate", float(load_rate), "%", "负荷率"
                     ))
             else:
                 current_only_rows.append(row)
@@ -259,7 +290,8 @@ def _map_low_voltage(
                 if isinstance(current, (int, float)) and current
                 else None
             )
-            fact = f"实测剩余电流={residual_current:g}A"
+            residual_unit = header_unit(sheet, _LABEL_ROW, 10, "A")
+            fact = f"实测剩余电流={residual_current:g}{residual_unit}"
             if ratio is not None:
                 fact += f"；占运行电流={ratio * 100:.2f}%"
             evidence.append(
@@ -278,7 +310,11 @@ def _map_low_voltage(
                     fact=fact,
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=residual_current,
-                    unit="A",
+                    unit=residual_unit,
+                    measurements=[_measure(
+                        sheet, 10, row, "residual_current", float(residual_current),
+                        "A", "剩余电流",
+                    )],
                     # The header asks for a photo above 10 A.
                     needs_confirmation=residual_current > 10
                     and not dispimg_refs(sheet.cell(row, 11).value),
@@ -340,26 +376,26 @@ def _map_total_distribution(
         current = _numeric_value(sheet, value_sheet, row, 3)
         capacity = _numeric_value(sheet, value_sheet, row, 4)
         if isinstance(current, (int, float)):
+            running = _measure(sheet, 3, row, "running_current", float(current), "A", "运行电流")
             value = float(current)
-            unit = "A"
-            fact = f"运行电流={current:g}A"
-            measurements = [EvidenceMeasurement(
-                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
-            )]
+            unit = running.unit
+            fact = f"{running.label}={current:g}{running.unit}"
+            measurements = [running]
             if isinstance(capacity, (int, float)) and capacity:
-                fact += f"；变压器容量={capacity:g}kVA"
-                measurements.append(EvidenceMeasurement(
-                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
-                    source_cell=f"D{row}",
-                ))
+                rated = _measure(
+                    sheet, 4, row, "transformer_capacity", float(capacity), "kVA", "变压器容量"
+                )
+                fact += f"；{rated.label}={capacity:g}{rated.unit}"
+                measurements.append(rated)
                 reported_fact, note, load_rate = _source_load_rate(
                     sheet, value_sheet, row, gaps
                 )
                 fact += reported_fact
                 if load_rate is not None:
+                    # Percent: _source_load_rate reads the cell's own number format.
                     value, unit = load_rate, "%"
-                    measurements.append(EvidenceMeasurement(
-                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    measurements.append(_measure(
+                        sheet, 5, row, "load_rate", float(load_rate), "%", "负荷率"
                     ))
             else:
                 fact += "；额定容量未提供"
@@ -384,7 +420,10 @@ def _map_total_distribution(
             )
         elif isinstance(capacity, (int, float)) and capacity:
             capacity_only_rows.append(row)
-            fact = f"变压器容量={capacity:g}kVA；运行电流未提供"
+            rated = _measure(
+                sheet, 4, row, "transformer_capacity", float(capacity), "kVA", "变压器容量"
+            )
+            fact = f"{rated.label}={capacity:g}{rated.unit}；运行电流未提供"
             note = "未提供运行电流，不能计算负荷率或判断过载"
             evidence.append(
                 make_evidence(
@@ -397,7 +436,8 @@ def _map_total_distribution(
                     subject=subject,
                     fact=fact,
                     value=float(capacity),
-                    unit="kVA",
+                    unit=rated.unit,
+                    measurements=[rated],
                     program_note=note,
                     needs_confirmation=True,
                     checkpoint_field=header_label(sheet, _LABEL_ROW, 5, "负荷率"),
@@ -430,10 +470,18 @@ def _map_total_distribution(
             end_letter = get_column_letter(end_column)
             numeric_value = float(value) if isinstance(value, (int, float)) else None
             unit = None
+            measurements = []
             if numeric_value is not None and residual:
-                unit = "A"
+                unit = header_unit(sheet, _LABEL_ROW, value_column, "A")
+                quantity = "residual_current"
             elif numeric_value is not None and value_column == 16:
-                unit = "%"
+                # The harmonic header declares no unit; the column is a ratio.
+                unit = header_unit(sheet, _LABEL_ROW, value_column, "%")
+                quantity = "harmonic"
+            if unit:
+                measurements = [_measure(
+                    sheet, value_column, row, quantity, numeric_value, unit, field
+                )]
             fact_value = (
                 f"{value:g}{unit}"
                 if numeric_value is not None and unit
@@ -466,6 +514,7 @@ def _map_total_distribution(
                     photo_refs=dispimg_refs(photo_value),
                     value=numeric_value,
                     unit=unit,
+                    measurements=measurements,
                     needs_confirmation=(
                         (
                             _text(value).upper().startswith("NG")
@@ -677,14 +726,17 @@ def _map_thermal(
             float(Decimal(str(measured)) - Decimal(str(current_environment)))
             if current_environment is not None else None
         )
+        point = _measure(sheet, 7, row, "measured_temperature", float(measured), "℃", "测点温度")
+        ambient = _measure(
+            sheet, 2, environment_row, "ambient_temperature", current_environment, "℃", "环境温度",
+            missing_reason="missing_ambient_temperature" if current_environment is None else None,
+        )
         measurements = [
-            EvidenceMeasurement(quantity="measured_temperature", value=float(measured), unit="℃", source_cell=f"G{row}"),
+            point,
+            ambient,
+            # A difference of two temperatures, computed here; no column holds it.
             EvidenceMeasurement(
-                quantity="ambient_temperature", value=current_environment, unit="℃", source_cell=f"B{environment_row}",
-                missing_reason="missing_ambient_temperature" if current_environment is None else None,
-            ),
-            EvidenceMeasurement(
-                quantity="temperature_rise", value=rise, unit="K",
+                quantity="temperature_rise", value=rise, unit="K", label="相对环境温升",
                 derived_from=["measured_temperature", "ambient_temperature"],
                 missing_reason="missing_ambient_temperature" if current_environment is None else None,
             ),
@@ -695,28 +747,31 @@ def _map_thermal(
         else:
             missing_position_rows.append(row)
             fact_parts.append("检测部位=未填写")
-        fact_parts.append(f"测点温度={measured:g}℃")
+        fact_parts.append(f"{point.label}={measured:g}{point.unit}")
         load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
-            measurements.append(EvidenceMeasurement(
-                quantity="load_rate", value=round(float(load_rate) * 100, 4), unit="%",
-                source_cell=f"E{load_row}",
+            measurements.append(_measure(
+                sheet, 5, load_row, "load_rate", round(float(load_rate) * 100, 4), "%", "负荷率",
             ))
         if current_environment is not None:
-            fact_parts.append(f"环境温度={current_environment:g}℃")
+            fact_parts.append(f"{ambient.label}={current_environment:g}{ambient.unit}")
             fact_parts.append(f"相对环境温升={rise:.1f}K")
         if current_humidity is not None:
-            fact_parts.append(f"环境湿度={current_humidity:g}%RH")
+            moisture = _measure(
+                sheet, 3, humidity_row, "ambient_humidity", current_humidity, "%RH", "环境湿度"
+            )
+            fact_parts.append(f"{moisture.label}={current_humidity:g}{moisture.unit}")
+            measurements.append(moisture)
         # The knowledge unit on equipment heating lists the relative
         # temperature difference among its inputs; keep it when recorded.
         relative = _numeric_value(sheet, value_sheet, row, 9)
         if isinstance(relative, (int, float)) and not isinstance(relative, bool):
-            fact_parts.append(f"相对温差={relative:g}%")
-            measurements.append(EvidenceMeasurement(
-                quantity="relative_temperature_difference", value=float(relative), unit="%",
-                source_cell=f"I{row}",
-            ))
+            difference = _measure(
+                sheet, 9, row, "relative_temperature_difference", float(relative), "%", "相对温差"
+            )
+            fact_parts.append(f"{difference.label}={relative:g}{difference.unit}")
+            measurements.append(difference)
         fact = "；".join(fact_parts)
         context_rows = [
             context_row
@@ -743,7 +798,7 @@ def _map_thermal(
                     submodule_id=submodule_id,
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=float(measured),
-                    unit="℃",
+                    unit=point.unit,
                     measurements=measurements,
                     needs_confirmation=(
                         not position or not current_room or not current_cabinet
