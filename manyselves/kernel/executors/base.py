@@ -1,6 +1,6 @@
 """Action executor interface and registry."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from inspect import isawaitable
@@ -75,6 +75,9 @@ class RuntimeContext:
     conversations: ConversationRegistry = field(default_factory=ConversationRegistry)
     subworkflows: Mapping[str, ResolvedPlan] = field(default_factory=dict)
     plan_tool_factory: PlanToolFactory | None = None
+    # Action ids the Run was asked to stop before (a partial run), read when
+    # each action starts; resuming without them continues from that action.
+    stop_before: Callable[[], Collection[str]] | None = None
 
 
 @dataclass(slots=True)

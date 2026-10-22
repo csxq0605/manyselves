@@ -1,5 +1,5 @@
 id: ledger_relation_input
-version: 1.0.0
+version: 1.1.0
 description: Other modules' flagged rows and the knowledge base's relation method, for one author
 adapter: json_schema
 schema:
@@ -10,6 +10,9 @@ schema:
       type: string
     related:
       type: object
+    proposed:
+      type: object
+      description: The linker's proposals on this author's rows, by row id
     flagged_elsewhere:
       type: array
       items:

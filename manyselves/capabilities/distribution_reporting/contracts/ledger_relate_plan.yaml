@@ -1,0 +1,7 @@
+id: ledger_relate_plan
+version: 1.0.0
+description: One relate item per author, with the linker's proposals on its rows
+adapter: json_schema
+schema:
+  type: object
+  required: [relate_items]

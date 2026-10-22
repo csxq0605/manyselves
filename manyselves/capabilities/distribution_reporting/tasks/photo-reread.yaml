@@ -20,4 +20,5 @@ constraints:
 - 输入里列了“请专门看清”的各项时，逐项看清，在 transcription 里用同样的 label 各写一项；不知道上一次读成什么，也不用猜。输入里给出的上一次读到的照片日期只用来对照记录的时间先后。
 - 照片看不清、打不开或可能有安全隐患需要人看时，needs_review 写 true。
 tools: []
+attention_budget_tokens: 50000
 recovery: typed-turn-recovery

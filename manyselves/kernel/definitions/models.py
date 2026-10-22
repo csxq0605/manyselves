@@ -137,6 +137,15 @@ class TaskDefinition(DefinitionBase):
         ),
     )
     image: TaskImageInput | None = None
+    attention_budget_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Largest request (system prompt, history, task input and tools) "
+            "this task may send.  A larger one fails before it is sent and is "
+            "never truncated: the workflow must split the work instead"
+        ),
+    )
 
 
 class RecoveryRule(BaseModel):

@@ -46,7 +46,12 @@ from .agent_execution import (
 from .agent_memo import FileAgentTurnMemo, file_digest, turn_key
 from .agent_recovery import AgentRecoveryDriver
 from .agent_results import FileAgentResultStore
-from .conversation_history import FileConversationHistoryStore, serialize_message
+from .context_budget import estimate_request_tokens
+from .conversation_history import (
+    FileConversationHistoryStore,
+    drop_rejected_attempts,
+    serialize_message,
+)
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
 from .tools.registry import ToolRegistry
@@ -203,6 +208,25 @@ class DefinitionAgentInvoker:
             )
         prompt = self._prompt(task, input_value, tools)
         before = _history_of(existing, restore)
+        if task.attention_budget_tokens is not None:
+            estimate = estimate_request_tokens(
+                system_prompt=agent.instructions,
+                history=before,
+                prompt=prompt,
+                tool_schemas=tools.get_definitions(),
+                images=len(images),
+            )
+            if estimate > task.attention_budget_tokens:
+                # Never truncated: the workflow has to split this work.
+                return AgentInvocationOutcome(
+                    status="failed",
+                    session_id=conversation.external_session_id,
+                    error=(
+                        f"{ATTENTION_BUDGET_EXCEEDED}: task {task.id} would send about "
+                        f"{estimate} tokens, above its budget of "
+                        f"{task.attention_budget_tokens}"
+                    ),
+                )
         memo_key = turn_key(
             system_prompt=agent.instructions,
             prompt=prompt,
@@ -300,6 +324,8 @@ class DefinitionAgentInvoker:
                         status="ok", result=recovered, session_id=session.session_id
                     )
                 )
+            if mapped.status == "ok":
+                self._settle(session.loop, len(before))
         finally:
             self._save_history(conversation_id, session.loop)
         if mapped.status == "ok" and not task.tools:
@@ -495,6 +521,19 @@ class DefinitionAgentInvoker:
             return AgentSessionRestore(messages=persisted)
         return None
 
+    @staticmethod
+    def _settle(loop: AgentSessionLoop, start: int) -> None:
+        """Keep only the accepted answer of the turn that just finished."""
+
+        messages = getattr(loop, "conversation_messages", None)
+        replace = getattr(loop, "replace_conversation", None)
+        if not callable(messages) or not callable(replace):
+            return
+        current = messages()
+        settled = drop_rejected_attempts(current, start)
+        if len(settled) != len(current):
+            replace(settled)
+
     def _save_history(self, conversation_id: str, loop: AgentSessionLoop) -> None:
         messages = getattr(loop, "conversation_messages", None)
         if callable(messages):
@@ -687,6 +726,9 @@ def _event_digests(loop: AgentSessionLoop) -> set[str]:
     return digests
 
 
+ATTENTION_BUDGET_EXCEEDED = "attention budget exceeded"
+
+
 def _history_of(
     existing: Any, restore: AgentSessionRestore | None
 ) -> list[dict[str, Any]]:
@@ -708,4 +750,4 @@ def _json_value(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
-__all__ = ["DefinitionAgentInvoker"]
+__all__ = ["ATTENTION_BUDGET_EXCEEDED", "DefinitionAgentInvoker"]

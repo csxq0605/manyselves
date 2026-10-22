@@ -613,6 +613,10 @@ class EvidenceMeasurement(ReportingModel):
 class EvidenceItem(ReportingModel):
     id: str = Field(min_length=1)
     subject: str = Field(min_length=1)
+    place: str | None = Field(
+        default=None,
+        description="The site the record belongs to (the table's room column); none for project-level records",
+    )
     fact: str = Field(min_length=1)
     source: SourceLocation
     value: str | float | int | None = None

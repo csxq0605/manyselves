@@ -1,0 +1,16 @@
+id: ledger_story_input
+version: 1.0.0
+description: The project map with relations, every flagged row briefly and what joins them
+adapter: json_schema
+schema:
+  type: object
+  required: [map, rows, object_chains, same_observation]
+  properties:
+    map:
+      type: string
+    rows:
+      type: array
+    object_chains:
+      type: array
+    same_observation:
+      type: array

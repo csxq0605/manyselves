@@ -17,4 +17,5 @@ constraints:
 - 没被点名的行不要重新提交。只提交本模块的行（J-本模块-…），别的模块的行改不了。
 - concern 行的 hazard_conditions 不能为空：写明后果要在什么条件下才会发生。
 tools: []
+attention_budget_tokens: 250000
 recovery: typed-turn-recovery

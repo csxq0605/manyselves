@@ -1,0 +1,5 @@
+id: ledger_link_proposals
+version: 1.0.0
+description: The cross-module relations one linker proposes
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:LinkProposals

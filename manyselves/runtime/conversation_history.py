@@ -37,6 +37,57 @@ def serialize_message(message: Any) -> dict[str, Any]:
     return json.loads(json.dumps(data, ensure_ascii=False, default=str))
 
 
+def _get(message: Any, name: str) -> Any:
+    return message.get(name) if isinstance(message, Mapping) else getattr(message, name, None)
+
+
+def _calls(message: Any) -> list[tuple[str, str]]:
+    return [
+        (str(_get(call, "id") or ""), str(_get(call, "name") or ""))
+        for call in _get(message, "tool_calls") or ()
+    ]
+
+
+def drop_rejected_attempts(
+    messages: Sequence[Any], start: int, *, terminal: str = "submit_result"
+) -> list[Any]:
+    """The conversation after one finished task, without its rejected attempts.
+
+    ``messages[start:]`` is the task's own turn: its request, then the
+    model's attempts.  When the last ``terminal`` call was accepted, the
+    earlier attempts that only submitted (or said something without
+    submitting), the results answering them and the correction prompts in
+    between are removed: later turns read the accepted answer once, not a
+    superseded copy next to it.  Calls to other tools and their results stay.
+    """
+
+    head, turn = list(messages[:start]), list(messages[start:])
+    finals = [
+        index
+        for index, message in enumerate(turn)
+        if _get(message, "role") == "assistant"
+        and any(name == terminal for _id, name in _calls(message))
+    ]
+    if not finals:
+        return list(messages)
+    last = finals[-1]
+    dropped: set[str] = set()
+    kept: list[Any] = []
+    for index, message in enumerate(turn):
+        role = _get(message, "role")
+        calls = _calls(message)
+        if 0 < index < last:
+            if role == "assistant" and all(name == terminal for _id, name in calls):
+                dropped.update(call_id for call_id, _name in calls)
+                continue
+            if role == "user" and not _get(message, "is_tool_result"):
+                continue
+        if _get(message, "tool_call_id") in dropped:
+            continue
+        kept.append(message)
+    return head + kept
+
+
 class FileConversationHistoryStore:
     """Store one JSON message list per conversation under the Run directory."""
 
@@ -81,4 +132,4 @@ class FileConversationHistoryStore:
         os.replace(temporary, path)
 
 
-__all__ = ["FileConversationHistoryStore", "serialize_message"]
+__all__ = ["FileConversationHistoryStore", "drop_rejected_attempts", "serialize_message"]

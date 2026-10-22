@@ -52,6 +52,12 @@ def _status_value(value: Any, *photo_values: Any) -> Any:
     return PHOTO_ONLY if dispimg_refs(*photo_values) else None
 
 
+def _place(room: Any) -> str:
+    """The distribution room a record belongs to, from the table's room column."""
+
+    return _text(room) or "未注明配电房"
+
+
 def _subject(room: Any, cabinet: Any = None) -> str:
     room_text = _text(room) or "未注明配电房"
     cabinet_text = _text(cabinet)
@@ -200,6 +206,7 @@ def _map_low_voltage(
                     row=row,
                     column="C",
                     subject=subject,
+                    place=_place(room),
                     fact=fact,
                     value=value,
                     unit=unit,
@@ -242,6 +249,7 @@ def _map_low_voltage(
                     row=row,
                     column=start_letter,
                     subject=subject,
+                    place=_place(room),
                     fact=f"{label}={_text(value)}",
                     module_id=submodule_id.rsplit(".", 2)[0] if submodule_id else None,
                     submodule_id=submodule_id,
@@ -275,6 +283,7 @@ def _map_low_voltage(
                     row=row,
                     column=start_letter,
                     subject=subject,
+                    place=_place(room),
                     fact=f"{label}={_text(value)}",
                     photo_refs=dispimg_refs(sheet.cell(row, photo_column).value),
                     needs_confirmation=_text(value).upper().startswith("NG")
@@ -307,6 +316,7 @@ def _map_low_voltage(
                     row=row,
                     column="J",
                     subject=subject,
+                    place=_place(room),
                     fact=fact,
                     photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                     value=residual_current,
@@ -334,6 +344,7 @@ def _map_low_voltage(
                     row=row,
                     column="X",
                     subject=subject,
+                    place=_place(room),
                     fact=f"其他检查发现={other}",
                     photo_refs=dispimg_refs(
                         sheet.cell(row, 25).value,
@@ -409,6 +420,7 @@ def _map_total_distribution(
                     row=row,
                     column="C",
                     subject=subject,
+                    place=_place(room),
                     fact=fact,
                     value=value,
                     unit=unit,
@@ -434,6 +446,7 @@ def _map_total_distribution(
                     row=row,
                     column="D",
                     subject=subject,
+                    place=_place(room),
                     fact=fact,
                     value=float(capacity),
                     unit=rated.unit,
@@ -510,6 +523,7 @@ def _map_total_distribution(
                     row=row,
                     column=start_letter,
                     subject=subject,
+                    place=_place(room),
                     fact=fact,
                     photo_refs=dispimg_refs(photo_value),
                     value=numeric_value,
@@ -606,6 +620,7 @@ def _map_general_inspection(path: Path, file_id: str, sheet: Any) -> list:
                     row=row,
                     column=start_letter,
                     subject=_subject(room),
+                    place=_place(room),
                     fact=fact,
                     photo_refs=photo_refs,
                     needs_confirmation=(
@@ -654,6 +669,7 @@ def _map_busbar(path: Path, file_id: str, sheet: Any) -> list:
                     row=row,
                     column=start_letter,
                     subject=_subject(location),
+                    place=_place(location),
                     fact=f"{label}={_text(value)}",
                     module_id="2.4" if submodule_id else None,
                     submodule_id=submodule_id,
@@ -717,7 +733,7 @@ def _map_thermal(
                     evidence.append(make_evidence(
                         file_id=file_id, path=path, sheet=sheet.title,
                         cell=f"A{min(room_row, cabinet_row)}:K{row}", row=row, column="G",
-                        subject=_subject(current_room, current_cabinet), fact=fact,
+                        place=_place(current_room), subject=_subject(current_room, current_cabinet), fact=fact,
                         module_id=module_id, submodule_id=submodule_id,
                         photo_refs=photo_refs, needs_confirmation=True,
                     ))
@@ -793,6 +809,7 @@ def _map_thermal(
                     row=row,
                     column="G",
                     subject=_subject(current_room, current_cabinet),
+                    place=_place(current_room),
                     fact=fact,
                     module_id=module_id,
                     submodule_id=submodule_id,

@@ -105,8 +105,9 @@ def _definitions() -> tuple[DefinitionRegistry, dict[str, Any]]:
     return registry, contracts
 
 
-def _task(*, tools: list[str] | None = None) -> TaskDefinition:
+def _task(*, tools: list[str] | None = None, budget: int | None = None) -> TaskDefinition:
     return TaskDefinition(
+        attention_budget_tokens=budget,
         id="answer-question",
         version="1.0.0",
         description="Answer one question",
@@ -680,3 +681,74 @@ async def test_re_execution_replays_unchanged_turns_and_reruns_changed_ones(
     assert '"text": "context"' in restored[0].content
     history = tmp_path / "Work" / "runs" / RUN_ID / "conversations"
     assert len(list(history.glob("*.json"))) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_submission_leaves_the_history_once_accepted(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path, [("submit", [{"wrong": 1}, {"answer": "fixed"}])], []
+    )
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(), {"text": "q"}, _conversation("a"),
+                task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.result == {"answer": "fixed"}
+    history = harness.loops[0].history
+    submitted = [m.tool_calls[0].arguments for m in history if m.tool_calls]
+    assert submitted == [{"answer": "fixed"}]
+    assert [m.role for m in history] == ["user", "assistant"]
+
+
+def test_rejected_attempts_are_dropped_but_other_tools_stay() -> None:
+    from manyselves.runtime.conversation_history import drop_rejected_attempts
+
+    def call(call_id: str, name: str) -> dict[str, Any]:
+        return {"id": call_id, "name": name, "arguments": {}}
+
+    earlier = [{"role": "user", "content": "old"}]
+    turn = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "", "tool_calls": [call("1", "lookup")]},
+        {"role": "tool", "content": "found", "tool_call_id": "1", "is_tool_result": True},
+        {"role": "assistant", "content": "", "tool_calls": [call("2", "submit_result")]},
+        {"role": "tool", "content": "invalid", "tool_call_id": "2", "is_tool_result": True},
+        {"role": "user", "content": "fix it"},
+        {"role": "assistant", "content": "I think"},
+        {"role": "assistant", "content": "", "tool_calls": [call("3", "submit_result")]},
+        {"role": "tool", "content": "ok", "tool_call_id": "3", "is_tool_result": True},
+    ]
+    kept = drop_rejected_attempts(earlier + turn, 1)
+    assert [m["content"] for m in kept] == ["old", "task", "", "found", "", "ok"]
+    assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["1", "3"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_over_its_attention_budget_fails_before_it_is_sent(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=50), {"text": "问" * 200},
+                _conversation("a"), task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "failed"
+    assert "attention budget exceeded" in (outcome.error or "")
+    assert not harness.loops or not harness.loops[0].received

@@ -161,8 +161,27 @@ def select_records(
     return selected
 
 
+def gather_by_key(
+    sources: Mapping[str, Mapping[str, Any] | None],
+) -> dict[str, dict[str, Any]]:
+    """Several record tables keyed alike, gathered per key.
+
+    ``sources`` maps a source name (for example one reviewer) to its table
+    (record id -> value).  The result maps each record id to the values the
+    sources gave it, by source, in the sources' order; nothing is merged
+    away, so a caller decides how values for one record combine.
+    """
+
+    gathered: dict[str, dict[str, Any]] = {}
+    for source, table in sources.items():
+        for key, value in (table or {}).items():
+            gathered.setdefault(str(key), {})[source] = deepcopy(value)
+    return gathered
+
+
 __all__ = [
     "RecordError",
+    "gather_by_key",
     "compare",
     "field_value",
     "keyed_items",

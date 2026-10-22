@@ -1,0 +1,16 @@
+id: ledger_object_batch
+version: 1.0.0
+description: Objects several modules judged, with every module's rows on them and all their records
+adapter: json_schema
+schema:
+  type: object
+  required: [batch_id, objects, rows, facts]
+  properties:
+    batch_id:
+      type: string
+    objects:
+      type: array
+    rows:
+      type: array
+    facts:
+      type: string

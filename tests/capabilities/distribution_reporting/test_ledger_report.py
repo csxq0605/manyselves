@@ -204,8 +204,25 @@ def _answer(message):
     content = message.content
     task = _task(content)
     value = _input_of(content)
-    if task in {"read-project", "read-ledger"}:
-        return ("submit", [{"summary": "已读。"}])
+    if task == "link-rows":
+        ids = [row["id"] for row in value["rows"]]
+        if {"J-2.4-1", "J-2.5-1"} <= set(ids):
+            return ("submit", [{"proposals": [{
+                "row_id": "J-2.4-1", "other_row_id": "J-2.5-1", "relation": "缺资料影响判断",
+                "reason": "缺少SOP使温度偏高的处置无法核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]}])
+        return ("submit", [{"proposals": []}])
+    if task in {"review-objects", "review-relations"}:
+        return ("submit", [{"findings": {}}])
+    if task == "plan-storyline":
+        ids = [row["id"] for row in value["rows"]]
+        if {"J-2.4-1", "J-2.5-1"} <= set(ids):
+            return ("submit", [{"lines": [{
+                "title": "温度偏高与规程缺失", "row_ids": ["J-2.4-1", "J-2.5-1"],
+                "conclusion": "温度偏高的处置缺少规程支持，待核实。",
+            }]}])
+        return ("submit", [{"lines": []}])
     if task == "judge-module":
         module_id = value["module_id"]
         number = REPORT_MODULE_IDS.index(module_id) + 1
@@ -443,17 +460,26 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     def tasks_of(loop: ScriptedLoop) -> list[str]:
         return [_task(message.content) for message in loop.received]
 
-    shared = loops[0]
-    assert tasks_of(shared) == ["read-project"]
     authors = {
         _input_of(loop.received[0].content)["module_id"]: loop
         for loop in loops
         if tasks_of(loop)[:1] == ["judge-module"]
     }
     assert set(authors) == set(REPORT_MODULE_IDS)
-    for loop in authors.values():
-        # Every author starts from the shared project reading.
-        assert loop.restored[0][0].content == shared.received[0].content
+    for module_id, loop in authors.items():
+        # Every author starts a conversation of its own from its materials:
+        # the project map, its records and the same objects' records elsewhere.
+        assert not loop.restored
+        first = loop.received[0].content
+        assert '<context name="materials">' in first and "# 项目图谱" in first
+        assert f"E-{REPORT_MODULE_IDS.index(module_id) + 1:04d}" in first
+    # The linker read the flagged rows; its proposal reached both authors.
+    linkers = [loop for loop in loops if tasks_of(loop) == ["link-rows"]]
+    assert len(linkers) == 1 and not linkers[0].restored
+    relate_24 = next(
+        _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
+    )
+    assert [o["row_id"] for o in relate_24["proposed"]["J-2.4-1"]] == ["J-2.5-1"]
     # 2.4 revised only in its own conversation; 2.1 had nothing blocking.
     assert "revise-judgments" in tasks_of(authors["2.4"])
     assert "revise-judgments" not in tasks_of(authors["2.1"])
@@ -474,14 +500,38 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     )
     assert '<context name="facts">' in review_24 and "E-0004" in review_24
     assert _input_of(review_24)["rows"][0]["id"] == "J-2.4-1"
-    assert "revise-sections" in tasks_of(authors["2.1"])
-    assert "revise-sections" not in tasks_of(authors["2.4"])
-    # Prose is written once per section, after judgment, in the author's conversation.
+    def module_of(section_id: str) -> str:
+        return next(m for m in REPORT_MODULE_IDS if section_id in REPORT_TAXONOMY[m].submodules)
+
+    writers = {
+        module_of(_input_of(loop.received[0].content)["submodule_id"]): loop
+        for loop in loops
+        if tasks_of(loop)[:1] == ["write-section"]
+    }
+    assert "revise-sections" in tasks_of(writers["2.1"])
+    assert "revise-sections" not in tasks_of(writers["2.4"])
+    # Prose is written once per section, after judgment, by a writer that
+    # starts from its group's material; the story line reaches its sections.
     sections = len(REPORT_TAXONOMY["2.4"].submodules)
-    assert tasks_of(authors["2.4"]).count("write-section") == sections
+    assert tasks_of(writers["2.4"]).count("write-section") == sections
+    assert not writers["2.4"].restored
+    assert '<context name="pack">' in writers["2.4"].received[0].content
+    assert '<context name="pack">' not in writers["2.4"].received[1].content
+    briefs = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "write-section"]
+    assert [b["story_lines"][0]["other_sections"] for b in briefs if b.get("story_lines")] == [
+        [next(iter(REPORT_TAXONOMY["2.5"].submodules))]
+    ]
+    story = json.loads((ledger_dir / "story-lines.json").read_text(encoding="utf-8"))
+    assert [line["row_ids"] for line in story["lines"]] == [["J-2.4-1", "J-2.5-1"]]
     chief = [loop for loop in loops if "chief-chapter-3" in tasks_of(loop)]
     assert len(chief) == 1
     assert tasks_of(chief[0])[:2] == ["chief-chapter-3", "chief-chapter-1"]
+    # The chief reads its own material once; chapter 1 does not resend it.
+    assert not chief[0].restored
+    chief_3, chief_1 = chief[0].received[:2]
+    assert '<context name="map">' in chief_3.content
+    assert [row["id"] for row in _input_of(chief_3.content)["rows"]] == ["J-2.4-1", "J-2.5-1"]
+    assert set(_input_of(chief_1.content)) == {"note"}
     # Chapters 1 and 3 are fact-checked in small packets, each in a fresh
     # conversation; a blocking finding on chapter 1 sends the chief back once.
     checks = [loop for loop in loops if tasks_of(loop) == ["check-chief-facts"]]

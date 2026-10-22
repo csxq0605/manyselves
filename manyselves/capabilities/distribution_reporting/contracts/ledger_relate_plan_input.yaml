@@ -1,0 +1,7 @@
+id: ledger_relate_plan_input
+version: 1.0.0
+description: Ledger context, the built ledger and the cross-module linker's proposals by pack
+adapter: json_schema
+schema:
+  type: object
+  required: [context, ledger, links]

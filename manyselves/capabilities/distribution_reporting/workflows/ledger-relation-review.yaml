@@ -1,0 +1,29 @@
+id: ledger-relation-review
+version: 1.0.0
+description: One batch of the relation lens, reviewed in a conversation of its own
+tasks:
+- review-relations
+recovery:
+- typed-turn-recovery
+state:
+  item: null
+  item_key: null
+actions:
+- id: open-review
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: relation-review
+  key_variable: item_key
+  mode: run
+  output_variable: review_conversation
+- id: review
+  kind: invoke_agent
+  agent: report-consultant
+  task: review-relations
+  conversation_variable: review_conversation
+  input_variable: item
+  output_variable: review
+- id: finish
+  kind: end_workflow
+  output_variable: review
+  output_name: result

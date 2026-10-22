@@ -8,6 +8,8 @@ The classification only uses the plan's structure and the error text:
   no progress, a result that kept failing its contract).  A fresh sample
   usually works, so running again is worth a bounded number of tries.
 - ``cancelled``: someone stopped the Run.
+- ``stopped``: the Run was started to stop before a given step and did;
+  resuming it continues from that step.
 - ``program``: a Tool or a workflow step failed.  Running again would fail
   the same way; it needs a code or input fix.
 
@@ -30,6 +32,10 @@ _TEMPORARY = re.compile(
     re.IGNORECASE,
 )
 _CANCELLED = re.compile(r"cancelled by user|run cancelled", re.IGNORECASE)
+# The Run was asked to stop before a step (a partial run); resume continues it.
+_STOPPED = re.compile(r"stopped before step", re.IGNORECASE)
+# A request larger than its task allows fails the same way every time.
+_OVER_BUDGET = re.compile(r"attention budget exceeded", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,10 @@ def describe_failure(plan: ResolvedPlan, state: Mapping[str, Any]) -> RunFailure
 def _classify(kind: str | None, error: str) -> tuple[str, bool]:
     if _CANCELLED.search(error):
         return "cancelled", False
+    if _STOPPED.search(error):
+        return "stopped", False
+    if _OVER_BUDGET.search(error):
+        return "program", False
     if _TEMPORARY.search(error):
         return "temporary", True
     if kind == "invoke_agent":

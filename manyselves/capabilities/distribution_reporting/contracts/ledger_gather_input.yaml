@@ -1,0 +1,7 @@
+id: ledger_gather_input
+version: 1.0.0
+description: The review plan, the ledger and the three lenses' findings
+adapter: json_schema
+schema:
+  type: object
+  required: [plan, ledger, module_reviews, object_reviews, relation_reviews]

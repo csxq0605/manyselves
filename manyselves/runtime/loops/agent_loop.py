@@ -1649,6 +1649,13 @@ class AgentLoop:
 
         return list(self._conversation_history)
 
+    def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
+        """Replace the retained conversation between turns (task boundaries stay)."""
+
+        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            raise RuntimeError("cannot replace conversation while the Agent is active")
+        self._conversation_history = list(messages)
+
     def restore_conversation(
         self,
         messages: Sequence[Mapping[str, Any] | LLMMessage],

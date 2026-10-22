@@ -195,6 +195,7 @@ def make_evidence(
     column: str,
     subject: str,
     fact: str,
+    place: str | None = None,
     module_id: str | None = None,
     submodule_id: str | None = None,
     photo_refs: list[str] | None = None,
@@ -210,6 +211,7 @@ def make_evidence(
     return EvidenceItem(
         id=evidence_id(file_id, sheet, cell, submodule_id, fact),
         subject=subject,
+        place=place,
         fact=fact,
         source=SourceLocation(
             file_id=file_id,

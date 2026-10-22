@@ -1,0 +1,10 @@
+id: apply-story-lines
+version: 1.0.0
+description: Check the story lines and plan writing groups and the chief input with them
+implementation: capability:distribution-reporting:apply-story-lines
+input_contract: ledger_story_apply_input
+output_contract: ledger_final
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

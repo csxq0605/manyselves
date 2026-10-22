@@ -216,6 +216,14 @@ class CandidateReview(_Model):
     reason: str = Field(default="", description="可不写")
 
 
+class DeclinedProposal(_Model):
+    """A relation the linker proposed for one of the author's rows, not taken."""
+
+    row_id: str = Field(pattern=r"^J-", description="本模块的判断行编号")
+    other_row_id: str = Field(pattern=r"^J-", description="专员提议关联的别的模块的行")
+    reason: str = Field(min_length=1, description="一句话：为什么本次不成立")
+
+
 class RelationSet(_Model):
     """One author's cross-module relations, by its own row id."""
 
@@ -226,6 +234,65 @@ class RelationSet(_Model):
     considered: list[CandidateReview] = Field(
         default_factory=list,
         description="可选：考虑过、但本次不成立的候选关系名称；不用逐条覆盖，也不用写理由",
+    )
+    declined_proposals: list[DeclinedProposal] = Field(
+        default_factory=list,
+        description="专员提议、但你判断本次不成立的关联，每条写一句理由；采纳的写进 relations",
+    )
+
+
+class LinkProposal(_Model):
+    """One relation between rows of two modules, proposed by the cross-module linker."""
+
+    row_id: str = Field(pattern=r"^J-", description="一端的判断行编号")
+    other_row_id: str = Field(pattern=r"^J-", description="另一端、别的模块的判断行编号")
+    relation: str = Field(
+        min_length=1,
+        description="关系名称：知识库关联方法列出的照抄 relation_names；知识库没有收录的自拟简短名称",
+    )
+    reason: str = Field(
+        min_length=1,
+        description="一句话：两边哪项事实满足这条关系要核实的条件，对两边结论有什么作用",
+    )
+    mechanism: str = Field(default="", description="知识库没有收录的关联必填：两边为什么相关的机理")
+    condition: str = Field(
+        default="", description="知识库没有收录的关联必填：成立条件，以及两边哪项事实满足了它"
+    )
+
+
+class LinkProposals(_Model):
+    """What one linker found between the rows it was given."""
+
+    proposals: list[LinkProposal] = Field(
+        default_factory=list,
+        description="提议的跨模块关联；两边的事实看不出条件的不提，宁缺不凑",
+    )
+
+
+class StoryLine(_Model):
+    """One cross-module line of evidence the report carries through its sections."""
+
+    title: str = Field(min_length=1, description="这条主线说的是什么，一句话，给读者看")
+    row_ids: list[str] = Field(
+        min_length=2,
+        description="链上的判断行（J-…），至少两行，来自至少两个模块；顺序就是论证顺序",
+    )
+    conclusion: str = Field(
+        min_length=1,
+        description="几行合起来得出的结论，措辞不强于链上最弱一行的证据状态",
+    )
+    section_notes: dict[str, str] = Field(
+        default_factory=dict,
+        description="可选：键是小节编号，值是这一节写这条主线时要交代的一句（例如引哪一端、标“详见 2.x.x”）",
+    )
+
+
+class StoryPlan(_Model):
+    """The cross-module lines of evidence, settled before any prose is written."""
+
+    lines: list[StoryLine] = Field(
+        default_factory=list,
+        description="只收已审定的关联和同一对象上的判断能支持的主线；没有就留空",
     )
 
 
@@ -1293,6 +1360,11 @@ def layout_findings(
 
 
 __all__ = [
+    "DeclinedProposal",
+    "LinkProposal",
+    "LinkProposals",
+    "StoryLine",
+    "StoryPlan",
     "RelationSet",
     "UNVERIFIED_MARK",
     "action_content",

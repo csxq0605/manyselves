@@ -1,6 +1,6 @@
 id: ledger-module-writing
-version: 1.0.0
-description: The author writes each submodule in the conversation that judged it
+version: 1.1.0
+description: A writer writes one group of sections in a conversation of its own, from the group's material
 tasks:
 - write-section
 recovery:
@@ -10,13 +10,13 @@ state:
   item_key: null
   written: []
 actions:
-- id: resume-author
-  kind: resolve_conversation
+- id: open-writer
+  kind: create_conversation
   agent: report-consultant
-  conversation_key: author
+  conversation_key: writer
   key_variable: item_key
   mode: run
-  output_variable: author_conversation
+  output_variable: writer_conversation
 - id: sections
   kind: set_variable
   variable: sections
@@ -32,7 +32,7 @@ actions:
   kind: invoke_agent
   agent: report-consultant
   task: write-section
-  conversation_variable: author_conversation
+  conversation_variable: writer_conversation
   input_variable: section
   output_variable: section_text
 - id: record

@@ -61,6 +61,9 @@ class ScriptedLoop:
         self.restored.append(restored)
         self.history = list(restored)
 
+    def replace_conversation(self, messages) -> None:
+        self.history = list(messages)
+
     def conversation_messages(self) -> list[LLMMessage]:
         return list(self.history)
 

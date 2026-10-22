@@ -1,8 +1,8 @@
 id: relate-judgments
-version: 1.2.0
+version: 1.3.0
 description: Decide which other modules' rows bear on this module's rows, before review
 agent: report-consultant
-objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。
+objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断，proposed 是跨模块专员看过全部关注和不能判定行后、对你这些行提出的关联。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。
 input_contract: ledger_relation_input
 output_contract: ledger_relation_set
 context_fields:
@@ -13,6 +13,8 @@ constraints:
 - 知识库没有收录、但两边的事实能看出确实相关的关联也可以连：relation 自拟一个简短名称，并必须写 mechanism（两边为什么相关的机理）和 condition（这条关联成立要满足的条件，以及两边哪项事实满足了它）。这类关联没有知识库兜底，会被审查专门核对。
 - 只是同一房间、同一次检查、同一个计划或制度的不连；条件核实不了就不连。
 - relations 的键是本模块的判断行编号，值是这一行的关联，每条写：row_id（所引的别的模块的行）、relation（知识库的候选关系照抄 relation_names 里的名称）、reason（一句话：两边哪项事实满足条件，对本行结论有什么作用），知识库未收录的另写 mechanism 和 condition。不连的行不写。
+- proposed 的键是本模块的行，值是专员提议的关联（row 是另一端那一行的一句话摘要）。逐条看：两边的事实确实满足条件的，照它写进 relations（可以改写 reason，知识库未收录的照样写 mechanism 和 condition）；不成立的写进 declined_proposals，一句理由。专员只是提议，不因为是专员提的就采纳；proposed 以外你自己看出的关联照常写。
 - 这一步只记关联，不改判断行本身；关联会交给审查核对理由。不替别的模块下结论，不复述它的论证。程序会删掉所引行不存在、属于本模块，或知识库未收录又没写机理和成立条件的关联。
 tools: []
+attention_budget_tokens: 250000
 recovery: typed-turn-recovery

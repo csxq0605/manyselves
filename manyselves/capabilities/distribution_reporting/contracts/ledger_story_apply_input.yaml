@@ -1,0 +1,7 @@
+id: ledger_story_apply_input
+version: 1.0.0
+description: The final ledger and the story-line plan
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger]

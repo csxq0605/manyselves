@@ -1,0 +1,28 @@
+id: ledger_link_pack
+version: 1.0.0
+description: Flagged rows of one scope in full with what they cite, the project map and the relation method
+adapter: json_schema
+schema:
+  type: object
+  required: [pack_id, scope, rows, facts, map, relation_method, relation_names]
+  properties:
+    pack_id:
+      type: string
+    scope:
+      type: string
+    rows:
+      type: array
+    other_rows:
+      type: array
+      items:
+        type: string
+    facts:
+      type: string
+    map:
+      type: string
+    relation_method:
+      type: string
+    relation_names:
+      type: array
+      items:
+        type: string

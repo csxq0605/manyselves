@@ -1,0 +1,69 @@
+id: ledger-module-settle
+version: 1.0.0
+description: One module's review, the three lenses merged by row; the author revises only on blocking findings
+tasks:
+- revise-judgments
+recovery:
+- typed-turn-recovery
+output_contract: ledger_owner_result
+state:
+  item: null
+  item_key: null
+  revision: null
+actions:
+- id: lens-review
+  kind: set_variable
+  variable: review
+  value_variable: item
+  field: review
+- id: merge
+  kind: invoke_tool
+  tool: merge-review-findings
+  input_variables:
+    item: item
+    review: review
+  output_variable: merged
+- id: revise-needed
+  kind: set_variable
+  variable: revise
+  value_variable: merged
+  field: revise
+- id: route
+  kind: if
+  condition:
+    variable: revise
+    operator: eq
+    value: true
+  then: resume-author
+  otherwise: close
+- id: resume-author
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: author
+  key_variable: item_key
+  mode: run
+  output_variable: author_conversation
+- id: revision-input
+  kind: set_variable
+  variable: revision_input
+  value_variable: merged
+  field: revision_input
+- id: revise
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-judgments
+  conversation_variable: author_conversation
+  input_variable: revision_input
+  output_variable: revision
+- id: close
+  kind: invoke_tool
+  tool: close-review
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

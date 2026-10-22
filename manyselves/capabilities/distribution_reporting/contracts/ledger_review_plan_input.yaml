@@ -1,0 +1,7 @@
+id: ledger_review_plan_input
+version: 1.0.0
+description: Ledger context and the related ledger after the photos were read again
+adapter: json_schema
+schema:
+  type: object
+  required: [context, ledger]

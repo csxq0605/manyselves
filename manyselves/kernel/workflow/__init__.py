@@ -42,6 +42,7 @@ from .models import (
 from .records import (
     RecordError,
     field_value,
+    gather_by_key,
     keyed_items,
     map_items,
     matches_all,
@@ -71,6 +72,7 @@ __all__ = [
     "keyed_items",
     "map_items",
     "matches_all",
+    "gather_by_key",
     "select_records",
     "upsert_records",
     "ActionExecutionState",

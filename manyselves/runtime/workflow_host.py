@@ -37,6 +37,7 @@ from manyselves.kernel.workflow import (
 
 # ``asyncio.Task.cancel`` message for a user-requested Run cancel.
 RUN_CANCEL_REQUESTED = "run cancelled by user"
+RUN_STOPPED_BEFORE = "run stopped before step"
 
 
 class WorkflowRuntimeEvent(BaseModel):
@@ -230,6 +231,8 @@ class WorkflowRuntimeHost:
         plan_bundle: dict[str, ResolvedPlan],
         checkpoint: Callable[[WorkflowState], None],
     ) -> ActionResult:
+        if context.stop_before is not None and action.id in context.stop_before():
+            raise RuntimeError(f"{RUN_STOPPED_BEFORE} {action.id} as requested")
         if isinstance(action, ParallelAction):
             return await self._execute_parallel(
                 plan,

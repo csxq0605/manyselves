@@ -14,4 +14,5 @@ constraints:
 - findings 的键是条目的 unit_id。severity：blocking=事实写错（数量、档位、对象、数值不对，或说法比所引行更重），必须改；minor=可以更准确但不影响事实。problem 写清哪里不对、正确的是什么，suggestion 写怎么改。
 - 没有问题时提交空的 findings。
 tools: []
+attention_budget_tokens: 200000
 recovery: typed-turn-recovery

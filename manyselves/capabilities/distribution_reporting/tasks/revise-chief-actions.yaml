@@ -8,4 +8,5 @@ output_contract: ledger_chief_chapter_3
 constraints:
 - 只改 findings 指出的问题，其余内容保持不变。占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留；数量和档位用占位符，不自己数。程序给的“请核对”是提示：数写对了就不用改。
 tools: []
+attention_budget_tokens: 200000
 recovery: typed-turn-recovery

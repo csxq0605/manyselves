@@ -27,4 +27,5 @@ constraints:
 - method 是建议，不是硬规定。program_findings 是程序已经查出的问题，不用重复写。
 - 没有问题时提交空的 findings。
 tools: []
+attention_budget_tokens: 200000
 recovery: typed-turn-recovery

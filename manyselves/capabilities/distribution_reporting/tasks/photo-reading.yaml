@@ -17,4 +17,5 @@ constraints:
 - visible 用一两句话写照片拍的是什么设备、什么部位、可见状态。不推测看不到的部分，不引用标准，不下合格或不合格的结论。
 - 照片看不清、打不开或可能有安全隐患需要人看时，needs_review 写 true。
 tools: []
+attention_budget_tokens: 50000
 recovery: typed-turn-recovery

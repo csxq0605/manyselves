@@ -1,0 +1,7 @@
+id: ledger_review_plan
+version: 1.0.0
+description: The three review lenses' items
+adapter: json_schema
+schema:
+  type: object
+  required: [review_items, object_items, relation_items]

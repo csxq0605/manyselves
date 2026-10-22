@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from inspect import isawaitable
@@ -60,6 +60,7 @@ from .capability_binding import (
 )
 from .conversation_store import FileConversationStore
 from .definition_agent import DefinitionAgentInvoker
+from .run_failure import describe_failure
 from .run_lifecycle import DetachedRunTaskOwner, StartAwareFileWorkflowStateStore
 from .step_memo import MEMO_DIR, MemoizedTool, RunStepMemo, code_digest, package_data_digest
 from .tool_adapter import CapabilityToolAdapter, CapabilityToolAdapterFactory
@@ -76,6 +77,8 @@ SettledListener = Callable[[str], Awaitable[None] | None]
 RerunInput = Callable[[str, str, Any, dict[str, Any], Path], dict[str, Any]]
 
 START_INPUT_FILE = "start-input.json"
+# {"stop_before": [action ids]}: a partial run stops before these steps.
+RUN_OPTIONS_FILE = "run-options.json"
 # The code of the steps as the Run last executed them.
 STEP_CODE_FILE = "step-code.json"
 # Run-directory entries that stay in place when a version is archived.
@@ -162,10 +165,14 @@ class GenericCapabilityRuntimeBinding:
         command_id: UUID,
         workflow_id: str,
         values: Any,
+        *,
+        stop_before: Sequence[str] = (),
     ) -> dict[str, Any]:
         registry, plan = self._compile(workflow_id)
         contracts = _contracts(registry)
         run_id = self.run_id_for(command_id, workflow_id)
+        if stop_before:
+            self.set_stop_before(run_id, stop_before)
         # Resolve every Tool the plan reaches before any Run state exists.
         self._tools(plan, contracts, None)
         try:
@@ -248,6 +255,10 @@ class GenericCapabilityRuntimeBinding:
         if state.status is WorkflowStatus.COMPLETED or self._detached.is_active(run_id):
             return {"run_id": run_id, "task_id": None}
         plan = self._load_plan(run_id)
+        failure = describe_failure(plan, state.model_dump(mode="json"))
+        if failure is not None and failure.category == "stopped":
+            # A partial run that stopped where asked continues to the end.
+            self.set_stop_before(run_id, ())
         _registry, current = self._compile(state.workflow_id)
         if _plan_data(current) != _plan_data(plan):
             return await self.rerun(command_id, run_id, reason="definitions changed")
@@ -312,6 +323,27 @@ class GenericCapabilityRuntimeBinding:
             state_store=self._store,
             operation=self._accepted(run_id, self._execute(plan, fresh, registry)),
         )
+
+    def set_stop_before(self, run_id: str, steps: Sequence[str]) -> None:
+        """Make the Run stop before these steps (none: run to the end)."""
+
+        path = self._run_dir(run_id) / RUN_OPTIONS_FILE
+        if not steps:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"stop_before": list(dict.fromkeys(steps))}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _stop_before(self, run_id: str) -> frozenset[str]:
+        path = self._run_dir(run_id) / RUN_OPTIONS_FILE
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return frozenset()
+        return frozenset(str(step) for step in data.get("stop_before") or ())
 
     def versions(self, run_id: str) -> list[dict[str, Any]]:
         """Archived versions of one Run, oldest first."""
@@ -524,6 +556,7 @@ class GenericCapabilityRuntimeBinding:
                         plan_tool_factory=lambda definition, plan_contracts: MemoizedTool(
                             self._tool_factory(plan_contracts, run_id).build(definition), memo
                         ),
+                        stop_before=lambda: self._stop_before(run_id),
                     ),
                 )
         finally:

@@ -1,0 +1,7 @@
+id: ledger_settle_items
+version: 1.0.0
+description: One review per module to settle, the lenses' findings merged by row
+adapter: json_schema
+schema:
+  type: object
+  required: [settle_items]
