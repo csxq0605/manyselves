@@ -16,7 +16,6 @@ PUBLIC_ENTRYPOINTS = (
     "revise-report",
     "aggregate-existing",
     "render-existing",
-    "distill-template-skill",
     "extract-template-skills",
     "triage-writing-lessons",
 )
@@ -47,9 +46,6 @@ def test_public_entrypoints_are_file_defined_and_compile() -> None:
     aggregate_tail = plans["aggregate-existing"].actions[1]
     assert isinstance(aggregate_tail, SubworkflowAction)
     assert aggregate_tail.workflow == "distribution-aggregate-existing-tail"
-    template_project = plans["distill-template-skill"].actions[0]
-    assert isinstance(template_project, InvokeToolAction)
-    assert template_project.tool == "project-public-template-distillation-input"
 
 
 def test_public_input_projection_injects_host_run_identity_and_fixed_defaults() -> None:
@@ -68,11 +64,3 @@ def test_public_input_projection_injects_host_run_identity_and_fixed_defaults() 
     )
     assert aggregate.run_id == "run-aggregate"
     assert aggregate.request.operation == "aggregate_existing"
-
-    template = project_public_entrypoint_input(
-        "distill-template-skill",
-        "run-template",
-        {"template_ref": "Inputs/report-template.docx"},
-    )
-    assert template.run_id == "run-template"
-    assert len(template.required_part_ids) == 14

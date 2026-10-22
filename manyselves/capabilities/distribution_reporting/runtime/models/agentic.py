@@ -5,7 +5,6 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import uuid4
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
@@ -137,7 +136,6 @@ class TaskEnvelope(StrictModel):
     target_submodule_ids: list[str] = Field(default_factory=list)
     input_contract_kind: (
         Literal[
-            "template_distillation_input",
             "module_authoring_input",
             "module_review_input",
             "cross_review_input",
@@ -608,102 +606,6 @@ class TemplateSkillBoundaryManifest(StrictModel):
         return self
 
 
-TemplateRoleSkillId = Literal[
-    "author-2.1",
-    "author-2.2",
-    "author-2.3",
-    "author-2.4",
-    "author-2.5",
-    "auditor-2.1",
-    "auditor-2.2",
-    "auditor-2.3",
-    "auditor-2.4",
-    "auditor-2.5",
-    "chief-editor-chapter-1",
-    "chief-editor-chapter-3",
-    "chief-editor-chapter-4",
-    "final-auditor",
-]
-
-TEMPLATE_ROLE_SKILL_IDS: tuple[str, ...] = (
-    "author-2.1",
-    "author-2.2",
-    "author-2.3",
-    "author-2.4",
-    "author-2.5",
-    "auditor-2.1",
-    "auditor-2.2",
-    "auditor-2.3",
-    "auditor-2.4",
-    "auditor-2.5",
-    "chief-editor-chapter-1",
-    "chief-editor-chapter-3",
-    "chief-editor-chapter-4",
-    "final-auditor",
-)
-
-
-class TemplateSkillSubmission(StrictModel):
-    """Complete role- and module-specific Skills distilled from one template."""
-
-    kind: Literal["template_skill_submission"] = "template_skill_submission"
-    name: Literal["report-template-role-skills"] = "report-template-role-skills"
-    skills: dict[TemplateRoleSkillId, str] = Field(
-        description=(
-            "Exactly fourteen complete Skills: five module-author Skills, five module-auditor "
-            "Skills, three chapter-specific Chief Skills, and one final-auditor Skill. "
-            "Cross receives none."
-        )
-    )
-    boundary_manifest: TemplateSkillBoundaryManifest = Field(
-        description=(
-            "Typed reusable-guidance transfer declaration; allowed methods retain their "
-            "fact-free worked examples inside this Skill."
-        )
-    )
-
-    @model_validator(mode="after")
-    def complete_role_skills(self) -> "TemplateSkillSubmission":
-        expected = set(TEMPLATE_ROLE_SKILL_IDS)
-        if set(self.skills) != expected or len(self.skills) != len(expected):
-            raise ValueError(
-                "template role Skills must contain exactly the fourteen assigned identities"
-            )
-        for skill_id, content in self.skills.items():
-            if len(content.strip()) < 300:
-                raise ValueError(f"template role Skill {skill_id} is too short")
-            if len(content) > 20_000:
-                raise ValueError(f"template role Skill {skill_id} exceeds 20000 characters")
-            lines = content.splitlines()
-            if not lines or lines[0].strip() != "---":
-                raise ValueError(f"template role Skill {skill_id} must start with YAML frontmatter")
-            try:
-                closing = next(
-                    index
-                    for index, line in enumerate(lines[1:], start=1)
-                    if line.strip() == "---"
-                )
-                metadata = yaml.safe_load("\n".join(lines[1:closing])) or {}
-            except (StopIteration, yaml.YAMLError) as exc:
-                raise ValueError(
-                    f"template role Skill {skill_id} has invalid YAML frontmatter"
-                ) from exc
-            if not isinstance(metadata, dict) or set(metadata) != {"name", "description"}:
-                raise ValueError(
-                    f"template role Skill {skill_id} frontmatter must contain exactly name and description"
-                )
-            if metadata["name"] != f"report-template-{skill_id}":
-                raise ValueError(
-                    f"template role Skill {skill_id} frontmatter name must be "
-                    f"report-template-{skill_id}"
-                )
-            if not any(line.lstrip().startswith("# ") for line in lines[closing + 1 :]):
-                raise ValueError(f"template role Skill {skill_id} must contain a top-level heading")
-        return self
-
-
-# Review contracts deliberately separate immutable findings from author
-# responses and reviewer verdicts.
 class ModuleReviewCoverage(StrictModel):
     submodule_ids: list[str] = Field(
         min_length=1,
@@ -1864,18 +1766,6 @@ class ChiefRevisionSubmissionInput(StrictModel):
     revision_responses: list[RevisionResponse] = Field(min_length=1)
 
 
-class TemplateSkillSubmissionInput(StrictModel):
-    """Function-call input permitting durable references for fourteen complete Skills.
-
-    The boundary manifest is deterministic runtime metadata derived from the
-    active TemplateDistillationInput, so providers never restate it here.
-    """
-
-    kind: Literal["template_skill_submission"] = "template_skill_submission"
-    name: Literal["report-template-role-skills"] = "report-template-role-skills"
-    skills: dict[TemplateRoleSkillId, str | TextArtifactRef]
-
-
 class EditedReportSubmissionInput(StrictModel):
     """Function-call input that permits durable references for edited report prose."""
 
@@ -1909,7 +1799,6 @@ class SkillEvolutionSubmission(StrictModel):
 Submission = Annotated[
     ModuleSubmission
     | ModuleRevisionSubmission
-    | TemplateSkillSubmission
     | ModuleReviewFindingSubmission
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
@@ -1935,7 +1824,6 @@ SubmissionInput = Annotated[
     ModuleSubmissionInput
     | ModuleRevisionSubmissionInput
     | ChiefRevisionSubmissionInput
-    | TemplateSkillSubmissionInput
     | ModuleReviewFindingSubmission
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
@@ -1960,7 +1848,6 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_submission": ModuleSubmissionInput,
     "module_revision_submission": ModuleRevisionSubmissionInput,
     "chief_revision_submission": ChiefRevisionSubmissionInput,
-    "template_skill_submission": TemplateSkillSubmissionInput,
     "module_review_finding_submission": ModuleReviewFindingSubmission,
     "module_review_verdict_submission": ModuleReviewVerdictSubmission,
     "cross_review_finding_submission": CrossReviewFindingSubmission,

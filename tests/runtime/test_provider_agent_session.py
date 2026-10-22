@@ -168,7 +168,6 @@ def test_all_reporting_provider_compositions_enable_bounded_handoff() -> None:
         "final_chief_provider.py",
         "final_provider.py",
         "module_provider.py",
-        "template_provider.py",
     )
 
     for filename in providers:

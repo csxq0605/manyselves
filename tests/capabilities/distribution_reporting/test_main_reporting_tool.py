@@ -114,7 +114,6 @@ def test_distribution_demo_main_tool_exposes_the_six_operation_contract() -> Non
     definition = registry.get_definitions()[0]
     assert definition["name"] == "run_reporting_workflow"
     assert definition["input_schema"]["properties"]["operation"]["enum"] == [
-        "distill_template_skill",
         "full_report",
         "module_report",
         "aggregate_existing",

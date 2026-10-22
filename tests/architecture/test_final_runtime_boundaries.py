@@ -28,7 +28,7 @@ REPORTING_ENTRYPOINTS = {
     "module-report",
     "aggregate-existing",
     "render-existing",
-    "distill-template-skill",
+    "extract-template-skills",
 }
 
 

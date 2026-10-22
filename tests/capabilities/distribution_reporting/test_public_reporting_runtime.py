@@ -18,7 +18,6 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
     RunInputSnapshotStore,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
     ClaimRecord,
@@ -91,6 +90,17 @@ from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink
+
+# Role Skill files a fixture project carries; the old module, Cross and final
+# lanes still look up their auditor and chapter-4 Skills by these names.
+TEMPLATE_ROLE_SKILL_IDS = (
+    *(f"author-2.{n}" for n in range(1, 6)),
+    *(f"auditor-2.{n}" for n in range(1, 6)),
+    "chief-editor-chapter-1",
+    "chief-editor-chapter-3",
+    "chief-editor-chapter-4",
+    "final-auditor",
+)
 
 
 def test_public_reporting_runtime_binding_module_exists() -> None:

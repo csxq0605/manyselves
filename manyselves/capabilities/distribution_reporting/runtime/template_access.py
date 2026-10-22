@@ -25,16 +25,17 @@ def is_isolated_distillation_document(path_or_ref: str | Path) -> bool:
     }
 
 
-def reject_forbidden_agent_document(
-    path_or_ref: str | Path, *, allow_template_distiller: bool = False
-) -> None:
-    """Prevent non-distiller Reporting Agents from opening the isolated source."""
+def reject_forbidden_agent_document(path_or_ref: str | Path) -> None:
+    """Prevent every Reporting Agent from opening the expert report.
 
-    if is_isolated_distillation_document(path_or_ref) and not allow_template_distiller:
+    Methods are learned from it only by the program-run extraction, which
+    hands each role its located blocks; no agent reads the file itself.
+    """
+
+    if is_isolated_distillation_document(path_or_ref):
         raise PermissionError(
             f"{FORBIDDEN_AGENT_ACCESS_ERROR}: this document is outside every Reporting "
-            "Agent's read, search, inspection, and analysis scope except the isolated "
-            "template-distiller task"
+            "Agent's read, search, inspection, and analysis scope"
         )
 
 

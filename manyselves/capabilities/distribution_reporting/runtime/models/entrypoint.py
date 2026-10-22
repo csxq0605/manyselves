@@ -12,7 +12,6 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field
 
-from .agentic import TEMPLATE_ROLE_SKILL_IDS
 from .preparation import PreparationContext
 from .reporting import REPORT_MODULE_IDS, ReportingModel, ReportRequest
 
@@ -117,32 +116,11 @@ class PublicRenderExistingRequest(_PublicReportRequest):
     )
 
 
-class PublicTemplateDistillationRequest(ReportingModel):
-    """User input for distilling the packaged report template."""
-
-    template_ref: str = Field(
-        min_length=1,
-        description="Project-relative report template to inspect.",
-    )
-    inspect_max_chars: int = Field(
-        default=100_000,
-        ge=1,
-        description="Maximum characters exposed to the one template inspection.",
-    )
-
-
 class PublicAggregateExistingInitializerInput(ReportingModel):
     """Host-owned Run identity paired with public aggregate input."""
 
     run_id: str = Field(min_length=1)
     request: PublicAggregateExistingRequest
-
-
-class PublicTemplateDistillationInitializerInput(ReportingModel):
-    """Host-owned Run identity paired with public template input."""
-
-    run_id: str = Field(min_length=1)
-    request: PublicTemplateDistillationRequest
 
 
 __all__ = [
@@ -153,8 +131,5 @@ __all__ = [
     "PublicFullReportRequest",
     "PublicModuleReportRequest",
     "PublicRenderExistingRequest",
-    "PublicTemplateDistillationRequest",
     "PublicAggregateExistingInitializerInput",
-    "PublicTemplateDistillationInitializerInput",
-    "TEMPLATE_ROLE_SKILL_IDS",
 ]

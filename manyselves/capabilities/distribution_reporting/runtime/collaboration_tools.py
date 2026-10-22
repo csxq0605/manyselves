@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import unicodedata
 from copy import deepcopy
-from functools import partial
 from html import escape
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -30,7 +28,6 @@ from manyselves.capabilities.distribution_reporting.runtime.contracts.submission
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
-    TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
     ChiefChapterLaneRevisionSubmission,
@@ -54,9 +51,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     ModuleSubmission,
     ModuleSubmissionInput,
     TableSubmission,
-    TemplateSkillBoundaryManifest,
-    TemplateSkillSubmission,
-    TemplateSkillSubmissionInput,
     WorkflowDecisionSubmission,
     extra_numbered_submodule_headings,
     numbered_markdown_headings,
@@ -75,7 +69,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
-    TemplateDistillationInput,
     WorkflowExceptionInput,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
@@ -90,9 +83,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskCorrelation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
-from manyselves.capabilities.distribution_reporting.runtime.template_access import (
-    reject_forbidden_agent_document,
-)
 from manyselves.interfaces.types import (
     AgentResultMessage,
     BlockedNoticeMessage,
@@ -102,7 +92,6 @@ from manyselves.interfaces.types import (
     UserMessage,
 )
 from manyselves.runtime.loops.bus import MessageBus
-from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool
 
 from .assessment_context import normalize_assessments, part_assessment
@@ -1243,24 +1232,6 @@ class SubmitResultTool(_ResultTool):
         chief_part_ids = set(CHIEF_RESULT_PART_IDS)
         for issue in issues:
             field = str(issue.get("field", ""))
-            problem = str(issue.get("problem", ""))
-            if field.startswith("skills."):
-                skill_id = next(
-                    (
-                        candidate
-                        for candidate in TEMPLATE_ROLE_SKILL_IDS
-                        if field == f"skills.{candidate}"
-                        or field.startswith(f"skills.{candidate}.")
-                    ),
-                    None,
-                )
-                if skill_id is not None:
-                    affected.add(skill_id)
-                continue
-            role_skill_match = re.search(r"template role Skill ([A-Za-z0-9.-]+)", problem)
-            if role_skill_match:
-                affected.add(role_skill_match.group(1))
-                continue
             if field in chief_part_ids:
                 affected.add(field)
                 continue
@@ -1909,194 +1880,9 @@ class SubmitResultTool(_ResultTool):
                 ),
             )
 
-    def _assemble_template_skill_commit(
-        self,
-        commit: TemplateSkillSubmissionInput,
-    ) -> TemplateSkillSubmission:
-        """Attach runtime-owned boundary metadata to provider-authored Skills."""
-
-        contract = self._load_input_contract()
-        if not isinstance(contract, TemplateDistillationInput):
-            raise SubmissionValidationError(
-                "template Skill commit requires its active distillation input",
-                field="$runtime.input_contract",
-                expected="a readable template_distillation_input for this task",
-                received=self.input_contract_ref,
-                repair_instruction=(
-                    "Do not change the saved Skill files. The workflow runtime must "
-                    "restore the assigned template distillation input before retrying."
-                ),
-            )
-        materialized = self._materialize_text_artifacts(commit.model_dump(mode="python"))
-        return TemplateSkillSubmission.model_validate(
-            {
-                **materialized,
-                "boundary_manifest": TemplateSkillBoundaryManifest(
-                    policy_version=contract.boundary_policy_version,
-                    transferred_categories=list(contract.allowed_transfer_categories),
-                    excluded_categories=list(contract.required_exclusion_categories),
-                    boundary_statement=(
-                        "本 Skill 只保留可跨项目复用的分析、综合、图证组织和质量检查方法；"
-                        "专业机理、标准阈值、客户事实、项目判断、项目建议及证据标识均未迁移，"
-                        "必须分别由模块 Skill、Knowledge 或当前运行 Evidence 提供。"
-                    ),
-                ).model_dump(mode="python"),
-            }
-        )
-
-    @staticmethod
-    def _validate_template_skill_boundary(
-        payload: TemplateSkillSubmission,
-        contract: TemplateDistillationInput,
-        source_text: str,
-    ) -> None:
-        manifest = payload.boundary_manifest
-        if manifest.policy_version != contract.boundary_policy_version:
-            raise SubmissionValidationError(
-                "template Skill boundary policy differs from the input contract",
-                field="boundary_manifest.policy_version",
-                expected=str(contract.boundary_policy_version),
-                received=manifest.policy_version,
-            )
-        SubmitResultTool._require_exact_ids(
-            set(manifest.transferred_categories),
-            set(contract.allowed_transfer_categories),
-            "template Skill transfer categories",
-            field="boundary_manifest.transferred_categories",
-        )
-        SubmitResultTool._require_exact_ids(
-            set(manifest.excluded_categories),
-            set(contract.required_exclusion_categories),
-            "template Skill exclusion categories",
-            field="boundary_manifest.excluded_categories",
-        )
-        def normalized(value: str) -> str:
-            return re.sub(
-                r"\s+",
-                "",
-                unicodedata.normalize("NFKC", value),
-            ).casefold()
-
-        normalized_source = normalized(source_text)
-        for skill_id, skill_text in payload.skills.items():
-            field = f"skills.{skill_id}"
-            identifier = re.search(
-                r"(?<![A-Za-z0-9])(?:E|C|SI)-[A-Za-z0-9][A-Za-z0-9_.-]*",
-                skill_text,
-            )
-            if identifier is not None:
-                raise SubmissionValidationError(
-                    "template Skill contains a project evidence, Claim, or synthesis identifier",
-                    field=field,
-                    expected=(
-                        "reusable guidance or fact-free worked examples with no concrete "
-                        "E-*, C-*, or SI-* identifier"
-                    ),
-                    received=identifier.group(0),
-                )
-            threshold = re.search(
-                r"(?<![\w.])\d+(?:\.\d+)?\s*(?:%|kV|V|A|kW|MW|kVA|MVA|Hz|Ω|℃|°C|mm2|mm²)(?![\w])",
-                skill_text,
-                flags=re.IGNORECASE,
-            )
-            if threshold is not None:
-                raise SubmissionValidationError(
-                    "template Skill contains a concrete domain number or threshold",
-                    field=field,
-                    expected=(
-                        "reusable guidance or placeholder examples; source domain thresholds "
-                        "belong to Knowledge"
-                    ),
-                    received=threshold.group(0),
-                )
-            standard = re.search(
-                r"(?<![\w/])(?:GB(?:/T)?|DL/T|IEC|IEEE|ISO|NFPA|EN)"
-                r"\s*[-:：]?\s*\d{2,}(?:[.-]\d+)*(?!\w)",
-                skill_text,
-                flags=re.IGNORECASE,
-            )
-            if standard is not None:
-                raise SubmissionValidationError(
-                    "template Skill contains a concrete domain standard identifier",
-                    field=field,
-                    expected=(
-                        "reusable guidance or placeholder examples; standards and applicability "
-                        "belong to Knowledge"
-                    ),
-                    received=standard.group(0),
-                )
-            copied = next(
-                (
-                    segment.strip()
-                    for segment in re.split(r"[。！？.!?\n]+", skill_text)
-                    if len(normalized(segment)) >= 36
-                    and normalized(segment) in normalized_source
-                ),
-                None,
-            )
-            if copied is not None:
-                raise SubmissionValidationError(
-                    "template Skill copies a long source sentence instead of abstracting a method",
-                    field=field,
-                    expected="new method-level wording with no long verbatim source sentence",
-                    received=copied[:240],
-                )
-
     def _validate_against_input_contract(self, payload) -> None:
         contract = self._load_input_contract()
         if contract is None:
-            return
-        if isinstance(contract, TemplateDistillationInput):
-            if not isinstance(payload, TemplateSkillSubmission):
-                return
-            if contract.run_id != self.run_id:
-                raise SubmissionValidationError(
-                    "template distillation input belongs to another run",
-                    field="$runtime.run_id",
-                    expected=contract.run_id,
-                    example=contract.run_id,
-                    received=self.run_id,
-                    repair_instruction=(
-                        "Do not change the Skill payload. Resume the task under the exact "
-                        "run_id named by its input contract."
-                    ),
-                )
-            cache_ref = f"Work/runs/{contract.run_id}/context/template-inspection.json"
-            cached = InspectDocumentTool(
-                self.store.workspace,
-                path_validator=partial(
-                    reject_forbidden_agent_document,
-                    allow_template_distiller=True,
-                ),
-                required_path=contract.template_ref,
-                required_max_chars=contract.inspect_max_chars,
-                cache_ref=cache_ref,
-            ).load_cached_result(
-                contract.template_ref,
-                max_chars=contract.inspect_max_chars,
-            )
-            if cached is None or not str(cached.get("text", "")).strip():
-                raise SubmissionValidationError(
-                    "template Skill submission requires the durable inspection "
-                    f"for {contract.template_ref}",
-                    field="$runtime.template_inspection",
-                    expected=(
-                        f"a completed inspection of {contract.template_ref} using "
-                        f"max_chars={contract.inspect_max_chars}"
-                    ),
-                    example=cache_ref,
-                    received=None,
-                    repair_instruction=(
-                        "Inspect the assigned template with inspect_document using the "
-                        "required path and max_chars, then resubmit the unchanged complete "
-                        "Skill payload."
-                    ),
-                )
-            self._validate_template_skill_boundary(
-                payload,
-                contract,
-                str(cached["text"]),
-            )
             return
         if isinstance(contract, ModuleAuthoringInput):
             if not isinstance(payload, ModuleSubmission):
@@ -3362,11 +3148,6 @@ class SubmitResultTool(_ResultTool):
         elif submission_kind == "chief_revision_submission":
             commit = ChiefRevisionSubmissionInput.model_validate(normalized_payload)
             normalized_payload = self._assemble_chief_revision_commit(commit).model_dump(
-                mode="python"
-            )
-        elif submission_kind == "template_skill_submission":
-            commit = TemplateSkillSubmissionInput.model_validate(normalized_payload)
-            normalized_payload = self._assemble_template_skill_commit(commit).model_dump(
                 mode="python"
             )
         elif submission_kind in {

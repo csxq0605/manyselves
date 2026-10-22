@@ -13,7 +13,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.entrypoint im
     PublicModuleReportRequest,
     PublicRenderExistingRequest,
     PublicReviseReportRequest,
-    PublicTemplateDistillationRequest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
@@ -23,7 +22,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from manyselves.runtime.tools.registry import Tool
 
 ReportOperation = Literal[
-    "distill_template_skill",
     "full_report",
     "module_report",
     "aggregate_existing",
@@ -32,7 +30,6 @@ ReportOperation = Literal[
 ]
 
 _WORKFLOW_BY_OPERATION: dict[ReportOperation, str] = {
-    "distill_template_skill": "distill-template-skill",
     "full_report": "full-report",
     "module_report": "module-report",
     "aggregate_existing": "aggregate-existing",
@@ -59,12 +56,12 @@ class ConversationRunPort(Protocol):
 
 
 class RunReportingWorkflowTool(Tool):
-    """Expose the six Distribution Reporting operations to Main."""
+    """Expose the five Distribution Reporting operations to Main."""
 
     name = "run_reporting_workflow"
     description = (
         "Start one Distribution Reporting operation selected from "
-        "distill_template_skill, full_report, module_report, aggregate_existing, "
+        "full_report, module_report, aggregate_existing, "
         "render_existing, or revise_report. revise_report copies baseline_run_id into a "
         "new Run; requested_changes maps subsection IDs to initial edits; impact_mode=auto "
         "builds an impact list from current inputs then continues; impact_mode=confirm "
@@ -103,55 +100,45 @@ class RunReportingWorkflowTool(Tool):
             "deterministic_workers"
         ),
         preparation_concurrency: int = 5,
-        template_ref: str | None = None,
-        inspect_max_chars: int = 100_000,
     ) -> dict[str, Any]:
         """Start the selected report operation through its public Workflow root."""
 
         workflow_id = _WORKFLOW_BY_OPERATION[operation]
-        if operation == "distill_template_skill":
-            if template_ref is None:
-                raise ValueError("distill_template_skill requires template_ref")
-            request = PublicTemplateDistillationRequest(
-                template_ref=template_ref,
-                inspect_max_chars=inspect_max_chars,
-            )
-        else:
-            values = {
-                "instruction": instruction,
-                "target_modules": (
-                    target_modules
-                    if target_modules is not None
-                    else list(REPORT_MODULE_IDS)
-                ),
-                "source_module_refs": source_module_refs,
-                "source_markdown_ref": (
-                    Path(source_markdown_ref) if source_markdown_ref is not None else None
-                ),
-                "output_filename": output_filename,
-                "baseline_run_id": baseline_run_id,
-                "requested_changes": requested_changes or {},
-                "impact_mode": impact_mode,
-                "execution_requirements": execution_requirements or [],
-                "user_supplements": [
-                    UserSupplement.model_validate(item)
-                    for item in (user_supplements or [])
-                ],
-                "missing_evidence_policy": missing_evidence_policy,
-                "cost_control_mode": cost_control_mode,
-                "max_provider_attempts": max_provider_attempts,
-                "max_total_tokens": max_total_tokens,
-                "preparation_mode": preparation_mode,
-                "preparation_concurrency": preparation_concurrency,
-            }
-            request_type = {
-                "full_report": PublicFullReportRequest,
-                "module_report": PublicModuleReportRequest,
-                "aggregate_existing": PublicAggregateExistingRequest,
-                "render_existing": PublicRenderExistingRequest,
-                "revise_report": PublicReviseReportRequest,
-            }[operation]
-            request = request_type.model_validate(values)
+        values = {
+            "instruction": instruction,
+            "target_modules": (
+                target_modules
+                if target_modules is not None
+                else list(REPORT_MODULE_IDS)
+            ),
+            "source_module_refs": source_module_refs,
+            "source_markdown_ref": (
+                Path(source_markdown_ref) if source_markdown_ref is not None else None
+            ),
+            "output_filename": output_filename,
+            "baseline_run_id": baseline_run_id,
+            "requested_changes": requested_changes or {},
+            "impact_mode": impact_mode,
+            "execution_requirements": execution_requirements or [],
+            "user_supplements": [
+                UserSupplement.model_validate(item)
+                for item in (user_supplements or [])
+            ],
+            "missing_evidence_policy": missing_evidence_policy,
+            "cost_control_mode": cost_control_mode,
+            "max_provider_attempts": max_provider_attempts,
+            "max_total_tokens": max_total_tokens,
+            "preparation_mode": preparation_mode,
+            "preparation_concurrency": preparation_concurrency,
+        }
+        request_type = {
+            "full_report": PublicFullReportRequest,
+            "module_report": PublicModuleReportRequest,
+            "aggregate_existing": PublicAggregateExistingRequest,
+            "render_existing": PublicRenderExistingRequest,
+            "revise_report": PublicReviseReportRequest,
+        }[operation]
+        request = request_type.model_validate(values)
 
         public_input = request.model_dump(mode="json", exclude={"operation"})
         accepted = await self._projection_resolver().start(

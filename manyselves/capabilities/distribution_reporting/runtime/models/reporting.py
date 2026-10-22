@@ -91,7 +91,6 @@ def chapter_section_ids(
         return tuple(section.section_id for section in special_topic_plan.sections)
     raise ValueError(f"unsupported Chief/Final chapter lane: {chapter_id}")
 ReportOperation = Literal[
-    "distill_template_skill",
     "full_report",
     "module_report",
     "aggregate_existing",
@@ -460,8 +459,6 @@ class ReportRequest(ReportingModel):
             raise ValueError(f"supplements supersede unknown ids: {unknown_superseded}")
         requested = set(self.target_modules)
         all_modules = set(REPORT_MODULE_IDS)
-        if self.operation == "distill_template_skill" and requested:
-            raise ValueError("distill_template_skill does not accept target modules")
         if self.operation == "full_report" and requested != all_modules:
             raise ValueError("full_report requires exactly modules 2.1-2.5")
         if self.operation == "module_report" and not requested:

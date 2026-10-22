@@ -16,7 +16,6 @@ from manyselves.capabilities.distribution_reporting.runtime import (
     module_review_preparation,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    TEMPLATE_ROLE_SKILL_IDS,
     TemplateSkillBoundaryManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
@@ -126,6 +125,18 @@ _CAPABILITY_AVAILABLE_METHODS = (
     "complete_lane",
     "prepare_lanes",
     "reduce_lanes",
+)
+
+
+# Role Skill files a fixture project carries; the old module, Cross and final
+# lanes still look up their auditor and chapter-4 Skills by these names.
+TEMPLATE_ROLE_SKILL_IDS = (
+    *(f"author-2.{n}" for n in range(1, 6)),
+    *(f"auditor-2.{n}" for n in range(1, 6)),
+    "chief-editor-chapter-1",
+    "chief-editor-chapter-3",
+    "chief-editor-chapter-4",
+    "final-auditor",
 )
 
 

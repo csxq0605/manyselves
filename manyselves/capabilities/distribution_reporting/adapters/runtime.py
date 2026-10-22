@@ -59,12 +59,6 @@ from manyselves.capabilities.distribution_reporting.runtime.render_existing impo
 from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime import (
     ReportingTailComposition,
 )
-from manyselves.capabilities.distribution_reporting.runtime.template_distillation import (
-    TemplateDistillationWorkflowRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
-    TemplateDistillationProviderRuntime,
-)
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
     build_template_skill_binding,
 )
@@ -130,7 +124,6 @@ class DistributionReportingRuntimeBinding:
         public_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         aggregate_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         render_state_store = StartAwareFileWorkflowStateStore(self.workspace)
-        template_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         snapshot_store = RunInputSnapshotStore(self.workspace)
         content_store = ContentAddressedStore(self.workspace)
         module = build_module_provider_composition(
@@ -146,10 +139,6 @@ class DistributionReportingRuntimeBinding:
             execution=self._execution,
         )
         final_chief = build_final_chief_provider_composition(
-            services,
-            execution=self._execution,
-        )
-        template = TemplateDistillationProviderRuntime(
             services,
             execution=self._execution,
         )
@@ -209,7 +198,6 @@ class DistributionReportingRuntimeBinding:
             aggregate,
             final,
             final_chief,
-            template,
             cross,
             chief,
             full_final,
@@ -264,11 +252,6 @@ class DistributionReportingRuntimeBinding:
                 self.workspace,
                 state_store=render_state_store,
             ),
-            "distill-template-skill": TemplateDistillationWorkflowRuntime(
-                self.workspace,
-                agent_invoker=template,
-                state_store=template_state_store,
-            ),
         }
         self._start_stores = {
             "full-report": ledger_report.state_store,
@@ -278,7 +261,6 @@ class DistributionReportingRuntimeBinding:
             "revise-report": public_state_store,
             "aggregate-existing": aggregate_state_store,
             "render-existing": render_state_store,
-            "distill-template-skill": template_state_store,
         }
 
     async def start(

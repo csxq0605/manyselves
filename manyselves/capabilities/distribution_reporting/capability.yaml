@@ -17,7 +17,6 @@ entrypoints:
 - revise-report
 - aggregate-existing
 - render-existing
-- distill-template-skill
 - extract-template-skills
 - triage-writing-lessons
 runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models.agentic import TEMPLATE_ROLE_SKILL_IDS
 from .models.aggregate_existing import AggregateExistingPreparationInput
 from .models.entrypoint import (
     PublicAggregateExistingInitializerInput,
@@ -13,10 +12,7 @@ from .models.entrypoint import (
     PublicModuleReportRequest,
     PublicRenderExistingRequest,
     PublicReviseReportRequest,
-    PublicTemplateDistillationInitializerInput,
-    PublicTemplateDistillationRequest,
 )
-from .models.inputs import TemplateDistillationInput
 from .models.reporting import REPORT_MODULE_IDS, ReportRequest
 
 
@@ -63,7 +59,7 @@ def project_public_entrypoint_input(
     workflow_id: str,
     run_id: str,
     value: Any,
-) -> ReportRequest | AggregateExistingPreparationInput | TemplateDistillationInput:
+) -> ReportRequest | AggregateExistingPreparationInput:
     """Project one user-facing input after the Host has allocated ``run_id``.
 
     The returned values are existing Capability task contracts.  This helper
@@ -97,14 +93,6 @@ def project_public_entrypoint_input(
         payload = public.model_dump(mode="python")
         payload["operation"] = "render_existing"
         return ReportRequest.model_validate(payload)
-    if workflow_id == "distill-template-skill":
-        public = PublicTemplateDistillationRequest.model_validate(value)
-        return project_public_template_distillation_input(
-            PublicTemplateDistillationInitializerInput(
-                run_id=run_id,
-                request=public,
-            )
-        )
     raise ValueError(f"unsupported public Reporting workflow: {workflow_id}")
 
 
@@ -122,23 +110,8 @@ def project_public_aggregate_existing_input(
     )
 
 
-def project_public_template_distillation_input(
-    value: PublicTemplateDistillationInitializerInput | Any,
-) -> TemplateDistillationInput:
-    """Join Host-owned Run identity and fixed Skill ids to the template task."""
-
-    initializer = PublicTemplateDistillationInitializerInput.model_validate(value)
-    return TemplateDistillationInput(
-        run_id=initializer.run_id,
-        template_ref=initializer.request.template_ref,
-        inspect_max_chars=initializer.request.inspect_max_chars,
-        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
-    )
-
-
 __all__ = [
     "load_public_entrypoint_definitions",
     "project_public_aggregate_existing_input",
     "project_public_entrypoint_input",
-    "project_public_template_distillation_input",
 ]

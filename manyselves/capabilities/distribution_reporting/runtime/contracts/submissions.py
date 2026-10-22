@@ -21,7 +21,6 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     SUBMISSION_INPUT_TYPES,
-    TEMPLATE_ROLE_SKILL_IDS,
 )
 
 FIELD_GUIDANCE: dict[str, str] = {
@@ -289,9 +288,6 @@ KIND_SUMMARIES: dict[str, str] = {
     "module_revision_submission": (
         "A small in-scope revision commit for already saved result parts and author responses."
     ),
-    "template_skill_submission": (
-        "Complete project-scoped module and role Skills distilled from the template without copied facts."
-    ),
     "module_review_finding_submission": (
         "Initial module-local review coverage and new immutable findings."
     ),
@@ -374,25 +370,6 @@ def _module_revision_example() -> dict[str, Any]:
     }
 
 
-def _template_skill_example() -> dict[str, Any]:
-    description = (
-        "从模板中提炼报告写作、专业分析、跨模块综合、视觉组织和质量校核方法，"
-        "仅约束表达与推理，不迁移任何客户事实。"
-    )
-    return {
-        "kind": "template_skill_submission",
-        "name": "report-template-role-skills",
-        "skills": {
-            skill_id: (
-                f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
-                f"# {skill_id} 模板方法\n\n"
-                + "按本职责组织现状、风险分析、建议与依据；不提供项目事实。" * 8
-            )
-            for skill_id in TEMPLATE_ROLE_SKILL_IDS
-        },
-    }
-
-
 def _edited_report_example() -> dict[str, Any]:
     modules = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
     return {
@@ -448,7 +425,6 @@ _EXAMPLE_TAXONOMY = activate_report_taxonomy(example_report_taxonomy())
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
-    "template_skill_submission": _template_skill_example(),
     "edited_report_submission": _edited_report_example(),
     "chief_revision_submission": _chief_revision_example(),
     "module_review_finding_submission": {

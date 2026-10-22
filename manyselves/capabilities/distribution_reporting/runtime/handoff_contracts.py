@@ -15,7 +15,7 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
     contracts = [
         {
             "stage": "template-skill-read",
-            "producer": "separate template-distiller action",
+            "producer": "extract-template-skills, then publish_template_skills",
             "consumer": "module specialists/auditors, chief editor, and final auditor",
             "input": (
                 "user-managed Inputs/report-template-role-skills files selected by exact "

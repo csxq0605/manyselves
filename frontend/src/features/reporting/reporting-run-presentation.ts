@@ -2,7 +2,7 @@ import type { WorkflowRunResponse } from "../runs/workflow-api";
 
 const workflowLabels: Readonly<Record<string, string>> = {
   "aggregate-existing": "汇总既有模块",
-  "distill-template-skill": "蒸馏报告模板 Skill",
+  "extract-template-skills": "提炼报告模板 Skill",
   "full-report": "配电安全报告",
   "module-report": "单模块报告",
   "render-existing": "渲染既有报告",
