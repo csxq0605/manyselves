@@ -10,6 +10,7 @@ input_contract: reporting_tool_input
 input_variable: state
 output_contract: distribution_reporting_output
 state:
+  revision: null
   context: {}
   ledger: {}
   final: {}
@@ -17,7 +18,9 @@ actions:
 - id: prepare
   kind: invoke_tool
   tool: prepare-ledger-context
-  input_variable: state
+  input_variables:
+    state: state
+    revision: revision
   output_variable: context
 - id: shared-context
   kind: set_variable

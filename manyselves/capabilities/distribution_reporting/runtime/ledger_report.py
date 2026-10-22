@@ -23,7 +23,7 @@ from .models.reporting import ReportRequest, ReportRevision
 from .photo_reading import build_photo_reading_tool_implementations
 from .preparation_tools import build_preparation_tool_implementations
 from .public_entrypoints import project_public_entrypoint_input
-from .run_taxonomy import bind_run_taxonomy
+from .run_taxonomy import bind_run_taxonomy, run_taxonomy_scope
 from .storage import ReportingStore
 
 
@@ -71,10 +71,12 @@ def ledger_report_rerun_input(workspace: Path):
     """Initial variables for running a report again under the same run id.
 
     Without revision values the report runs again from its saved request.
-    With them it becomes a revision of the version just archived: the request
-    keeps its original instruction (so unchanged steps are reused) and carries
-    the revision; with ``new_inputs`` the project's current files are frozen
-    again for this version.
+    With them it becomes a revision of the version just archived.  The
+    request stays exactly as it was and the revision goes in its own
+    variable, read only by the ledger, so every step before the ledger sees
+    the same input and is skipped; with ``new_inputs`` the project's current
+    files are frozen again for this version, and the steps that read them
+    run again.
     """
 
     def rerun_input(
@@ -104,10 +106,8 @@ def ledger_report_rerun_input(workspace: Path):
                 if source.exists():
                     shutil.move(str(source), str(archive / name))
             RunInputSnapshotStore(workspace).freeze(run_id)
-        request["revision"] = revision.model_dump(mode="json")
-        ReportRequest.model_validate(request)
         del workflow_id
-        return {"request": request, "run-id": run_id}
+        return {"request": request, "run-id": run_id, "revision": revision.model_dump(mode="json")}
 
     return rerun_input
 
@@ -142,7 +142,8 @@ def build_ledger_report_binding(
         start_input=ledger_report_start_input(Path(workspace)),
         execution=execution,
         rerun_input=ledger_report_rerun_input(Path(workspace)),
-        kept_on_rerun=KEPT_ON_RERUN,
+        frozen_inputs=KEPT_ON_RERUN,
+        run_context=lambda run_id: run_taxonomy_scope(Path(workspace), run_id),
     )
 
 

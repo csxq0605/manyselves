@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import replace
@@ -93,11 +94,15 @@ class WorkflowRuntimeHost:
         events: WorkflowEventSink,
         *,
         kernel: StatelessWorkflowKernel | None = None,
+        save_sparingly: Callable[[], bool] | None = None,
     ) -> None:
         self._executors = executors
         self._state_store = state_store
         self._events = events
         self._kernel = kernel or StatelessWorkflowKernel()
+        # True while steps finish at once (skipped, not executed): the state
+        # is then saved every few seconds instead of after every transition.
+        self._save_sparingly = save_sparingly
 
     async def execute(
         self,
@@ -129,12 +134,13 @@ class WorkflowRuntimeHost:
                 tools=tools,
             )
         actions = {action.id: action for action in plan.actions}
+        save = _ThrottledSave(self._state_store.save, self._save_sparingly)
         self._emit("workflow.started", state)
         event = StartWorkflow()
         while True:
             transition = self._kernel.transition(plan, state, event)
             state = transition.state
-            self._state_store.save(state)
+            save(state, now=not transition.effects)
             if isinstance(event, ActionSucceeded):
                 action = actions[event.action_id]
                 self._emit_action_events(state, action.id, event.result)
@@ -164,12 +170,13 @@ class WorkflowRuntimeHost:
                     state,
                     context,
                     plan_bundle=plan.subworkflow_plans,
-                    checkpoint=self._state_store.save,
+                    checkpoint=save,
                 )
             except asyncio.CancelledError as exc:
                 # Only an explicit Run cancel is terminal.  An unlabelled
                 # cancel (process shutdown) leaves RUNNING for Same-run resume.
                 if RUN_CANCEL_REQUESTED not in exc.args:
+                    save.flush()
                     raise
                 failed = self._kernel.transition(
                     plan,
@@ -888,3 +895,48 @@ def _checkpoint_view(state: WorkflowState, **children: dict[str, Any]) -> Workfl
             for field, entries in children.items()
         }
     )
+
+
+class _ThrottledSave:
+    """Save the Run's state after each transition, or every few seconds.
+
+    The state is the whole Run, nested steps included, and a running Run
+    saves it after every transition, so that a stopped process resumes at
+    the step it was in.  While steps are being skipped (a rerun replaying
+    unchanged steps) each finishes at once and saving costs more than the
+    step; then the state is saved at most every ``interval`` seconds.  A
+    state that settles (completed, failed, waiting) is always saved at once.
+    If the process stops between saves, resume repeats a few skipped steps.
+    """
+
+    def __init__(
+        self,
+        save: Callable[[WorkflowState], None],
+        sparingly: Callable[[], bool] | None = None,
+        interval: float = 2.0,
+    ) -> None:
+        self._save = save
+        self._sparingly = sparingly
+        self._interval = interval
+        self._last = float("-inf")
+        self._pending: WorkflowState | None = None
+
+    def __call__(self, state: WorkflowState, *, now: bool = False) -> None:
+        moment = time.monotonic()
+        if (
+            now
+            or state.status is not WorkflowStatus.RUNNING
+            or self._sparingly is None
+            or not self._sparingly()
+            or moment - self._last >= self._interval
+        ):
+            self._save(state)
+            self._last = moment
+            self._pending = None
+        else:
+            self._pending = state
+
+    def flush(self) -> None:
+        if self._pending is not None:
+            self._save(self._pending)
+            self._pending = None

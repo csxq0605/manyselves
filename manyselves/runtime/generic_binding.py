@@ -5,12 +5,16 @@ its Tools.  Everything else is generic: compile an entrypoint workflow, start
 or resume the Run on the Runtime Host, invoke every Agent through the
 definition-driven invoker, and project state, outputs and cost.
 
+Resume continues an unfinished Run from its saved state: completed steps
+are not executed again.
+
 A Run can also be executed again in place, under the same run id: the
-previous version's files move to ``versions/v<n>``, the current plan is
-compiled and executed from the start, and every Agent turn whose context is
-unchanged is replayed from the Run's turn memo instead of calling the model.
-Resume does this on its own when the definitions changed since the Run was
-compiled; a Capability can also ask for it with revised input.
+previous version's files move to ``versions/v<n>`` and the current plan is
+executed from the start, but every step that did not change is skipped, not
+executed: a program step comes back from the step memo with the files it
+wrote (see ``step_memo``), and a model turn from the turn memo.  Resume does
+this on its own when the definitions or the code of the Run's steps changed
+since they ran; a Capability can also ask for it with revised input.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import json
 import os
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from inspect import isawaitable
 from pathlib import Path
@@ -56,6 +61,7 @@ from .capability_binding import (
 from .conversation_store import FileConversationStore
 from .definition_agent import DefinitionAgentInvoker
 from .run_lifecycle import DetachedRunTaskOwner, StartAwareFileWorkflowStateStore
+from .step_memo import MEMO_DIR, MemoizedTool, RunStepMemo, code_digest, package_data_digest
 from .tool_adapter import CapabilityToolAdapter, CapabilityToolAdapterFactory
 from .tools.result_memory import RunToolResultIndex
 from .usage_ledger import UsageLedger
@@ -70,8 +76,10 @@ SettledListener = Callable[[str], Awaitable[None] | None]
 RerunInput = Callable[[str, str, Any, dict[str, Any], Path], dict[str, Any]]
 
 START_INPUT_FILE = "start-input.json"
+# The code of the steps as the Run last executed them.
+STEP_CODE_FILE = "step-code.json"
 # Run-directory entries that stay in place when a version is archived.
-_KEPT_ON_RERUN = frozenset({"agent-memo", "versions", START_INPUT_FILE})
+_KEPT_ON_RERUN = frozenset({"agent-memo", MEMO_DIR, "versions", START_INPUT_FILE})
 
 
 class GenericCapabilityRuntimeBinding:
@@ -89,6 +97,8 @@ class GenericCapabilityRuntimeBinding:
         execution: AgentExecutionService | None = None,
         rerun_input: RerunInput | None = None,
         kept_on_rerun: tuple[str, ...] = (),
+        frozen_inputs: tuple[str, ...] = (),
+        run_context: Callable[[str], AbstractContextManager[Any]] | None = None,
     ) -> None:
         capability, _registry = load_capability(capability_file)
         self.capability_id = capability.id
@@ -100,11 +110,20 @@ class GenericCapabilityRuntimeBinding:
         self._loop_builder = loop_builder
         self._start_input = start_input
         self._rerun_input = rerun_input
+        # Entered around every execution of a Run, e.g. to make the Run's own
+        # data readable to steps that run outside a Tool call.
+        self._run_context = run_context or (lambda _run_id: nullcontext())
         self._settled_listeners: list[SettledListener] = []
-        self._kept_on_rerun = _KEPT_ON_RERUN | set(kept_on_rerun)
+        # Run entries written once when the Run starts and only read by its
+        # steps.  They are kept on a rerun, and their content is an input of
+        # every step.
+        self._frozen_inputs = frozenset(frozen_inputs)
+        self._kept_on_rerun = _KEPT_ON_RERUN | set(kept_on_rerun) | self._frozen_inputs
         self._store = StartAwareFileWorkflowStateStore(self.workspace)
         self._executors = build_builtin_executor_registry()
         self._detached = DetachedRunTaskOwner()
+        # Runs whose next execution replays unchanged steps (a rerun in place).
+        self._replay: set[str] = set()
         self._execution = execution or (
             AgentExecutionService(services.bus) if services is not None else None
         )
@@ -218,9 +237,11 @@ class GenericCapabilityRuntimeBinding:
     async def resume(self, command_id: UUID, run_id: str) -> dict[str, Any]:
         """Continue an unfinished Run.
 
-        When the definitions changed since the Run was compiled, the Run is
-        executed again in place under the current plan (see ``rerun``);
-        otherwise it continues from its next action.
+        It continues from its next action, reading the state and files the
+        Run saved.  When the definitions or the code of its steps changed
+        since they ran, it is executed again in place instead (see
+        ``rerun``), so that no step keeps a result the current code would
+        not give.
         """
 
         state = self._load_state(run_id)
@@ -230,6 +251,8 @@ class GenericCapabilityRuntimeBinding:
         _registry, current = self._compile(state.workflow_id)
         if _plan_data(current) != _plan_data(plan):
             return await self.rerun(command_id, run_id, reason="definitions changed")
+        if self._code_changed(run_id, plan):
+            return await self.rerun(command_id, run_id, reason="code changed")
         if state.status is WorkflowStatus.WAITING:
             raise CapabilityRunStateError(
                 "run is waiting for input; resume it through the input endpoint"
@@ -283,6 +306,7 @@ class GenericCapabilityRuntimeBinding:
         fresh = WorkflowState.for_plan(run_id, plan, initial_variables=initial)
         self._store.save_plan(run_id, plan)
         self._save_start_input(run_id, initial)
+        self._replay.add(run_id)
         return await self._detached.accept_after_persisted_state(
             run_id=run_id,
             state_store=self._store,
@@ -445,7 +469,18 @@ class GenericCapabilityRuntimeBinding:
     ) -> WorkflowState:
         contracts = _contracts(registry)
         run_id = state.run_id
+        memo = RunStepMemo(
+            self.workspace,
+            run_id,
+            replay=run_id in self._replay,
+            kept=self._kept_on_rerun,
+            frozen_inputs=self._frozen_inputs,
+            source_roots=self._source_roots(),
+        )
+        self._replay.discard(run_id)
         tools = self._tools(plan, contracts, run_id)
+        self._save_step_code(run_id, tools)
+        memoized = {tool_id: MemoizedTool(tool, memo) for tool_id, tool in tools.items()}
         factory = self._tool_factory(contracts, run_id)
         agent_ids = _agent_ids(plan)
         invoker = None
@@ -469,27 +504,30 @@ class GenericCapabilityRuntimeBinding:
                 ),
             )
         try:
-            return await WorkflowRuntimeHost(
-                self._executors,
-                self._store,
-                FileWorkflowEventSink(self.workspace),
-            ).execute(
-                plan,
-                state,
-                RuntimeContext(
-                    tools=tools,
-                    contracts=contracts,
-                    agents={agent_id: invoker for agent_id in agent_ids},
-                    definitions=registry,
-                    conversations=ConversationRegistry(
-                        FileConversationStore(self.workspace)
+            with self._run_context(run_id):
+                return await WorkflowRuntimeHost(
+                    self._executors,
+                    self._store,
+                    FileWorkflowEventSink(self.workspace),
+                    save_sparingly=lambda: memo.replaying,
+                ).execute(
+                    plan,
+                    state,
+                    RuntimeContext(
+                        tools=memoized,
+                        contracts=contracts,
+                        agents={agent_id: invoker for agent_id in agent_ids},
+                        definitions=registry,
+                        conversations=ConversationRegistry(
+                            FileConversationStore(self.workspace)
+                        ),
+                        plan_tool_factory=lambda definition, plan_contracts: MemoizedTool(
+                            self._tool_factory(plan_contracts, run_id).build(definition), memo
+                        ),
                     ),
-                    plan_tool_factory=lambda definition, plan_contracts: (
-                        self._tool_factory(plan_contracts, run_id).build(definition)
-                    ),
-                ),
-            )
+                )
         finally:
+            memo.report()
             if invoker is not None:
                 await invoker.close()
             await self._settled(run_id)
@@ -527,6 +565,38 @@ class GenericCapabilityRuntimeBinding:
             if isinstance(definition, ToolDefinition):
                 tools[tool_id] = factory.build(definition)
         return tools
+
+    def _source_roots(self) -> list[Path]:
+        """Sources outside the workspace that steps may read."""
+
+        root = getattr(self.services, "global_knowledge_root", None)
+        return [Path(root)] if root else []
+
+    def _step_code(self, tools: Mapping[str, CapabilityToolAdapter]) -> dict[str, Any]:
+        return {
+            "data": package_data_digest(),
+            "tools": {
+                tool_id: code_digest(getattr(tool.tool, "_implementation", tool.tool))
+                for tool_id, tool in sorted(tools.items())
+            },
+        }
+
+    def _save_step_code(
+        self, run_id: str, tools: Mapping[str, CapabilityToolAdapter]
+    ) -> None:
+        path = self._run_dir(run_id) / STEP_CODE_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._step_code(tools), indent=1), encoding="utf-8")
+
+    def _code_changed(self, run_id: str, plan: ResolvedPlan) -> bool:
+        path = self._run_dir(run_id) / STEP_CODE_FILE
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # A Run executed before step code was saved keeps continuing.
+            return False
+        tools = self._tools(plan, _contracts(restore_plan_definition_registry(plan)), None)
+        return saved != self._step_code(tools)
 
     def _load_state(self, run_id: str) -> WorkflowState:
         try:

@@ -10,7 +10,7 @@ tests; a run never reads it.
 import hashlib
 import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
@@ -78,6 +78,16 @@ _ACTIVE_REPORT_TAXONOMY: ContextVar[Mapping[str, ModuleDefinition] | None] = (
 )
 
 
+# Where the tree of the run being executed can be read once it exists: set
+# around a whole run, so that a step outside any Tool call (validating a
+# skipped step's recorded result, or state a resumed run reloaded) still
+# reads the run's own tree.
+_RUN_TAXONOMY_SOURCE: ContextVar[Callable[[], Mapping[str, Any] | None] | None] = ContextVar(
+    "run_taxonomy_source", default=None
+)
+_SOURCE_CACHE: dict[str, Mapping[str, ModuleDefinition]] = {}
+
+
 EXAMPLE_TAXONOMY_FILE = Path(__file__).with_name("report-taxonomy-example.json")
 
 
@@ -91,6 +101,8 @@ class _RunTaxonomyView(Mapping[str, ModuleDefinition]):
     @staticmethod
     def _current() -> Mapping[str, ModuleDefinition]:
         modules = _ACTIVE_REPORT_TAXONOMY.get()
+        if modules is None:
+            modules = _from_run_source()
         if modules is None:
             raise ReportTaxonomyUnbound(
                 "报告小节树未绑定：第二章小节只从本次运行的评估信息汇总表读取"
@@ -296,6 +308,31 @@ def bound_report_taxonomy(payload: Mapping[str, Any]) -> Iterator[None]:
         yield
     finally:
         reset_report_taxonomy(token)
+
+
+def _from_run_source() -> Mapping[str, ModuleDefinition] | None:
+    source = _RUN_TAXONOMY_SOURCE.get()
+    payload = source() if source is not None else None
+    if not payload:
+        return None
+    key = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    modules = _SOURCE_CACHE.get(key)
+    if modules is None:
+        modules = taxonomy_from_snapshot(payload)
+        _SOURCE_CACHE.clear()
+        _SOURCE_CACHE[key] = modules
+    return modules
+
+
+@contextmanager
+def run_taxonomy_source(read: Callable[[], Mapping[str, Any] | None]) -> Iterator[None]:
+    """Read the run's tree through ``read`` wherever no tree is bound."""
+
+    token = _RUN_TAXONOMY_SOURCE.set(read)
+    try:
+        yield
+    finally:
+        _RUN_TAXONOMY_SOURCE.reset(token)
 
 
 def report_taxonomy_bound() -> bool:

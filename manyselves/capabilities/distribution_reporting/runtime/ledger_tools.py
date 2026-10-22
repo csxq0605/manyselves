@@ -93,7 +93,13 @@ from .models.agentic import (
     PhotoReadingSubmission,
 )
 from .models.photo_reading import PhotoReadingInput
-from .models.reporting import EvidenceItem, PhotoAsset, ReportRequest, SpecialTopicPlan
+from .models.reporting import (
+    EvidenceItem,
+    PhotoAsset,
+    ReportRequest,
+    ReportRevision,
+    SpecialTopicPlan,
+)
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import build_observation_ledger, shared_labels
 from .photo_reading import (
@@ -520,7 +526,11 @@ class LedgerTools:
 
     # -- shared context ---------------------------------------------------
 
-    def prepare_context(self, state: dict[str, Any]) -> dict[str, Any]:
+    def prepare_context(self, value: dict[str, Any]) -> dict[str, Any]:
+        state = value["state"]
+        revision = (
+            ReportRevision.model_validate(value["revision"]) if value.get("revision") else None
+        )
         run_id = str(state["run_id"])
         request = ReportRequest.model_validate(state["request"])
         with _taxonomy(state):
@@ -647,11 +657,11 @@ class LedgerTools:
                 ]
             )
         revision_plan = None
-        if request.revision is not None:
-            base = base_dir(self.workspace, run_id, request.revision.base_version)
+        if revision is not None:
+            base = base_dir(self.workspace, run_id, revision.base_version)
             with _taxonomy(state):
                 revision_plan = plan_revision(
-                    request.revision,
+                    revision,
                     base=base,
                     items=items,
                     sections={
@@ -1772,6 +1782,10 @@ class LedgerTools:
         state = dict(value["state"])
         run_id = str(state["run_id"])
         ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
+        with _taxonomy(state):
+            state["evidence_items"] = self._placed_evidence(
+                run_id, state.get("evidence_items", []), state.get("photo_assets", []), ledger
+            )
         # A later revision starts its chapters 1 and 3 from these.
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/chief-outputs.json", _plain(value["chief"])
@@ -1870,6 +1884,63 @@ class LedgerTools:
             "output_artifacts": state.get("output_artifacts", []),
             "render_verification": state.get("render_verification"),
         }
+
+    def _placed_evidence(
+        self,
+        run_id: str,
+        items: Sequence[Any],
+        photos: Sequence[Any],
+        ledger: Mapping[str, Sequence[JudgmentRow]],
+    ) -> list[dict[str, Any]]:
+        """Evidence with the sections the authors placed unassigned records in.
+
+        The knowledge base leaves some records without a section; the authors
+        judge each in a section of their choice (``placement_findings`` checks
+        that).  The first row citing such a record gives it its section, so
+        its photos are shown there.  The program only checks that the section
+        is in this report's tree; photos of records no row placed are left
+        out and listed in ``ledger/unplaced-photos.json``.
+        """
+
+        placed: dict[str, tuple[str, str]] = {}
+        for module_id, rows in ledger.items():
+            submodules = REPORT_TAXONOMY[module_id].submodules
+            for row in rows:
+                if row.submodule_id not in submodules:
+                    continue
+                for evidence_id in row.evidence_ids:
+                    placed.setdefault(evidence_id, (module_id, row.submodule_id))
+        result: list[dict[str, Any]] = []
+        for raw in items:
+            item = _plain(raw)
+            if item.get("submodule_id") is None and item.get("id") in placed:
+                module_id, submodule_id = placed[item["id"]]
+                item = {**item, "module_id": module_id, "submodule_id": submodule_id}
+            result.append(item)
+        with_section = {
+            photo_id
+            for item in result
+            if item.get("submodule_id") is not None
+            for photo_id in item.get("photo_refs") or ()
+        }
+        unplaced = [
+            {
+                "photo_id": photo_id,
+                "evidence_ids": [
+                    item["id"] for item in result if photo_id in (item.get("photo_refs") or ())
+                ],
+            }
+            for photo_id in (_plain(photo).get("id") for photo in photos)
+            if photo_id not in with_section
+        ]
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/unplaced-photos.json",
+            {
+                "note": "这些照片对应的记录没有任何判断行放进小节，报告里不出现，需人工确认。",
+                "photos": unplaced,
+            },
+        )
+        return result
 
     def _module_submission(
         self, module_id: str, rows: Sequence[JudgmentRow], sections: Mapping[str, str]

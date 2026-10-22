@@ -1,7 +1,8 @@
-"""A finished or failed report runs again in place and reuses unchanged turns.
+"""A finished or failed report runs again in place and reuses unchanged steps.
 
 The run keeps its id; the previous version moves to ``versions/v<n>``; every
-model turn whose context did not change is replayed from the run's turn memo.
+model turn whose context did not change is replayed from the run's turn memo,
+and every program step that did not change is skipped with its files restored.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPOR
 from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
     ledger_report_tool_implementations,
 )
+from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
 from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.runtime import generic_binding
@@ -40,7 +42,9 @@ COMMAND = UUID("60000000-0000-4000-8000-000000000002")
 RUN_ID = "report-ledger-60000000000040008000000000000001"
 
 
-async def _rerun(tmp_path: Path, operation) -> tuple[GenericCapabilityRuntimeBinding, list[str]]:
+async def _rerun(
+    tmp_path: Path, operation, frozen_inputs: tuple[str, ...] = ()
+) -> tuple[GenericCapabilityRuntimeBinding, list[str]]:
     """Run ``operation(binding)`` on a fresh process; return the tasks the model saw."""
 
     bus = MessageBus()
@@ -68,6 +72,7 @@ async def _rerun(tmp_path: Path, operation) -> tuple[GenericCapabilityRuntimeBin
         start_input=lambda run_id, workflow_id, values: {"state": values},
         # The test seeds facts in the run directory instead of preparing them.
         kept_on_rerun=("preparation",),
+        frozen_inputs=frozen_inputs,
     )
     binding.entrypoints = (*binding.entrypoints, "report-ledger")
     bus_task = asyncio.create_task(bus.process_queue())
@@ -101,6 +106,100 @@ async def test_rerun_with_nothing_changed_calls_no_model(tmp_path: Path) -> None
     assert binding.versions(RUN_ID)[0]["status"] == "completed"
     hits = (run_dir / "agent-memo/hits.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(hits) == first_turns
+    # No program step ran: each came back from the step memo with its files.
+    steps = _last_execution(tmp_path)
+    assert steps["executed"] == 0 and steps["skipped"] > 10
+    assert (run_dir / "ledger/judgments.json").read_bytes() == (
+        archived / "ledger/judgments.json"
+    ).read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_changed_frozen_input_runs_the_program_steps_again(tmp_path: Path) -> None:
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    frozen = tmp_path / "Work/runs" / RUN_ID / "frozen-project/table.txt"
+    frozen.parent.mkdir()
+    frozen.write_text("原资料", encoding="utf-8")
+
+    def rerun(binding):
+        return binding.rerun(COMMAND, RUN_ID)
+
+    await _rerun(tmp_path, rerun, frozen_inputs=("frozen-project",))
+    # The same frozen input again: nothing runs.
+    await _rerun(tmp_path, rerun, frozen_inputs=("frozen-project",))
+    assert _last_execution(tmp_path)["executed"] == 0
+    # The input is frozen again with new content (same size): every step runs.
+    frozen.write_text("新资料", encoding="utf-8")
+    binding, _tasks = await _rerun(tmp_path, rerun, frozen_inputs=("frozen-project",))
+
+    assert binding.get_run(RUN_ID)["run"]["status"] == "completed"
+    steps = _last_execution(tmp_path)
+    assert steps["skipped"] == 0 and steps["executed"] > 10
+
+
+def _last_execution(tmp_path: Path) -> dict[str, int]:
+    path = tmp_path / "Work/runs" / RUN_ID / "step-memo/last-execution.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {"skipped": data["skipped"], "executed": data["executed"]}
+
+
+@pytest.mark.asyncio
+async def test_interrupted_run_continues_without_running_finished_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = LedgerTools.compose_report
+    calls: list[int] = []
+
+    def flaky(self, value):
+        # A passing fault (a full disk): the code does not change.
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("disk full")
+        return original(self, value)
+
+    monkeypatch.setattr(LedgerTools, "compose_report", flaky)
+    with pytest.raises(Exception, match="disk full"):
+        await run_ledger_report(tmp_path, run_id=RUN_ID)
+    before = _last_execution(tmp_path)
+
+    binding, tasks = await _rerun(
+        tmp_path, lambda binding: binding.resume(COMMAND, RUN_ID)
+    )
+
+    assert binding.get_run(RUN_ID)["run"]["status"] == "completed"
+    # It went on from the failed step: nothing before it ran again.
+    assert tasks == []
+    assert before["executed"] > 10
+    assert _last_execution(tmp_path) == {"skipped": 0, "executed": 1}
+    assert not (tmp_path / "Work/runs" / RUN_ID / "versions").exists()
+    assert (tmp_path / REPORT).is_file()
+
+
+@pytest.mark.asyncio
+async def test_changed_code_redoes_only_that_step_and_what_follows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = LedgerTools.compose_report
+
+    def broken(self, value):
+        raise RuntimeError("bug in compose")
+
+    monkeypatch.setattr(LedgerTools, "compose_report", broken)
+    with pytest.raises(Exception, match="bug in compose"):
+        await run_ledger_report(tmp_path, run_id=RUN_ID)
+    # The bug is fixed: compose's code is no longer what the run executed.
+    monkeypatch.setattr(LedgerTools, "compose_report", original)
+    binding, tasks = await _rerun(
+        tmp_path, lambda binding: binding.resume(COMMAND, RUN_ID)
+    )
+
+    assert binding.get_run(RUN_ID)["run"]["status"] == "completed"
+    assert tasks == []
+    steps = _last_execution(tmp_path)
+    # Compose is the last program step; everything before it was skipped.
+    assert steps["executed"] == 1 and steps["skipped"] > 10
+    assert binding.versions(RUN_ID)[0]["reason"] == "code changed"
+    assert (tmp_path / REPORT).is_file()
 
 
 @pytest.mark.asyncio
@@ -162,12 +261,10 @@ def _revising_binding(tmp_path: Path, answer, loops: list[ScriptedLoop], bus: Me
         return loop
 
     def rerun_input(run_id, workflow_id, values, previous, archive):
-        state = dict(previous["state"])
-        state["request"] = {
-            **state["request"],
+        return {
+            "state": previous["state"],
             "revision": {**values, "base_version": int(archive.name[1:])},
         }
-        return {"state": state}
 
     binding = GenericCapabilityRuntimeBinding(
         capability_file=CAPABILITY_FILE,

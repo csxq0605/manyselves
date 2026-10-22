@@ -18,7 +18,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
-from ..domain.taxonomy import bound_report_taxonomy, report_taxonomy_bound
+from ..domain.taxonomy import bound_report_taxonomy, report_taxonomy_bound, run_taxonomy_source
 
 _KEY = "report_taxonomy"
 
@@ -101,6 +101,20 @@ def project_taxonomy(workspace: Path) -> dict[str, Any]:
     )
 
 
+def run_taxonomy_scope(workspace: Path, run_id: str):
+    """For a whole run: its persisted tree, read wherever no tree is bound."""
+
+    path = Path(workspace) / persisted_taxonomy_ref(run_id)
+
+    def read() -> Mapping[str, Any] | None:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    return run_taxonomy_source(read)
+
+
 def with_project_taxonomy(
     implementations: Mapping[str, Callable[[Any], Any]], workspace: Path
 ) -> dict[str, Callable[[Any], Any]]:
@@ -163,6 +177,7 @@ __all__ = [
     "bind_run_taxonomy",
     "persisted_taxonomy_ref",
     "project_taxonomy",
+    "run_taxonomy_scope",
     "run_taxonomy",
     "with_project_taxonomy",
     "with_run_taxonomy",

@@ -1,5 +1,6 @@
 """File-backed implementation of the Kernel workflow-state port."""
 
+import os
 from pathlib import Path
 
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState
@@ -36,9 +37,7 @@ class FileWorkflowStateStore:
         self._workspace = Path(workspace)
 
     def save(self, state: WorkflowState) -> None:
-        path = self._state_path(state.run_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        _write_atomically(self._state_path(state.run_id), state.model_dump_json(indent=2))
 
     def load(self, run_id: str) -> WorkflowState:
         return WorkflowState.model_validate_json(
@@ -46,9 +45,7 @@ class FileWorkflowStateStore:
         )
 
     def save_plan(self, run_id: str, plan: ResolvedPlan) -> None:
-        path = self._plan_path(run_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        _write_atomically(self._plan_path(run_id), plan.model_dump_json(indent=2))
 
     def load_plan(self, run_id: str) -> ResolvedPlan:
         return ResolvedPlan.model_validate_json(
@@ -71,3 +68,12 @@ class FileWorkflowStateStore:
 
     def _plan_path(self, run_id: str) -> Path:
         return self._workspace / "Work" / "runs" / run_id / "resolved-plan.json"
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Replace the file whole: a stop mid-write leaves the previous state."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)

@@ -91,9 +91,11 @@ def chapter_section_ids(
         return tuple(section.section_id for section in special_topic_plan.sections)
     raise ValueError(f"unsupported Chief/Final chapter lane: {chapter_id}")
 ReportOperation = Literal["full_report", "render_existing"]
-# Request fields of the retired module/aggregate/copy-revision operations.  Runs
-# saved before carry them; they are dropped when such a request is read.
+# Request fields of the retired module/aggregate/copy-revision operations, and
+# the revision a request once carried (a run now keeps it in its own variable).
+# Runs saved before carry them; they are dropped when such a request is read.
 _RETIRED_REQUEST_FIELDS = (
+    "revision",
     "source_module_refs",
     "baseline_run_id",
     "requested_changes",
@@ -423,7 +425,6 @@ class ReportRequest(ReportingModel):
     target_modules: list[str] = Field(default_factory=lambda: list(REPORT_MODULE_IDS))
     source_markdown_ref: Path | None = None
     output_filename: str | None = None
-    revision: ReportRevision | None = None
     execution_requirements: list[str] = Field(default_factory=list)
     user_supplements: list[UserSupplement] = Field(
         default_factory=list,
@@ -461,8 +462,6 @@ class ReportRequest(ReportingModel):
 
     @model_validator(mode="after")
     def operation_inputs_are_complete(self) -> "ReportRequest":
-        if self.revision is not None and self.operation != "full_report":
-            raise ValueError("only a full report can be revised")
         supplement_ids = [item.id for item in self.user_supplements]
         if len(supplement_ids) != len(set(supplement_ids)):
             raise ValueError("user supplement ids must be unique")

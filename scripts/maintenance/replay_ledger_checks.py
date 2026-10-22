@@ -231,7 +231,7 @@ def _replay_checks(
     tools: LedgerTools, run_dir: Path, state: dict[str, Any], results: list
 ) -> dict[str, Any]:
     run_id = state["run_id"]
-    context = tools.prepare_context(state)
+    context = tools.prepare_context({"state": state})
     first = _load(run_dir / "ledger/judgments-r0.json")
     built = tools.build_ledger({
         "context": context,

@@ -10,6 +10,9 @@ input_variable: request
 output_contract: distribution_reporting_output
 state:
   run-id: ''
+  # A revision of the run's previous version; only the ledger reads it, so
+  # that the steps before it see the same input as in that version.
+  revision: null
   run-context: {}
   preparation-input: {}
   prepared-preparation: {}
@@ -87,8 +90,9 @@ actions:
 - id: run-report-ledger
   kind: subworkflow
   workflow: report-ledger
-  input_variable: reporting-state
-  child_input_variable: state
+  input_variables:
+    state: reporting-state
+    revision: revision
   child_output_name: result
   output_variable: delivered
 - id: publish-full-report
