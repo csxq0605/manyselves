@@ -121,6 +121,39 @@ def readings_agree(first: list[dict[str, Any]], second: list[dict[str, Any]]) ->
     return True, "两次读数一致"
 
 
+def unread_labels(transcription: list[dict[str, Any]]) -> list[str]:
+    """Items a reading left blank or could not read: what a second reading looks at."""
+
+    return list(dict.fromkeys(
+        str(item.get("label"))
+        for item in transcription
+        if item.get("label") and (not item.get("legible") or not str(item.get("text") or "").strip())
+    ))
+
+
+def unread_agree(
+    first: list[dict[str, Any]], second: list[dict[str, Any]], labels: list[str]
+) -> tuple[bool, str]:
+    """A second reading that reads text where the first saw a blank or nothing legible disagrees."""
+
+    def by_label(entries):
+        return {str(e.get("label")): e for e in entries if e.get("label")}
+
+    one, two = by_label(first), by_label(second)
+    differing = []
+    for label in labels:
+        again = two.get(label)
+        text = str((again or {}).get("text") or "").strip()
+        if again is None or not again.get("legible") or not text:
+            continue
+        before = one.get(label) or {}
+        said = "看不清" if not before.get("legible") else "空白"
+        differing.append(f"{label}：首读为{said}，复读为“{text}”")
+    if differing:
+        return False, "两次读图不一致，读数待核：" + "；".join(differing)
+    return True, ""
+
+
 def photo_readings_ref(run_id: str) -> str:
     return f"Work/runs/{run_id}/preparation/photo-readings.json"
 
@@ -368,6 +401,8 @@ __all__ = [
     "declared_quantities",
     "photo_records",
     "readings_agree",
+    "unread_agree",
+    "unread_labels",
     "PhotoReadingTools",
     "build_photo_reading_tool_implementations",
     "load_photo_readings",

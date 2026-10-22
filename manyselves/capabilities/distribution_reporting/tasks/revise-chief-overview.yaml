@@ -6,6 +6,6 @@ objective: 程序核对了你提交的第一章，下面是要改的问题。改
 input_contract: ledger_chief_check
 output_contract: ledger_chief_chapter_1
 constraints:
-- 只改 findings 指出的问题，其余内容保持不变。占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留，数值和数量只用占位符。
+- 只改 findings 指出的问题，其余内容保持不变。占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留；数量和档位用占位符，不自己数。程序给的“请核对”是提示：数写对了就不用改。
 tools: []
 recovery: typed-turn-recovery

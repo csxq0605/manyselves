@@ -68,12 +68,12 @@ def test_prose_values_are_slots_and_a_concern_object_is_named() -> None:
     def check(text: str):
         return report_check_findings(
             sections={"2.4.1": text}, rows_by_submodule={"2.4.1": rows}, slots=slots,
-            names=["A房/2#", "B房/3#", "2#", "3#"],
         )
 
     assert check("2#、3# 等共〔K-0009〕SPD；2# 柜〔V-0001〕，约为 3# 柜〔V-0002〕的几倍。") == {}
-    assert "10" in check("2#、3# 等共 10 个 SPD。")["2.4.1"]["problem"]
-    assert "3# 旁写的〔V-0001〕" in check("3# 柜剩余电流〔V-0001〕。")["2.4.1"]["problem"].replace(" 〔", "〔")
+    # A number the writer writes itself is free.
+    assert check("2#、3# 等共 10 个 SPD。") == {}
+    assert "B房/3# 旁写的〔V-0001〕" in check("B房 3# 柜剩余电流〔V-0001〕。")["2.4.1"]["problem"].replace(" 〔", "〔")
     minor = check("2# 柜〔V-0001〕。")["2.4.1"]
     assert minor["severity"] == "minor" and "J-2.4-2" in minor["problem"]
 

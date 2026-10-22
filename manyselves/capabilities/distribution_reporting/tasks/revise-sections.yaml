@@ -8,7 +8,7 @@ output_contract: ledger_section_set
 constraints:
 - sections 的键是被点名的小节编号，值是改好后的完整正文；没被点名的小节不要提交。
 - 写法要求与前面写作时相同；不在正文里改判断结论。
-- 正文里的占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留；数值和数量只用占位符，不改写成数字。
+- 正文里的占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留，不改写成数字；被指出配错或不存在的占位符，换成 value_slots 里正确的那个。程序给的“请核对”是提示：数写对了就不用改。
 - minor 意见可以顺手改，也可以不改。
 tools: []
 recovery: typed-turn-recovery

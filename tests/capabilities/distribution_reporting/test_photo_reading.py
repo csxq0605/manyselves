@@ -353,3 +353,64 @@ def test_program_compares_structured_readings_by_quantity_and_names_another_reco
     assert readings_agree(read(11.3), read(11.27))[0] is True
     agrees, why = readings_agree(read(11.3), read(2.9))
     assert agrees is False and "读数待核" in why
+
+
+def test_items_a_first_reading_left_blank_or_illegible_are_read_again_and_compared() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
+        unread_agree,
+        unread_labels,
+    )
+
+    first = [
+        {"label": "1月", "text": "√", "legible": True},
+        {"label": "5月", "text": "", "legible": True},
+        {"label": "面板读数", "text": "", "legible": False},
+    ]
+    labels = unread_labels(first)
+    assert labels == ["5月", "面板读数"]
+    agrees, why = unread_agree(first, [{"label": "5月", "text": "√ 王", "legible": True}], labels)
+    assert agrees is False and "5月：首读为空白" in why
+    # A second reading that also sees nothing, or leaves the item out, settles nothing.
+    assert unread_agree(first, [{"label": "5月", "text": "", "legible": True}], labels)[0] is True
+    assert unread_agree(first, [], labels)[0] is True
+
+
+def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import JudgmentRow
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import photos_to_check
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import PhotoReading
+
+    row = JudgmentRow.model_validate(
+        {"id": "J-1", "submodule_id": "2.2.1", "object": "1#", "checkpoint": "消防",
+         "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"],
+         "photo_ids": ["P-1", "P-2", "P-3"], "basis": "b", "risk_level": "中", "hazard": "h",
+         "hazard_conditions": ["c"], "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+    )
+    reference = {"photos": {p: {"path": f"{p}.jpg", "media_type": "image/jpeg"} for p in ("P-1", "P-2", "P-3")}}
+
+    def reading(photo_id, **extra):
+        return PhotoReading(photo_id=photo_id, visible="v", record_match="cannot_tell",
+                            reason="r", needs_review=True, **extra)
+
+    readings = {
+        "P-1": reading("P-1"),  # the reader asked for a look: the re-read answers that
+        "P-2": reading("P-2", reread_agrees=False, reread_reason="两次读图不一致"),
+        "P-3": reading("P-3").model_copy(update={"record_match": "conflicts"}),
+    }
+    assert [p["photo_id"] for p in photos_to_check([row], reference, readings)] == ["P-2", "P-3"]
+
+
+def test_the_reader_is_told_where_the_photo_sits_and_what_to_read_again() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
+        PhotoReadingRecord,
+    )
+
+    item = PhotoReadingInput(
+        run_id="r", photo_id="P-1", photo_path="p.jpg", media_type="image/jpeg",
+        photo_sheet="配电房合规性", photo_cell="I9", column_header="填写OK/NG，NG附图 / 消防设施",
+        records=[PhotoReadingRecord(evidence_id="E-1", subject="老配电房", checkpoint="消防设施")],
+        check_labels=["5月"], photo_date="2026-05-15 09:49",
+    )
+    prompt = PhotoReaderProviderRuntime._prompt(SimpleNamespace(objective="读图"), item)
+    assert "配电房合规性!I9" in prompt and "NG附图" in prompt
+    assert "2026-05-15 09:49" in prompt and '"5月"' in prompt

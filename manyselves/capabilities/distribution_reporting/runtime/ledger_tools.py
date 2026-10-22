@@ -18,6 +18,7 @@ here does one deterministic step on ordinary files of the current Run:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -51,19 +52,22 @@ from ..domain.judgment_ledger import (
     place_problem_table,
     problem_table,
     process_terms,
+    HINT_SUGGESTION,
+    SLOT_SUGGESTION,
     report_check_findings,
     risk_overview_markdown,
     settle_evidence_status,
+    slot_check,
 )
 from ..domain.taxonomy import (
     REPORT_TAXONOMY,
 )
 from ..domain.value_slots import (
     SLOT,
+    UNRESOLVED,
     fill_slots,
     format_value,
     object_names,
-    slot_findings,
     slot_lines,
     slot_table,
     slots_for_evidence,
@@ -100,6 +104,8 @@ from .photo_reading import (
     photo_records,
     reading_label,
     readings_agree,
+    unread_agree,
+    unread_labels,
 )
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
@@ -164,8 +170,10 @@ def photos_to_check(
 ) -> list[dict[str, Any]]:
     """Original images for the rows whose photo reading is in doubt.
 
-    A photo is sent when the program found its copied numbers differ from the
-    record, or the reader asked for a person to look at it.
+    A photo is sent when the program found its reading differs from the
+    record, or two independent readings of it differ.  A reader's own wish
+    for a second look is what the re-read answers; sending every such photo
+    put two dozen images into one review.
     """
 
     evidence_photos = reference.get("evidence_photos") or {}
@@ -181,7 +189,7 @@ def photos_to_check(
         asset = assets.get(photo_id)
         if asset is None or reading is None:
             continue
-        if reading.record_match != "conflicts" and not reading.needs_review:
+        if reading.record_match != "conflicts" and reading.reread_agrees is not False:
             continue
         photos.append(
             {
@@ -230,7 +238,7 @@ def _combined(
 
 def _filled(value: Any, slots: Mapping[str, Mapping[str, Any]]) -> Any:
     if isinstance(value, str):
-        return fill_slots(value, slots)
+        return fill_slots(value, slots, unresolved=UNRESOLVED)
     if isinstance(value, Mapping):
         return {key: _filled(item, slots) for key, item in value.items()}
     if isinstance(value, list):
@@ -660,7 +668,12 @@ class LedgerTools:
                 ],
                 "calculation_ids": [calc.id for calc in calculations],
                 "photos": {
-                    asset["id"]: {"path": asset["path"], "media_type": asset["media_type"]}
+                    asset["id"]: {
+                        "path": asset["path"],
+                        "media_type": asset["media_type"],
+                        "sheet": asset.get("source_sheet"),
+                        "cell": asset.get("source_cell"),
+                    }
                     for asset in (_plain(a) for a in state.get("photo_assets", []))
                 },
                 "evidence_subjects": {
@@ -928,15 +941,22 @@ class LedgerTools:
     def plan_reread(self, value: dict[str, Any]) -> dict[str, Any]:
         """The photos a problem or a gap rests on, to be read once more, independently.
 
-        Only photos the rows cite themselves, and that the first reading read
-        any declared quantity from: a second reading can then confirm or
-        contradict those numbers.  The reader again gets no recorded values.
+        Only photos the rows cite themselves, and only where a second reading
+        can settle something: the first reading read a declared quantity (the
+        numbers are compared), or left items blank or illegible (those items
+        are read again on their own).  The reader gets no recorded values and
+        not what the first reading said, only the date it found, so that a
+        dated record's blanks after that date are not taken for missed ones.
         """
 
         state = value["ledger"]
         run_id = state["run_id"]
         reference = self._reference(run_id)
         assets = reference.get("photos") or {}
+        headers = {
+            (str(path), str(sheet)): dict(columns)
+            for path, sheet, columns in reference.get("column_headers") or []
+        }
         readings = load_photo_readings(self.workspace, run_id)
         ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
         cited = list(dict.fromkeys(
@@ -953,20 +973,31 @@ class LedgerTools:
         for photo_id in cited:
             reading = readings.get(photo_id)
             asset = assets.get(photo_id)
-            if reading is None or asset is None or not reading.readings:
+            if reading is None or asset is None:
+                continue
+            labels = unread_labels(reading.transcription)
+            if not reading.readings and not labels:
                 continue
             bound = [by_id[e] for e in reading.evidence_ids if e in by_id]
             if not bound:
                 continue
             records, quantities = photo_records(bound, items)
+            sheet, cell = asset.get("sheet"), asset.get("cell")
+            column = re.sub(r"\d+", "", cell or "")
+            header = headers.get((bound[0].source.path.as_posix(), sheet or ""), {}).get(column)
             planned.append(
                 PhotoReadingInput(
                     run_id=run_id,
                     photo_id=photo_id,
                     photo_path=asset["path"],
                     media_type=asset["media_type"],
+                    photo_sheet=sheet,
+                    photo_cell=cell,
+                    column_header=header,
                     records=records,
                     quantities=quantities,
+                    check_labels=labels,
+                    photo_date=reading.photo_date,
                 ).model_dump(mode="json")
             )
         return {"reread_items": planned}
@@ -990,6 +1021,13 @@ class LedgerTools:
             agrees, reason = readings_agree(
                 reading.readings, [r.model_dump(mode="json") for r in second.readings]
             )
+            seen, unread = unread_agree(
+                reading.transcription,
+                [entry.model_dump(mode="json") for entry in second.transcription],
+                unread_labels(reading.transcription),
+            )
+            if not seen:
+                agrees, reason = False, "；".join(r for r in (reason if not agrees else "", unread) if r)
             readings[photo_id] = reading.model_copy(update={
                 "reread_agrees": agrees,
                 "reread_reason": reason,
@@ -1175,6 +1213,11 @@ class LedgerTools:
                 "value_slots": slot_lines(
                     [
                         *counts,
+                        # Each column's counts, so no total is counted by hand.
+                        *(
+                            slot_id for slot_id, slot in slots.items()
+                            if slot_id.startswith("K-") and str(slot.get("label", "")).endswith("_count")
+                        ),
                         *(
                             c for rows in ledger.values() for row in rows
                             if row.disposition in {"concern", "undetermined"}
@@ -1210,7 +1253,8 @@ class LedgerTools:
 
         def add(label: str, value: int) -> None:
             counts[f"K-{start + len(counts):04d}"] = {
-                "text": format_value(value, "个"), "label": label, "evidence_ids": [],
+                "text": format_value(value, "个"), "label": label, "value": float(value),
+                "unit": "个", "evidence_ids": [],
             }
 
         scopes = [("全部维度", [r for rows in ledger.values() for r in rows])]
@@ -1240,32 +1284,6 @@ class LedgerTools:
         if path.is_file():
             slots.update(json.loads(path.read_text(encoding="utf-8")))
         return slots
-
-    def _digit_texts(
-        self, run_id: str, rows: Sequence[JudgmentRow], *, with_facts: bool = False
-    ) -> list[str]:
-        """Texts the prose may repeat with their digits as they are.
-
-        The request, the rows' objects, checkpoints, measures, timeframes and
-        gaps, and the standards their knowledge units name; for the chief's
-        background (``with_facts``) also the facts themselves.
-        """
-
-        reference = self._reference(run_id)
-        units = self._knowledge_units(run_id)
-        texts = [str(text) for text in reference.get("request_texts") or ()]
-        for row in rows:
-            texts += [row.object, row.checkpoint]
-            if row.action is not None:
-                texts += [row.action.measure, row.action.timeframe]
-            if row.gap is not None:
-                texts += [row.gap.missing, row.gap.requested_input]
-        for entry in section_standards(rows, units):
-            standards = entry.get("standards")
-            texts += [str(s) for s in standards] if isinstance(standards, list) else [str(standards)]
-        if with_facts:
-            texts += list((reference.get("fact_texts") or {}).values())
-        return texts
 
     def _write_knowledge_candidates(
         self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]], names: Sequence[str]
@@ -1442,26 +1460,22 @@ class LedgerTools:
         run_id = final.get("run_id")
         if run_id:
             slots = self._slots(run_id)
-            all_rows = [row for rows in ledger.values() for row in rows]
-            digit_texts = self._digit_texts(run_id, all_rows, with_facts=bool(chapter1))
-            names = self._reference(run_id).get("object_names") or []
-            sections = _section_ids()
-            problems = slot_findings(
-                "\n".join(_strings(chapter1 or value["chapter3"])),
-                slots,
-                names=names,
-                section_ids=sections,
-                digit_texts=digit_texts,
-            )
+            problems, hints = slot_check("\n".join(_strings(chapter1 or value["chapter3"])), slots)
+            key = "1.2" if chapter1 else "3.1"
             if problems:
-                key = "1.2" if chapter1 else "3.1"
                 findings[key] = _combined(
                     findings.get(key),
                     {
                         "problem": "；".join(problems),
                         "severity": "blocking",
-                        "suggestion": "数量和数值改用 value_slots 里对应的占位符，不自己写数字。",
+                        "suggestion": SLOT_SUGGESTION,
                     },
+                )
+            if hints:
+                findings[key] = _combined(
+                    findings.get(key),
+                    {"problem": "请核对：" + "；".join(hints), "severity": "minor",
+                     "suggestion": HINT_SUGGESTION},
                 )
         return {"findings": findings, "blocking": _blocking(findings)}
 
@@ -1469,8 +1483,6 @@ class LedgerTools:
         run_id = value["ledger"]["run_id"]
         reference = self._reference(run_id)
         slots = self._slots(run_id)
-        names = reference.get("object_names") or []
-        section_ids = _section_ids()
         fact_texts = reference.get("fact_texts") or {}
         ledger = {m: _rows(rows) for m, rows in value["ledger"]["ledger"].items()}
         by_submodule: dict[str, list[JudgmentRow]] = {}
@@ -1506,12 +1518,6 @@ class LedgerTools:
                                 sections=texts,
                                 rows_by_submodule=by_submodule,
                                 slots=slots,
-                                names=names,
-                                section_ids=section_ids,
-                                digit_texts={
-                                    sid: self._digit_texts(run_id, by_submodule.get(sid, []))
-                                    for sid in texts
-                                },
                                 quote_sources={
                                     sid: [
                                         fact_texts.get(e, "")
@@ -1565,14 +1571,6 @@ class LedgerTools:
                         sections=chief_texts,
                         rows_by_submodule={},
                         slots=slots,
-                        names=names,
-                        section_ids=section_ids,
-                        digit_texts={
-                            section_id: self._digit_texts(
-                                run_id, all_rows, with_facts=section_id == "1.1"
-                            )
-                            for section_id in chief_texts
-                        },
                         quote_sources={
                             section_id: list(fact_texts.values()) for section_id in chief_texts
                         },
@@ -1647,31 +1645,26 @@ class LedgerTools:
         findings: dict[str, dict[str, Any]] = {}
         run_id = item.get("run_id")
         slots = self._slots(run_id) if run_id else {}
-        reference = self._reference(run_id) if run_id else {}
-        rows = (
-            [row for rows in self._final_rows(run_id).values() for row in rows] if run_id else []
-        )
         for section_id, text in changed.items():
-            problems = []
+            problems: list[str] = []
+            hints: list[str] = []
             if leaked := process_terms(strip_slots(text)):
                 problems.append("修订后的正文里出现了内部流程用语或编号：" + "、".join(leaked))
             if run_id:
-                problems += slot_findings(
-                    text,
-                    slots,
-                    names=reference.get("object_names") or [],
-                    section_ids=_section_ids(),
-                    digit_texts=self._digit_texts(
-                        run_id,
-                        [r for r in rows if item["owner"] == CHIEF_OWNER or r.submodule_id == section_id],
-                        with_facts=section_id == "1.1",
-                    ),
-                )
+                found, hints = slot_check(text, slots)
+                problems += found
             if problems:
                 findings[section_id] = {
-                    "problem": "；".join(problems),
+                    "problem": "；".join(problems)
+                    + ("；另请核对：" + "；".join(hints) if hints else ""),
                     "severity": "blocking",
-                    "suggestion": "删去这些用语；数值和数量改用占位符，不自己写数字。",
+                    "suggestion": "删去这些用语；" + SLOT_SUGGESTION,
+                }
+            elif hints:
+                findings[section_id] = {
+                    "problem": "请核对：" + "；".join(hints),
+                    "severity": "minor",
+                    "suggestion": HINT_SUGGESTION,
                 }
         if item["owner"] == CHIEF_OWNER and changed:
             findings = self._chief_text_findings(findings, changed)
@@ -1704,7 +1697,10 @@ class LedgerTools:
         # chief's structured fields alike.
         slots = self._slots(run_id)
         edits = {
-            edit["owner"]: {key: fill_slots(text, slots) for key, text in edit["sections"].items()}
+            edit["owner"]: {
+                key: fill_slots(text, slots, unresolved=UNRESOLVED)
+                for key, text in edit["sections"].items()
+            }
             for edit in value["edits"].values()
         }
         chief = _filled(value["chief"], slots)

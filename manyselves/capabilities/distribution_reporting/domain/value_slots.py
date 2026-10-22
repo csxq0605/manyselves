@@ -9,14 +9,20 @@ with its unit when the report is composed:
 - ``〔K-0001〕`` one calculation or count, with its unit;
 - ``〔S-0001〕`` one checkpoint's object list, ``〔S-0001:NG〕`` only the
   objects with that status;
+- ``〔V-0001:对象〕`` the object's name and its value together, so values
+  listed for several objects cannot be paired with the wrong one;
+- ``〔S-0001:取值〕`` a numeric checkpoint's distinct values, smallest first;
 - ``〔#:V-0003、V-0007〕`` the number of objects the listed slots belong to,
   for a count of objects the writer picked ("所列 N 个"), as distinct from a
   checkpoint's total, which is a ``K`` count.
 
-The check is structural: a slot must exist, and an Arabic numeral left in the
-prose outside a slot must be part of something the program already knows to
-carry digits (an object's name, a section number, a list marker, a standard's
-code, the request's own text, a row's measure or timeframe).
+Slots are recommended, not required: a writer may write any number, a limit,
+a date or a figure of its own reasoning.  Only what the program can tie to
+the table is checked, and only a structural certainty sends the text back: a
+slot that does not exist, or one object's value slot written next to another
+object alone.  A number the table can only suggest is wrong (a value with a
+declared unit next to one object that is another object's value) is a hint
+for the editor.
 """
 
 from __future__ import annotations
@@ -25,7 +31,8 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-SLOT = re.compile(r"〔([VKS]-\d{4,})(?:[:：](OK|NG))?〕")
+VARIANTS = ("OK", "NG", "对象", "取值")
+SLOT = re.compile(r"〔([VKS]-\d{4,})(?:[:：](OK|NG|对象|取值))?〕")
 _ID = r"[VKS]-\d{4,}"
 COUNT = re.compile(rf"〔#[:：]({_ID}(?:\s*[,，、]\s*{_ID})*)〕")
 
@@ -36,11 +43,10 @@ def _count_ids(match: re.Match[str]) -> list[str]:
 
 def strip_slots(text: str) -> str:
     return SLOT.sub("", COUNT.sub("", text))
-_DIGITS = re.compile(r"\d")
-# A section number (2.4.1), a list marker at a line start, a chapter reference.
-_SECTION_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)+(?![\d.])")
-_LIST_MARKER = re.compile(r"^\s*\d+[.、)）]\s*", re.MULTILINE)
-_CHAPTER = re.compile(r"第\s*\d+\s*[章节]")
+
+
+EMPTY = "无"
+UNRESOLVED = "（数值待核）"
 
 
 def format_value(value: float, unit: str) -> str:
@@ -74,6 +80,8 @@ def slot_table(
             "text": format_value(value, unit),
             "subject": item.subject,
             "label": label,
+            "value": float(value),
+            "unit": unit or "",
             "evidence_ids": [item.id],
         }
 
@@ -109,6 +117,8 @@ def slot_table(
             "text": format_value(calc.value, calc.unit),
             "subject": calc.subject,
             "label": calc.quantity,
+            "value": float(calc.value),
+            "unit": calc.unit or "",
             "evidence_ids": list(calc.evidence_ids),
         }
     for list_id, spec in lists.items():
@@ -118,10 +128,12 @@ def slot_table(
                 f"{entry['subject']}{format_value(entry['value'], spec.get('unit') or '')}"
                 for entry in entries
             )
+            distinct = sorted({float(entry["value"]) for entry in entries})
             slots[list_id] = {
                 "text": text,
                 "label": spec.get("name", ""),
                 "evidence_ids": list(spec.get("evidence_ids") or ()),
+                "取值": "、".join(format_value(v, spec.get("unit") or "") for v in distinct),
             }
         else:
             status = spec.get("status") or {}
@@ -131,7 +143,7 @@ def slot_table(
                 ),
                 "label": spec.get("name", ""),
                 "evidence_ids": list(spec.get("evidence_ids") or ()),
-                **{key: "、".join(subjects) for key, subjects in status.items()},
+                **{key: "、".join(subjects) or EMPTY for key, subjects in status.items()},
             }
     return slots
 
@@ -160,73 +172,145 @@ def slots_for_evidence(
     ]
 
 
-def fill_slots(text: str, slots: Mapping[str, Mapping[str, Any]]) -> str:
-    """Write each slot's value into the prose; an unknown slot is left as written."""
+def _variant(slot: Mapping[str, Any], variant: str) -> str | None:
+    """What a slot's variant writes, or None when this slot has no such variant."""
+
+    if variant == "对象":
+        return f"{slot['subject']}{slot['text']}" if slot.get("subject") else None
+    found = slot.get(variant)
+    return None if found is None else str(found)
+
+
+def fill_slots(
+    text: str, slots: Mapping[str, Mapping[str, Any]], *, unresolved: str | None = None
+) -> str:
+    """Write each slot's value into the prose.
+
+    A slot the program cannot fill is left as written, or replaced with
+    ``unresolved`` when the report is composed, so no raw slot reaches it.
+    """
 
     def value(match: re.Match[str]) -> str:
         slot = slots.get(match.group(1))
         if slot is None:
-            return match.group(0)
+            return match.group(0) if unresolved is None else unresolved
         if match.group(2):
-            return str(slot.get(match.group(2), ""))
+            filled = _variant(slot, match.group(2))
+            if filled is None:
+                return match.group(0) if unresolved is None else unresolved
+            return filled
         return str(slot["text"])
 
     def count(match: re.Match[str]) -> str:
         ids = _count_ids(match)
         if any(slot_id not in slots for slot_id in ids):
-            return match.group(0)
+            return match.group(0) if unresolved is None else unresolved
         subjects = {slots[slot_id].get("subject") or slot_id for slot_id in ids}
         return str(len(subjects))
 
     return SLOT.sub(value, COUNT.sub(count, text))
 
 
-def slot_findings(
-    text: str,
-    slots: Mapping[str, Mapping[str, Any]],
-    *,
-    names: Iterable[str] = (),
-    section_ids: Iterable[str] = (),
-    digit_texts: Iterable[str] = (),
-) -> list[str]:
-    """Unknown slots, and Arabic numerals written outside slots.
+def slot_findings(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Slots the program cannot fill: they would reach the report as written.
 
-    ``names`` are object names (and their parts); ``digit_texts`` are texts the
-    prose may repeat as they are (standard codes, the request, a row's measure
-    and timeframe).  Their digits are not values the writer computed.
+    These are the only slot problems that send a text back.  Numbers written
+    outside slots are not checked here (see ``value_hints``).
     """
 
-    problems = [
-        f"占位符 {match.group(0)} 不存在"
-        for match in SLOT.finditer(text)
-        if match.group(1) not in slots
-        or (match.group(2) and match.group(2) not in slots[match.group(1)])
-    ]
+    problems = []
+    for match in SLOT.finditer(text):
+        slot = slots.get(match.group(1))
+        if slot is None:
+            problems.append(f"占位符 {match.group(0)} 不存在")
+        elif match.group(2) and _variant(slot, match.group(2)) is None:
+            problems.append(f"占位符 {match.group(0)} 没有“{match.group(2)}”这种写法")
     problems += [
         f"计数占位符 {match.group(0)} 里有不存在的占位符"
         for match in COUNT.finditer(text)
         if any(slot_id not in slots for slot_id in _count_ids(match))
     ]
-    rest = strip_slots(text)
-    known_sections = set(section_ids)
-    rest = _SECTION_NUMBER.sub(
-        lambda m: "" if m.group(0) in known_sections else m.group(0), rest
-    )
-    rest = _LIST_MARKER.sub("", rest)
-    rest = _CHAPTER.sub("", rest)
-    for known in sorted(
-        {t.strip() for t in [*names, *digit_texts] if t and _DIGITS.search(t)},
-        key=len,
-        reverse=True,
-    ):
-        rest = rest.replace(known, "")
-    left = sorted(set(re.findall(r"[\d.]*\d[\d.]*\s*[A-Za-z%℃‰个台处倍]*", rest)))
-    if left:
-        problems.append(
-            "正文里有不是占位符的阿拉伯数字：" + "、".join(left[:12])
-            + ("等" if len(left) > 12 else "")
-        )
     return problems
+
+
+def empty_status_hints(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """A status list cited for a status no object has: the prose will read "无"."""
+
+    return [
+        f"{match.group(0)} 这一检查项没有 {match.group(2)} 对象，成稿会写成“{EMPTY}”，请确认句子仍通顺"
+        for match in SLOT.finditer(text)
+        if match.group(2) in {"OK", "NG"}
+        and (slot := slots.get(match.group(1))) is not None
+        and slot.get(match.group(2)) == EMPTY
+    ]
+
+
+def _units(slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """The units the table declares for its values, longest first."""
+
+    units = {
+        str(slot.get("unit"))
+        for slot_id, slot in slots.items()
+        if slot_id.startswith("V-") and slot.get("unit")
+    }
+    return sorted(units, key=len, reverse=True)
+
+
+def value_hints(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """A written value next to one object, in a column's unit, that is another object's value.
+
+    Only what the table pins down is compared: a number followed by a unit a
+    column declares, in a sentence that names exactly one object.  A number
+    that is that object's own value, or nobody's (a limit, a computed figure),
+    passes.  The result is a hint; the editor decides.
+    """
+
+    units = _units(slots)
+    if not units:
+        return []
+    by_subject: dict[str, dict[str, set[float]]] = {}
+    for slot_id, slot in slots.items():
+        if slot_id.startswith("V-") and slot.get("subject") and "value" in slot:
+            by_subject.setdefault(str(slot["subject"]), {}).setdefault(
+                str(slot.get("unit") or ""), set()
+            ).add(round(float(slot["value"]), 6))
+    number = re.compile(
+        r"(?<![\d.])(\d+(?:\.\d+)?)\s*(" + "|".join(re.escape(u) for u in units) + ")"
+    )
+    hints = []
+    for sentence in _SENTENCE.findall(strip_slots(text)):
+        named = _named(sentence, by_subject)
+        if len(named) != 1:
+            continue
+        (subject,) = named
+        own = by_subject[subject]
+        for match in number.finditer(sentence):
+            value, unit = round(float(match.group(1)), 6), match.group(2)
+            if value in own.get(unit, set()):
+                continue
+            others = [s for s, values in by_subject.items() if s != subject and value in values.get(unit, set())]
+            if others:
+                mine = "、".join(f"{v:g}{unit}" for v in sorted(own.get(unit, set()))) or "无此列数值"
+                hints.append(
+                    f"{subject} 旁写的 {match.group(0)} 是 {others[0]} 的值（{subject} 记录为 {mine}）"
+                )
+    return hints
+
+
+def _named(sentence: str, subjects: Iterable[str]) -> set[str]:
+    """Objects a sentence names: every part of the name (房间/柜号) is in it.
+
+    A part alone ("变压器", "3#") is shared by objects in many rooms, so it does
+    not pin one down.  Spaces are ignored on both sides ("16 号楼").
+    """
+
+    plain = re.sub(r"\s+", "", sentence)
+    named = set()
+    for subject in subjects:
+        parts = [re.sub(r"\s+", "", part) for part in str(subject).split("/") if part.strip()]
+        if parts and all(part in plain for part in parts):
+            named.add(subject)
+    return named
 
 
 _SENTENCE = re.compile(r"[^。；;\n]+")
@@ -243,10 +327,7 @@ def mispaired_slots(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[s
     }
     problems = []
     for sentence in _SENTENCE.findall(text):
-        named = {
-            s for s in subjects
-            if s in sentence or (s.rsplit("/", 1)[-1].strip() or s) in sentence
-        }
+        named = _named(sentence, subjects)
         if len(named) != 1:
             continue
         (subject,) = named
@@ -255,6 +336,7 @@ def mispaired_slots(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[s
             if (
                 slot
                 and match.group(1).startswith("V-")
+                and match.group(2) != "对象"
                 and slot.get("subject")
                 and slot["subject"] != subject
                 and slot["subject"] not in sentence
@@ -286,7 +368,12 @@ def object_names(subjects: Iterable[str]) -> list[str]:
 
 __all__ = [
     "COUNT",
+    "EMPTY",
     "SLOT",
+    "UNRESOLVED",
+    "VARIANTS",
+    "empty_status_hints",
+    "value_hints",
     "strip_slots",
     "fill_slots",
     "format_value",

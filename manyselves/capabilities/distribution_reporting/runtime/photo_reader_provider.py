@@ -257,14 +257,30 @@ class PhotoReaderProviderRuntime:
             }
             for record in item.records
         ]
-        return "\n\n".join((
+        where = f"{item.photo_sheet or ''}!{item.photo_cell or ''}" if item.photo_sheet else ""
+        parts = [
             f"任务：{task.objective}",
             f"图片 {item.photo_id} 已随本消息发送。它绑定的表格记录（主记录在前）：",
             json.dumps(records, ensure_ascii=False, indent=2),
+        ]
+        if where or item.column_header:
+            parts.append(
+                "照片附在表格的位置和这一列的表头（说明为什么附图）："
+                + json.dumps({"位置": where, "表头": item.column_header or ""}, ensure_ascii=False)
+            )
+        parts += [
             "表格为这个对象声明的量（图中能看到的写进 readings）：",
             json.dumps([q.model_dump(mode="json") for q in item.quantities], ensure_ascii=False),
-            "看完图片后调用 submit_result 提交 photo_reading_submission。",
-        ))
+        ]
+        if item.photo_date:
+            parts.append(f"上一次读到的照片日期（仅供对照时间先后）：{item.photo_date}")
+        if item.check_labels:
+            parts.append(
+                "请专门看清以下各项，在 transcription 里用同样的 label 各写一项："
+                + json.dumps(item.check_labels, ensure_ascii=False)
+            )
+        parts.append("看完图片后调用 submit_result 提交 photo_reading_submission。")
+        return "\n\n".join(parts)
 
     @staticmethod
     def _recovery_prompt(event: Any) -> str:

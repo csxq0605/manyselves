@@ -62,6 +62,20 @@ class PhotoReadingInput(StrictModel):
         default_factory=list,
         description="Quantities the table declares for this object, to read off the photo if shown.",
     )
+    check_labels: list[str] = Field(
+        default_factory=list,
+        description=(
+            "A re-read only: the items a first reading left blank or illegible, to be read "
+            "again on their own.  What the first reading said is not given."
+        ),
+    )
+    photo_date: str | None = Field(
+        default=None,
+        description=(
+            "A re-read only: the date the first reading found on the photo, as context for "
+            "dated records (a blank after this date is not a missed entry)."
+        ),
+    )
 
 
 class PhotoReading(StrictModel):

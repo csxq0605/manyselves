@@ -26,11 +26,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .action_table import ACTION_PRIORITY_GROUPS, ACTION_TABLE_HEADERS
 from .value_slots import (
     SLOT,
+    empty_status_hints,
     fill_slots,
     mispaired_slots,
     quote_findings,
     slot_findings,
     strip_slots,
+    value_hints,
 )
 
 Disposition = Literal["concern", "no_concern", "undetermined", "not_applicable"]
@@ -268,10 +270,14 @@ def ledger_findings(
             problems.append(
                 "一行判断写了多个对象（" + "、".join(objects) + "），关注项和不能判定项要一行一个对象"
             )
+        # A number of the author's own (a voltage, a limit, a computed figure)
+        # may be right: pointed out, not sent back.
+        hints: list[str] = []
         if cited_values is not None and (stray := _uncited_values(row, cited_values)):
-            problems.append(
+            hints.append(
                 "判断行里的数值不在它所引的事实、计算、照片或知识单元里："
                 + "、".join(stray)
+                + "（推理得出或通用常识的数可以保留）"
             )
         problems.extend(_hazard_problems(row))
         covered.update(row.evidence_ids)
@@ -287,15 +293,19 @@ def ledger_findings(
             problems.append("判断行文字里有内部流程用语或编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表")
         if problems:
             findings[row.id] = _finding(
-                "；".join(problems),
+                "；".join([*problems, *hints]),
                 "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号；"
-                "数值补引它的出处（事实、计算、照片或知识单元），没有出处的删去。判断本身不变。",
+                "抄自资料的数值补引它的出处。判断本身不变。",
             )
-        elif leaked:
+        elif leaked or hints:
             # An id alone is easy to drop in writing; it does not hold up a revision.
             findings[row.id] = _finding(
-                "判断行文字里有内部编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表",
-                "删去这些编号。判断本身不变。",
+                "；".join([
+                    *(["判断行文字里有内部编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表"]
+                      if leaked else []),
+                    *hints,
+                ]),
+                "删去内部编号；抄自资料的数值补引它的出处。判断本身不变。",
                 severity="minor",
             )
         elif row.disposition in {"concern", "undetermined"} and not any(
@@ -1056,38 +1066,58 @@ def process_terms(text: str) -> list[str]:
     return [*found, *dict.fromkeys(_PROCESS_ID.findall(text))]
 
 
+def slot_check(
+    text: str, slots: Mapping[str, Mapping[str, Any]]
+) -> tuple[list[str], list[str]]:
+    """(problems that send the text back, hints for the editor) for one text.
+
+    Sent back: slots the program cannot fill and one object's value slot next
+    to another object alone.  Hints: values that look like another object's
+    and a status list with nothing in it.  If a check itself fails on
+    unexpected input, it becomes a hint and the rest carries on.
+    """
+
+    problems: list[str] = []
+    hints: list[str] = []
+    for target, check in (
+        (problems, slot_findings),
+        (problems, mispaired_slots),
+        (hints, value_hints),
+        (hints, empty_status_hints),
+    ):
+        try:
+            target.extend(check(text, slots))
+        except Exception as error:  # noqa: BLE001 - a check must not stop the run
+            hints.append(f"程序核对未完成（{check.__name__}：{type(error).__name__}），请人工核对数值")
+    return problems, hints
+
+
+SLOT_SUGGESTION = (
+    "占位符只用 value_slots 里有的；列举几个对象的值时用〔V-…:对象〕或〔S-…〕，"
+    "让程序把对象和数值一起写。"
+)
+HINT_SUGGESTION = "核对这些数是否写对；写对了不用改。"
+
+
 def report_check_findings(
     *,
     sections: Mapping[str, str],
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
     slots: Mapping[str, Mapping[str, Any]],
-    names: Iterable[str] = (),
-    section_ids: Iterable[str] = (),
-    digit_texts: Mapping[str, Iterable[str]] | None = None,
     quote_sources: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Program check of the written sections against the slots and the ledger.
 
-    Values are written as slots the program fills (``value_slots``): a slot
-    must exist, no Arabic numeral may stand outside one except in what the
-    program knows carries digits, a value slot next to one object must be that
-    object's own, and text in 「」 must be the source author's recorded words
-    (all blocking).  A concern row whose object the section never names is
-    minor, because wording may differ.
+    Numbers are free to write; slots are recommended.  Blocking: a slot the
+    program cannot fill, one object's value slot next to another object
+    alone, and text in 「」 that is not the source author's recorded words.
+    Minor: hints on written values, and a concern row whose object the
+    section never names.
     """
 
-    names = list(names)
-    section_ids = list(section_ids)
     findings: dict[str, dict[str, str]] = {}
     for section_id, text in sections.items():
-        problems = slot_findings(
-            text,
-            slots,
-            names=names,
-            section_ids=section_ids,
-            digit_texts=(digit_texts or {}).get(section_id, ()),
-        )
-        problems.extend(mispaired_slots(text, slots))
+        problems, hints = slot_check(text, slots)
         if quoted := quote_findings(text, (quote_sources or {}).get(section_id, ())):
             problems.append("「」里的话不是来源记录的原话：" + "、".join(quoted))
         filled = fill_slots(text, slots)
@@ -1096,25 +1126,18 @@ def report_check_findings(
             for row in rows_by_submodule.get(section_id, ())
             if row.disposition == "concern" and row.object not in filled
         ]
+        if missing:
+            hints.append("以下关注项的对象没有在本节正文点名：" + "、".join(missing))
+        if leaked := process_terms(strip_slots(text)):
+            problems.append("正文里出现了内部流程用语或编号：" + "、".join(leaked))
         if problems:
             findings[section_id] = _finding(
-                "；".join(problems),
-                "数值、数量和对象清单改用对应的占位符（〔V-…〕〔K-…〕〔S-…〕），不自己写数字；"
-                "「」里只放来源记录的原话。",
+                "；".join(problems) + ("；另请核对：" + "；".join(hints) if hints else ""),
+                SLOT_SUGGESTION + "「」里只放来源记录的原话；删去内部流程用语。",
             )
-        elif missing:
+        elif hints:
             findings[section_id] = _finding(
-                "以下关注项的对象没有在本节正文点名：" + "、".join(missing),
-                "在正文里点名这些对象。",
-                severity="minor",
-            )
-        if leaked := process_terms(strip_slots(text)):
-            problem = "正文里出现了内部流程用语或编号：" + "、".join(leaked)
-            earlier = findings.get(section_id)
-            findings[section_id] = _finding(
-                problem if earlier is None else f"{earlier['problem']}；{problem}",
-                ("" if earlier is None else f"{earlier['suggestion']}；")
-                + "删去这些用语，只写结论和依据本身。",
+                "请核对：" + "；".join(hints), HINT_SUGGESTION, severity="minor"
             )
     return findings
 
@@ -1232,4 +1255,7 @@ __all__ = [
     "place_problem_table",
     "problem_table",
     "report_check_findings",
+    "slot_check",
+    "HINT_SUGGESTION",
+    "SLOT_SUGGESTION",
 ]

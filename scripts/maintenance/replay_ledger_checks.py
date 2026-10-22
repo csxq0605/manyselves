@@ -29,6 +29,7 @@ import json
 import re
 import shutil
 from collections.abc import Iterable, Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import 
     CHIEF_OWNER,
     LedgerTools,
 )
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import bound_report_taxonomy
 from manyselves.capabilities.distribution_reporting.runtime.mappers import map_s4_6
 from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
     JudgmentRow,
@@ -449,6 +451,16 @@ def replay(project: Path, run_id: str, output: Path, knowledge_root: Path | None
     # Reporting files live under the reporting run id, which a direct
     # report-ledger run may hold apart from the workflow run id.
     reporting_dir = output / "Work/runs" / state["run_id"]
+    # Chapter 2's tree is the run's own; every step below reads it.
+    taxonomy = reporting_dir / "preparation/report-taxonomy.json"
+    with bound_report_taxonomy(_load(taxonomy)) if taxonomy.is_file() else nullcontext():
+        return _replay_bound(output, run_id, run_dir, state, results, reporting_dir, rebound, knowledge_root)
+
+
+def _replay_bound(
+    output: Path, run_id: str, run_dir: Path, state: dict[str, Any], results: list,
+    reporting_dir: Path, rebound: int, knowledge_root: Path | None,
+) -> dict:
     summary_rows, items = _remark_summary_rows(output, reporting_dir)
     by_id = {item.id: item for item in items}
     state["evidence_items"] = [
