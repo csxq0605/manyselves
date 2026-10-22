@@ -2,7 +2,7 @@ id: revise-chief-actions
 version: 1.1.0
 description: Correct the 3.2 action rows after the program check
 agent: report-consultant
-objective: 程序核对了你提交的第三章，下面是要改的问题。改好后重新提交完整的第三章。
+objective: 程序或核对员核对了你提交的第三章，下面是要改的问题。改好后重新提交完整的第三章。
 input_contract: ledger_chief_check
 output_contract: ledger_chief_chapter_3
 constraints:

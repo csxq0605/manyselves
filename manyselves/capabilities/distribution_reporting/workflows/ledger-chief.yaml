@@ -1,6 +1,6 @@
 id: ledger-chief
-version: 1.0.0
-description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger
+version: 1.1.0
+description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger; chapters 1 and 3 are fact-checked in small packets
 tasks:
 - chief-chapter-3
 - revise-chief-actions
@@ -90,13 +90,92 @@ actions:
     operator: eq
     value: true
   then: revise-1
-  otherwise: topic-flag
+  otherwise: plan-facts
 - id: revise-1
   kind: invoke_agent
   agent: report-consultant
   task: revise-chief-overview
   conversation_variable: chief_conversation
   input_variable: check1
+  output_variable: chapter1
+- id: plan-facts
+  kind: invoke_tool
+  tool: plan-chief-facts
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter1: chapter1
+  output_variable: fact_plan
+- id: fact-items
+  kind: set_variable
+  variable: fact_items
+  value_variable: fact_plan
+  field: fact_items
+- id: fact-check
+  kind: map
+  items_variable: fact_items
+  key_field: packet_id
+  workflow: ledger-chief-fact-check
+  key_input_variable: item_key
+  output_variable: fact_results
+  errors_variable: fact_errors
+  max_concurrency: 6
+- id: apply-facts
+  kind: invoke_tool
+  tool: apply-chief-facts
+  input_variables:
+    packets: fact_items
+    results: fact_results
+  output_variable: fact_checks
+- id: fact-check-3
+  kind: set_variable
+  variable: fact_check3
+  value_variable: fact_checks
+  field: check3
+- id: fact-blocking-3
+  kind: set_variable
+  variable: fact_blocking3
+  value_variable: fact_checks
+  field: blocking3
+- id: fact-check-1
+  kind: set_variable
+  variable: fact_check1
+  value_variable: fact_checks
+  field: check1
+- id: fact-blocking-1
+  kind: set_variable
+  variable: fact_blocking1
+  value_variable: fact_checks
+  field: blocking1
+- id: route-fact-3
+  kind: if
+  condition:
+    variable: fact_blocking3
+    operator: eq
+    value: true
+  then: fix-3
+  otherwise: route-fact-1
+- id: fix-3
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-actions
+  conversation_variable: chief_conversation
+  input_variable: fact_check3
+  output_variable: chapter3
+- id: route-fact-1
+  kind: if
+  condition:
+    variable: fact_blocking1
+    operator: eq
+    value: true
+  then: fix-1
+  otherwise: topic-flag
+- id: fix-1
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-overview
+  conversation_variable: chief_conversation
+  input_variable: fact_check1
   output_variable: chapter1
 - id: topic-flag
   kind: set_variable

@@ -1,0 +1,7 @@
+id: ledger_chief_fact_packet
+version: 1.0.0
+description: A few units of chapters 1 and 3 with the rows they cite or name, those rows' records, and the values and counts they need
+adapter: json_schema
+schema:
+  type: object
+  required: [packet_id, units, rows, facts, values]

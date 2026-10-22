@@ -280,6 +280,16 @@ def _answer(message):
                 }
             ],
         )
+    if task == "check-chief-facts":
+        findings = {}
+        for unit in value["units"]:
+            if unit["unit_id"] == "1.2-重点风险-1":
+                findings[unit["unit_id"]] = {
+                    "problem": "风险等级写重了。",
+                    "severity": "blocking",
+                    "suggestion": "按所引行写。",
+                }
+        return ("submit", [{"findings": findings}])
     if task == "edit-sections":
         findings = {}
         if value["owner"] == "2.1":
@@ -459,6 +469,14 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     chief = [loop for loop in loops if "chief-chapter-3" in tasks_of(loop)]
     assert len(chief) == 1
     assert tasks_of(chief[0])[:2] == ["chief-chapter-3", "chief-chapter-1"]
+    # Chapters 1 and 3 are fact-checked in small packets, each in a fresh
+    # conversation; a blocking finding on chapter 1 sends the chief back once.
+    checks = [loop for loop in loops if tasks_of(loop) == ["check-chief-facts"]]
+    assert checks and all(not loop.restored for loop in checks)
+    packet = _input_of(checks[0].received[0].content)
+    assert packet["units"] and {"rows", "facts", "values", "counts"} <= set(packet)
+    assert tasks_of(chief[0])[2:3] == ["revise-chief-overview"]
+    assert "revise-chief-actions" not in tasks_of(chief[0])
 
 
 def test_full_report_reaches_only_ledger_agents_and_bound_tools() -> None:

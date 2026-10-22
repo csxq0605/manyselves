@@ -28,10 +28,11 @@ import yaml
 
 from ..domain.calculations import compute, render_calculations, render_statistics, statistics
 from ..domain.judgment_ledger import (
+    HINT_SUGGESTION,
     PROBLEM_TABLE_MARKER,
+    SLOT_SUGGESTION,
     ActionText,
     ChiefChapter3,
-    CrossFinding,
     DimensionHealth,
     JudgmentRow,
     JudgmentSet,
@@ -52,8 +53,6 @@ from ..domain.judgment_ledger import (
     place_problem_table,
     problem_table,
     process_terms,
-    HINT_SUGGESTION,
-    SLOT_SUGGESTION,
     report_check_findings,
     risk_overview_markdown,
     settle_evidence_status,
@@ -63,7 +62,6 @@ from ..domain.taxonomy import (
     REPORT_TAXONOMY,
 )
 from ..domain.value_slots import (
-    SLOT,
     UNRESOLVED,
     fill_slots,
     format_value,
@@ -74,15 +72,16 @@ from ..domain.value_slots import (
     strip_slots,
 )
 from .assets import runtime_photo_ids
+from .chief_fact_packets import apply_fact_findings, chief_fact_packets
 from .cross_module import (
     checked_relations,
-    unlisted_relations,
     conflict_summary,
     flagged_rows,
     object_chains,
-    relation_names,
     related_rows,
+    relation_names,
     see_also_by_row,
+    unlisted_relations,
 )
 from .delivery_tools import DeliveryTools
 from .joint_dossiers import build_dossiers
@@ -91,12 +90,12 @@ from .models.agentic import (
     ModuleSubmission,
     ObservationAssessment,
     PartAssessment,
+    PhotoReadingSubmission,
 )
+from .models.photo_reading import PhotoReadingInput
 from .models.reporting import EvidenceItem, PhotoAsset, ReportRequest, SpecialTopicPlan
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import build_observation_ledger, shared_labels
-from .models.agentic import PhotoReadingSubmission
-from .models.photo_reading import PhotoReadingInput
 from .photo_reading import (
     load_photo_readings,
     photo_reading_labels,
@@ -118,11 +117,11 @@ from .rule_standards import (
     unit_bodies,
     unit_ids,
 )
+from .run_taxonomy import run_taxonomy
 from .storage import ReportingStore
 from .template_lengths import matched_lengths, render_length_reference, template_sections
 from .template_resolver import resolve_report_template
 from .template_skill_paths import is_template_skill_path
-from .run_taxonomy import run_taxonomy
 from .template_skills import plain_value, skill_order, skills_for_run, skills_with_lessons
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
@@ -1479,6 +1478,29 @@ class LedgerTools:
                 )
         return {"findings": findings, "blocking": _blocking(findings)}
 
+    def plan_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Chapters 1 and 3 cut into small packets for a fact check (see chief_fact_packets)."""
+
+        final = value["ledger"]
+        run_id = final["run_id"]
+        ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        packets = chief_fact_packets(
+            chapter1=_plain(value.get("chapter1")),
+            chapter3=_plain(value.get("chapter3")),
+            ledger=ledger,
+            groups=final.get("action_groups") or [],
+            slots=self._slots(run_id),
+            fact_texts=self._reference(run_id).get("fact_texts") or {},
+            run_id=run_id,
+        )
+        self.store.write_json(f"Work/runs/{run_id}/ledger/chief-fact-packets.json", packets)
+        return {"fact_items": packets}
+
+    def apply_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
+        return apply_fact_findings(
+            value.get("packets") or [], _plain(value.get("results") or {})
+        )
+
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
         run_id = value["ledger"]["run_id"]
         reference = self._reference(run_id)
@@ -1536,36 +1558,13 @@ class LedgerTools:
             )
         chief = value["chief"]
         chief_texts = self._chief_texts(chief, value["ledger"])
-        all_rows = [row for rows in ledger.values() for row in rows]
-        groups = value["ledger"].get("action_groups") or []
-        cited = {
-            row_id
-            for entry in [
-                *groups,
-                *(chief["chapter3"].get("cross_findings") or []),
-                *(chief["chapter1"].get("key_risks") or []),
-            ]
-            for row_id in entry.get("row_ids") or []
-        }
+        # The chief's facts were checked against the rows in small packets
+        # before this pass (plan-chief-facts); the editor reads organisation.
         items.append(
             {
                 "run_id": run_id,
                 "owner": CHIEF_OWNER,
                 "sections": chief_texts,
-                "cited_rows": [
-                    {
-                        "id": row.id,
-                        "object": row.object,
-                        "checkpoint": row.checkpoint,
-                        "disposition": row.disposition,
-                        "evidence_status": row.evidence_status,
-                        "risk_level": row.risk_level,
-                        "basis": row.basis,
-                        "hazard": row.hazard,
-                    }
-                    for row in all_rows
-                    if row.id in cited
-                ],
                 "program_findings": self._chief_text_findings(
                     report_check_findings(
                         sections=chief_texts,
@@ -1854,6 +1853,8 @@ class LedgerTools:
             "close-review": self.close_review,
             "finalize-judgment-ledger": self.finalize_ledger,
             "check-chief-tables": self.check_chief,
+            "plan-chief-facts": self.plan_chief_facts,
+            "apply-chief-facts": self.apply_chief_facts,
             "check-report": self.check_report,
             "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,

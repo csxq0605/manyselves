@@ -1,0 +1,7 @@
+id: ledger_chief_fact_plan
+version: 1.0.0
+description: Fact-check packets over chapters 1 and 3
+adapter: json_schema
+schema:
+  type: object
+  required: [fact_items]

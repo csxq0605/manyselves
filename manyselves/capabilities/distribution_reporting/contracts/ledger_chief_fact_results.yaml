@@ -1,0 +1,7 @@
+id: ledger_chief_fact_results
+version: 1.0.0
+description: The fact-check packets and the checkers' findings by packet
+adapter: json_schema
+schema:
+  type: object
+  required: [packets]
