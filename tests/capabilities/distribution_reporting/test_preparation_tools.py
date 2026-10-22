@@ -211,27 +211,6 @@ async def test_preparation_workflow_emits_ordered_tool_events_without_agent_or_p
     ] == list(NORMAL_PREPARATION_TOOL_IDS)
 
 
-def test_top_level_file_workflow_prepares_before_module_cohort() -> None:
-    _capability, registry = load_distribution_reporting_capability()
-    top = registry.require(DefinitionKind.WORKFLOW, "distribution-reporting")
-    assert isinstance(top, WorkflowDefinition)
-
-    actions = top.actions
-    preparation_index = next(
-        index
-        for index, action in enumerate(actions)
-        if action.get("kind") == ActionKind.SUBWORKFLOW
-        and action.get("workflow") == PREPARATION_WORKFLOW_ID
-    )
-    module_cohort_index = next(
-        index
-        for index, action in enumerate(actions)
-        if action.get("kind") == ActionKind.SUBWORKFLOW
-        and action.get("workflow") == "distribution-module-cohort"
-    )
-    assert preparation_index < module_cohort_index
-
-
 def _ordered_subsequence(expected: tuple[str, ...], actual: list[str]) -> bool:
     positions = iter(actual)
     return all(any(candidate == item for candidate in positions) for item in expected)

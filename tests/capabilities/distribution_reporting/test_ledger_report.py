@@ -35,8 +35,8 @@ from manyselves.kernel.definitions import load_capability
 from manyselves.runtime.generic_binding import GenericCapabilityRuntimeBinding
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
-from tests.capabilities.distribution_reporting.test_public_reporting_runtime import (
-    _write_complete_template_skill_fixture,
+from tests.capabilities.distribution_reporting.support import (
+    write_role_skill_fixture as _write_complete_template_skill_fixture,
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 

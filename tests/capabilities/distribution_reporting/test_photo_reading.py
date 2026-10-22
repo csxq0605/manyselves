@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,9 +30,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     SourceLocation,
 )
-from manyselves.capabilities.distribution_reporting.runtime.photo_reader_provider import (
-    PhotoReaderProviderRuntime,
-)
 from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
     build_photo_reading_tool_implementations,
     load_photo_readings,
@@ -41,8 +37,6 @@ from manyselves.capabilities.distribution_reporting.runtime.photo_reading import
 from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
     prepare_module_fact_context,
 )
-from manyselves.config.schema import AgentDefaults
-from manyselves.interfaces.types import UserMessage
 from manyselves.kernel.contracts import build_contract_catalog
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -58,16 +52,10 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
-from manyselves.runtime.agent_execution import AgentExecutionService
-from manyselves.runtime.loops.bus import MessageBus
-from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink, WorkflowRuntimeHost
-from tests.capabilities.distribution_reporting.test_project_fact_packet import _write_facts
-from tests.capabilities.distribution_reporting.test_public_entrypoint_workflows import (
-    _registry_with_existing_workflow_specializers,
-)
+from tests.capabilities.distribution_reporting.support import write_facts as _write_facts
 
 RUN_ID = "facts"
 SUBMISSION = {
@@ -191,16 +179,12 @@ async def test_workflow_without_photos_skips_the_model(tmp_path: Path) -> None:
 
 def test_root_workflows_read_photos_before_any_module_writes() -> None:
     _capability, registry = load_distribution_reporting_capability()
-    for workflow_id, writer in (
-        ("full-report", "report-ledger"),
-        ("module-report", "distribution-module-cohort"),
-    ):
+    for workflow_id, writer in (("full-report", "report-ledger"),):
         workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
         children = [a["workflow"] for a in workflow.actions if a["kind"] == "subworkflow"]
         assert children.index("distribution-photo-reading") < children.index(writer)
-        specialized = _registry_with_existing_workflow_specializers()
         plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
-            specialized.require(DefinitionKind.WORKFLOW, workflow_id), specialized,
+            registry.require(DefinitionKind.WORKFLOW, workflow_id), registry,
         )
         assert "distribution-photo-reading" in plan.workflow_ids
 
@@ -220,75 +204,6 @@ def _conversation(conversation_id: str) -> ConversationRecord:
                             mode=ConversationMode.RUN),
         run_id=RUN_ID,
     )
-
-
-@pytest.mark.asyncio
-async def test_provider_sends_the_image_and_reuses_a_completed_reading(tmp_path: Path) -> None:
-    bus = MessageBus()
-    bus_task = asyncio.create_task(bus.process_queue())
-    received: list[UserMessage] = []
-    restored: list[tuple] = []
-
-    class Loop:
-        def __init__(self, kwargs: dict) -> None:
-            self.kwargs = kwargs
-            self.tools = kwargs["tools"]
-            self._callback = None
-
-        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
-            del task_boundaries, handoff_summary
-            restored.append(tuple(messages))
-
-        async def start(self) -> None:
-            async def respond(message: UserMessage) -> None:
-                if message.agent_type != self.kwargs["agent_type"]:
-                    return
-                received.append(message)
-                await self.tools.get("submit_result")(**SUBMISSION)
-
-            self._callback = respond
-            bus.subscribe(UserMessage, respond)
-
-        async def stop(self) -> None:
-            if self._callback is not None:
-                bus.unsubscribe(UserMessage, self._callback)
-
-        async def wait_until_turn_complete(self) -> None:
-            return None
-
-    services = RuntimeServicesView(
-        workspace=tmp_path, bus=bus, active_provider=object(),
-        agent_defaults=AgentDefaults(), global_knowledge_root=None,
-    )
-    runtime = PhotoReaderProviderRuntime(
-        services, execution=AgentExecutionService(bus, timeout=1),
-        loop_builder=lambda **kwargs: Loop(kwargs),
-    )
-    agent, task = _agent_and_task()
-    context = _context(tmp_path, 2)
-    plan = build_photo_reading_tool_implementations(tmp_path)["prepare-photo-reading"](context)
-    first, second = plan["lanes"]["1"][0], plan["lanes"]["2"][0]
-    try:
-        outcome = await runtime.invoke(agent, task, first, _conversation("c-1"), task_id="read-photo-1")
-        reused = await runtime.invoke(agent, task, first, _conversation("c-2"), task_id="read-photo-1")
-        other = await runtime.invoke(agent, task, second, _conversation("c-3"), task_id="read-photo-1")
-    finally:
-        await runtime.close()
-        bus.shutdown()
-        await bus_task
-
-    assert outcome.status == "ok" and outcome.result == {**SUBMISSION, "readings": []}
-    assert reused.status == "ok" and reused.result == {**SUBMISSION, "readings": []}
-    assert [message.images for message in received] == [
-        [{"path": str((tmp_path / "Work/assets/P-0001.png").resolve()), "media_type": "image/png"}],
-        [{"path": str((tmp_path / "Work/assets/P-0002.png").resolve()), "media_type": "image/png"}],
-    ]
-    # The reader is told where the photo sits and what to look for, never the recorded value.
-    assert "E-0001" in received[0].content and "35℃" not in received[0].content
-    assert '"quantity": "记录值"' in received[0].content
-    assert other.status == "ok"
-    # The lane session is reused, but the next photo starts with an empty history.
-    assert () in restored
 
 
 def _module(part_id: str, evidence_id: str) -> SimpleNamespace:
@@ -400,17 +315,3 @@ def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
     assert [p["photo_id"] for p in photos_to_check([row], reference, readings)] == ["P-2", "P-3"]
 
 
-def test_the_reader_is_told_where_the_photo_sits_and_what_to_read_again() -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
-        PhotoReadingRecord,
-    )
-
-    item = PhotoReadingInput(
-        run_id="r", photo_id="P-1", photo_path="p.jpg", media_type="image/jpeg",
-        photo_sheet="配电房合规性", photo_cell="I9", column_header="填写OK/NG，NG附图 / 消防设施",
-        records=[PhotoReadingRecord(evidence_id="E-1", subject="老配电房", checkpoint="消防设施")],
-        check_labels=["5月"], photo_date="2026-05-15 09:49",
-    )
-    prompt = PhotoReaderProviderRuntime._prompt(SimpleNamespace(objective="读图"), item)
-    assert "配电房合规性!I9" in prompt and "NG附图" in prompt
-    assert "2026-05-15 09:49" in prompt and '"5月"' in prompt

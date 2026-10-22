@@ -9,14 +9,10 @@ from importlib import import_module
 from importlib.util import find_spec
 
 RESEARCH_MODULES = {
-    "tools": "manyselves.capabilities.distribution_reporting.runtime.research_tools",
     "reference": (
         "manyselves.capabilities.distribution_reporting.runtime.research.reference_library"
     ),
     "web": "manyselves.capabilities.distribution_reporting.runtime.research.web",
-    "memory": (
-        "manyselves.capabilities.distribution_reporting.runtime.research.evidence_memory"
-    ),
     "context": (
         "manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context"
     ),
@@ -59,15 +55,6 @@ def test_research_runtime_imports_without_core_reporting() -> None:
 
 def test_research_symbols_are_physically_capability_owned() -> None:
     expected_symbols = {
-        "tools": (
-            "SearchProjectEvidenceTool",
-            "OpenProjectSourceTool",
-            "SearchReferenceLibraryTool",
-            "OpenReferenceTool",
-            "WebSearchTool",
-            "OpenWebSourceTool",
-            "PublishResearchNoteTool",
-        ),
         "reference": ("ReferenceLibrary", "ReferenceDocument", "ReferenceHit"),
         "web": (
             "BraveWebResearchBackend",
@@ -75,7 +62,6 @@ def test_research_symbols_are_physically_capability_owned() -> None:
             "WebSearchHit",
             "OpenedWebSource",
         ),
-        "memory": ("EvidenceResearchMemory",),
         "context": ("KnowledgeContext", "KnowledgeContextBuilder"),
     }
     for alias, module_name in RESEARCH_MODULES.items():

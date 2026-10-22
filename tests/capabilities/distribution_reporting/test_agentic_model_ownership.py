@@ -6,12 +6,6 @@ from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 
-from manyselves.capabilities.distribution_reporting import (
-    load_distribution_reporting_capability,
-)
-from manyselves.kernel.contracts import build_contract_catalog
-from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
-
 AGENTIC_MODEL_MODULE = (
     "manyselves.capabilities.distribution_reporting.runtime.models.agentic"
 )
@@ -104,15 +98,3 @@ def test_agentic_models_are_physically_owned_by_the_capability() -> None:
     assert find_spec("manyselves.core.reporting") is None
 
 
-def test_agentic_contracts_resolve_to_capability_owned_models() -> None:
-    _, registry = load_distribution_reporting_capability()
-    agentic = import_module(AGENTIC_MODEL_MODULE)
-    contracts = build_contract_catalog(registry)
-
-    for contract_id, model_name in CONTRACT_MODEL_NAMES.items():
-        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
-        assert isinstance(definition, ContractDefinition)
-        assert definition.model == f"{AGENTIC_MODEL_MODULE}:{model_name}"
-        assert contracts[contract_id].json_schema() == getattr(
-            agentic, model_name
-        ).model_json_schema()

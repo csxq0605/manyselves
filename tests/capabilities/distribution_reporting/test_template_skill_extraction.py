@@ -47,13 +47,13 @@ from manyselves.runtime.exemplar.lessons import LessonBook, load_lessons
 from manyselves.runtime.exemplar.outline import document_outline
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
+from tests.capabilities.distribution_reporting.support import (
+    write_role_skill_fixture as _write_complete_template_skill_fixture,
+)
 from tests.capabilities.distribution_reporting.test_ledger_report import (
     _input_of,
     _task,
     run_ledger_report,
-)
-from tests.capabilities.distribution_reporting.test_public_reporting_runtime import (
-    _write_complete_template_skill_fixture,
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 
@@ -205,6 +205,10 @@ async def _run(workspace: Path, workflow_id: str, values: dict[str, Any], answer
 @pytest.mark.asyncio
 async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_path: Path) -> None:
     _write_complete_template_skill_fixture(tmp_path)
+    # A role the flow no longer declares, left over from an older package.
+    stray = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("old role\n", encoding="utf-8")
     (tmp_path / EXPERT_REPORT_REF).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(TEMPLATE, tmp_path / EXPERT_REPORT_REF)
     published_before = (tmp_path / "Inputs/report-template-role-skills/author-2.1/SKILL.md").read_text(

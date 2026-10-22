@@ -4,90 +4,28 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models.aggregate_existing import AggregateExistingPreparationInput
-from .models.entrypoint import (
-    PublicAggregateExistingInitializerInput,
-    PublicAggregateExistingRequest,
-    PublicFullReportRequest,
-    PublicModuleReportRequest,
-    PublicRenderExistingRequest,
-    PublicReviseReportRequest,
-)
-from .models.reporting import REPORT_MODULE_IDS, ReportRequest
-
-
-def load_public_entrypoint_definitions():
-    """Load the five roots with their packaged definition specializations.
-
-    Parameterized child workflows are materialized before compilation.  This
-    is definition composition only; no Provider, Run state, or domain
-    execution is created here.
-    """
-
-    from manyselves.kernel.definitions import (
-        DefinitionKind,
-        DefinitionRegistry,
-        specialize_workflow,
-    )
-
-    from .. import load_distribution_reporting_capability
-    from .cross_owner_definitions import register_cross_owner_pipeline_specializations
-    from .entrypoint_tools import specialize_module_cohort_workflow
-    from .module_lane_definitions import register_module_runtime_lane_specializations
-    from .reporting_tail_runtime import register_reporting_tail_workflow_specializations
-
-    capability, source = load_distribution_reporting_capability()
-    registry = DefinitionRegistry()
-    for definition in source.all():
-        if (
-            definition.kind == DefinitionKind.WORKFLOW
-            and definition.id == "distribution-module-cohort"
-        ):
-            continue
-        registry.register(definition)
-    cohort = source.require(DefinitionKind.WORKFLOW, "distribution-module-cohort")
-    cohort = specialize_module_cohort_workflow(cohort, REPORT_MODULE_IDS)
-    cohort = specialize_workflow(cohort, {"max_concurrency": len(REPORT_MODULE_IDS)})
-    registry.register(cohort)
-    register_cross_owner_pipeline_specializations(registry)
-    register_module_runtime_lane_specializations(registry)
-    register_reporting_tail_workflow_specializations(registry)
-    return capability, registry
+from .models.entrypoint import PublicFullReportRequest, PublicRenderExistingRequest
+from .models.reporting import ReportRequest
 
 
 def project_public_entrypoint_input(
     workflow_id: str,
     run_id: str,
     value: Any,
-) -> ReportRequest | AggregateExistingPreparationInput:
+) -> ReportRequest:
     """Project one user-facing input after the Host has allocated ``run_id``.
 
-    The returned values are existing Capability task contracts.  This helper
+    The returned value is the Capability's typed report request.  This helper
     does not allocate state, call a Provider, or choose a workflow; it only
-    adds the root operation and the fixed template task fields that are not
-    user inputs.
+    adds the root operation that is not a user input.
     """
 
+    del run_id
     if workflow_id == "full-report":
         public = PublicFullReportRequest.model_validate(value)
         payload = public.model_dump(mode="python")
         payload["operation"] = "full_report"
         return ReportRequest.model_validate(payload)
-    if workflow_id == "module-report":
-        public = PublicModuleReportRequest.model_validate(value)
-        payload = public.model_dump(mode="python")
-        payload["operation"] = "module_report"
-        return ReportRequest.model_validate(payload)
-    if workflow_id == "revise-report":
-        return ReportRequest.model_validate(PublicReviseReportRequest.model_validate(value).model_dump())
-    if workflow_id == "aggregate-existing":
-        public = PublicAggregateExistingRequest.model_validate(value)
-        return project_public_aggregate_existing_input(
-            PublicAggregateExistingInitializerInput(
-                run_id=run_id,
-                request=public,
-            )
-        )
     if workflow_id == "render-existing":
         public = PublicRenderExistingRequest.model_validate(value)
         payload = public.model_dump(mode="python")
@@ -96,22 +34,4 @@ def project_public_entrypoint_input(
     raise ValueError(f"unsupported public Reporting workflow: {workflow_id}")
 
 
-def project_public_aggregate_existing_input(
-    value: PublicAggregateExistingInitializerInput | Any,
-) -> AggregateExistingPreparationInput:
-    """Join Host-owned Run identity to the aggregate task input."""
-
-    initializer = PublicAggregateExistingInitializerInput.model_validate(value)
-    payload = initializer.request.model_dump(mode="python")
-    payload["operation"] = "aggregate_existing"
-    return AggregateExistingPreparationInput(
-        run_id=initializer.run_id,
-        request=ReportRequest.model_validate(payload),
-    )
-
-
-__all__ = [
-    "load_public_entrypoint_definitions",
-    "project_public_aggregate_existing_input",
-    "project_public_entrypoint_input",
-]
+__all__ = ["project_public_entrypoint_input"]

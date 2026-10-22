@@ -398,11 +398,11 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
     assert reporting["version"] == "1.0.0"
     assert reporting["description"] == "Declarative distribution reporting capability"
     assert {
-        "distribution-cross-owner-cohort",
-        "distribution-module-cohort",
-        "distribution-reporting",
-        "distribution-reporting-tail",
-        "distribution-report-delivery",
+        "full-report",
+        "report-ledger",
+        "ledger-chief",
+        "distribution-photo-reading",
+        "extract-template-skills",
     } <= set(reporting["workflow_ids"])
     assert capabilities[2] == {
         "id": "parameter-adjustment",

@@ -7,13 +7,6 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter
-
-from manyselves.capabilities.distribution_reporting import (
-    load_distribution_reporting_capability,
-)
-from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
-from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
 
 PREPARATION_MODULE = (
     "manyselves.capabilities.distribution_reporting.runtime.models.preparation"
@@ -229,44 +222,3 @@ def test_preparation_models_serialize_project_paths_as_canonical_refs() -> None:
     )
 
 
-def test_preparation_contract_catalog_uses_typed_models_and_collection_shapes() -> None:
-    _, registry = load_distribution_reporting_capability()
-    contracts = build_contract_catalog(registry)
-    preparation = import_module(PREPARATION_MODULE)
-    reporting = import_module(REPORTING_MODULE)
-
-    assert preparation.ParsedArtifacts == list[preparation.ParsedArtifact]
-    assert reporting.EvidenceItems == list[reporting.EvidenceItem]
-    assert reporting.OutputArtifacts == list[reporting.OutputArtifact]
-
-    valid_values = {
-        "project_manifest": {"files": []},
-        "parsed_artifacts": [],
-        "evidence_items": [],
-        "coverage_matrix": {"entries": {}},
-        "output_artifacts": [],
-    }
-    for contract_id, (module_name, model_name) in CONTRACT_MODELS.items():
-        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
-        model_type = getattr(import_module(module_name), model_name)
-        assert isinstance(definition, ContractDefinition)
-        assert definition.adapter == "pydantic"
-        assert definition.model == f"{module_name}:{model_name}"
-        assert contracts[contract_id].json_schema() == TypeAdapter(
-            model_type
-        ).json_schema()
-        contracts[contract_id].validate(valid_values[contract_id])
-
-    for contract_id in ("parsed_artifacts", "evidence_items", "output_artifacts"):
-        assert contracts[contract_id].json_schema()["type"] == "array"
-        with pytest.raises(ContractValidationError):
-            contracts[contract_id].validate({})
-    for contract_id in ("project_manifest", "coverage_matrix"):
-        assert contracts[contract_id].json_schema()["type"] == "object"
-        with pytest.raises(ContractValidationError):
-            contracts[contract_id].validate([])
-
-    report_request = registry.require(DefinitionKind.CONTRACT, "report_request")
-    assert isinstance(report_request, ContractDefinition)
-    assert report_request.adapter == "json_schema"
-    assert report_request.schema_ == {}

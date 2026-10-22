@@ -8,11 +8,8 @@ from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from manyselves.capabilities.distribution_reporting.runtime.models.entrypoint import (
-    PublicAggregateExistingRequest,
     PublicFullReportRequest,
-    PublicModuleReportRequest,
     PublicRenderExistingRequest,
-    PublicReviseReportRequest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     REPORT_MODULE_IDS,
@@ -23,18 +20,12 @@ from manyselves.runtime.tools.registry import Tool
 
 ReportOperation = Literal[
     "full_report",
-    "module_report",
-    "aggregate_existing",
     "render_existing",
-    "revise_report",
 ]
 
 _WORKFLOW_BY_OPERATION: dict[ReportOperation, str] = {
     "full_report": "full-report",
-    "module_report": "module-report",
-    "aggregate_existing": "aggregate-existing",
     "render_existing": "render-existing",
-    "revise_report": "revise-report",
 }
 
 
@@ -133,10 +124,7 @@ class RunReportingWorkflowTool(Tool):
         }
         request_type = {
             "full_report": PublicFullReportRequest,
-            "module_report": PublicModuleReportRequest,
-            "aggregate_existing": PublicAggregateExistingRequest,
             "render_existing": PublicRenderExistingRequest,
-            "revise_report": PublicReviseReportRequest,
         }[operation]
         request = request_type.model_validate(values)
 

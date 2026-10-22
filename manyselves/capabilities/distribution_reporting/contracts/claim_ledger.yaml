@@ -1,6 +1,0 @@
-id: claim_ledger
-version: 1.0.0
-description: Reporting adapter boundary for claim_ledger
-adapter: json_schema
-schema: {}
-

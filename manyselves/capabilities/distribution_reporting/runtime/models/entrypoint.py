@@ -76,36 +76,6 @@ class PublicFullReportRequest(_PublicReportRequest):
     )
 
 
-class PublicModuleReportRequest(_PublicReportRequest):
-    """User input for a selected-module report root."""
-
-    operation: Literal["module_report"] = "module_report"
-    target_modules: list[str] = Field(
-        default_factory=lambda: [REPORT_MODULE_IDS[0]],
-        description="One or more reporting modules to execute.",
-    )
-
-
-class PublicReviseReportRequest(_PublicReportRequest):
-    """New Run copying one baseline and patching assigned or impact-derived subsections."""
-
-    operation: Literal["revise_report"] = "revise_report"
-    baseline_run_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    requested_changes: dict[str, str] = Field(default_factory=dict)
-    impact_mode: Literal["none", "auto", "confirm"] = "none"
-
-
-class PublicAggregateExistingRequest(_PublicReportRequest):
-    """User input for aggregating the five already-produced module reports."""
-
-    operation: Literal["aggregate_existing"] = "aggregate_existing"
-    instruction: str = "Aggregate the five existing module reports."
-    target_modules: list[str] = Field(
-        default_factory=lambda: list(REPORT_MODULE_IDS),
-        description="Aggregate-existing always consumes all five modules.",
-    )
-
-
 class PublicRenderExistingRequest(_PublicReportRequest):
     """User input for rendering one existing Markdown report."""
 
@@ -116,20 +86,10 @@ class PublicRenderExistingRequest(_PublicReportRequest):
     )
 
 
-class PublicAggregateExistingInitializerInput(ReportingModel):
-    """Host-owned Run identity paired with public aggregate input."""
-
-    run_id: str = Field(min_length=1)
-    request: PublicAggregateExistingRequest
-
-
 __all__ = [
     "ReportingPreparationAttachment",
     "ReportingRunContext",
     "ReportingRunInitializerInput",
-    "PublicAggregateExistingRequest",
     "PublicFullReportRequest",
-    "PublicModuleReportRequest",
     "PublicRenderExistingRequest",
-    "PublicAggregateExistingInitializerInput",
 ]

@@ -25,10 +25,9 @@ REPORTING_DOMAIN_PREFIX = "manyselves.core.reporting"
 
 REPORTING_ENTRYPOINTS = {
     "full-report",
-    "module-report",
-    "aggregate-existing",
     "render-existing",
     "extract-template-skills",
+    "triage-writing-lessons",
 }
 
 
@@ -417,7 +416,7 @@ def test_legacy_core_reporting_python_package_is_absent() -> None:
 
 
 def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> None:
-    """The five public report operations must start compiled file workflows."""
+    """The public report operations must start compiled file workflows."""
 
     capability_path = REPORTING_CAPABILITY_ROOT / "capability.yaml"
     capability = yaml.safe_load(capability_path.read_text(encoding="utf-8"))
@@ -429,5 +428,5 @@ def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> No
         if isinstance(payload, dict) and isinstance(payload.get("id"), str)
     }
 
-    assert REPORTING_ENTRYPOINTS <= declared_entrypoints
+    assert REPORTING_ENTRYPOINTS == declared_entrypoints
     assert declared_entrypoints <= workflow_ids

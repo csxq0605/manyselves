@@ -28,7 +28,7 @@ from manyselves.capabilities.distribution_reporting.runtime.observation_ledger i
 from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
     prepare_module_fact_context,
 )
-from tests.capabilities.distribution_reporting.test_project_fact_packet import _write_facts
+from tests.capabilities.distribution_reporting.support import write_facts as _write_facts
 
 
 def _load_row(evidence_id: str, module_id: str, submodule_id: str, row: int) -> EvidenceItem:

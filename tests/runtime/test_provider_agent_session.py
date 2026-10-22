@@ -153,24 +153,3 @@ def test_provider_session_factory_loads_existing_bounded_handoff(
     }
 
 
-def test_all_reporting_provider_compositions_enable_bounded_handoff() -> None:
-    runtime = (
-        Path(__file__).parents[2]
-        / "manyselves"
-        / "capabilities"
-        / "distribution_reporting"
-        / "runtime"
-    )
-    providers = (
-        "aggregate_provider.py",
-        "chief_provider.py",
-        "cross_provider.py",
-        "final_chief_provider.py",
-        "final_provider.py",
-        "module_provider.py",
-    )
-
-    for filename in providers:
-        source = (runtime / filename).read_text(encoding="utf-8")
-        assert "persist_handoff_summary=True" in source
-        assert "persist_handoff_summary=False" not in source

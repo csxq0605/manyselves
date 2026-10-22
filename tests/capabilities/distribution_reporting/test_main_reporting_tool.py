@@ -7,7 +7,6 @@ from manyselves.capabilities.distribution_reporting.adapters.main_tool import (
     RunReportingWorkflowTool,
     attach_main_reporting_tool,
 )
-from manyselves.runtime.tools.registry import ToolRegistry
 
 
 class _Projection:
@@ -102,60 +101,3 @@ def test_distribution_demo_attaches_reporting_tool_to_main_runtime() -> None:
     assert registered[0][1].name == "run_reporting_workflow"
 
 
-def test_distribution_demo_main_tool_exposes_the_six_operation_contract() -> None:
-    registry = ToolRegistry()
-    registry.register(
-        RunReportingWorkflowTool(
-            projection_resolver=lambda: _Projection(),
-            conversation_resolver=lambda: _Conversations(),
-        )
-    )
-
-    definition = registry.get_definitions()[0]
-    assert definition["name"] == "run_reporting_workflow"
-    assert definition["input_schema"]["properties"]["operation"]["enum"] == [
-        "full_report",
-        "module_report",
-        "aggregate_existing",
-        "render_existing",
-        "revise_report",
-    ]
-    properties = definition["input_schema"]["properties"]
-    assert "baseline_run_id" in properties
-    assert "requested_changes" in properties
-
-
-@pytest.mark.asyncio
-async def test_main_starts_revision_from_explicit_baseline_and_binds_new_run():
-    projection = _Projection()
-    conversations = _Conversations()
-    tool = RunReportingWorkflowTool(
-        projection_resolver=lambda: projection,
-        conversation_resolver=lambda: conversations,
-    )
-    changes = {"2.3.1": "Clarify the risk", "2.4.1.3": "Explain its linked impact"}
-    result = await tool(
-        operation="revise_report", instruction="Revise the previous report with Cross",
-        baseline_run_id="full-report-baseline", requested_changes=changes,
-    )
-    assert len(projection.started) == 1
-    _command, workflow_id, values = projection.started[0]
-    assert workflow_id == "revise-report"
-    assert values["baseline_run_id"] == "full-report-baseline"
-    assert values["requested_changes"] == changes
-    assert values["target_modules"] == ["2.3", "2.4"]
-    assert "operation" not in values
-    assert conversations.bound == ["revise-report-command"]
-    assert result["conversation_id"] == "conversation-main"
-
-
-@pytest.mark.asyncio
-async def test_main_revision_does_not_guess_a_missing_baseline():
-    projection = _Projection()
-    tool = RunReportingWorkflowTool(
-        projection_resolver=lambda: projection,
-        conversation_resolver=lambda: _Conversations(),
-    )
-    with pytest.raises(ValueError):
-        await tool(operation="revise_report", instruction="Revise", requested_changes={"2.3.1": "Clarify"})
-    assert projection.started == []

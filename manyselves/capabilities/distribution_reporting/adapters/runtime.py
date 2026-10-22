@@ -8,35 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
-    runtime_photo_ids,
-)
-from manyselves.capabilities.distribution_reporting.runtime.aggregate_existing import (
-    PublicAggregateExistingWorkflowRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.aggregate_provider import (
-    build_aggregate_provider_composition,
-)
-from manyselves.capabilities.distribution_reporting.runtime.chief_provider import (
-    build_chief_provider_composition,
-)
-from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
-    ChiefChapterRuntime,
-)
 from manyselves.capabilities.distribution_reporting.runtime.content_snapshot import (
     snapshot_content,
-)
-from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
-    CrossOwnerRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.cross_provider import (
-    build_cross_provider_composition,
-)
-from manyselves.capabilities.distribution_reporting.runtime.final_chief_provider import (
-    build_final_chief_provider_composition,
-)
-from manyselves.capabilities.distribution_reporting.runtime.final_provider import (
-    build_final_provider_composition,
 )
 from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
     RunInputSnapshotStore,
@@ -44,20 +17,8 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
 from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
     build_ledger_report_binding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
-    build_module_provider_composition,
-)
-from manyselves.capabilities.distribution_reporting.runtime.photo_reader_provider import (
-    PhotoReaderProviderRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
-    PublicReportingWorkflowRuntime,
-)
 from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
     RenderExistingWorkflowRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.reporting_tail_runtime import (
-    ReportingTailComposition,
 )
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
     build_template_skill_binding,
@@ -65,7 +26,6 @@ from manyselves.capabilities.distribution_reporting.runtime.template_skill_bindi
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
-from manyselves.runtime.context_budget import retained_input_budget_for
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,
     DetachedRuntime,
@@ -73,42 +33,6 @@ from manyselves.runtime.run_lifecycle import (
 )
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
-
-
-class _TaskContractAgentRouter:
-    """Select a Capability Agent implementation by its declared Task contract."""
-
-    def __init__(self, default: Any, routes: dict[str, Any]) -> None:
-        self.default = default
-        self.routes = routes
-
-    def _invoker(self, task: Any) -> Any:
-        return self.routes.get(task.output_contract, self.default)
-
-    async def invoke(self, agent: Any, task: Any, value: Any, conversation: Any, **kwargs: Any):
-        return await self._invoker(task).invoke(
-            agent,
-            task,
-            value,
-            conversation,
-            **kwargs,
-        )
-
-    async def invoke_with_recovery(
-        self,
-        agent: Any,
-        task: Any,
-        value: Any,
-        conversation: Any,
-        **kwargs: Any,
-    ):
-        return await self._invoker(task).invoke_with_recovery(
-            agent,
-            task,
-            value,
-            conversation,
-            **kwargs,
-        )
 
 
 class DistributionReportingRuntimeBinding:
@@ -121,110 +45,9 @@ class DistributionReportingRuntimeBinding:
         self.services = services
         self._execution = AgentExecutionService(services.bus)
         self._detached_runs = DetachedRunTaskOwner()
-        public_state_store = StartAwareFileWorkflowStateStore(self.workspace)
-        aggregate_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         render_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         snapshot_store = RunInputSnapshotStore(self.workspace)
         content_store = ContentAddressedStore(self.workspace)
-        module = build_module_provider_composition(
-            services,
-            execution=self._execution,
-        )
-        aggregate = build_aggregate_provider_composition(
-            services,
-            execution=self._execution,
-        )
-        final = build_final_provider_composition(
-            services,
-            execution=self._execution,
-        )
-        final_chief = build_final_chief_provider_composition(
-            services,
-            execution=self._execution,
-        )
-        cross_lifecycle = CrossOwnerRuntime(
-            self.workspace,
-            input_budget=lambda: retained_input_budget_for(
-                services.agent_defaults, services.active_provider,
-            ),
-        )
-        cross = build_cross_provider_composition(
-            services,
-            cross_runtime=cross_lifecycle,
-            execution=self._execution,
-        )
-        chief_lifecycle = ChiefChapterRuntime(self.workspace)
-        chief = build_chief_provider_composition(
-            services,
-            chief_runtime=chief_lifecycle,
-            execution=self._execution,
-        )
-        full_final = build_final_provider_composition(
-            services,
-            workflow_id="public-reporting",
-            execution=self._execution,
-        )
-        full_final_chief = build_final_chief_provider_composition(
-            services,
-            workflow_id="public-reporting",
-            execution=self._execution,
-        )
-        photo_reader = PhotoReaderProviderRuntime(
-            services,
-            execution=self._execution,
-        )
-        tail = ReportingTailComposition(
-            self.workspace,
-            cross_runtime=cross_lifecycle,
-            chief_runtime=chief,
-        )
-        chief_router = _TaskContractAgentRouter(
-            chief.provider,
-            {
-                "declarative_final_chief_revision_agent_result": (
-                    full_final_chief.provider
-                )
-            },
-        )
-        full_agents = {
-            **aggregate.agent_invokers,
-            **cross.agent_invokers,
-            **full_final.agent_invokers,
-            **photo_reader.agent_invokers,
-            "chief-editor": chief_router,
-        }
-        self._providers = (
-            module.provider,
-            aggregate,
-            final,
-            final_chief,
-            cross,
-            chief,
-            full_final,
-            full_final_chief,
-            photo_reader,
-        )
-
-        public = PublicReportingWorkflowRuntime(
-            self.workspace,
-            input_snapshot=snapshot_store.load,
-            snapshot_content=partial(
-                snapshot_content,
-                self.workspace,
-                content_store,
-            ),
-            runtime_photo_ids=runtime_photo_ids,
-            module_runtime=module.module_runtime,
-            workflow_specializers=(tail.workflow_specializer,),
-            additional_tool_implementations=tail.tool_implementations(),
-            additional_agent_invokers=full_agents,
-            state_store=public_state_store,
-        )
-        aggregate_invokers = {
-            **aggregate.agent_invokers,
-            **final.agent_invokers,
-            **final_chief.agent_invokers,
-        }
         ledger_report = build_ledger_report_binding(
             self.workspace,
             services,
@@ -235,19 +58,11 @@ class DistributionReportingRuntimeBinding:
         template_skills = build_template_skill_binding(
             self.workspace, services, execution=self._execution
         )
-        self._providers = (*self._providers, ledger_report, template_skills)
+        self._providers = (ledger_report, template_skills)
         self._runtimes: dict[str, DetachedRuntime] = {
             "full-report": ledger_report,
             "extract-template-skills": template_skills,
             "triage-writing-lessons": template_skills,
-            "module-report": public,
-            "revise-report": public,
-            "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
-                self.workspace,
-                input_snapshot=snapshot_store,
-                agent_invokers=aggregate_invokers,
-                state_store=aggregate_state_store,
-            ),
             "render-existing": RenderExistingWorkflowRuntime(
                 self.workspace,
                 state_store=render_state_store,
@@ -257,9 +72,6 @@ class DistributionReportingRuntimeBinding:
             "full-report": ledger_report.state_store,
             "extract-template-skills": template_skills.state_store,
             "triage-writing-lessons": template_skills.state_store,
-            "module-report": public_state_store,
-            "revise-report": public_state_store,
-            "aggregate-existing": aggregate_state_store,
             "render-existing": render_state_store,
         }
 
