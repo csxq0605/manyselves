@@ -235,8 +235,12 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
 
     packet = prepare_module_fact_context(tmp_path, RUN_ID, "2.2").inline_context
     assert '"photo_reading":"P-0001：柜内进线端子' in packet
-    assert "抄写：最高温度=60.2℃，柜号=D1701（看不清）；照片日期：2025-06-12 10:31" in packet
-    assert "以表格记录为准，照片读数或归属待核（记录值 照片 60.2，记录 35）；需人工复核" in packet
+    # The table record stands: a reading that differs shows no numbers to cite.
+    assert (
+        "P-0001：柜内进线端子的热像图；照片日期：2025-06-12 10:31；"
+        "程序比对：照片读数未能确认，以表格记录为准" in packet
+    )
+    assert "60.2" not in packet
     assert "逐张读图结果" in packet
 
     [dossier] = build_joint_dossiers(tmp_path, RUN_ID, modules)
@@ -315,3 +319,64 @@ def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
     assert [p["photo_id"] for p in photos_to_check([row], reference, readings)] == ["P-2", "P-3"]
 
 
+
+
+def test_a_photo_is_read_again_only_where_a_judgment_rests_on_it() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
+        PhotoReading,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
+        rests_on_photo,
+    )
+
+    def reading(*readings):
+        return PhotoReading(photo_id="P-1", visible="v", record_match="cannot_tell", reason="r",
+                            needs_review=False, readings=list(readings))
+
+    table_row = SimpleNamespace(evidence_status="现场确认")
+    photo_row = SimpleNamespace(evidence_status="照片待核")
+    shown = {"quantity": "temperature", "value": 48.7, "legible": True}
+    # A photo backing a table record is not read again ...
+    assert not rests_on_photo([table_row], reading(), {})
+    assert not rests_on_photo([table_row], reading(shown), {"temperature": [48.7]})
+    # ... one the author marked 照片待核, or one showing a number the table lacks, is.
+    assert rests_on_photo([photo_row], reading(), {})
+    assert rests_on_photo([table_row], reading(shown), {})
+
+
+def test_a_reread_sees_the_photo_and_its_four_quarters_enlarged(tmp_path: Path) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import zoom_tiles
+
+    Image.new("RGB", (908, 1215), "white").save(tmp_path / "p.jpg")
+    tiles = zoom_tiles(tmp_path, "p.jpg", "tiles", "P-1")
+    assert [t["part"][:2] for t in tiles] == ["左上", "右上", "左下", "右下"]
+    for tile in tiles:
+        with Image.open(tmp_path / tile["path"]) as image:
+            assert max(image.size) == 1568
+    assert zoom_tiles(tmp_path, "missing.jpg", "tiles", "P-2") == []
+    reread = load_distribution_reporting_capability()[1].require(
+        DefinitionKind.TASK, "photo-reread"
+    )
+    assert reread.image.list_field == "images"
+
+
+def test_labels_follow_the_table_and_leave_out_what_the_photo_cannot_show() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
+        PhotoReading,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
+        UNSTABLE,
+        reading_label,
+    )
+
+    card = [
+        {"label": "3月", "text": "已检", "legible": True},
+        {"label": "5月", "text": "", "legible": True, "after_photo_date": True},
+    ]
+    base = PhotoReading(photo_id="P-1", visible="巡检卡", transcription=card, photo_date="2026-04-02",
+                        readings=[{"quantity": "current", "value": 1.97, "legible": True}],
+                        record_match="matches", reason="可见", needs_review=False)
+    label = reading_label(base)
+    assert "3月=已检" in label and "5月" not in label and "拍摄日期之后的1格未计入" in label
+    unstable = reading_label(base.model_copy(update={"reread_agrees": False}))
+    assert unstable.endswith(UNSTABLE) and "1.97" not in unstable and "已检" not in unstable

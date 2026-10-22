@@ -44,6 +44,14 @@ class PhotoReadingRecord(StrictModel):
     )
 
 
+class PhotoImage(StrictModel):
+    """One image sent with a reading: the whole photo or an enlarged part of it."""
+
+    path: str = Field(min_length=1, description="Workspace-relative image path.")
+    media_type: str = Field(min_length=1)
+    part: str = Field(default="整张照片", description="Which part of the photo this image shows.")
+
+
 class PhotoReadingInput(StrictModel):
     """One photo and its bound records, sent to the photo reader as one task."""
 
@@ -74,6 +82,13 @@ class PhotoReadingInput(StrictModel):
         description=(
             "A re-read only: the date the first reading found on the photo, as context for "
             "dated records (a blank after this date is not a missed entry)."
+        ),
+    )
+    images: list[PhotoImage] = Field(
+        default_factory=list,
+        description=(
+            "A re-read only: the whole photo first, then its four quarters enlarged, so "
+            "small displays and segment digits can be read."
         ),
     )
 
@@ -132,6 +147,7 @@ __all__ = [
     "PhotoReading",
     "PhotoReadingInput",
     "PhotoReadingPlan",
+    "PhotoImage",
     "PhotoQuantity",
     "PhotoReadingRecord",
     "RecordValue",

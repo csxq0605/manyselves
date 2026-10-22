@@ -14,7 +14,7 @@ image:
   path_field: path
   media_type_field: media_type
 constraints:
-- 逐行看：basis 是否由所引事实、计算和知识单元推出；hazard 里的每一环后果，hazard_sources 所列的出处里是否真有，没有出处的是否写成了待核实；gap 是否说清缺什么、影响什么。不审文字写法，这一步还没有正文。
+- 逐行看：basis 是否由所引事实、计算和知识单元推出；hazard 里的每一环后果，hazard_sources 所列的出处里是否真有，没有出处的是否写成了待核实；gap 是否说清缺什么、影响什么；finding 是否与 basis 和所引事实一致、没有说得比它们更重。不审文字写法，这一步还没有正文。
 - related_rows 是作者记下的跨模块关联：for_row 是本模块的行，row 是所关联的别的模块的行（它所引的事实也在 facts 里）。核对 reason 里说的条件能不能从两边的事实看出来；看不出来的，对 for_row 判 blocking，要求删掉这条关联或改成待核实。
 - related_rows 里标了 in_knowledge_base=false 的，是知识库没有收录的关联，没有知识库兜底：专门核对它的 mechanism 在专业上是否成立、condition 是否真能从两边的事实看出来；有一项站不住就对 for_row 判 blocking，要求删掉或改成待核实。
 - rules 里所引知识单元的限值/阈值、结论标准、依据状态和判断条件是判断的参考：把知识库标为候选、未核实的数值当成合规限值，或越过了结论标准里的限定语的，判 blocking；作者说明本项目条件下知识单元不适用或只部分适用、且理由能从事实看出来的，不算问题。

@@ -5,7 +5,7 @@ tasks:
 - check-chief-facts
 recovery:
 - typed-turn-recovery
-output_contract: review-findings
+output_contract: ledger_grounded_findings
 state:
   item: null
   item_key: null

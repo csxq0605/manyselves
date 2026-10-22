@@ -90,15 +90,28 @@ def test_packets_close_on_unit_count_or_size() -> None:
     assert len(small) == 10  # one unit each when nothing more fits
 
 
-def test_findings_go_back_by_chapter_and_only_blocking_ones_send_the_chief_back() -> None:
-    packets = [{"units": [{"unit_id": "1.2-重点风险-1", "where": "1.2 重点风险表"},
-                          {"unit_id": "3.2-G-01", "where": "3.2 改善行动速查表"}]}]
+def test_findings_go_back_together_and_only_grounded_blocking_ones_send_the_chief_back() -> None:
+    packets = [{
+        "packet_id": "F-01",
+        "units": [{"unit_id": "1.2-重点风险-1", "where": "1.2 重点风险表", "row_ids": ["J-2.4-01"]},
+                  {"unit_id": "3.2-G-01", "where": "3.2 改善行动速查表", "row_ids": ["J-2.4-01"]}],
+        "rows": [{"id": "J-2.4-01", "object": "14#柜", "basis": "共14个"}],
+        "facts": {}, "values": {}, "counts": {},
+    }]
     results = {"F-01": {"findings": {
-        "1.2-重点风险-1": {"problem": "13 应为 14", "severity": "blocking", "suggestion": "改为 14"},
-        "3.2-G-01": {"problem": "措辞可更准", "severity": "minor", "suggestion": "s"},
-        "9.9-x": {"problem": "unknown unit", "severity": "blocking"},
+        "1.2-重点风险-1": {"problem": "13 应为 14", "severity": "blocking", "suggestion": "改为 14",
+                       "grounds": ["J-2.4-01"]},
+        "3.2-G-01": {"problem": "措辞可更准", "severity": "minor", "suggestion": "s", "grounds": []},
+        "9.9-x": {"problem": "unknown unit", "severity": "blocking", "grounds": []},
     }}, "F-02": None}
     applied = apply_fact_findings(packets, results)
-    assert applied["blocking1"] is True and applied["blocking3"] is False
-    assert applied["check1"]["findings"]["1.2-重点风险-1"]["problem"].startswith("1.2 重点风险表：")
-    assert set(applied["check3"]["findings"]) == {"3.2-G-01"}
+    assert applied["blocking"] is True
+    findings = applied["check"]["findings"]
+    assert set(findings) == {"1.2-重点风险-1", "3.2-G-01"}
+    assert findings["1.2-重点风险-1"]["problem"].startswith("1.2 重点风险表：")
+    # The other unit resting on the same row is named, so a fix is carried there.
+    assert findings["1.2-重点风险-1"]["same_elsewhere"] == ["3.2 改善行动速查表（3.2-G-01）"]
+    ungrounded = apply_fact_findings(packets, {"F-01": {"findings": {
+        "1.2-重点风险-1": {"problem": "13 应为 14", "severity": "blocking", "suggestion": "", "grounds": []},
+    }}})
+    assert ungrounded["blocking"] is False

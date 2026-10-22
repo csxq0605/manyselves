@@ -1,7 +1,7 @@
 id: ledger_chief_fact_checks
-version: 1.0.0
-description: Fact-check findings on chapters 1 and 3, split by chapter
+version: 1.1.0
+description: Fact-check findings on chapters 1 and 3, held to the material each cites, for the chief's one revision
 adapter: json_schema
 schema:
   type: object
-  required: [check1, check3, blocking1, blocking3]
+  required: [check, blocking]

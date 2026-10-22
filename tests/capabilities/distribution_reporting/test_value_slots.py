@@ -60,10 +60,10 @@ def test_slots_fill_values_with_units_and_lists() -> None:
     value_slot = next(k for k, v in slots.items() if v.get("subject") == "A房/1#" and v["label"] == "负荷率")
     list_slot = next(iter(lists))
     text = f"A房/1#负荷率〔{value_slot}〕；各柜〔{list_slot}〕。"
-    assert fill_slots(text, slots) == "A房/1#负荷率80%；各柜A房/1#80%、B房/2#40%。"
+    assert fill_slots(text, slots) == "A房/1#负荷率80%；各柜A房/1# 80%、B房/2# 40%。"
     assert slot_findings(text, slots) == []
     # The object and its value written together, and a column's distinct values.
-    assert fill_slots(f"〔{value_slot}:对象〕；取值〔{list_slot}:取值〕", slots) == "A房/1#80%；取值40%、80%"
+    assert fill_slots(f"〔{value_slot}:对象〕；取值〔{list_slot}:取值〕", slots) == "A房/1# 80%；取值40%、80%"
 
 
 def test_only_unfillable_slots_send_text_back_and_other_numbers_are_free() -> None:

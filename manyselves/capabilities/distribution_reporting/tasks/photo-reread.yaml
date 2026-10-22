@@ -1,19 +1,21 @@
 id: photo-reread
-version: 1.1.0
+version: 1.2.0
 description: Read one photo again, independently, for a finding that rests on it
 agent: photo-reader
 objective: 这张照片支撑了报告里一项问题或不能判定的判断，需要独立再读一次。把图中能看到的字符和读数照原样抄下来。是否与表格记录或上一次读数相符由程序比对，你不用判断。
 input_contract: photo_reading_input
 output_contract: photo_reading_submission
 image:
-  path_field: photo_path
+  list_field: images
+  path_field: path
   media_type_field: media_type
 constraints:
+- 随任务发来的图依次是 images 里列的：第一张是整张照片，其后是同一张照片按四个角切开、放大的局部（part 写明是哪一块，相邻局部有少量重叠）。小屏幕、数码管和小字以放大的局部为准；同一处读数在几张图里出现只写一次。数码管只抄亮着的段组成的数字，暗的段不算。
 - 先看 photo_sheet、photo_cell、column_header 和 records：这张图附在表格哪一行、哪一列、哪个检查项，这一列为什么附图（例如超过某个值才附图）。据此知道该在图里找什么；只写图中实际可见的内容。
 - quantities 是表格为这个对象声明的量（quantity 是键，label 是表头名，unit 是单位）。图中能看到其中哪个量的读数，就在 readings 里写一项：quantity 照抄键，value 写图中的数字，unit 写图中显示的单位；看不清写 legible=false、value 留空。图中没有的量不写。是否与记录相符由程序比对。
 - transcription 逐项抄写：屏幕或仪表上的读数和符号、铭牌、标签、记录表各栏（空白栏也抄，text 写空）。每项标 legible；不能确定的字符写 legible=false，不要猜。
 - 先读照片水印或屏幕上显示的日期时间，原样照抄进 photo_date；没有就不填。
-- 按时间排列的记录（巡检卡、检查记录表、台账）逐格抄写，每一格一项：有字的照抄，空白的 text 写空、legible 写 true，看不清的 legible 写 false。不要把一段格子概括成“某月至某月空白”。对照拍摄日期看：拍摄日期之后的格子空白属正常；拍摄日期之前和当期的格子要逐格看清再判断是否空白。
+- 按时间排列的记录（巡检卡、检查记录表、台账）逐格抄写，每一格一项：有字的照抄，空白的 text 写空、legible 写 true，看不清的 legible 写 false。不要把一段格子概括成“某月至某月空白”。对照拍摄日期看：拍摄日期之后的格子空白属正常；拍摄日期之前和当期的格子要逐格看清再判断是否空白。日期晚于拍摄日期的格子 after_photo_date 写 true。
 - visible 用一两句话写照片拍的是什么设备、什么部位、可见状态。不推测看不到的部分，不引用标准，不下合格或不合格的结论。
 - 输入里列了“请专门看清”的各项时，逐项看清，在 transcription 里用同样的 label 各写一项；不知道上一次读成什么，也不用猜。输入里给出的上一次读到的照片日期只用来对照记录的时间先后。
 - 照片看不清、打不开或可能有安全隐患需要人看时，needs_review 写 true。

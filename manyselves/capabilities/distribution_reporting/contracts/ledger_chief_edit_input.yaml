@@ -1,0 +1,7 @@
+id: ledger_chief_edit_input
+version: 1.0.0
+description: Ledger, chapters 1 and 3, and optionally the editor's result or the chief's fix
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, chapter1, chapter3]

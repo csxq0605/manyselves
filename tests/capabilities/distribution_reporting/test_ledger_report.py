@@ -192,6 +192,7 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
         row.update(
             disposition="concern",
             risk_level="中",
+            finding="温度偏高",
             hazard="可能过热，待核实。",
             hazard_conditions=["温度持续偏高"],
             action={"measure": "复测温度", "priority": "重要，紧急", "timeframe": "一周内"},
@@ -252,6 +253,12 @@ def _answer(message):
                 }
             ],
         )
+    if task == "revise-chief-facts":
+        # One turn answers the fact check of both chapters, with the text as edited.
+        assert set(value["findings"]) == {"1.2-重点风险-1"}
+        assert value["findings"]["1.2-重点风险-1"]["grounds"]["J-2.4-1"]
+        assert set(value["texts"]) == {"1.1", "1.2", "1.3", "3.1"}
+        return ("submit", [{"sections": {"1.2": "总体良好，个别对象温度偏高需复测。"}}])
     if task in {"chief-chapter-1", "revise-chief-overview"}:
         return (
             "submit",
@@ -288,6 +295,7 @@ def _answer(message):
                     "problem": "风险等级写重了。",
                     "severity": "blocking",
                     "suggestion": "按所引行写。",
+                    "grounds": ["J-2.4-1"],
                 }
         return ("submit", [{"findings": findings}])
     if task == "edit-sections":
@@ -298,6 +306,7 @@ def _answer(message):
                 "problem": "表述太简单。",
                 "severity": "blocking",
                 "suggestion": "补一句结论。",
+                "grounds": ["J-2.1-1"],
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-sections":
@@ -387,6 +396,8 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(
         encoding="utf-8"
     )
+    # The chief's answer to the fact check reaches the report.
+    assert "总体良好，个别对象温度偏高需复测。" in markdown
     docx = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
     # The draft is marked the same way in both files.
     assert markdown.startswith("# 配电安全专家咨询报告（草稿）\n\n草稿：本报告存在资料缺口")
@@ -477,8 +488,15 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     assert checks and all(not loop.restored for loop in checks)
     packet = _input_of(checks[0].received[0].content)
     assert packet["units"] and {"rows", "facts", "values", "counts"} <= set(packet)
-    assert tasks_of(chief[0])[2:3] == ["revise-chief-overview"]
-    assert "revise-chief-actions" not in tasks_of(chief[0])
+    assert all("basis" in row for row in packet["rows"])
+    # The chief's editor reads before the fact check; one turn fixes both chapters.
+    edits = [
+        loop for loop in loops
+        if tasks_of(loop) == ["edit-sections"]
+        and _input_of(loop.received[0].content)["owner"] == "chief"
+    ]
+    assert len(edits) == 1
+    assert tasks_of(chief[0])[2:] == ["revise-chief-facts"]
 
 
 def test_full_report_reaches_only_ledger_agents_and_bound_tools() -> None:

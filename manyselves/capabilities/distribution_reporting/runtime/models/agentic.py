@@ -1543,6 +1543,10 @@ class PhotoTranscribedItem(StrictModel):
     )
     text: str = Field(max_length=200, description="The characters as shown, unchanged.")
     legible: bool = Field(description="False when the characters cannot be read with certainty.")
+    after_photo_date: bool = Field(
+        default=False,
+        description="A dated entry (row/cell of a dated record) later than the photo's own date.",
+    )
 
 
 class PhotoQuantityReading(StrictModel):

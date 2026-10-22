@@ -33,6 +33,7 @@ from ..domain.judgment_ledger import (
     SLOT_SUGGESTION,
     ActionText,
     ChiefChapter3,
+    ChiefFix,
     DimensionHealth,
     JudgmentRow,
     JudgmentSet,
@@ -80,10 +81,13 @@ from .cross_module import (
     object_chains,
     related_rows,
     relation_names,
+    same_observation_findings,
+    same_observation_rows,
     see_also_by_row,
     unlisted_relations,
 )
 from .delivery_tools import DeliveryTools
+from .grounds import grounded
 from .joint_dossiers import build_dossiers
 from .models.agentic import (
     EditedReportSubmission,
@@ -103,14 +107,18 @@ from .models.reporting import (
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import build_observation_ledger, shared_labels
 from .photo_reading import (
+    compare_readings,
     load_photo_readings,
+    photo_expected_ref,
     photo_reading_labels,
     photo_readings_ref,
     photo_records,
     reading_label,
     readings_agree,
+    rests_on_photo,
     unread_agree,
     unread_labels,
+    zoom_tiles,
 )
 from .report_revision import (
     SECTION_NOTE,
@@ -246,6 +254,7 @@ def _combined(
             for text in (program.get("suggestion"), reviewed.get("suggestion"))
             if text
         ),
+        **({"grounds": reviewed["grounds"]} if reviewed.get("grounds") else {}),
     }
 
 
@@ -711,7 +720,8 @@ class LedgerTools:
                 if measurement.value is not None:
                     known_values.append((float(measurement.value), measurement.unit))
         calculations = [*calculations, *counted]
-        known_values.extend((calc.value, calc.unit) for calc in calculations)
+        # A count has no unit; in prose it is written with a measure word (个).
+        known_values.extend((calc.value, calc.unit or "个") for calc in calculations)
         slots = slot_table(items, calculations, statistic_lists)
         subject_values: dict[str, list[tuple[float, str]]] = {}
         for item in items:
@@ -815,7 +825,7 @@ class LedgerTools:
             )
             values[item.id] = pairs
         for calc in calculations:
-            values[calc.id] = {(float(calc.value), calc.unit), *known_values_from_text([calc.formula])}
+            values[calc.id] = {(float(calc.value), calc.unit or "个"), *known_values_from_text([calc.formula])}
         for photo_id, text in readings.items():
             values[photo_id] = set(known_values_from_text([text]))
         for unit_id, (_title, body) in self._unit_bodies(run_id).items():
@@ -958,7 +968,18 @@ class LedgerTools:
             for module_id, rows in ledger.items()
         }
         names = relation_names(self._relation_method(run_id))
-        ledger, dropped = checked_relations(ledger, names)
+        observation_of, owner_sections = self._observation_map(run_id)
+        ledger, dropped = checked_relations(ledger, names, observation_of)
+        program_findings = {
+            module_id: dict(found) for module_id, found in built["program_findings"].items()
+        }
+        for module_id, found in same_observation_findings(
+            ledger, observation_of, owner_sections
+        ).items():
+            for target, finding in found.items():
+                program_findings.setdefault(module_id, {})[target] = _combined(
+                    program_findings.get(module_id, {}).get(target), finding
+                )
         # Candidates an author looked at and found not to hold.  The method's
         # relations are references: nothing requires every one to be decided.
         considered_not_valid = {
@@ -992,7 +1013,7 @@ class LedgerTools:
                     "run_id": run_id,
                     "module_id": module["module_id"],
                     "title": module["title"],
-                    "program_findings": built["program_findings"][module["module_id"]],
+                    "program_findings": program_findings.get(module["module_id"], {}),
                     "dossiers": [
                         dossier
                         for dossier in built["dossiers"]
@@ -1013,12 +1034,14 @@ class LedgerTools:
     def plan_reread(self, value: dict[str, Any]) -> dict[str, Any]:
         """The photos a problem or a gap rests on, to be read once more, independently.
 
-        Only photos the rows cite themselves, and only where a second reading
-        can settle something: the first reading read a declared quantity (the
-        numbers are compared), or left items blank or illegible (those items
-        are read again on their own).  The reader gets no recorded values and
-        not what the first reading said, only the date it found, so that a
-        dated record's blanks after that date are not taken for missed ones.
+        The table record is the fact and a photo backs it, so a photo is read
+        again only where a judgment rests on the photo itself (see
+        ``rests_on_photo``): a row the author marked 照片待核, or a number the
+        photo shows that the table does not hold.  The second reading also
+        gets the photo's four quarters enlarged.  The reader gets no recorded
+        values and not what the first reading said, only the date it found,
+        so that a dated record's blanks after that date are not taken for
+        missed ones.
         """
 
         state = value["ledger"]
@@ -1030,25 +1053,25 @@ class LedgerTools:
             for path, sheet, columns in reference.get("column_headers") or []
         }
         readings = load_photo_readings(self.workspace, run_id)
+        expected = self._photo_expected(run_id)
         ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
-        cited = list(dict.fromkeys(
-            photo_id
-            for rows in ledger.values()
-            for row in rows
-            if row.disposition in {"concern", "undetermined"}
-            for photo_id in row.photo_ids
-        ))
+        cited: dict[str, list[JudgmentRow]] = {}
+        for rows in ledger.values():
+            for row in rows:
+                if row.disposition in {"concern", "undetermined"}:
+                    for photo_id in row.photo_ids:
+                        cited.setdefault(photo_id, []).append(row)
         index = ProjectEvidenceIndex(self.workspace, run_id)
         items = index.items() if index.path.is_file() else []
         by_id = {item.id: item for item in items}
         planned = []
-        for photo_id in cited:
+        for photo_id, rows in cited.items():
             reading = readings.get(photo_id)
             asset = assets.get(photo_id)
             if reading is None or asset is None:
                 continue
-            labels = unread_labels(reading.transcription)
-            if not reading.readings and not labels:
+            bound_values = (expected.get(photo_id) or {}).get("bound") or {}
+            if not rests_on_photo(rows, reading, bound_values):
                 continue
             bound = [by_id[e] for e in reading.evidence_ids if e in by_id]
             if not bound:
@@ -1057,6 +1080,10 @@ class LedgerTools:
             sheet, cell = asset.get("sheet"), asset.get("cell")
             column = re.sub(r"\d+", "", cell or "")
             header = headers.get((bound[0].source.path.as_posix(), sheet or ""), {}).get(column)
+            images = [{"path": asset["path"], "media_type": asset["media_type"], "part": "整张照片"}]
+            images += zoom_tiles(
+                self.workspace, asset["path"], f"Work/runs/{run_id}/ledger/photo-tiles", photo_id
+            )
             planned.append(
                 PhotoReadingInput(
                     run_id=run_id,
@@ -1068,11 +1095,16 @@ class LedgerTools:
                     column_header=header,
                     records=records,
                     quantities=quantities,
-                    check_labels=labels,
+                    check_labels=unread_labels(reading.transcription),
                     photo_date=reading.photo_date,
+                    images=images,
                 ).model_dump(mode="json")
             )
         return {"reread_items": planned}
+
+    def _photo_expected(self, run_id: str) -> dict[str, Any]:
+        path = self.workspace / photo_expected_ref(run_id)
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
     def apply_reread(self, value: dict[str, Any]) -> dict[str, Any]:
         """Compare each second reading with the first; disagreeing numbers are to be checked.
@@ -1084,6 +1116,7 @@ class LedgerTools:
         state = dict(value["ledger"])
         run_id = state["run_id"]
         readings = load_photo_readings(self.workspace, run_id)
+        expected = self._photo_expected(run_id)
         changed = False
         for photo_id, result in (value.get("rereads") or {}).items():
             reading = readings.get(photo_id)
@@ -1100,10 +1133,24 @@ class LedgerTools:
             )
             if not seen:
                 agrees, reason = False, "；".join(r for r in (reason if not agrees else "", unread) if r)
+            # Either reading showing the recorded value is enough: the photo
+            # shows the record.
+            match, match_reason = reading.record_match, reading.reason
+            if match == "conflicts":
+                bound = expected.get(photo_id) or {}
+                again, again_reason = compare_readings(
+                    [r.model_dump(mode="json") for r in second.readings],
+                    bound.get("bound") or {}, bound.get("same_subject") or {},
+                )
+                if again == "matches":
+                    match, match_reason = "matches", f"复读：{again_reason}"
+                    agrees, reason = True, "首读与记录不同，复读与记录一致"
             readings[photo_id] = reading.model_copy(update={
+                "record_match": match,
+                "reason": match_reason,
                 "reread_agrees": agrees,
                 "reread_reason": reason,
-                "needs_review": reading.needs_review or not agrees,
+                "needs_review": not agrees or match == "conflicts",
             })
             changed = True
         if changed:
@@ -1131,6 +1178,19 @@ class LedgerTools:
 
         item = value["item"]
         reviewed = dict((value.get("review") or {}).get("findings") or {})
+        if item.get("owner") and item.get("run_id"):
+            # An editor's finding is held to the ledger it was read against,
+            # and names the owner's other sections holding the same values.
+            reviewed = grounded(reviewed, self._ledger_material(str(item["run_id"])))
+            sections = item.get("sections") or {}
+            for target, finding in reviewed.items():
+                slots = [g for g in finding.get("grounds") or {} if g[:2] in {"V-", "K-", "S-"}]
+                elsewhere = [
+                    section_id for section_id, text in sections.items()
+                    if section_id != target and any(f"〔{slot}" in str(text) for slot in slots)
+                ]
+                if elsewhere:
+                    finding["same_elsewhere"] = elsewhere
         foreign: dict[str, Any] = {}
         if module_id := item.get("module_id"):
             # Rows of another module are revised only by that module's author;
@@ -1224,7 +1284,8 @@ class LedgerTools:
                 unanswered[module_id] = missing
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         names = relation_names(self._relation_method(run_id))
-        ledger, dropped_relations = checked_relations(ledger, names)
+        observation_of, _owners = self._observation_map(run_id)
+        ledger, dropped_relations = checked_relations(ledger, names, observation_of)
         self._write_knowledge_candidates(run_id, ledger, names)
         conflicts = [d for d in dossiers if d["kind"] == "conflict"]
         chains = object_chains(dossiers, ledger)
@@ -1288,6 +1349,16 @@ class LedgerTools:
             "action_groups": groups,
             "chief_input": {
                 "object_chains": chains,
+                # One source cell judged in several sections: one record.
+                "same_observation": [
+                    {
+                        "row_ids": [row.id for row in rows],
+                        "sections": list(dict.fromkeys(row.submodule_id for row in rows)),
+                        "object": rows[0].object,
+                    }
+                    for rows in same_observation_rows(ledger, observation_of)
+                    if any(row.disposition in {"concern", "undetermined"} for row in rows)
+                ],
                 "unresolved_conflicts": [conflict_summary(d) for d in conflicts],
                 "changed_rows": changed,
                 "removed_row_ids": removed,
@@ -1341,9 +1412,10 @@ class LedgerTools:
         counts: dict[str, dict[str, Any]] = {}
 
         def add(label: str, value: int) -> None:
+            # A count is a bare number: the prose adds its own measure word.
             counts[f"K-{start + len(counts):04d}"] = {
-                "text": format_value(value, "个"), "label": label, "value": float(value),
-                "unit": "个", "evidence_ids": [],
+                "text": format_value(value, ""), "label": label, "value": float(value),
+                "unit": "", "evidence_ids": [],
             }
 
         scopes = [("全部维度", [r for rows in ledger.values() for r in rows])]
@@ -1366,6 +1438,28 @@ class LedgerTools:
             module_id: _rows(rows)
             for module_id, rows in json.loads(path.read_text(encoding="utf-8")).items()
         }
+
+    def _ledger_material(self, run_id: str) -> dict[str, str]:
+        """The run's final rows, source records and value slots by id, for grounds."""
+
+        material: dict[str, str] = {
+            row.id: "｜".join(
+                text for text in (
+                    row.object, row.checkpoint, row.disposition, row.evidence_status,
+                    row.risk_level or "", row.basis,
+                ) if text
+            )
+            for rows in self._final_rows(run_id).values()
+            for row in rows
+        }
+        material.update(
+            {e: str(text) for e, text in (self._reference(run_id).get("fact_texts") or {}).items()}
+        )
+        slots = self._slots(run_id)
+        material.update(
+            {key.strip("〔〕"): line for key, line in slot_lines(slots, slots).items()}
+        )
+        return material
 
     def _slots(self, run_id: str) -> dict[str, dict[str, Any]]:
         slots = dict(self._reference(run_id).get("slots") or {})
@@ -1471,6 +1565,27 @@ class LedgerTools:
         except (OSError, ValueError):
             return {}
         return knowledge_units(document.text for document in documents)
+
+    def _observation_map(self, run_id: str) -> tuple[dict[str, str], dict[str, str]]:
+        """(routed copy -> its observation, observation -> owning section).
+
+        Mappers copy one source cell into several sections; each copy is the
+        same observation.  The owner is the ownership rule's, else the first
+        route.
+        """
+
+        observations = build_observation_ledger(self.workspace, run_id)
+        if observations is None:
+            return {}, {}
+        observation_of = {
+            route.evidence_id: group.observation_id
+            for group in observations.groups
+            for route in group.routes
+        }
+        owners = {
+            group.observation_id: str(group.owner.submodule_id) for group in observations.groups
+        }
+        return observation_of, owners
 
     def _data_elsewhere(
         self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
@@ -1582,14 +1697,19 @@ class LedgerTools:
             slots=self._slots(run_id),
             fact_texts=self._reference(run_id).get("fact_texts") or {},
             run_id=run_id,
+            edited=_plain(value.get("edited")) or {},
         )
         self.store.write_json(f"Work/runs/{run_id}/ledger/chief-fact-packets.json", packets)
         return {"fact_items": packets}
 
     def apply_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
-        return apply_fact_findings(
+        checked = apply_fact_findings(
             value.get("packets") or [], _plain(value.get("results") or {})
         )
+        # The chief fixes the text sections as they now read (after the edit).
+        if value.get("texts"):
+            checked["check"]["texts"] = dict(value["texts"])
+        return checked
 
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
         run_id = value["ledger"]["run_id"]
@@ -1646,29 +1766,108 @@ class LedgerTools:
                     ),
                 }
             )
-        chief = value["chief"]
-        chief_texts = self._chief_texts(chief, value["ledger"])
-        # The chief's facts were checked against the rows in small packets
-        # before this pass (plan-chief-facts); the editor reads organisation.
-        items.append(
-            {
-                "run_id": run_id,
-                "owner": CHIEF_OWNER,
-                "sections": chief_texts,
-                "program_findings": self._chief_text_findings(
-                    report_check_findings(
-                        sections=chief_texts,
-                        rows_by_submodule={},
-                        slots=slots,
-                        quote_sources={
-                            section_id: list(fact_texts.values()) for section_id in chief_texts
-                        },
-                    ),
-                    chief_texts,
-                ),
-            }
-        )
+        # A chief that has been through its own edit pass (ledger-chief: edit,
+        # then fact check) is not edited again.
+        chief = value.get("chief")
+        if chief and not chief.get("texts"):
+            items.append(self._chief_item(run_id, chief, value["ledger"]))
         return {"edit_items": items}
+
+    def _chief_item(
+        self, run_id: str, chief: Mapping[str, Any], final: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The chief's text sections for the edit pass, with their program findings."""
+
+        slots = self._slots(run_id)
+        fact_texts = self._reference(run_id).get("fact_texts") or {}
+        chief_texts = self._chief_texts(chief, final)
+        return {
+            "run_id": run_id,
+            "owner": CHIEF_OWNER,
+            "sections": chief_texts,
+            "program_findings": self._chief_text_findings(
+                report_check_findings(
+                    sections=chief_texts,
+                    rows_by_submodule={},
+                    slots=slots,
+                    quote_sources={
+                        section_id: list(fact_texts.values()) for section_id in chief_texts
+                    },
+                ),
+                chief_texts,
+            ),
+        }
+
+    def chief_edit_item(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The chief's edit item, before its fact check (see ledger-chief)."""
+
+        final = value["ledger"]
+        chief = {"chapter1": value["chapter1"], "chapter3": value["chapter3"]}
+        return {"item": self._chief_item(final["run_id"], chief, final)}
+
+    def apply_chief_edit(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Fold the editor's revision into chapters 1 and 3.
+
+        1.1-1.3 are chapter 1 fields and take the revised text.  3.1 is drawn
+        from chapter 3's structured layers; a revised 3.1 replaces that
+        drawing as text.  ``edited`` names the sections the revision changed,
+        so the fact check reads them as written.
+        """
+
+        final = value["ledger"]
+        chapter1 = dict(value["chapter1"])
+        chapter3 = dict(value["chapter3"])
+        drawn = self._chief_texts({"chapter1": chapter1, "chapter3": chapter3}, final)
+        revised = dict((value.get("edit") or {}).get("sections") or {})
+        edited = {
+            section_id: text
+            for section_id, text in revised.items()
+            if section_id in drawn and text != drawn[section_id]
+        }
+        for section_id, text in edited.items():
+            if section_id.startswith("1."):
+                chapter1[CHIEF_SECTIONS[section_id]] = text
+        return {
+            "chapter1": chapter1,
+            "chapter3": chapter3,
+            "texts": {**drawn, **edited},
+            "edited": edited,
+            "declined": {},
+        }
+
+    def apply_chief_fix(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Fold the chief's answer to the fact check into chapters 1 and 3.
+
+        A submitted section wins; a section the editor rewrote stays as
+        rewritten; any other section is drawn again from the (possibly
+        resubmitted) chapters.
+        """
+
+        final = value["ledger"]
+        fix = ChiefFix.model_validate(_plain(value.get("fix") or {}))
+        chapter1 = fix.chapter1.model_dump(mode="json") if fix.chapter1 else dict(value["chapter1"])
+        chapter3 = fix.chapter3.model_dump(mode="json") if fix.chapter3 else dict(value["chapter3"])
+        edited = dict(value.get("edited") or {})
+        previous = dict(value.get("texts") or {})
+        drawn = self._chief_texts({"chapter1": chapter1, "chapter3": chapter3}, final)
+        texts = {}
+        for section_id, text in drawn.items():
+            if section_id in fix.sections:
+                texts[section_id] = fix.sections[section_id]
+            elif section_id in edited:
+                texts[section_id] = previous.get(section_id, edited[section_id])
+            else:
+                texts[section_id] = text
+        for section_id, text in texts.items():
+            if section_id.startswith("1."):
+                chapter1[CHIEF_SECTIONS[section_id]] = text
+        return {
+            "chapter1": chapter1,
+            "chapter3": chapter3,
+            "texts": texts,
+            "edited": edited,
+            "declined": dict(fix.declined),
+        }
 
     @staticmethod
     def _chief_texts(chief: Mapping[str, Any], final: Mapping[str, Any]) -> dict[str, str]:
@@ -1774,6 +1973,10 @@ class LedgerTools:
             ),
             "findings": value["merged"]["findings"],
             **({"recheck_findings": recheck["findings"]} if recheck.get("findings") else {}),
+            **({"declined": declined} if (declined := {
+                **((value.get("revision") or {}).get("declined") or {}),
+                **((value.get("recheck_revision") or {}).get("declined") or {}),
+            }) else {}),
         }
 
     # -- composition and delivery -----------------------------------------
@@ -1800,6 +2003,11 @@ class LedgerTools:
             }
             for edit in value["edits"].values()
         }
+        if CHIEF_OWNER not in edits:
+            edits[CHIEF_OWNER] = {
+                key: fill_slots(text, slots, unresolved=UNRESOLVED)
+                for key, text in (value["chief"].get("texts") or {}).items()
+            }
         chief = _filled(value["chief"], slots)
         with _taxonomy(state):
             submissions = {
@@ -1866,6 +2074,19 @@ class LedgerTools:
                     "edit_reviews": {
                         owner: edit.get("findings") for owner, edit in value["edits"].items()
                     },
+                    "declined": {
+                        owner: edit["declined"]
+                        for owner, edit in value["edits"].items()
+                        if edit.get("declined")
+                    },
+                    **(
+                        {"chief_reviews": {
+                            key: value["chief"][key]
+                            for key in ("edit", "fact_check", "declined")
+                            if value["chief"].get(key)
+                        }}
+                        if value["chief"].get("texts") else {}
+                    ),
                 },
             )
             state["module_submissions"] = submissions
@@ -2009,6 +2230,9 @@ class LedgerTools:
             "finalize-judgment-ledger": self.finalize_ledger,
             "check-chief-tables": self.check_chief,
             "plan-chief-facts": self.plan_chief_facts,
+            "chief-edit-item": self.chief_edit_item,
+            "apply-chief-edit": self.apply_chief_edit,
+            "apply-chief-fix": self.apply_chief_fix,
             "apply-chief-facts": self.apply_chief_facts,
             "check-report": self.check_report,
             "recheck-edit": self.recheck_edit,

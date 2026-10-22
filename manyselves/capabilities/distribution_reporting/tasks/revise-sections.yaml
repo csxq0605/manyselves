@@ -1,14 +1,16 @@
 id: revise-sections
-version: 1.1.0
+version: 1.2.0
 description: Revise only the sections the editor named, in the conversation that wrote them
 agent: report-consultant
 objective: 编辑和程序对你写的成稿提出了意见。只修改被点名的小节，提交改好后的完整小节正文。
 input_contract: ledger_revision_input
 output_contract: ledger_section_set
 constraints:
-- sections 的键是被点名的小节编号，值是改好后的完整正文；没被点名的小节不要提交。
+- sections 的键是被点名的小节编号，值是改好后的完整正文；没被点名、也不在 same_elsewhere 里的小节不要提交。
 - 写法要求与前面写作时相同；不在正文里改判断结论。
 - 正文里的占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留，不改写成数字；被指出配错或不存在的占位符，换成 value_slots 里正确的那个。程序给的“请核对”是提示：数写对了就不用改。
+- 意见带 same_elsewhere 时，那里列的是用到同一数值或计数的其他小节：改了这里，那些小节写的同一内容也要一致（一并提交）。
 - minor 意见可以顺手改，也可以不改。
+- 意见附了 grounds（所引材料原文）时，先对照：意见与所引材料不符、或材料并不支持它的，不按它改，在 declined 里写意见编号和一句理由；只有“无法核对”的意见也同样先核对再决定。
 tools: []
 recovery: typed-turn-recovery

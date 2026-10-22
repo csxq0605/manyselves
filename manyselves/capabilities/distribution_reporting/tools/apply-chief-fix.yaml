@@ -1,0 +1,10 @@
+id: apply-chief-fix
+version: 1.0.0
+description: Fold the chief's answer to the fact check into chapters 1 and 3
+implementation: capability:distribution-reporting:apply-chief-fix
+input_contract: ledger_chief_edit_input
+output_contract: ledger_chief_draft
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -21,6 +21,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .action_table import ACTION_PRIORITY_GROUPS, ACTION_TABLE_HEADERS
@@ -52,6 +53,8 @@ DISPOSITION_LABELS = {
     "not_applicable": "不适用",
 }
 PROBLEM_TABLE_MARKER = "[[问题表]]"
+# The problem table's "发现问题" cell is one short sentence for the reader.
+FINDING_MAX = 60
 PROBLEM_TABLE_HEADERS = ("对象", "检查内容", "发现问题", "风险等级", "建议措施", "现场图片")
 
 
@@ -59,14 +62,34 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class JudgmentAction(_Model):
+class _RowPart(BaseModel):
+    """A part of a judgment row: a field the contract does not have is dropped.
+
+    A long judgment set is not sent back whole for one invented field (an
+    ``action.decline_reason``); the field is dropped and logged.  Required
+    fields are still required.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _log_dropped(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            dropped = sorted(set(value) - set(cls.model_fields))
+            if dropped:
+                logger.warning("{} dropped fields not in the contract: {}", cls.__name__, dropped)
+        return value
+
+
+class JudgmentAction(_RowPart):
     measure: str = Field(min_length=1)
     priority: Priority
     timeframe: str = Field(min_length=1)
     deadline_reason: str = ""
 
 
-class JudgmentGap(_Model):
+class JudgmentGap(_RowPart):
     missing: str = Field(min_length=1)
     impact: str = Field(min_length=1)
     requested_input: str = Field(
@@ -75,7 +98,7 @@ class JudgmentGap(_Model):
     )
 
 
-class RowRelation(_Model):
+class RowRelation(_RowPart):
     """Another module's row that bears on this row's conclusion, and why."""
 
     row_id: str = Field(pattern=r"^J-", description="别的模块的判断行编号（J-...）")
@@ -100,7 +123,7 @@ class RowRelation(_Model):
     )
 
 
-class JudgmentRow(_Model):
+class JudgmentRow(_RowPart):
     id: str = Field(pattern=r"^J-")
     submodule_id: str = Field(min_length=1)
     object: str = Field(min_length=1)
@@ -110,6 +133,14 @@ class JudgmentRow(_Model):
     evidence_ids: list[str] = Field(default_factory=list)
     calculation_ids: list[str] = Field(default_factory=list)
     basis: str = Field(min_length=1)
+    finding: str = Field(
+        default="",
+        description=(
+            "关注行必填：给报告读者看的一句话，写清这个对象有什么问题（现状，不写推理过程），"
+            f"不超过 {FINDING_MAX} 字；不写编号、知识单元和“本行”“台账”这类内部说法。"
+            "问题表印这一句，basis 只留给审查"
+        ),
+    )
     rule_refs: list[str] = Field(
         default_factory=list,
         description="本行所依据的知识单元 KU 编号，一项一个；涉及几个知识单元就写几个",
@@ -280,17 +311,27 @@ def ledger_findings(
                 + "（推理得出或通用常识的数可以保留）"
             )
         problems.extend(_hazard_problems(row))
+        if row.disposition == "concern" and not row.finding.strip():
+            problems.append(f"关注行没有写 finding（问题表印给读者的一句话，不超过 {FINDING_MAX} 字）")
+        elif len(row.finding) > FINDING_MAX + 20:
+            problems.append(
+                f"finding 有 {len(row.finding)} 字，问题表一格要短：写成不超过 {FINDING_MAX} 字的一句现状"
+            )
         covered.update(row.evidence_ids)
-        texts = [row.checkpoint, row.basis, row.hazard]
+        # basis is the reasoning the reviewers read; it is not printed.
+        texts = [row.checkpoint, row.finding, row.hazard]
         if row.action is not None:
             texts += [row.action.measure, row.action.timeframe]
         if row.gap is not None:
             texts += [row.gap.missing, row.gap.impact, row.gap.requested_input]
-        # Row text goes into the prose and the problem table as written.
+        # These row texts go into the problem table and the prose as written.
         leaked = list(dict.fromkeys(term for text in texts for term in process_terms(text)))
         words = [term for term in leaked if term in PROCESS_TERMS]
         if words:
-            problems.append("判断行文字里有内部流程用语或编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表")
+            problems.append(
+                "判断行要印进报告的文字（checkpoint、finding、hazard、措施、缺口）里有内部流程用语或编号："
+                + "、".join(leaked) + "；这些文字会原样进入正文和问题表"
+            )
         if problems:
             findings[row.id] = _finding(
                 "；".join([*problems, *hints]),
@@ -301,7 +342,7 @@ def ledger_findings(
             # An id alone is easy to drop in writing; it does not hold up a revision.
             findings[row.id] = _finding(
                 "；".join([
-                    *(["判断行文字里有内部编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表"]
+                    *(["判断行要印进报告的文字里有内部编号：" + "、".join(leaked) + "；这些文字会原样进入正文和问题表"]
                       if leaked else []),
                     *hints,
                 ]),
@@ -466,7 +507,7 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
     # A finding not confirmed on site is said once, under the table.
     unconfirmed: dict[str, list[str]] = {}
     for row in concerns:
-        problem = row.basis
+        problem = row_finding(row)
         if row.evidence_status != "现场确认":
             objects = unconfirmed.setdefault(row.evidence_status, [])
             if row.object not in objects:
@@ -497,6 +538,20 @@ def problem_table(rows: Sequence[JudgmentRow]) -> str | None:
         ) + "。"
         note = status_note + note
     return table + ("\n\n" + note if note else "")
+
+
+def row_finding(row: JudgmentRow) -> str:
+    """What the problem table says of a concern row: its finding for the reader.
+
+    A row written before ``finding`` existed falls back to its basis, with
+    internal ids removed.
+    """
+
+    if row.finding.strip():
+        return row.finding.strip()
+    text = _PROCESS_ID.sub("", row.basis)
+    text = re.sub(r"(按|依据|根据)\s*[，,；;]", "", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 def place_problem_table(prose: str, rows: Sequence[JudgmentRow]) -> str:
@@ -637,8 +692,35 @@ class SectionText(_Model):
     text: str = Field(min_length=1)
 
 
+DECLINED_HELP = (
+    "不采纳的意见：键是意见所在的小节或条目编号，值是一句理由（对照所引材料说明意见为什么不成立）；"
+    "全部采纳时留空"
+)
+
+
 class SectionSet(_Model):
     sections: dict[str, str] = Field(description="Section id to its complete revised text")
+    declined: dict[str, str] = Field(default_factory=dict, description=DECLINED_HELP)
+
+
+class ChiefFix(_Model):
+    """The chief's one answer to the fact check of chapters 1 and 3.
+
+    Only what changes is submitted: a text section of 1.1-1.3 or 3.1 as a
+    whole, and a chapter in full only when one of its tables changes.
+    """
+
+    sections: dict[str, str] = Field(
+        default_factory=dict,
+        description="要改的正文小节（1.1、1.2、1.3、3.1）：键是小节编号，值是改好后的完整正文；不改的不提交",
+    )
+    chapter1: ChiefChapter1 | None = Field(
+        default=None, description="第一章的表（健康度、重点风险、阶段）要改时，提交改好后的完整第一章；不改留空"
+    )
+    chapter3: ChiefChapter3 | None = Field(
+        default=None, description="3.2 速查表要改时，提交改好后的完整第三章；不改留空"
+    )
+    declined: dict[str, str] = Field(default_factory=dict, description=DECLINED_HELP)
 
 
 def _status_note(row_ids: Sequence[str], row_status: Mapping[str, str] | None) -> str:
@@ -1218,6 +1300,8 @@ __all__ = [
     "SpecialTopicAnalysis",
     "SectionText",
     "SectionSet",
+    "ChiefFix",
+    "DECLINED_HELP",
     "JudgmentRevision",
     "ActionText",
     "ChiefChapter3",

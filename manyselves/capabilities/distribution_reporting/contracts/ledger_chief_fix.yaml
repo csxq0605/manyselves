@@ -1,0 +1,5 @@
+id: ledger_chief_fix
+version: 1.0.0
+description: The chief's one answer to the fact check of chapters 1 and 3 - changed sections, changed chapters, declined findings
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:ChiefFix

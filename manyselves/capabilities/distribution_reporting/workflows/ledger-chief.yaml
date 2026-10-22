@@ -1,11 +1,12 @@
 id: ledger-chief
-version: 1.1.0
-description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger; chapters 1 and 3 are fact-checked in small packets
+version: 1.2.0
+description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger; an editor reads chapters 1 and 3 first, then they are fact-checked in small packets and fixed in one turn
 tasks:
 - chief-chapter-3
 - revise-chief-actions
 - chief-chapter-1
 - revise-chief-overview
+- revise-chief-facts
 - chief-chapter-4
 recovery:
 - typed-turn-recovery
@@ -16,6 +17,7 @@ state:
   context: null
   chief_key: chief
   chapter4: null
+  chief_fix: null
 actions:
 - id: open-chief
   kind: fork_conversation
@@ -90,7 +92,7 @@ actions:
     operator: eq
     value: true
   then: revise-1
-  otherwise: plan-facts
+  otherwise: edit-item
 - id: revise-1
   kind: invoke_agent
   agent: report-consultant
@@ -98,6 +100,53 @@ actions:
   conversation_variable: chief_conversation
   input_variable: check1
   output_variable: chapter1
+# The editor reads chapters 1 and 3 before the fact check, so whatever its
+# revision changes is checked too.
+- id: edit-item
+  kind: invoke_tool
+  tool: chief-edit-item
+  input_variables:
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+  output_variable: edit_plan
+- id: edit-item-value
+  kind: set_variable
+  variable: chief_edit_item
+  value_variable: edit_plan
+  field: item
+- id: edit-chief
+  kind: subworkflow
+  workflow: ledger-edit-pass
+  input_variables:
+    item: chief_edit_item
+    item_key: chief_key
+    review_base: review_base
+  output_variable: chief_edit
+- id: apply-edit
+  kind: invoke_tool
+  tool: apply-chief-edit
+  input_variables:
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+    edit: chief_edit
+  output_variable: draft
+- id: edited-chapter-1
+  kind: set_variable
+  variable: chapter1
+  value_variable: draft
+  field: chapter1
+- id: edited-texts
+  kind: set_variable
+  variable: texts
+  value_variable: draft
+  field: texts
+- id: edited-sections
+  kind: set_variable
+  variable: edited
+  value_variable: draft
+  field: edited
 - id: plan-facts
   kind: invoke_tool
   tool: plan-chief-facts
@@ -105,6 +154,7 @@ actions:
     ledger: final
     chapter3: chapter3
     chapter1: chapter1
+    edited: edited
   output_variable: fact_plan
 - id: fact-items
   kind: set_variable
@@ -119,64 +169,72 @@ actions:
   key_input_variable: item_key
   output_variable: fact_results
   errors_variable: fact_errors
-  max_concurrency: 6
+  max_concurrency: 32
 - id: apply-facts
   kind: invoke_tool
   tool: apply-chief-facts
   input_variables:
     packets: fact_items
     results: fact_results
+    texts: texts
   output_variable: fact_checks
-- id: fact-check-3
+- id: fact-check-value
   kind: set_variable
-  variable: fact_check3
+  variable: fact_check
   value_variable: fact_checks
-  field: check3
-- id: fact-blocking-3
+  field: check
+- id: fact-blocking
   kind: set_variable
-  variable: fact_blocking3
+  variable: fact_blocking
   value_variable: fact_checks
-  field: blocking3
-- id: fact-check-1
-  kind: set_variable
-  variable: fact_check1
-  value_variable: fact_checks
-  field: check1
-- id: fact-blocking-1
-  kind: set_variable
-  variable: fact_blocking1
-  value_variable: fact_checks
-  field: blocking1
-- id: route-fact-3
+  field: blocking
+- id: route-fact
   kind: if
   condition:
-    variable: fact_blocking3
+    variable: fact_blocking
     operator: eq
     value: true
-  then: fix-3
-  otherwise: route-fact-1
-- id: fix-3
+  then: fix
+  otherwise: settle-1
+# Chapters 1 and 3 are fixed in one turn of the chief.
+- id: fix
   kind: invoke_agent
   agent: report-consultant
-  task: revise-chief-actions
+  task: revise-chief-facts
   conversation_variable: chief_conversation
-  input_variable: fact_check3
-  output_variable: chapter3
-- id: route-fact-1
-  kind: if
-  condition:
-    variable: fact_blocking1
-    operator: eq
-    value: true
-  then: fix-1
-  otherwise: topic-flag
-- id: fix-1
-  kind: invoke_agent
-  agent: report-consultant
-  task: revise-chief-overview
-  conversation_variable: chief_conversation
-  input_variable: fact_check1
-  output_variable: chapter1
+  input_variable: fact_check
+  output_variable: chief_fix
+- id: apply-fix
+  kind: invoke_tool
+  tool: apply-chief-fix
+  input_variables:
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+    texts: texts
+    edited: edited
+    fix: chief_fix
+  output_variable: draft
+- id: settle-1
+  kind: set_variable
+  variable: chapter1
+  value_variable: draft
+  field: chapter1
+- id: settle-3
+  kind: set_variable
+  variable: chapter3
+  value_variable: draft
+  field: chapter3
+- id: settle-texts
+  kind: set_variable
+  variable: texts
+  value_variable: draft
+  field: texts
+- id: settle-declined
+  kind: set_variable
+  variable: declined
+  value_variable: draft
+  field: declined
 - id: topic-flag
   kind: set_variable
   variable: has_topic
@@ -209,6 +267,10 @@ actions:
     chapter1: chapter1
     chapter3: chapter3
     chapter4: chapter4
+    texts: texts
+    edit: chief_edit
+    fact_check: fact_check
+    declined: declined
 - id: finish
   kind: end_workflow
   output_variable: outputs

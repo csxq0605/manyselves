@@ -39,14 +39,60 @@ def test_status_counts_name_objects_and_numbers_are_ordered_with_ratios() -> Non
 
     ng = next(c for c in calculations if c.quantity == "ng_count")
     assert (ng.id, ng.value, ng.formula) == ("K-0008", 2, "NG 对象：A房/2#、B房/3#")
-    by_quantity = {c.quantity: c.value for c in calculations if c.unit != "个" or c.subject}
+    by_quantity = {c.quantity: c.value for c in calculations if c.unit}
     assert by_quantity["max_to_min_ratio"] == 3.9
     assert by_quantity["max_to_second_ratio"] == 3.6
     assert by_quantity["median"] == 3.1
-    counts = [(c.quantity, c.value) for c in calculations if c.unit == "个"]
+    # A count is a bare number; the prose adds the measure word.
+    counts = [(c.quantity, c.value) for c in calculations if c.unit == ""]
     assert ("record_count", 3) in counts and ("object_count", 3) in counts
     assert "K-" in lines[0] and "不写进正文" not in lines[0]
-    assert "按数值从大到小 A房/2#=11.3A、B房/3#=3.1A、A房/1#=2.9A" in lines[1]
+    assert "按数值从大到小 A房/2# 11.3A、B房/3# 3.1A、A房/1# 2.9A" in lines[1]
+
+
+def test_celsius_gets_differences_and_a_derived_rise_is_ordered_too() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        EvidenceMeasurement,
+    )
+
+    def point(number: int, subject: str, measured: float, rise: float) -> EvidenceItem:
+        item = _item(number, subject, f"测点温度={measured:g}℃", measured, "℃", column="G")
+        item.measurements = [
+            EvidenceMeasurement(
+                quantity="measured_temperature", value=measured, unit="℃", label="测点温度",
+                source_cell=f"G{number}",
+            ),
+            EvidenceMeasurement(
+                quantity="temperature_rise", value=rise, unit="K", label="相对环境温升",
+                derived_from=["measured_temperature", "ambient_temperature"],
+            ),
+        ]
+        return item
+
+    items = [point(1, "A房/1D1", 36.1, 10.2), point(2, "A房/2D1", 31.3, 4.0), point(3, "B房/1#", 29.2, 3.9)]
+    calculations, lines, _lists = statistics(items)
+
+    celsius = [c for c in calculations if c.unit == "℃" or "测点温度" in c.subject]
+    # A Celsius temperature has no meaningful ratio.
+    assert not any(c.quantity in {"multiple_of_median", "max_to_min_ratio"} for c in celsius)
+    assert any(c.quantity == "difference_to_median" and c.value == 4.8 for c in calculations)
+    # The rise is a ratio quantity of its own: 10.2K is about 2.5 times its median 4.0K.
+    rise = [c for c in calculations if c.quantity == "multiple_of_median" and c.unit == "倍"]
+    assert [c.value for c in rise] == [2.5, 1.0, 1.0]
+    assert any("相对环境温升" in line and "由同一记录算出" in line for line in lines)
+
+
+def test_a_column_of_other_written_values_is_counted_per_value() -> None:
+    items = [
+        _item(1, "A房/1#", "安全连锁=无", column="F"),
+        _item(2, "A房/2#", "安全连锁=无", column="F"),
+        _item(3, "B房/1#", "安全连锁=有", column="F"),
+    ]
+    calculations, lines, _lists = statistics(items)
+
+    counts = {c.formula: c.value for c in calculations if c.quantity == "value_count"}
+    assert counts == {"记为“无”的对象：A房/1#、A房/2#": 2, "记为“有”的对象：B房/1#": 1}
+    assert "记为“无”2 个" in lines[0]
 
 
 def test_prose_values_are_slots_and_a_concern_object_is_named() -> None:
@@ -266,7 +312,7 @@ def test_prose_pointing_to_a_missing_table_or_repeating_data_shown_elsewhere_is_
 def _concern(row_id: str, **extra) -> dict:
     value = {"id": row_id, "submodule_id": "2.4.1", "object": "1#", "checkpoint": "温升",
              "disposition": "concern", "evidence_status": "现场确认", "basis": "温升偏高",
-             "risk_level": "中", "hazard": "可能加速绝缘老化", "evidence_ids": ["E-1"],
+             "finding": "该柜温升偏高", "risk_level": "中", "hazard": "可能加速绝缘老化", "evidence_ids": ["E-1"],
              "hazard_conditions": ["温升持续偏高"],
              "rule_refs": ["KU-2.4-01"],
              "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
@@ -289,6 +335,39 @@ def test_a_hazard_names_its_sources_or_says_it_is_unverified() -> None:
     assert "hazard_conditions" in findings["J-2.4-5"]["problem"]
     assert "hazard_sources" in findings["J-2.4-1"]["problem"]
     assert "E-9" in findings["J-2.4-4"]["problem"]
+
+
+def test_a_concern_row_states_a_short_finding_for_the_problem_table() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import (
+        problem_table,
+    )
+
+    rows = [
+        _concern("J-2.4-1", finding="", hazard_sources=["E-1"]),
+        _concern("J-2.4-2", finding="长" * 90, hazard_sources=["E-1"]),
+        # basis is reasoning for the reviewers: ids in it are not sent back.
+        _concern("J-2.4-3", hazard_sources=["E-1"], basis="按KU-2.4-01判断温升偏高"),
+    ]
+    findings = ledger_findings(
+        JudgmentSet.model_validate({"module_id": "2.4", "rows": rows}),
+        submodule_ids=["2.4.1"], module_evidence_ids=["E-1"],
+        known_evidence_ids=["E-1"], known_photo_ids=[],
+    )
+    assert set(findings) == {"J-2.4-1", "J-2.4-2"}
+    table = problem_table([JudgmentRow.model_validate(rows[2])])
+    assert "该柜温升偏高" in table and "KU-" not in table and "按KU" not in table
+    # A row written before finding existed shows its basis without internal ids.
+    old = JudgmentRow.model_validate(rows[2] | {"finding": ""})
+    assert "KU-" not in problem_table([old]) and "温升偏高" in problem_table([old])
+
+
+def test_a_field_the_contract_does_not_have_is_dropped_not_sent_back() -> None:
+    row = JudgmentRow.model_validate(_concern(
+        "J-2.4-1", action={"measure": "m", "priority": "一般", "timeframe": "一月",
+                           "decline_reason": "x", "priority_note": "y"},
+    ))
+    assert row.action is not None and row.action.measure == "m"
+    assert "decline_reason" not in row.model_dump()["action"]
 
 
 def test_a_row_on_summary_entries_only_is_set_to_the_source_authors_opinion() -> None:

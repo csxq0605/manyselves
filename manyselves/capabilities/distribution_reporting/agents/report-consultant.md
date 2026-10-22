@@ -28,6 +28,8 @@ produces:
 - ledger_special_topic_analysis
 - ledger_section_set
 - ledger_relation_set
+- ledger_grounded_findings
+- ledger_chief_fix
 conversation_mode: run
 ---
 你是配电安全专家咨询团队的成员。同一份项目资料由团队共用：先通读一次，之后每个任务会告诉你本次承担的角色（某个模块的专家、审查人、总编或编辑）和要提交的内容。

@@ -15,7 +15,11 @@ final ledger this module derives three views, without any model:
   row records (``relations``: row, relation, reason), kept only when they
   name an existing row of another module and either follow a relation the
   knowledge base's method lists or state their own mechanism and condition
-  (marked as not in the knowledge base), and their content for the writer.
+  (marked as not in the knowledge base), and their content for the writer;
+- ``same_observation_rows`` and ``same_observation_findings``: rows of
+  different sections that rest on the same source cells (one observation
+  routed to several sections).  They are one record seen from two angles:
+  not a relation, counted once, and judged at one level, the owner's.
 
 The program only offers candidates it can tell from the fixed structure (the
 same fact or object) and checks that a cited row exists.  Whether two rows
@@ -178,9 +182,86 @@ def in_knowledge_base(relation: Any, names: Sequence[str]) -> bool:
     return relation.relation.strip() in set(names)
 
 
+def _observations(row: JudgmentRow, observation_of: Mapping[str, str]) -> frozenset[str]:
+    """The source observations a row rests on (a fact not routed twice is its own)."""
+
+    return frozenset(observation_of.get(e, e) for e in row.evidence_ids)
+
+
+def same_observation_rows(
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    observation_of: Mapping[str, str],
+) -> list[list[JudgmentRow]]:
+    """Groups of rows in different sections resting on exactly the same observations.
+
+    Only observations routed to several sections count: two rows citing the
+    same plain fact are left to the relation step.
+    """
+
+    shared = set(observation_of.values())
+    groups: dict[frozenset[str], list[JudgmentRow]] = {}
+    for rows in ledger.values():
+        for row in rows:
+            key = _observations(row, observation_of)
+            if key and key <= shared:
+                groups.setdefault(key, []).append(row)
+    return [
+        rows for rows in groups.values()
+        if len({row.submodule_id for row in rows}) > 1
+    ]
+
+
+def same_observation_findings(
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    observation_of: Mapping[str, str],
+    owner_sections: Mapping[str, str],
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Module -> row -> finding: one observation judged at two levels.
+
+    ``owner_sections`` maps an observation to the section that owns it (the
+    knowledge base's first route, or the ownership rules).  A concern row of
+    another section on the same observations must take the owner's risk
+    level and priority; it keeps its own angle in its text.
+    """
+
+    module_of = {row.id: m for m, rows in ledger.items() for row in rows}
+    findings: dict[str, dict[str, dict[str, str]]] = {}
+    for rows in same_observation_rows(ledger, observation_of):
+        owners = {
+            owner_sections.get(o) for row in rows for o in _observations(row, observation_of)
+        }
+        owner_rows = [row for row in rows if row.submodule_id in owners]
+        if not owner_rows:
+            continue
+        owner = owner_rows[0]
+        if owner.disposition != "concern":
+            continue
+        level = (owner.risk_level, owner.action.priority if owner.action else None)
+        for row in rows:
+            if row is owner or row.submodule_id in owners or row.disposition != "concern":
+                continue
+            mine = (row.risk_level, row.action.priority if row.action else None)
+            if mine == level:
+                continue
+            findings.setdefault(module_of[row.id], {})[row.id] = {
+                "problem": (
+                    f"本行与 {owner.submodule_id} 的 {owner.id} 引用的是同一个表格单元格（同一观测），"
+                    f"那里定为风险{owner.risk_level}、{level[1]}，本行定为风险{row.risk_level}、{mine[1]}；"
+                    "同一观测在报告里只能有一个当前定级"
+                ),
+                "severity": "blocking",
+                "suggestion": (
+                    f"risk_level 和优先级改成与 {owner.id} 一致，本行只写本节的视角；"
+                    "认为负责小节定级不对的，在 basis 写明理由和会改变定级的条件"
+                ),
+            }
+    return findings
+
+
 def checked_relations(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     names: Sequence[str] = (),
+    observation_of: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, list[JudgmentRow]], dict[str, list[dict[str, str]]]]:
     """Keep only relations to an existing row of another module, with their grounds.
 
@@ -188,11 +269,18 @@ def checked_relations(
     relation under one of them rests on the knowledge base.  An author may
     also relate rows the method does not cover; such a relation is kept only
     when it states its mechanism and the condition it holds under, and it is
-    marked as not in the knowledge base.  Returns the ledger with the other
-    relations removed, and what was removed with why.
+    marked as not in the knowledge base.  Two rows resting on the same
+    observations (``observation_of``: routed copy -> observation) are one
+    record, not a relation.  Returns the ledger with the other relations
+    removed, and what was removed with why.
     """
 
     owner = {row.id: module_id for module_id, rows in ledger.items() for row in rows}
+    same = {
+        frozenset((a.id, b.id))
+        for rows in same_observation_rows(ledger, observation_of or {})
+        for a in rows for b in rows if a.id != b.id
+    }
     listed = set(names)
     kept: dict[str, list[JudgmentRow]] = {}
     dropped: dict[str, list[dict[str, str]]] = {}
@@ -205,6 +293,8 @@ def checked_relations(
                     why = "所引的行不存在"
                 elif owner[relation.row_id] == module_id:
                     why = "所引的是本模块的行"
+                elif frozenset((row.id, relation.row_id)) in same:
+                    why = "两行引用的是同一个表格单元格（同一观测），是同一记录的两个视角，不是关联"
                 elif (
                     listed
                     and relation.relation.strip() not in listed
@@ -320,6 +410,8 @@ __all__ = [
     "conflict_summary",
     "object_chains",
     "related_rows",
+    "same_observation_findings",
+    "same_observation_rows",
     "section_see_also",
     "see_also_by_row",
 ]

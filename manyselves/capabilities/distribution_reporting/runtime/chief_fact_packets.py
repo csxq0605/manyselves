@@ -19,13 +19,19 @@ from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
 from ..domain.value_slots import fill_slots, slot_lines, slots_for_evidence
+from .grounds import GROUND_ID, grounded
 
 # A packet holds at most this many units and about this many characters.
 MAX_UNITS = 8
 MAX_CHARS = 15000
-# A long record or basis is cut to this many characters in a packet.
+# A row's basis is cut to this many characters in a packet; a hazard, action
+# or gap to the shorter length.  Source records are given whole: a checker
+# that sees half a record may "correct" a value from the half it lacks.
 MAX_TEXT = 300
 SHORT_TEXT = 120
+
+# At most this many other places resting on the same row are named with a finding.
+SAME_ELSEWHERE = 10
 
 _CHAPTER_1 = "1"
 _CHAPTER_3 = "3"
@@ -39,12 +45,18 @@ def chief_units(
     chapter1: Mapping[str, Any] | None,
     chapter3: Mapping[str, Any] | None,
     groups: Sequence[Mapping[str, Any]],
+    edited: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Every paragraph, table row, risk and action group of chapters 1 and 3.
 
     ``row_ids`` are the rows a structured unit cites itself; a paragraph
-    cites none and gets the rows of the objects it names.
+    cites none and gets the rows of the objects it names.  ``edited`` holds
+    the text sections an editor's revision rewrote: 1.1-1.3 replace their
+    chapter 1 fields, and a rewritten 3.1 is checked paragraph by paragraph
+    in place of the structured layers it was drawn from.
     """
+
+    edited = dict(edited or {})
 
     units: list[dict[str, Any]] = []
 
@@ -60,7 +72,7 @@ def chief_units(
         ("assessment_background", "1.1"), ("overall_assessment", "1.2"),
         ("regional_executive_summary", "1.3"),
     ):
-        for n, paragraph in enumerate(_paragraphs(one.get(field, "")), 1):
+        for n, paragraph in enumerate(_paragraphs(edited.get(section, one.get(field, ""))), 1):
             add(f"{section}-段{n}", _CHAPTER_1, f"{section} 第{n}段", paragraph)
     for health in one.get("dimension_health") or []:
         add(
@@ -79,7 +91,11 @@ def chief_units(
             f"1.2-阶段-{n}", _CHAPTER_1, "1.2 实施阶段",
             f"{phase.get('phase', '')}（{phase.get('time', '')}）：{phase.get('tasks', '')}；{phase.get('effect', '')}",
         )
-    three = chapter3 or {}
+    three = dict(chapter3 or {})
+    if "3.1" in edited:
+        for n, paragraph in enumerate(_paragraphs(edited["3.1"]), 1):
+            add(f"3.1-段{n}", _CHAPTER_3, f"3.1 第{n}段", paragraph)
+        three = {**three, "risk_summary": [], "risk_details": [], "cross_findings": []}
     for n, line in enumerate(three.get("risk_summary") or [], 1):
         add(f"3.1-汇总-{n}", _CHAPTER_3, "3.1 风险汇总", line)
     for details in three.get("risk_details") or []:
@@ -131,8 +147,9 @@ def _cut(text: Any, limit: int = MAX_TEXT) -> str:
 def _row_view(row: JudgmentRow) -> dict[str, Any]:
     """What a fact check needs of a row: its object, conclusion and strength.
 
-    The values themselves come with the row's records; the reasoning (basis)
-    is not what is checked here and stays out.
+    The values themselves come with the row's records.  The basis is not
+    checked, but without it a checker cannot tell which value a row rests on
+    and may "correct" a unit from the wrong record.
     """
 
     view = {
@@ -142,6 +159,7 @@ def _row_view(row: JudgmentRow) -> dict[str, Any]:
         "disposition": row.disposition,
         "evidence_status": row.evidence_status,
         "evidence_ids": list(row.evidence_ids),
+        "basis": _cut(row.basis),
     }
     if row.risk_level:
         view["risk_level"] = row.risk_level
@@ -163,6 +181,7 @@ def chief_fact_packets(
     slots: Mapping[str, Mapping[str, Any]],
     fact_texts: Mapping[str, str],
     run_id: str,
+    edited: Mapping[str, str] | None = None,
     max_units: int = MAX_UNITS,
     max_chars: int = MAX_CHARS,
 ) -> list[dict[str, Any]]:
@@ -195,7 +214,7 @@ def chief_fact_packets(
     }
 
     prepared = []
-    for unit in chief_units(chapter1, chapter3, groups):
+    for unit in chief_units(chapter1, chapter3, groups, edited):
         text = fill_slots(unit["text"], slots)
         # A unit that cites rows is held against them; a paragraph cites none
         # and is held against the rows of the objects it names.
@@ -263,7 +282,7 @@ def chief_fact_packets(
             **current,
             "units": [*current["units"], item["unit"]],
             "rows": {**current["rows"], **{r: _row_view(rows[r]) for r in item["rows"]}},
-            "facts": {**current["facts"], **{e: _cut(fact_texts.get(e, "")) for e in item["evidence"]}},
+            "facts": {**current["facts"], **{e: str(fact_texts.get(e, "")) for e in item["evidence"]}},
             "values": {**current["values"], **item["values"]},
             "counts": {**current["counts"], **item["counts"]},
         }
@@ -274,7 +293,7 @@ def chief_fact_packets(
                 **current,
                 "units": [item["unit"]],
                 "rows": {r: _row_view(rows[r]) for r in item["rows"]},
-                "facts": {e: _cut(fact_texts.get(e, "")) for e in item["evidence"]},
+                "facts": {e: str(fact_texts.get(e, "")) for e in item["evidence"]},
                 "values": dict(item["values"]),
                 "counts": dict(item["counts"]),
             }
@@ -284,47 +303,68 @@ def chief_fact_packets(
     return packets
 
 
+def packet_material(packet: Mapping[str, Any]) -> dict[str, str]:
+    """A packet's material by id: its rows, records, values and counts."""
+
+    material: dict[str, str] = {}
+    for row in packet.get("rows") or []:
+        material[row["id"]] = "｜".join(
+            str(row.get(key, "")) for key in (
+                "object", "checkpoint", "disposition", "evidence_status", "risk_level", "basis",
+            ) if row.get(key)
+        )
+    material.update({e: str(text) for e, text in (packet.get("facts") or {}).items()})
+    for key, line in {**(packet.get("values") or {}), **(packet.get("counts") or {})}.items():
+        for slot_id in GROUND_ID.findall(str(key)):
+            material[slot_id] = f"{material[slot_id]}；{line}" if slot_id in material else str(line)
+    return material
+
+
 def apply_fact_findings(
     packets: Sequence[Mapping[str, Any]], results: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """The checkers' findings, split by chapter, for the chief's one revision.
+    """The checkers' findings on chapters 1 and 3, for the chief's one revision.
 
-    A packet whose check failed is left out; a finding on a unit no packet
-    holds is ignored.
+    Each finding is held to the packet it was written on: a blocking finding
+    citing nothing of that packet cannot be checked and becomes minor
+    (see ``grounds``).  A packet whose check failed is left out; a finding on
+    a unit the packet does not hold is ignored.
     """
 
-    chapter_of = {
-        unit["unit_id"]: unit["unit_id"].split(".", 1)[0]
+    # Where each unit sits and which rows it rests on, across all packets, so
+    # a fix in one place can be carried to the others resting on the same row.
+    rests = {
+        unit["unit_id"]: (unit["where"], set(unit.get("row_ids") or ()))
         for packet in packets
         for unit in packet["units"]
     }
-    where = {
-        unit["unit_id"]: unit["where"] for packet in packets for unit in packet["units"]
-    }
-    split: dict[str, dict[str, Any]] = {_CHAPTER_1: {}, _CHAPTER_3: {}}
-    for result in results.values():
-        findings = (result or {}).get("findings") if isinstance(result, Mapping) else None
-        for unit_id, finding in (findings or {}).items():
-            chapter = chapter_of.get(unit_id)
-            if chapter not in split or not isinstance(finding, Mapping):
-                continue
-            split[chapter][unit_id] = {
+    findings: dict[str, Any] = {}
+    for packet in packets:
+        result = results.get(packet["packet_id"])
+        found = (result or {}).get("findings") if isinstance(result, Mapping) else None
+        if not found:
+            continue
+        where = {unit["unit_id"]: unit["where"] for unit in packet["units"]}
+        for unit_id, finding in grounded(
+            {u: f for u, f in found.items() if u in where}, packet_material(packet)
+        ).items():
+            rows = {g for g in finding.get("grounds") or {} if g.startswith("J-")}
+            elsewhere = list(dict.fromkeys(
+                f"{place}（{other}）"
+                for other, (place, rested) in rests.items()
+                if other != unit_id and rows & rested
+            ))
+            findings[unit_id] = {
+                **finding,
                 "problem": f"{where[unit_id]}：{finding.get('problem', '')}",
-                "severity": finding.get("severity", "minor"),
                 "suggestion": finding.get("suggestion", ""),
+                **({"same_elsewhere": elsewhere[:SAME_ELSEWHERE]} if elsewhere else {}),
             }
-
-    def check(findings: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "findings": findings,
-            "blocking": any(f.get("severity") == "blocking" for f in findings.values()),
-        }
-
-    one, three = check(split[_CHAPTER_1]), check(split[_CHAPTER_3])
-    return {
-        "check1": one, "check3": three,
-        "blocking1": one["blocking"], "blocking3": three["blocking"],
-    }
+    blocking = any(f.get("severity") == "blocking" for f in findings.values())
+    return {"check": {"findings": findings, "blocking": blocking}, "blocking": blocking}
 
 
-__all__ = ["MAX_CHARS", "MAX_UNITS", "apply_fact_findings", "chief_fact_packets", "chief_units"]
+__all__ = [
+    "MAX_CHARS", "MAX_UNITS", "apply_fact_findings", "chief_fact_packets", "chief_units",
+    "packet_material",
+]

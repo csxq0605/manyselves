@@ -1,0 +1,10 @@
+id: chief-edit-item
+version: 1.0.0
+description: The chief's text sections and their program findings, as an edit item
+implementation: capability:distribution-reporting:chief-edit-item
+input_contract: ledger_chief_edit_input
+output_contract: ledger_chief_edit_plan
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

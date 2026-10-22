@@ -1,12 +1,13 @@
 id: edit-sections
-version: 1.2.0
+version: 1.3.0
 description: Editorial pass over one owner's finished sections
 agent: report-consultant
 objective: 你现在是编辑。通读下面这部分成稿，只看组织方式是否与专家版范例一致、有没有重复论证、有没有台账里没有的新结论。
 input_contract: ledger_edit_item
-output_contract: review-findings
+output_contract: ledger_grounded_findings
 constraints:
-- findings 的键是小节编号；severity：blocking=有台账里没有的新结论、与台账矛盾或组织方式明显偏离范例；minor=措辞或篇幅可以更好。
+- findings 的键是小节编号；severity：blocking=有台账里没有的新结论、与台账矛盾（数值、对象、档位、证据状态写错或写重）；minor=组织方式、分段、篇幅、措辞和重复可以更好。组织方式与范例不同只判 minor，不要求重写整节。
+- 每条意见在 grounds 里写它依据的材料编号：台账判断行（J-…）、原始记录（E-…）、数值或计数（V-/K-/S-…）。说正文与台账矛盾时，grounds 写那几行的编号，并在 problem 里照台账原样写出对应内容，不凭印象概括。blocking 意见没有台账里的编号，程序会降为 minor 并标“无法核对”。
 - 可对照共享资料“专家版方法”里相应小节的“核对要点”。
 - program_findings 是程序核对出的问题，不用重复写。
 - 正文里的〔V-…〕〔K-…〕〔S-…〕是程序成稿时填值的占位符，不算编号或流程用语，也不要求改成数字。

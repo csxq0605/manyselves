@@ -40,7 +40,7 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
         "basis": "b", "rule_refs": refs or [],
     }
     if disposition == "concern":
-        value |= {"risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
+        value |= {"finding": "负荷率偏高", "risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
                   "hazard_conditions": ["负荷持续偏高"],
                   "action": {"measure": "核查", "priority": "一般", "timeframe": "一月"}}
     if disposition == "undetermined":
@@ -107,10 +107,10 @@ def test_row_text_is_checked_for_workflow_words_and_missing_knowledge_units() ->
         ledger_findings,
     )
 
-    leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "该冲突提交联合审查"})
+    leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"finding": "该冲突提交联合审查"})
     bare = _row("J-2.1-2", "undetermined")
     fine = _row("J-2.1-3", "no_concern")
-    only_id = _row("J-2.1-4", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "按 R-001 判断"})
+    only_id = _row("J-2.1-4", "concern", ["KU-2.1-01"]).model_copy(update={"hazard": "按 R-001 判断"})
     findings = ledger_findings(
         JudgmentSet(module_id="2.1", rows=[leaky, bare, fine, only_id]),
         submodule_ids=["2.1.1"], module_evidence_ids=["E-1"], known_evidence_ids=["E-1"],

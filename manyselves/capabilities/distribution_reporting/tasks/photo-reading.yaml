@@ -1,5 +1,5 @@
 id: photo-reading
-version: 1.2.0
+version: 1.3.0
 description: Copy what one project photo shows, given where it sits in the table
 agent: photo-reader
 objective: 看这张现场照片，把图中能看到的字符和内容照原样抄下来。是否与表格记录相符由程序比对，你不用判断。
@@ -13,7 +13,7 @@ constraints:
 - quantities 是表格为这个对象声明的量（quantity 是键，label 是表头名，unit 是单位）。图中能看到其中哪个量的读数，就在 readings 里写一项：quantity 照抄键，value 写图中的数字，unit 写图中显示的单位；看不清写 legible=false、value 留空。图中没有的量不写。是否与记录相符由程序比对。
 - transcription 逐项抄写：屏幕或仪表上的读数和符号、铭牌、标签、记录表各栏（空白栏也抄，text 写空）。每项标 legible；不能确定的字符写 legible=false，不要猜。
 - 先读照片水印或屏幕上显示的日期时间，原样照抄进 photo_date；没有就不填。
-- 按时间排列的记录（巡检卡、检查记录表、台账）逐格抄写，每一格一项：有字的照抄，空白的 text 写空、legible 写 true，看不清的 legible 写 false。不要把一段格子概括成“某月至某月空白”。对照拍摄日期看：拍摄日期之后的格子空白属正常；拍摄日期之前和当期的格子要逐格看清再判断是否空白。
+- 按时间排列的记录（巡检卡、检查记录表、台账）逐格抄写，每一格一项：有字的照抄，空白的 text 写空、legible 写 true，看不清的 legible 写 false。不要把一段格子概括成“某月至某月空白”。对照拍摄日期看：拍摄日期之后的格子空白属正常；拍摄日期之前和当期的格子要逐格看清再判断是否空白。日期晚于拍摄日期的格子 after_photo_date 写 true。
 - visible 用一两句话写照片拍的是什么设备、什么部位、可见状态。不推测看不到的部分，不引用标准，不下合格或不合格的结论。
 - 照片看不清、打不开或可能有安全隐患需要人看时，needs_review 写 true。
 tools: []

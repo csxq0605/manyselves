@@ -1,5 +1,5 @@
 id: report-ledger
-version: 1.2.0
+version: 1.3.0
 description: Judge into a ledger first, relate across modules, review each row with what it cites, write once, then check and deliver
 tasks:
 - read-project
@@ -67,6 +67,26 @@ actions:
   variable: relate_items
   value_variable: built
   field: relate_items
+# Photos are read again while the authors relate their rows: the choice of
+# photos rests on the rows' own dispositions, not on the relations.
+- id: plan-reread
+  kind: invoke_tool
+  tool: plan-photo-reread
+  input_variables:
+    ledger: built
+  output_variable: reread_plan
+- id: reread-items
+  kind: set_variable
+  variable: reread_items
+  value_variable: reread_plan
+  field: reread_items
+- id: relate-and-reread
+  kind: parallel
+  branches:
+    relate: relate-modules
+    reread: reread-photos
+  join: join-relate
+  max_concurrency: 2
 - id: relate-modules
   kind: map
   items_variable: relate_items
@@ -75,25 +95,9 @@ actions:
   key_input_variable: item_key
   output_variable: relations
   max_concurrency: 5
-- id: apply-relations
-  kind: invoke_tool
-  tool: apply-judgment-relations
-  input_variables:
-    context: context
-    ledger: built
-    relations: relations
-  output_variable: related
-- id: plan-reread
-  kind: invoke_tool
-  tool: plan-photo-reread
-  input_variables:
-    ledger: related
-  output_variable: reread_plan
-- id: reread-items
-  kind: set_variable
-  variable: reread_items
-  value_variable: reread_plan
-  field: reread_items
+- id: relate-done
+  kind: goto
+  target: join-relate
 - id: reread-photos
   kind: map
   items_variable: reread_items
@@ -103,6 +107,34 @@ actions:
   output_variable: rereads
   errors_variable: reread_errors
   max_concurrency: 4
+- id: reread-done
+  kind: goto
+  target: join-relate
+- id: join-relate
+  kind: join
+  parallel: relate-and-reread
+  inputs:
+    relate: relations
+    reread: rereads
+  output_variable: related_and_reread
+- id: relations-value
+  kind: set_variable
+  variable: relations
+  value_variable: related_and_reread
+  field: relate
+- id: rereads-value
+  kind: set_variable
+  variable: rereads
+  value_variable: related_and_reread
+  field: reread
+- id: apply-relations
+  kind: invoke_tool
+  tool: apply-judgment-relations
+  input_variables:
+    context: context
+    ledger: built
+    relations: relations
+  output_variable: related
 - id: apply-reread
   kind: invoke_tool
   tool: apply-photo-reread
@@ -169,6 +201,30 @@ actions:
   key_input_variable: item_key
   output_variable: written
   max_concurrency: 5
+# Module sections are checked and edited while the chief writes; the chief's
+# own edit pass runs inside ledger-chief, before its fact check.
+- id: check-report
+  kind: invoke_tool
+  tool: check-report
+  input_variables:
+    ledger: final
+    written: written
+  output_variable: checked
+- id: edit-items
+  kind: set_variable
+  variable: edit_items
+  value_variable: checked
+  field: edit_items
+- id: edit-pass
+  kind: map
+  items_variable: edit_items
+  key_field: owner
+  workflow: ledger-edit-pass
+  key_input_variable: item_key
+  input_variables:
+    review_base: review_base
+  output_variable: edits
+  max_concurrency: 6
 - id: writing-done
   kind: goto
   target: join-draft
@@ -187,12 +243,12 @@ actions:
   kind: join
   parallel: draft
   inputs:
-    writing: written
+    writing: edits
     chief: chief
   output_variable: drafts
-- id: written-sections
+- id: module-edits
   kind: set_variable
-  variable: written_sections
+  variable: edits
   value_variable: drafts
   field: writing
 - id: chief-outputs
@@ -200,29 +256,6 @@ actions:
   variable: chief_outputs
   value_variable: drafts
   field: chief
-- id: check-report
-  kind: invoke_tool
-  tool: check-report
-  input_variables:
-    ledger: final
-    written: written_sections
-    chief: chief_outputs
-  output_variable: checked
-- id: edit-items
-  kind: set_variable
-  variable: edit_items
-  value_variable: checked
-  field: edit_items
-- id: edit-pass
-  kind: map
-  items_variable: edit_items
-  key_field: owner
-  workflow: ledger-edit-pass
-  key_input_variable: item_key
-  input_variables:
-    review_base: review_base
-  output_variable: edits
-  max_concurrency: 6
 - id: compose
   kind: invoke_tool
   tool: compose-report

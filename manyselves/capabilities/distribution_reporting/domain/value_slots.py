@@ -6,10 +6,12 @@ gets a slot id; the prose names the slot and the program writes the value
 with its unit when the report is composed:
 
 - ``〔V-0001〕`` one declared value of one record, with its column's unit;
-- ``〔K-0001〕`` one calculation or count, with its unit;
+- ``〔K-0001〕`` one calculation with its unit, or a count as a bare number
+  (the prose adds the measure word: 个, 台, 条);
 - ``〔S-0001〕`` one checkpoint's object list, ``〔S-0001:NG〕`` only the
   objects with that status;
-- ``〔V-0001:对象〕`` the object's name and its value together, so values
+- ``〔V-0001:对象〕`` the object's name and its value together (a space
+  between them), so values
   listed for several objects cannot be paired with the wrong one;
 - ``〔S-0001:取值〕`` a numeric checkpoint's distinct values, smallest first;
 - ``〔#:V-0003、V-0007〕`` the number of objects the listed slots belong to,
@@ -125,7 +127,7 @@ def slot_table(
         if spec.get("kind") == "numeric":
             entries = spec.get("entries") or []
             text = "、".join(
-                f"{entry['subject']}{format_value(entry['value'], spec.get('unit') or '')}"
+                f"{entry['subject']} {format_value(entry['value'], spec.get('unit') or '')}"
                 for entry in entries
             )
             distinct = sorted({float(entry["value"]) for entry in entries})
@@ -176,7 +178,8 @@ def _variant(slot: Mapping[str, Any], variant: str) -> str | None:
     """What a slot's variant writes, or None when this slot has no such variant."""
 
     if variant == "对象":
-        return f"{slot['subject']}{slot['text']}" if slot.get("subject") else None
+        # A space keeps a cabinet number and its value apart ("D1701 186A").
+        return f"{slot['subject']} {slot['text']}" if slot.get("subject") else None
     found = slot.get(variant)
     return None if found is None else str(found)
 
