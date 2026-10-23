@@ -1,11 +1,12 @@
 id: chief-chapter-1
-version: 1.5.0
+version: 1.6.0
 description: Write chapter 1 from the ledger and the chapter 3 just settled
 agent: report-consultant
 objective: 继续作为总编，依据上文的总编资料和输入（rows、module_counts、story_lines、object_chains、same_observation、value_slots 等）以及你提交的第三章，写第一章：1.1 评估背景、1.2 健康度总览（总体评价加三张表的结构化行）、1.3 各区域执行摘要。输入没有重发，按上文的为准。
 input_contract: ledger_chief_followup
 output_contract: ledger_chief_chapter_1
 constraints:
+- 只提交第一章的字段：assessment_background、overall_assessment、dimension_health、key_risks、phases、regional_executive_summary，六项都要有；不写第三章的 actions、action_lead 等字段。key_risks 每条都写全 description、hazard、action、row_ids。
 - same_observation 里每一组是引用了同一条现场记录（同一张表的同一格）的几个小节的判断：它是一条记录、一个问题，只算一项、只写一个当前定级，可以说明它从几个角度看各意味着什么，但不写成几项缺陷，也不当作两条记录相互印证。
 - 不写审查、卷宗、台账、返修等流程用语，也不写免责句。
 - 参考上文专家版方法里第一章的“章节综合”“写法”和“范例”。文字字段只写文字，不画表；表格由系统按结构化字段生成。

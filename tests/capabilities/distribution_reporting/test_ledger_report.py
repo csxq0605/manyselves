@@ -286,13 +286,14 @@ def _answer(message):
         # One turn answers the fact check of both chapters, on the version checked.
         assert set(value["findings"]) == {"1.2-重点风险-1"}
         assert value["findings"]["1.2-重点风险-1"]["grounds"]["J-2.4-1"]
-        # Only what the findings point at: section 1.2, chapter 1 in full
-        # because a table of it is pointed at, and the 3.2 group that cites
-        # the same row (same_elsewhere).
-        assert set(value["texts"]) == {"1.2"}
-        assert value["chapter1"]["key_risks"]
+        # Only what the findings point at, by place id: the risk itself and
+        # the 3.2 group that cites the same row (same_elsewhere); no section text.
+        assert value["units"] == {}
+        assert set(value["key_risks"]) == {"1.2-重点风险-1"}
+        assert "chapter1" not in value and "texts" not in value
         assert [action["group_id"] for action in value["actions"]] == ["G-01"]
-        return ("submit", [{"sections": {"1.2": "总体良好，个别对象温度偏高需复测。"}}])
+        risk = {**value["key_risks"]["1.2-重点风险-1"], "description": "个别对象温度偏高需复测"}
+        return ("submit", [{"key_risks": {"1.2-重点风险-1": risk}}])
     if task in {"chief-chapter-1", "revise-chief-overview"}:
         return (
             "submit",
@@ -432,7 +433,7 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         encoding="utf-8"
     )
     # The chief's answer to the fact check reaches the report.
-    assert "总体良好，个别对象温度偏高需复测。" in markdown
+    assert "个别对象温度偏高需复测" in markdown
     docx = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
     # The draft is marked the same way in both files.
     assert markdown.startswith("# 配电安全专家咨询报告（草稿）\n\n草稿：本报告存在资料缺口")

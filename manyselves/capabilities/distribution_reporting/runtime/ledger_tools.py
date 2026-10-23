@@ -77,7 +77,7 @@ from ..domain.value_slots import (
     strip_slots,
 )
 from .assets import runtime_photo_ids
-from .chief_fact_packets import apply_fact_findings, chief_fact_packets
+from .chief_fact_packets import apply_fact_findings, chief_fact_packets, chief_pieces, place_chief_fix
 from .context_packs import (
     PROJECT_LEVEL,
     GROUP_ROW_SPAN,
@@ -2239,10 +2239,11 @@ class LedgerTools(LedgerStageTools):
     def chief_fix_input(self, value: dict[str, Any]) -> dict[str, Any]:
         """What the chief's one fix needs, for a conversation of its own.
 
-        The findings with the rows and records they cite (grounds), the text
-        sections they or their same_elsewhere point at, chapter 1 in full
-        only when one of its tables is pointed at (the fix then submits it
-        whole), and the 3.2 groups pointed at.  Nothing else of the chapters.
+        The findings with the rows and records they cite (grounds), and only
+        the pieces they or their same_elsewhere point at, each under its
+        place id: paragraphs and 3.1 lines as text (a finding on a whole
+        section brings all its paragraphs), chapter 1 table rows, 3.1 cross
+        findings and 3.2 groups as they stand.  The fix answers piece by piece.
         """
 
         check = _plain(value["fact_check"])
@@ -2252,25 +2253,26 @@ class LedgerTools(LedgerStageTools):
             for ref in finding.get("same_elsewhere") or []:
                 if match := re.search(r"（([^（）]+)）\s*$", str(ref)):
                     places.add(match.group(1))
-        texts = {
-            section_id: text
-            for section_id, text in (check.get("texts") or {}).items()
-            if any(place == section_id or place.startswith(section_id + "-") for place in places)
-        }
+        chapter1 = _plain(value["chapter1"]) or {}
+        chapter3 = _plain(value["chapter3"]) or {}
+        pieces = chief_pieces(chapter1, chapter3)
+
+        def pointed(place_id: str) -> bool:
+            section = place_id.split("-", 1)[0]
+            return place_id in places or (section in places and place_id in pieces["units"])
+
         result: dict[str, Any] = {
             "findings": findings,
             "blocking": bool(check.get("blocking")),
-            "texts": texts,
+            "units": {k: v for k, v in pieces["units"].items() if pointed(k)},
         }
-        if any(re.match(r"1\.2-(健康度|重点风险|阶段)", place) for place in places):
-            result["chapter1"] = _plain(value["chapter1"])
+        for field in ("key_risks", "phases", "cross_findings"):
+            if chosen := {k: v for k, v in pieces[field].items() if k in places}:
+                result[field] = chosen
+        if health := [h for k, h in pieces["health"].items() if k in places]:
+            result["health"] = health
         groups = {place.split("-", 1)[1] for place in places if place.startswith("3.2-")}
-        actions = [
-            action
-            for action in (_plain(value["chapter3"]).get("actions") or [])
-            if str(action.get("group_id")) in groups
-        ]
-        if actions:
+        if actions := [a for a in chapter3.get("actions") or [] if str(a.get("group_id")) in groups]:
             result["actions"] = actions
         return result
 
@@ -2423,32 +2425,21 @@ class LedgerTools(LedgerStageTools):
     def apply_chief_fix(self, value: dict[str, Any]) -> dict[str, Any]:
         """Fold the chief's answer to the fact check into chapters 1 and 3.
 
-        The answer holds only what changes: whole text sections (1.1-1.3,
-        3.1), chapter 1 in full when one of its tables changes, and the 3.2
-        groups that change, by group id.  Everything else is drawn again from
-        the chapters.  The program's checks run once more on the result; what
-        they find is recorded for the delivery report, nothing goes back.
+        The answer holds only what changes, piece by piece under the place ids
+        the fact check uses (see ``chief_pieces``); each piece is put back in
+        place and the text sections are drawn again from the chapters.  A
+        piece naming no place is recorded for the delivery report.  The
+        program's checks run once more on the result; what they find is
+        recorded too, nothing goes back.
         """
 
         final = value["ledger"]
         run_id = final["run_id"]
         fix = ChiefFix.model_validate(_plain(value.get("fix") or {}))
-        chapter1 = fix.chapter1.model_dump(mode="json") if fix.chapter1 else dict(value["chapter1"])
-        chapter3 = dict(_plain(value["chapter3"]))
-        patches = {action.group_id: action.model_dump(mode="json") for action in fix.actions}
-        if patches:
-            chapter3["actions"] = [
-                patches.get(str(action.get("group_id")), action)
-                for action in chapter3.get("actions") or []
-            ]
-        if fix.action_lead.strip():
-            chapter3["action_lead"] = fix.action_lead
-        drawn = self._chief_texts({"chapter1": chapter1, "chapter3": chapter3}, final)
-        texts = {**drawn, **{k: v for k, v in fix.sections.items() if k in drawn}}
-        for section_id, text in texts.items():
-            if section_id.startswith("1."):
-                chapter1[CHIEF_SECTIONS[section_id]] = text
-        unknown = sorted(set(patches) - {str(a.get("group_id")) for a in chapter3.get("actions") or []})
+        chapter1, chapter3, unplaced = place_chief_fix(
+            _plain(value["chapter1"]), _plain(value["chapter3"]), fix
+        )
+        texts = self._chief_texts({"chapter1": chapter1, "chapter3": chapter3}, final)
         after = self._chief_program_findings(run_id, texts, hints_out=None)
         tables = self.check_chief({"ledger": final, "chapter3": chapter3})["findings"]
         tables.update(self.check_chief({"ledger": final, "chapter3": chapter3, "chapter1": chapter1})["findings"])
@@ -2457,7 +2448,7 @@ class LedgerTools(LedgerStageTools):
             "chief_after_fix",
             {
                 **{key: f["problem"] for key, f in {**after, **tables}.items()},
-                **({"3.2": "主编返修提交了不存在的行动组：" + "、".join(unknown)} if unknown else {}),
+                **({"chief_fix": "主编返修提交了不存在的位置：" + "、".join(unplaced)} if unplaced else {}),
             },
         )
         return {

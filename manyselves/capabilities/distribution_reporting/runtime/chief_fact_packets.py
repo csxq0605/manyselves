@@ -124,6 +124,104 @@ def chief_units(
     return units
 
 
+_TEXT_FIELDS = {"1.1": "assessment_background", "1.2": "overall_assessment", "1.3": "regional_executive_summary"}
+
+
+def chief_pieces(chapter1: Mapping[str, Any] | None, chapter3: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """The editable pieces of chapters 1 and 3 under the place ids of ``chief_units``.
+
+    ``units`` are text: the paragraphs of 1.1-1.3 and the 3.1 summary and
+    detail lines.  The others are the structured items as they stand.
+    """
+
+    one, three = dict(chapter1 or {}), dict(chapter3 or {})
+    units: dict[str, str] = {}
+    for section, field in _TEXT_FIELDS.items():
+        for n, paragraph in enumerate(_paragraphs(one.get(field, "")), 1):
+            units[f"{section}-段{n}"] = paragraph
+    for n, line in enumerate(three.get("risk_summary") or [], 1):
+        units[f"3.1-汇总-{n}"] = line
+    for details in three.get("risk_details") or []:
+        for n, point in enumerate(details.get("points") or [], 1):
+            units[f"3.1-详述-{details.get('module_id')}-{n}"] = point
+    return {
+        "units": units,
+        "health": {f"1.2-健康度-{h.get('module_id')}": h for h in one.get("dimension_health") or []},
+        "key_risks": {f"1.2-重点风险-{n}": r for n, r in enumerate(one.get("key_risks") or [], 1)},
+        "phases": {f"1.2-阶段-{n}": p for n, p in enumerate(one.get("phases") or [], 1)},
+        "cross_findings": {f"3.1-综合-{n}": f for n, f in enumerate(three.get("cross_findings") or [], 1)},
+    }
+
+
+def place_chief_fix(
+    chapter1: Mapping[str, Any], chapter3: Mapping[str, Any], fix: Any
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Put each piece of the chief's fix back where its place id points.
+
+    Returns the two chapters and the place ids that point nowhere.
+    """
+
+    one = json.loads(json.dumps(chapter1 or {}, ensure_ascii=False))
+    three = json.loads(json.dumps(chapter3 or {}, ensure_ascii=False))
+    unplaced: list[str] = []
+
+    def put(items: list[Any], n: int, value: Any, place: str) -> None:
+        if 1 <= n <= len(items):
+            items[n - 1] = value
+        else:
+            unplaced.append(place)
+
+    for place, text in (fix.units or {}).items():
+        text = str(text).strip()
+        if match := re.fullmatch(r"(1\.[123])-段(\d+)", place):
+            field = _TEXT_FIELDS[match.group(1)]
+            paragraphs = _paragraphs(one.get(field, ""))
+            n = int(match.group(2))
+            if 1 <= n <= len(paragraphs) and text:
+                paragraphs[n - 1] = text
+                one[field] = ("\n\n" if "\n\n" in str(one.get(field, "")) else "\n").join(paragraphs)
+            else:
+                unplaced.append(place)
+        elif match := re.fullmatch(r"3\.1-汇总-(\d+)", place):
+            put(three.setdefault("risk_summary", []), int(match.group(1)), text, place)
+        elif match := re.fullmatch(r"3\.1-详述-(.+)-(\d+)", place):
+            details = next(
+                (d for d in three.get("risk_details") or [] if str(d.get("module_id")) == match.group(1)), None
+            )
+            if details is None:
+                unplaced.append(place)
+            else:
+                put(details.setdefault("points", []), int(match.group(2)), text, place)
+        else:
+            unplaced.append(place)
+    health = {str(h.get("module_id")): h for h in one.get("dimension_health") or []}
+    for row in fix.health or []:
+        dumped = row.model_dump(mode="json")
+        if str(dumped.get("module_id")) in health:
+            health[str(dumped["module_id"])].clear()
+            health[str(dumped["module_id"])].update(dumped)
+        else:
+            unplaced.append(f"1.2-健康度-{dumped.get('module_id')}")
+    for field, chapter, prefix, items_key in (
+        ("key_risks", one, "1.2-重点风险-", "key_risks"),
+        ("phases", one, "1.2-阶段-", "phases"),
+        ("cross_findings", three, "3.1-综合-", "cross_findings"),
+    ):
+        for place, item in (getattr(fix, field) or {}).items():
+            n = place[len(prefix):] if place.startswith(prefix) else ""
+            if n.isdigit():
+                put(chapter.setdefault(items_key, []), int(n), item.model_dump(mode="json"), place)
+            else:
+                unplaced.append(place)
+    patches = {action.group_id: action.model_dump(mode="json") for action in fix.actions or []}
+    known = {str(a.get("group_id")) for a in three.get("actions") or []}
+    three["actions"] = [patches.get(str(a.get("group_id")), a) for a in three.get("actions") or []]
+    unplaced += [f"3.2-{g}" for g in sorted(set(patches) - known)]
+    if str(fix.action_lead or "").strip():
+        three["action_lead"] = fix.action_lead
+    return one, three, unplaced
+
+
 def _named(text: str, names: Iterable[str]) -> list[str]:
     """Names whose every part (房间/柜号) is in the text, spaces ignored."""
 
@@ -398,6 +496,8 @@ def apply_fact_findings(
 
 
 __all__ = [
+    "chief_pieces",
+    "place_chief_fix",
     "MAX_CHARS", "MAX_UNITS", "apply_fact_findings", "chief_fact_packets", "chief_units",
     "packet_material",
 ]

@@ -961,17 +961,28 @@ class SectionSet(_Model):
 class ChiefFix(_Model):
     """The chief's one answer to the fact check of chapters 1 and 3.
 
-    Only what changes is submitted: a text section of 1.1-1.3 or 3.1 as a
-    whole, chapter 1 in full only when one of its tables changes, and only
-    the 3.2 groups that change.
+    Only what changes is submitted, each piece under the place the finding
+    names: a paragraph or a 3.1 line by its unit id, a table row of chapter 1
+    by its id, and the 3.2 groups that change.  The program puts each back in
+    place; the rest of the chapters stays as it was.
     """
 
-    sections: dict[str, str] = Field(
+    units: dict[str, str] = Field(
         default_factory=dict,
-        description="要改的正文小节（1.1、1.2、1.3、3.1）：键是小节编号，值是改好后的完整正文；不改的不提交",
+        description="要改的段落和 3.1 条目：键是位置编号（1.1-段n、1.2-段n、1.3-段n、3.1-汇总-n、"
+        "3.1-详述-模块-n），值是改好后的这一段或这一条全文；不改的不提交",
     )
-    chapter1: ChiefChapter1 | None = Field(
-        default=None, description="第一章的表（健康度、重点风险、阶段）要改时，提交改好后的完整第一章；不改留空"
+    health: list[DimensionHealth] = Field(
+        default_factory=list, description="1.2 健康度表要改的行：每个模块一条，写改好后的整行（module_id 照抄）；不改的不提交"
+    )
+    key_risks: dict[str, KeyRisk] = Field(
+        default_factory=dict, description="1.2 重点风险表要改的条：键是位置编号（1.2-重点风险-n），值是改好后的整条；不改的不提交"
+    )
+    phases: dict[str, Phase] = Field(
+        default_factory=dict, description="1.2 阶段表要改的条：键是位置编号（1.2-阶段-n），值是改好后的整条；不改的不提交"
+    )
+    cross_findings: dict[str, CrossFinding] = Field(
+        default_factory=dict, description="3.1 跨对象综合结论要改的条：键是位置编号（3.1-综合-n），值是改好后的整条；不改的不提交"
     )
     actions: list[ActionText] = Field(
         default_factory=list,
