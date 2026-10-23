@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -783,7 +784,11 @@ def test_run_events_project_file_sink_for_current_run_only(tmp_path: Path) -> No
 
     facade = _facade(tmp_path, _ReportingAdapter())
 
-    assert facade.get_events("report-1") == {
+    projected = facade.get_events("report-1")
+    # Each line carries the time it was written, for progress views.
+    stamped = projected["events"][0].pop("ts")
+    assert datetime.fromisoformat(stamped).tzinfo is not None
+    assert projected == {
         "run_id": "report-1",
         "events": [
             {

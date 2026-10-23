@@ -2087,7 +2087,9 @@ async def test_generic_workflow_run_is_visible_only_in_its_active_project(
     assert started.status_code == 202
     assert visible_in_p2.status_code == 200
     assert events_in_p2.status_code == 200
-    assert events_in_p2.json()["events"][-1] == {
+    last_event = events_in_p2.json()["events"][-1]
+    assert last_event.pop("ts")  # when the line was written
+    assert last_event == {
         "kind": "workflow.completed",
         "runId": run_id,
         "workflowId": "parameter-adjustment",

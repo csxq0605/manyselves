@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -80,8 +81,11 @@ class FileWorkflowEventSink:
             / "workflow-events.jsonl"
         )
         path.parent.mkdir(parents=True, exist_ok=True)
+        # The time an event was written, for progress views; not part of the
+        # event itself.
+        line = {**event.model_dump(mode="json"), "ts": datetime.now(UTC).isoformat()}
         with path.open("a", encoding="utf-8") as stream:
-            stream.write(event.model_dump_json())
+            stream.write(json.dumps(line, ensure_ascii=False))
             stream.write("\n")
 
 

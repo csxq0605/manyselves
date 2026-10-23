@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
+import type { RunProgressResponse } from "../runs/workflow-api";
 import { RuntimePage, RuntimeRoutePage } from "./RuntimePage";
 
 type RuntimeSnapshot = components["schemas"]["RuntimeSnapshotResponse"];
@@ -114,7 +115,115 @@ describe("RuntimePage", () => {
     expect(screen.getByText("判断、关联、审查、写作与总编")).toBeVisible();
     expect(screen.getByText("已完成 9 个顶层步骤")).toBeVisible();
     expect(screen.getByText("full-report-live")).toBeVisible();
-    expect(screen.getByText("当前没有对话协作任务")).toBeVisible();
+    // The Main-era task board and queue only show when they hold something.
+    expect(screen.queryByText("当前没有对话协作任务")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "运行进度" })).toBeVisible();
+  });
+
+  it("follows the running Run step by step, newest calls and events first", () => {
+    const writer = "distribution-reporting:full-report-0123456789abcdef0123456789abcdef:report-consultant:run:full-report-0123456789abcdef0123456789abcdef:report-consultant:writer:2.4#1";
+    const progress: RunProgressResponse = {
+      events: [
+        { action_id: "write-modules", agent_id: null, error: null, key: "2.3", kind: "map.item.completed", reused: null, tool_id: null, ts: "2026-10-23T14:29:59Z", workflow_id: "report-ledger" },
+        { action_id: "judge-modules", agent_id: null, error: "模型没有给出可用结果", key: "G2", kind: "map.item.failed", reused: null, tool_id: null, ts: "2026-10-23T14:10:00Z", workflow_id: "report-ledger" },
+      ],
+      root: {
+        current: "run-report-ledger",
+        detail: {
+          action_id: "run-report-ledger",
+          child: {
+            current: "draft",
+            detail: {
+              action_id: "draft",
+              branches: [
+                {
+                  branch_id: "writing",
+                  node: {
+                    current: "write-modules",
+                    detail: {
+                      action_id: "write-modules",
+                      completed: 3,
+                      completed_keys: ["2.1", "2.2", "2.3"],
+                      failed: 0,
+                      items: [{
+                        key: "2.4#1",
+                        node: {
+                          current: "write",
+                          detail: { action_id: "each-section", index: 1, kind: "for_each", total: 4 },
+                          status: "running",
+                          steps: [{ id: "each-section", kind: "for_each", status: "pending" }, { id: "write", kind: "invoke_agent", status: "running" }],
+                          workflow_id: "ledger-module-writing",
+                        },
+                        status: "running",
+                      }],
+                      kind: "map",
+                      queued: 1,
+                      queued_keys: ["2.5"],
+                      running: 1,
+                      total: 5,
+                      workflow: "ledger-module-writing",
+                    },
+                    status: "running",
+                    steps: [{ id: "write-modules", kind: "map", status: "running" }, { id: "check-report", kind: "invoke_tool", status: "pending" }],
+                    workflow_id: "report-ledger",
+                  },
+                  start: "write-modules",
+                  status: "running",
+                },
+                { branch_id: "chief", node: null, start: "chief-summary", status: "pending" },
+              ],
+              kind: "parallel",
+            },
+            status: "running",
+            steps: [
+              { id: "judge-modules", kind: "map", status: "completed" },
+              { id: "draft", kind: "parallel", status: "running" },
+            ],
+            workflow_id: "report-ledger",
+          },
+          kind: "subworkflow",
+        },
+        status: "running",
+        steps: [
+          { id: "run-photo-reading", kind: "subworkflow", status: "completed" },
+          { id: "run-report-ledger", kind: "subworkflow", status: "running" },
+        ],
+        workflow_id: "full-report",
+      },
+      runId: "full-report-live",
+      status: "running",
+      workflowId: "full-report",
+    };
+    render(<RuntimePage
+      progress={progress}
+      runs={[activeWorkflowRun]}
+      snapshot={{
+        ...snapshot,
+        agent_statuses: { main: "idle", [writer]: "thinking" },
+        tasks: [],
+        tools: [
+          { ...snapshot.tools[0]!, name: "older_call", status: "completed", toolCallId: "t-1" },
+          { ...snapshot.tools[0]!, agentId: writer, name: "submit_result", status: "running", toolCallId: "t-2" },
+        ],
+      }}
+    />);
+
+    // The current stage, explained, and each parallel branch's own position.
+    expect(screen.getByText("写正文与总编", { selector: ".run-progress__note strong" })).toBeVisible();
+    expect(screen.getByText("各写作组写第二章，总编同时写第三章和第一章。")).toBeVisible();
+    expect(screen.getByText(/5 个写作组：完成 3 · 进行中 1 · 排队 1/)).toBeVisible();
+    expect(screen.getByText("写一节 · 第 2 / 4 项")).toBeVisible();
+    expect(screen.getByText("排队：2.5")).toBeVisible();
+    // Workflow Agents show by role and piece, not by their raw ids.
+    expect(screen.getAllByText("report-consultant · writer · 2.4#1").length).toBeGreaterThan(0);
+    expect(screen.getByText("思考中")).toBeVisible();
+    // Newest first.
+    const tools = screen.getByRole("heading", { name: "工具调用" }).closest("section")!;
+    expect(within(tools).getAllByRole("listitem")[0]).toHaveTextContent("submit_result");
+    const events = screen.getByRole("heading", { name: "运行动态（最新在上）" }).parentElement!;
+    expect(within(events).getAllByRole("listitem")[0]).toHaveTextContent("模块写作：2.3 完成");
+    // Run failures are errors too.
+    expect(screen.getByText("各模块判断 · G2：模型没有给出可用结果")).toBeVisible();
   });
 
   it("loads project Workflow Runs into the runtime route", async () => {
@@ -123,6 +232,9 @@ describe("RuntimePage", () => {
         projects: [{ active: true, description: "", displayName: "success", id: "success", revision: "r1" }],
       };
       if (path === "/api/v1/runs") return { runs: [activeWorkflowRun] };
+      if (path === "/api/v1/runs/full-report-live/progress") return {
+        events: [], root: null, runId: "full-report-live", status: "running", workflowId: "full-report",
+      };
       throw new Error(`unexpected path: ${path}`);
     });
     const gateway = {
@@ -144,6 +256,8 @@ describe("RuntimePage", () => {
 
     expect(await screen.findByText("full-report-live")).toBeVisible();
     expect(requestJson).toHaveBeenCalledWith("/api/v1/runs");
+    expect(await screen.findByText("还没有运行进度")).toBeVisible();
+    expect(requestJson).toHaveBeenCalledWith("/api/v1/runs/full-report-live/progress");
     expect(screen.getByText("1 个运行进行中")).toBeVisible();
   });
 });

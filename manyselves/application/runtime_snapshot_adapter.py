@@ -30,10 +30,12 @@ class RuntimeSnapshotAdapter:
         statuses = manager.get_all_agent_statuses() if manager is not None else {}
         session_id = manager.get_agent_session_id("main") if manager is not None else None
         recovery = self.state.build(manager, statuses)
+        # Workflow Agents are not loops: their live statuses come from events.
+        busy = self.state.busy_agents(known=statuses)
         return RuntimeSnapshot(
             ready=True,
             workspace=str(workspace) if workspace is not None else None,
-            agent_statuses=statuses,
+            agent_statuses={**statuses, **busy},
             active_session_id=session_id,
             controller_client_id=controller_client_id,
             **recovery,

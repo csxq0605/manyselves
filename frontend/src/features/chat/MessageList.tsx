@@ -5,7 +5,7 @@ import { formatShanghaiDateTime } from "../../app/date-time";
 import { createUuid } from "../../app/uuid";
 import type { RuntimeMessageView } from "../agents/event-reducer";
 import type { ConversationApi } from "../conversations/conversation-api";
-import { normalizeMessages, type ChatMessage } from "./message-model";
+import { isSystemNotice, normalizeMessages, type ChatMessage } from "./message-model";
 
 interface EditAttempt {
   readonly content: string;
@@ -108,7 +108,7 @@ export function MessageList({
     : normalizeMessages(messages);
   const preCheckpointsByMessageId = new Map<string, ChatMessage>();
   const visibleHistory = history.filter((message) => {
-    if (isRuntimeTrace(message)) return false;
+    if (isRuntimeTrace(message) || isSystemNotice(message)) return false;
     if (!isPreCheckpoint(message)) return true;
     if (message.messageId) preCheckpointsByMessageId.set(message.messageId, message);
     return false;

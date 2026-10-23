@@ -378,8 +378,10 @@ class ConversationStore:
         if extra:
             record.update(extra)
 
-        # Auto-name only from the main panel's first direct user message.
-        if role == "user" and agent_type == "main":
+        # Auto-name only from the main panel's first direct user message; a
+        # system notice sent to Main as a user turn names nothing.
+        direct = str((extra or {}).get("source") or "user") == "user"
+        if role == "user" and agent_type == "main" and direct:
             self.rename_current_session_from_first_message(agent_type, content)
             self.update_session_preview(agent_type, content)
         try:

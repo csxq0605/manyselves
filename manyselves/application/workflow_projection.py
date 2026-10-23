@@ -25,6 +25,7 @@ from manyselves.runtime.capability_binding import (
 from manyselves.runtime.run_failure import RunFailure, describe_failure
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
+from .run_progress import RunProgressReader
 from .run_supervisor import RunSupervisor
 
 
@@ -108,6 +109,7 @@ class WorkflowProjectionFacade:
             workspace=self.workspace,
             services=runtime_services,
         )
+        self._progress = RunProgressReader(self.workspace)
         self.supervisor: RunSupervisor | None = None
         if supervise:
             self.supervisor = RunSupervisor(self, _main_notifier(runtime_services))
@@ -358,6 +360,22 @@ class WorkflowProjectionFacade:
             if event.get("run_id") == run_id:
                 events.append(event)
         return {"run_id": run_id, "events": events}
+
+    def get_progress(self, run_id: str) -> dict[str, Any]:
+        """Where the Run is now, read from its persisted state tree."""
+
+        self._locate_run(run_id)
+        try:
+            return self._progress.read(run_id)
+        except FileNotFoundError:
+            run = self.get_run(run_id)["run"]
+            return {
+                "run_id": run_id,
+                "workflow_id": str(run.get("workflow_id") or ""),
+                "status": str(run.get("status") or ""),
+                "root": None,
+                "events": [],
+            }
 
     def _find_workflow(
         self,

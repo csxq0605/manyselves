@@ -3191,6 +3191,17 @@
             "title": "Runid",
             "type": "string"
           },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
           "workflowId": {
             "title": "Workflowid",
             "type": "string"
@@ -3354,6 +3365,50 @@
           "outputs"
         ],
         "title": "WorkflowOutputListResponse",
+        "type": "object"
+      },
+      "WorkflowProgressResponse": {
+        "description": "Where a Run is now: its state tree as steps, items and branches.\n\nThe tree is open-ended (nested workflows, maps and branches), so it is\npassed through as plain objects; ``manyselves.application.run_progress``\ndocuments the shape.",
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "root": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "workflowId": {
+            "title": "Workflowid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "workflowId",
+          "status"
+        ],
+        "title": "WorkflowProgressResponse",
         "type": "object"
       },
       "WorkflowRunAcceptedResponse": {
@@ -7471,6 +7526,60 @@
           }
         ],
         "summary": "Get Run Outputs"
+      }
+    },
+    "/api/v1/runs/{run_id}/progress": {
+      "get": {
+        "operationId": "get_api_v1_runs_run_id_progress",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowProgressResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Run Progress"
       }
     },
     "/api/v1/runs/{run_id}/resume": {

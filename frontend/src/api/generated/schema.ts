@@ -978,6 +978,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Progress */
+        get: operations["get_api_v1_runs_run_id_progress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/resume": {
         parameters: {
             query?: never;
@@ -2374,6 +2391,8 @@ export interface components {
             kind: string;
             /** Runid */
             runId: string;
+            /** Ts */
+            ts?: string | null;
             /** Workflowid */
             workflowId: string;
         };
@@ -2424,6 +2443,30 @@ export interface components {
             outputs: components["schemas"]["WorkflowOutput"][];
             /** Runid */
             runId: string;
+        };
+        /**
+         * WorkflowProgressResponse
+         * @description Where a Run is now: its state tree as steps, items and branches.
+         *
+         *     The tree is open-ended (nested workflows, maps and branches), so it is
+         *     passed through as plain objects; ``manyselves.application.run_progress``
+         *     documents the shape.
+         */
+        WorkflowProgressResponse: {
+            /** Events */
+            events?: {
+                [key: string]: unknown;
+            }[];
+            /** Root */
+            root?: {
+                [key: string]: unknown;
+            } | null;
+            /** Runid */
+            runId: string;
+            /** Status */
+            status: string;
+            /** Workflowid */
+            workflowId: string;
         };
         /** WorkflowRunAcceptedResponse */
         WorkflowRunAcceptedResponse: {
@@ -5158,6 +5201,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowOutputListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_progress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowProgressResponse"];
                 };
             };
             /** @description Request validation failed */
