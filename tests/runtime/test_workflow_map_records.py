@@ -200,6 +200,46 @@ async def test_map_lead_item_starts_before_the_others(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_map_others_start_after_the_leads_first_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from manyselves.runtime import workflow_host
+    from manyselves.runtime.prefix_lead import notify_first_response
+
+    monkeypatch.setattr(workflow_host, "LEAD_CACHE_SETTLE_SECONDS", 0.2)
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(registry, _map_parent(lead_seconds=60))
+    marks: dict[str, float] = {}
+
+    async def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        key = arguments["key"]
+        marks[f"{key}-start"] = time.monotonic()
+        if key == "a":
+            await asyncio.sleep(0.3)  # the provider reads the prompt
+            marks["a-first"] = time.monotonic()
+            notify_first_response()
+            await asyncio.sleep(2.0)  # the lead keeps answering
+        marks[f"{key}-end"] = time.monotonic()
+        return {"total": arguments["item"]["n"]}
+
+    host, _store = _host(tmp_path)
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("map-lead-first", plan),
+        RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    # c started after the lead's first response plus the settle time, and
+    # long before the lead finished.
+    assert marks["c-start"] - marks["a-first"] >= 0.2
+    assert marks["c-start"] < marks["a-end"] - 1.0
+
+
+@pytest.mark.asyncio
 async def test_map_records_item_errors_and_completes_other_items(
     tmp_path: Path,
 ) -> None:

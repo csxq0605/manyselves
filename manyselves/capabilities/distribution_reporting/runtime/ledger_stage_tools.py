@@ -110,10 +110,10 @@ class LedgerStageTools:
     def _sites(self, run_id: str) -> Sites:
         return Sites(ProjectEvidenceIndex(self.workspace, run_id).items())
 
-    def _renderer(self, run_id: str):
+    def _renderer(self, run_id: str, *, for_writer: bool = False):
         reference = self._reference(run_id)
         shared = shared_labels(self.workspace, run_id)
-        readings = photo_reading_labels(self.workspace, run_id)
+        readings = photo_reading_labels(self.workspace, run_id, for_writer=for_writer)
         headers = {
             (path, sheet): columns
             for path, sheet, columns in reference.get("column_headers") or []
@@ -542,7 +542,7 @@ class LedgerStageTools:
         reference = self._reference(run_id)
         skills = reference.get("author_skills") or {}
         sites = self._sites(run_id)
-        render = self._renderer(run_id)
+        render = self._renderer(run_id, for_writer=True)
         length_reference = reference.get("length_reference") or ""
         groups: list[dict[str, Any]] = []
         for item in final.get("writing_items") or []:

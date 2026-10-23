@@ -312,8 +312,10 @@ class MapAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
     errors_variable: str | None = Field(default=None, min_length=1)
     max_concurrency: int | None = Field(default=None, ge=1)
-    # The first item starts alone and the others this many seconds later, so
-    # requests that open with the same text can reuse what the first sent.
+    # The first item starts alone so requests that open with the same text can
+    # reuse what it sent: the others start once its first model response is
+    # back (the provider has read the prompt by then), or after at most this
+    # many seconds.
     lead_seconds: float | None = Field(default=None, gt=0, le=300)
 
 

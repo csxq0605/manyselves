@@ -9,6 +9,7 @@ from anthropic import AsyncAnthropic
 from loguru import logger
 
 from ..runtime_errors import MalformedModelOutputError
+from .tool_json_repair import repair_tool_json
 from .base import (
     LLMProvider,
     LLMResponse,
@@ -550,6 +551,8 @@ class AnthropicProvider(LLMProvider):
         try:
             async with self.client.messages.stream(**params) as stream:
                 stream_opened = True
+                tap = _RawEventTap.attach(stream)
+                recovered = None
                 request_id = getattr(stream, "request_id", None)
                 logger.debug("Anthropic stream opened: request_id={}", request_id)
                 # Stream full events so thinking_delta is not dropped by
@@ -569,10 +572,17 @@ class AnthropicProvider(LLMProvider):
                         raw = _received_output(stream)
                         if raw is None:
                             raise
-                        raise MalformedModelOutputError(
-                            f"模型返回的工具参数不是合法 JSON：{exc}",
-                            raw_output=raw,
-                        ) from exc
+                        # Read the answer to its end and repair the slip
+                        # here; resample only when that is not possible.
+                        recovered = await _finish_broken_tool_input(
+                            stream, tap, idle_timeout
+                        )
+                        if recovered is None:
+                            raise MalformedModelOutputError(
+                                f"模型返回的工具参数不是合法 JSON：{exc}",
+                                raw_output=raw,
+                            ) from exc
+                        break
                     except StopAsyncIteration:
                         iterator_exhausted = True
                         logger.debug(
@@ -608,7 +618,7 @@ class AnthropicProvider(LLMProvider):
 
                 # After streaming completes, extract tool calls from final message
                 stream_phase = "final_message"
-                final_message = await asyncio.wait_for(
+                final_message = recovered or await asyncio.wait_for(
                     stream.get_final_message(),
                     timeout=idle_timeout,
                 )
@@ -761,6 +771,114 @@ class AnthropicProvider(LLMProvider):
             }
             for tool in tools
         ]
+
+
+class _RawEventTap:
+    """Remembers the raw event the SDK was handling when its JSON parse failed.
+
+    The SDK re-parses a tool input after every chunk and stops the stream at
+    the first chunk that breaks it, dropping that chunk.  The tap sits under
+    the SDK's own iterator, so the failing chunk and the rest of the answer
+    can still be read.  Without the SDK attributes it relies on, there is no
+    tap and a broken input is resampled as before.
+    """
+
+    def __init__(self, raw: Any) -> None:
+        self.last: Any = None
+        inner = raw._iterator
+
+        async def tapped():
+            async for event in inner:
+                self.last = event
+                yield event
+
+        self.events = tapped()
+        raw._iterator = self.events
+
+    @classmethod
+    def attach(cls, stream: Any) -> "_RawEventTap | None":
+        raw = getattr(stream, "_raw_stream", None)
+        if raw is None or not hasattr(raw, "_iterator"):
+            return None
+        return cls(raw)
+
+
+async def _finish_broken_tool_input(
+    stream: Any, tap: _RawEventTap | None, idle_timeout: float
+) -> Any | None:
+    """The final message with its broken tool input repaired, or None.
+
+    Reads the rest of the answer from the tap, then repairs each tool input
+    that does not parse.  None when there is no tap or an input cannot be
+    repaired.
+    """
+
+    if tap is None or tap.last is None:
+        return None
+    try:
+        snapshot = stream.current_message_snapshot
+    except Exception:
+        return None
+    blocks = snapshot.content
+    buffers: dict[int, str] = {}
+    for index, block in enumerate(blocks):
+        if getattr(block, "type", None) in {"tool_use", "server_tool_use"}:
+            buffer = getattr(block, "__json_buf", b"") or b""
+            buffers[index] = (
+                buffer.decode("utf-8", "replace") if isinstance(buffer, bytes) else str(buffer)
+            )
+
+    def take(event: Any) -> None:
+        kind = getattr(event, "type", None)
+        if kind == "content_block_start":
+            block = event.content_block
+            blocks.append(block)
+            if getattr(block, "type", None) in {"tool_use", "server_tool_use"}:
+                buffers[len(blocks) - 1] = ""
+        elif kind == "content_block_delta":
+            delta = event.delta
+            block = blocks[event.index]
+            if delta.type == "input_json_delta":
+                buffers[event.index] = buffers.get(event.index, "") + delta.partial_json
+            elif delta.type == "text_delta" and getattr(block, "type", None) == "text":
+                block.text += delta.text
+            elif delta.type == "thinking_delta" and getattr(block, "type", None) == "thinking":
+                block.thinking += delta.thinking
+        elif kind == "message_delta":
+            snapshot.stop_reason = event.delta.stop_reason
+            usage = getattr(event, "usage", None)
+            if usage is not None and getattr(snapshot, "usage", None) is not None:
+                for field in (
+                    "output_tokens",
+                    "input_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                ):
+                    value = getattr(usage, field, None)
+                    if value is not None:
+                        setattr(snapshot.usage, field, value)
+
+    take(tap.last)  # the chunk the SDK dropped
+    while True:
+        try:
+            event = await asyncio.wait_for(tap.events.__anext__(), timeout=idle_timeout)
+        except StopAsyncIteration:
+            break
+        take(event)
+        if getattr(event, "type", None) == "message_stop":
+            break
+    for index, text in buffers.items():
+        if not text:
+            continue
+        repaired = repair_tool_json(text)
+        if repaired is None:
+            logger.warning("Broken tool input could not be repaired: chars={}", len(text))
+            return None
+        value, repairs = repaired
+        if repairs:
+            logger.warning("Repaired a broken tool input: {} (chars={})", "; ".join(repairs), len(text))
+        blocks[index].input = value
+    return snapshot
 
 
 def _received_output(stream: Any) -> str | None:

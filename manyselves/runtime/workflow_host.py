@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.kernel.contracts import build_contract_catalog
@@ -36,9 +37,15 @@ from manyselves.kernel.workflow import (
     restore_plan_definition_registry,
 )
 
+from .prefix_lead import watching_first_response
+
 # ``asyncio.Task.cancel`` message for a user-requested Run cancel.
 RUN_CANCEL_REQUESTED = "run cancelled by user"
 RUN_STOPPED_BEFORE = "run stopped before step"
+# After the lead's first token, how long the others still wait for the
+# provider to store the prefix it read.  The provider builds that entry within
+# seconds and does not say when it is done.
+LEAD_CACHE_SETTLE_SECONDS = 3.0
 
 
 class WorkflowRuntimeEvent(BaseModel):
@@ -465,7 +472,13 @@ class WorkflowRuntimeHost:
             if (saved_states.get(key) or {}).get("status") != WorkflowStatus.COMPLETED
         ]
         lead_key = pending[0] if action.lead_seconds and len(pending) > 1 else None
+        lead_started = asyncio.Event()
         lead_done = asyncio.Event()
+        event_loop = asyncio.get_running_loop()
+
+        def lead_responded() -> None:
+            # A tool may run in a worker thread; set the event on the loop.
+            event_loop.call_soon_threadsafe(lead_started.set)
 
         def checkpoint_item(key: str, current: WorkflowState) -> None:
             item_states[key] = current.model_dump(mode="json")
@@ -476,17 +489,32 @@ class WorkflowRuntimeHost:
             if saved is not None and saved.get("status") == WorkflowStatus.COMPLETED:
                 return WorkflowState.model_validate(saved)
             if lead_key is not None and key != lead_key:
-                # The others wait for the lead's head start, or for the lead
-                # to finish if it is quicker.
+                # The others wait until the provider has read the lead's
+                # prompt (its first token is back) and a moment more for the
+                # cache entry; lead_seconds caps the wait.
+                waited = time.monotonic()
                 try:
-                    await asyncio.wait_for(lead_done.wait(), timeout=action.lead_seconds)
+                    await asyncio.wait_for(lead_started.wait(), timeout=action.lead_seconds)
                 except TimeoutError:
-                    pass
-            try:
+                    logger.info(
+                        "map {} item {}: no response from lead {} within {}s; starting",
+                        action.id, key, lead_key, action.lead_seconds,
+                    )
+                else:
+                    if not lead_done.is_set():
+                        await asyncio.sleep(LEAD_CACHE_SETTLE_SECONDS)
+                    logger.debug(
+                        "map {} item {}: starting {:.1f}s after the lead",
+                        action.id, key, time.monotonic() - waited,
+                    )
+            if key != lead_key:
                 return await run_item(key, item, saved)
+            try:
+                with watching_first_response(lead_responded):
+                    return await run_item(key, item, saved)
             finally:
-                if key == lead_key:
-                    lead_done.set()
+                lead_done.set()
+                lead_started.set()
 
         async def run_item(key: str, item: Any, saved: dict[str, Any] | None) -> WorkflowState:
             async with semaphore:

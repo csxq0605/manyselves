@@ -143,3 +143,18 @@ def test_a_columns_unit_and_name_come_from_its_own_header() -> None:
     assert (header_label(sheet, 2, 3, "x"), header_unit(sheet, 2, 3, "mA")) == ("运行电流", "A")
     # A header that declares no unit keeps the mapper's.
     assert (header_label(sheet, 2, 5, "x"), header_unit(sheet, 2, 5, "%")) == ("负荷率", "%")
+
+
+def test_a_status_list_reads_without_raw_labels() -> None:
+    slots = {
+        "S-0012": {"text": "OK a、b；NG c、d", "OK": "a、b", "NG": "c、d"},
+        "S-0013": {"text": "NG e", "OK": "无", "NG": "e"},
+    }
+    # Written after one of its statuses: that status's objects only.
+    assert fill_slots("2个记为已投用、2个记为NG：〔S-0012〕。", slots) == (
+        "2个记为已投用、2个记为NG：c、d。"
+    )
+    assert fill_slots("记为OK（〔S-0012〕）", slots) == "记为OK（a、b）"
+    # Elsewhere each status is labelled, and a list of one status is bare.
+    assert fill_slots("各柜〔S-0012〕", slots) == "各柜OK：a、b；NG：c、d"
+    assert fill_slots("不合格的是〔S-0013〕", slots) == "不合格的是e"

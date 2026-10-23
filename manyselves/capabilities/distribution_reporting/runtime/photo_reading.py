@@ -161,9 +161,39 @@ def _numeric(text: Any) -> bool:
     return bool(re.search(r"\d", str(text or "")))
 
 
-def photo_reading_labels(workspace: Path, run_id: str) -> dict[str, str]:
+def writer_label(reading: PhotoReading) -> str:
+    """What a writer is told a photo shows: only what can be written as seen.
+
+    The judgment rows already settled what the photo adds.  A writer gets what
+    the photo legibly shows and nothing about readings that were not used, so
+    the prose follows the table record and never says a photo is unclear or
+    disagrees with it.
+    """
+
+    usable = reading.record_match != "conflicts" and reading.reread_agrees is not False
+    copied = "，".join(
+        f"{item.get('label')}={item.get('text')}"
+        for item in reading.transcription
+        if item.get("legible") and item.get("text")
+        and not item.get("after_photo_date")
+        and (usable or not _numeric(item.get("text")))
+    )
+    text = f"{reading.photo_id}：{reading.visible}"
+    if copied:
+        text += f"；抄写：{copied}"
+    if reading.photo_date:
+        text += f"；照片日期：{reading.photo_date}"
+    if usable and reading.record_match == "matches":
+        text += "；照片读数与表格记录一致"
+    return text
+
+
+def photo_reading_labels(
+    workspace: Path, run_id: str, *, for_writer: bool = False
+) -> dict[str, str]:
+    label = writer_label if for_writer else reading_label
     return {
-        photo_id: reading_label(reading)
+        photo_id: label(reading)
         for photo_id, reading in load_photo_readings(workspace, run_id).items()
     }
 
@@ -377,5 +407,6 @@ __all__ = [
     "load_photo_readings",
     "photo_reading_labels",
     "photo_readings_ref",
+    "writer_label",
     "reading_label",
 ]

@@ -1,5 +1,5 @@
 id: report-ledger
-version: 5.2.0
+version: 5.3.0
 description: Judge into a ledger, each author relating its rows right after; review the modules, the shared objects and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
 tasks: []
 recovery:
@@ -35,7 +35,7 @@ actions:
   key_input_variable: item_key
   output_variable: judgments
   max_concurrency: 5
-  lead_seconds: 5
+  lead_seconds: 30
 - id: build-ledger
   kind: invoke_tool
   tool: build-judgment-ledger
@@ -123,7 +123,7 @@ actions:
   key_input_variable: item_key
   output_variable: module_reviews
   max_concurrency: 5
-  lead_seconds: 5
+  lead_seconds: 30
 - id: modules-done
   kind: goto
   target: join-review
@@ -135,7 +135,7 @@ actions:
   key_input_variable: item_key
   output_variable: object_reviews
   max_concurrency: 6
-  lead_seconds: 5
+  lead_seconds: 30
 - id: objects-done
   kind: goto
   target: join-review
@@ -147,7 +147,7 @@ actions:
   key_input_variable: item_key
   output_variable: cross_reviews
   max_concurrency: 12
-  lead_seconds: 5
+  lead_seconds: 30
 - id: cross-done
   kind: goto
   target: join-review
@@ -236,7 +236,7 @@ actions:
   key_input_variable: item_key
   output_variable: written
   max_concurrency: 8
-  lead_seconds: 5
+  lead_seconds: 30
 # Module sections are checked and edited while the chief writes; the chief's
 # chapters are checked by the program and the fact check inside ledger-chief.
 - id: check-report
@@ -259,7 +259,7 @@ actions:
   key_input_variable: item_key
   output_variable: edits
   max_concurrency: 8
-  lead_seconds: 5
+  lead_seconds: 30
 - id: writing-done
   kind: goto
   target: join-draft

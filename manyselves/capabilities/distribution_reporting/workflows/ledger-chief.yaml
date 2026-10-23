@@ -1,5 +1,5 @@
 id: ledger-chief
-version: 5.0.0
+version: 5.1.0
 description: The chief merges actions and writes chapters 3 and 1 from the ledger; chapters 1 and 3 are fact-checked in small packets while the program checks their tables and text. The one fix and chapter 4 follow in ledger-chief-finish, while the authors fix the rows that carry the same errors
 tasks:
 - chief-chapter-3
@@ -101,7 +101,7 @@ actions:
   output_variable: fact_results
   errors_variable: fact_errors
   max_concurrency: 32
-  lead_seconds: 5
+  lead_seconds: 30
 - id: apply-facts
   kind: invoke_tool
   tool: apply-chief-facts

@@ -225,22 +225,32 @@ def _variant(slot: Mapping[str, Any], variant: str) -> str | None:
 _SEPARATED = set("，。；：、,.;:（(【[“\"'「 \n\t|")
 
 
-def _list_text(slot: Mapping[str, Any]) -> str:
-    """A status list without its raw status labels when only one status has objects.
-
-    "NG a、b" reads as raw table text in prose; the sentence already names the
-    status it counts.  With several statuses, each is labelled "NG：…".
-    """
-
-    groups = [
+def _status_groups(slot: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return [
         (key, slot[key]) for key in slot
         if key not in {"text", "label", "evidence_ids", "取值", "subject", "unit", "value"}
         and isinstance(slot[key], str) and slot[key] and slot[key] != EMPTY
     ]
+
+
+def _list_text(slot: Mapping[str, Any], before: str = "") -> str:
+    """A status list without its raw status labels when only one status has objects.
+
+    "NG a、b" reads as raw table text in prose; the sentence already names the
+    status it counts.  A list written right after one of its statuses ("4个记为
+    NG：〔S-0012〕") lists that status's objects only.  Otherwise, with several
+    statuses, each is labelled "NG：…".
+    """
+
+    groups = _status_groups(slot)
     if not groups:
         return str(slot["text"])
     if len(groups) == 1:
         return groups[0][1]
+    lead = before.rstrip(" ：:（(")
+    named = [key for key, _objects in groups if lead.endswith(key)]
+    if named:
+        return str(slot[max(named, key=len)])
     return "；".join(f"{key}：{objects}" for key, objects in groups)
 
 
@@ -256,8 +266,9 @@ def fill_slots(
 
     A value carries its unit, so a unit the prose repeats right after the slot
     ("〔K-0001〕kVA", "〔K-0154〕倍") is written once.  An object list written
-    straight after a word is set off in brackets, and a list of one status
-    drops the raw status label.
+    straight after a word is set off in brackets, a list of one status
+    drops the raw status label, and a list written right after one of its
+    statuses lists that status only.
     """
 
     def value(match: re.Match[str]) -> str:
@@ -270,7 +281,7 @@ def fill_slots(
                 return match.group(0) if unresolved is None else str(slot["text"])
             return filled
         if match.group(1).startswith("S-"):
-            listed = _list_text(slot)
+            listed = _list_text(slot, text[:match.start()])
             clause = text[:match.start()]
             for n in range(len(clause) - 1, -1, -1):
                 if clause[n] in _SEPARATED:
