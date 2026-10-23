@@ -1,7 +1,0 @@
-id: ledger_chief_edit_plan
-version: 1.0.0
-description: The chief's text sections as one edit item
-adapter: json_schema
-schema:
-  type: object
-  required: [item]

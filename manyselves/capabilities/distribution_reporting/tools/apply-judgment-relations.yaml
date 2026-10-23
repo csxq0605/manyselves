@@ -1,6 +1,6 @@
 id: apply-judgment-relations
 version: 1.0.0
-description: Put the authors' relations on their rows, check them and build the review packets
+description: Put each group's own relations and the proposals it took on its rows, and check them
 implementation: capability:distribution-reporting:apply-judgment-relations
 input_contract: ledger_apply_relations_input
 output_contract: ledger_state

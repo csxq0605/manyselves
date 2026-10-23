@@ -25,6 +25,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .action_table import ACTION_PRIORITY_GROUPS, ACTION_TABLE_HEADERS
+from .copied_text import COPIED_SUGGESTION, CopiedText, copied_problem
 from .value_slots import (
     SLOT,
     empty_status_hints,
@@ -40,6 +41,8 @@ Disposition = Literal["concern", "no_concern", "undetermined", "not_applicable"]
 Priority = Literal["重要，紧急", "重要，不紧急", "一般"]
 RiskLevel = Literal["高", "中", "低"]
 EvidenceStatus = Literal["现场确认", "来源作者意见", "资料未提供", "照片待核", "推断"]
+RelationStatus = Literal["成立", "待核实"]
+PENDING_RELATION = "待核实"
 EVIDENCE_STATUS_HELP = (
     "现场确认=表格或照片直接记录了该情况；来源作者意见=原表评语、既有评估等他人结论；"
     "资料未提供=缺资料，不能说明有或没有；照片待核=只靠照片且照片读数有疑问；"
@@ -121,6 +124,21 @@ class RowRelation(_RowPart):
         default="",
         description="知识库没有收录的关联必填：这条关联成立要满足的条件，以及两边哪项事实满足了它",
     )
+    status: RelationStatus = Field(
+        default="成立",
+        description=(
+            "成立=两边的事实已经满足这条关系的条件；待核实=机理成立、但还有一项条件现有资料核实不了，"
+            "在 missing 写明缺哪项、补什么能确认"
+        ),
+    )
+    missing: str = Field(
+        default="",
+        description="待核实的关联必填：还缺哪项条件、补充什么资料或检测能确认；成立的关联不写",
+    )
+
+    @property
+    def pending(self) -> bool:
+        return self.status == PENDING_RELATION
 
 
 class JudgmentRow(_RowPart):
@@ -296,17 +314,92 @@ class StoryPlan(_Model):
     )
 
 
-class JudgmentRevision(_Model):
-    """Targeted revision of a module's rows in answer to review findings."""
+class RowPatch(_Model):
+    """The fields of one existing row that a revision changes, and nothing else."""
 
+    row_id: str = Field(pattern=r"^J-", description="要改的本模块已有判断行编号")
+    fields: dict[str, Any] = Field(
+        min_length=1,
+        description=(
+            "只写要改的字段：键是判断行的字段名（如 disposition、risk_level、basis、finding、hazard、"
+            "hazard_conditions、action、gap、evidence_ids、relations），值是改好后的完整字段值；"
+            "action、gap 这类对象字段写改好后的整个对象。没改的字段不写，行编号不改"
+        ),
+    )
+
+
+class JudgmentRevision(_Model):
+    """Targeted revision of a module's rows in answer to review findings.
+
+    An existing row is changed by a patch of the fields that change; only a
+    new row is written in full.  The program applies the patches and checks
+    the rows they produce.
+    """
+
+    patches: list[RowPatch] = Field(
+        default_factory=list, description="要改的已有行：每行一条，只写改动的字段"
+    )
     rows: list[JudgmentRow] = Field(
-        default_factory=list, description="Changed or added rows, each complete"
+        default_factory=list, description="新增的行，每行写完整；已有的行用 patches 改，不在这里重交"
     )
     removed_row_ids: list[str] = Field(default_factory=list)
     responses: dict[str, str] = Field(
         default_factory=dict,
         description="Finding target to the reason it was not changed",
     )
+
+
+# Fields a patch may not touch: the row's identity.
+_FIXED_FIELDS = frozenset({"id"})
+
+
+def apply_row_patches(
+    rows: Sequence[JudgmentRow], revision: Mapping[str, Any]
+) -> tuple[list[JudgmentRow], list[str], dict[str, str]]:
+    """(the changed and new rows in full, removed ids, problems by row) for one revision.
+
+    A patch on an existing row replaces the named fields and the row is
+    validated again; a patch that names a field rows do not have, a row that
+    does not exist, or that leaves the row invalid is a problem of that row,
+    and the row stays as it was.  A full row for an existing id (an older
+    revision's form) replaces it.
+    """
+
+    current = {row.id: row for row in rows}
+    changed: dict[str, JudgmentRow] = {}
+    problems: dict[str, str] = {}
+    for patch in revision.get("patches") or []:
+        row_id = str(patch.get("row_id", ""))
+        fields = dict(patch.get("fields") or {})
+        base = changed.get(row_id) or current.get(row_id)
+        if base is None:
+            problems[row_id] = f"要改的行 {row_id} 不存在；新增的行写进 rows"
+            continue
+        unknown = sorted(set(fields) - set(JudgmentRow.model_fields) - _FIXED_FIELDS)
+        fixed = sorted(set(fields) & _FIXED_FIELDS)
+        if unknown or fixed:
+            problems[row_id] = "改动里有判断行没有或不能改的字段：" + "、".join([*unknown, *fixed])
+            continue
+        try:
+            changed[row_id] = JudgmentRow.model_validate(
+                {**base.model_dump(mode="json", exclude_none=True), **fields}
+            )
+        except ValueError as error:
+            problems[row_id] = "按改动改完后这一行不成立：" + _validation_text(error)
+    for value in revision.get("rows") or []:
+        row = value if isinstance(value, JudgmentRow) else JudgmentRow.model_validate(value)
+        changed[row.id] = row
+    return list(changed.values()), list(revision.get("removed_row_ids") or []), problems
+
+
+def _validation_text(error: ValueError) -> str:
+    errors = getattr(error, "errors", None)
+    if callable(errors):
+        return "；".join(
+            f"{'.'.join(str(part) for part in item.get('loc', ()))} {item.get('msg', '')}".strip()
+            for item in errors()
+        )
+    return str(error)
 
 
 def _finding(problem: str, suggestion: str, severity: str = "blocking") -> dict[str, str]:
@@ -324,8 +417,12 @@ def ledger_findings(
     evidence_subjects: Mapping[str, str] | None = None,
     cited_values: Mapping[str, Iterable[Sequence[Any]]] | None = None,
     summary_evidence_ids: Iterable[str] = (),
+    copied: CopiedText | None = None,
 ) -> dict[str, dict[str, str]]:
     """Return program findings keyed by row id or by the uncovered fact id.
+
+    With ``copied``, a printed field (checkpoint, finding, hazard, measure,
+    timeframe, gap) that repeats the instructions word for word is sent back.
 
     A concern or undetermined row covers one object: when its facts name
     several objects it must be split, so counts and groups stay per object.
@@ -399,11 +496,13 @@ def ledger_findings(
                 "判断行要印进报告的文字（checkpoint、finding、hazard、措施、缺口）里有内部流程用语或编号："
                 + "、".join(leaked) + "；这些文字会原样进入正文和问题表"
             )
+        if copied is not None and (spans := copied.spans("\n".join(texts))):
+            problems.append(copied_problem(spans) + "（这些字段会原样印进报告）")
         if problems:
             findings[row.id] = _finding(
                 "；".join([*problems, *hints]),
                 "按事实清单改正编号或小节归属；多个对象的拆成每个对象一行；删去流程用语和编号；"
-                "抄自资料的数值补引它的出处。判断本身不变。",
+                "抄自资料的数值补引它的出处；与写作说明逐字相同的文字用本项目的话重写。判断本身不变。",
             )
         elif leaked or hints:
             # An id alone is easy to drop in writing; it does not hold up a revision.
@@ -555,18 +654,23 @@ def drop_mirrored_relations(
     after: Mapping[str, Sequence[JudgmentRow]],
     judged_invalid: Iterable[str],
 ) -> tuple[dict[str, list[JudgmentRow]], list[dict[str, str]]]:
-    """A relation found not to hold goes from both ends.
+    """A relation found not to hold at both ends goes from both ends.
 
     ``judged_invalid`` are the rows whose relations a reviewer judged not to
-    hold (a blocking finding on the relations).  When such a row's revision
-    drops its relation to B, B's relation back to it is dropped as well, and
-    each removal is listed.  A relation an author dropped without that
-    finding stays on the other end, which still holds it.
+    hold (a blocking finding on the relations).  When A and B are both such
+    rows and A's revision drops its relation to B, B's relation back to it is
+    dropped as well, and each removal is listed.  When only A was found
+    wanting, B keeps its relation: it was not challenged.
     """
 
     invalid = set(judged_invalid)
+    # Only when the reviewer judged both ends' relations not to hold: one end
+    # dropping a relation the other end still holds unchallenged is that
+    # author's call on its own row, not a finding against the other row.
     given_up = {
-        (a, b) for a, b in relation_pairs(before) - relation_pairs(after) if a in invalid
+        (a, b)
+        for a, b in relation_pairs(before) - relation_pairs(after)
+        if a in invalid and b in invalid
     }
     gone = {(b, a) for a, b in given_up}
     removed: list[dict[str, str]] = []
@@ -692,6 +796,8 @@ class ChiefAction(_Model):
     )
     note: str = Field(default="", description="备注；模块之间对同一对象结论不同时，在这里说明以负责模块为准")
     row_ids: list[str] = Field(min_length=1)
+    group_id: str = ""
+    interim: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -747,6 +853,13 @@ class ActionText(_Model):
         description="解决方案：对象上的动作，建议时限写在动作里（如“建议〈时限〉内…”），有依据时末尾写“依据：…”",
     )
     note: str = Field(default="", description="备注；模块之间对同一对象结论不同时，在这里说明以负责模块为准")
+    interim: str = Field(
+        default="",
+        description=(
+            "本组的判断行时限不止一种时必填：几项措施的先后关系，以及最晚的一项完成前，"
+            "期间（例如下一次作业）按什么做；组内时限只有一种时留空"
+        ),
+    )
 
 
 class DimensionPoints(_Model):
@@ -821,7 +934,8 @@ class ChiefFix(_Model):
     """The chief's one answer to the fact check of chapters 1 and 3.
 
     Only what changes is submitted: a text section of 1.1-1.3 or 3.1 as a
-    whole, and a chapter in full only when one of its tables changes.
+    whole, chapter 1 in full only when one of its tables changes, and only
+    the 3.2 groups that change.
     """
 
     sections: dict[str, str] = Field(
@@ -831,9 +945,11 @@ class ChiefFix(_Model):
     chapter1: ChiefChapter1 | None = Field(
         default=None, description="第一章的表（健康度、重点风险、阶段）要改时，提交改好后的完整第一章；不改留空"
     )
-    chapter3: ChiefChapter3 | None = Field(
-        default=None, description="3.2 速查表要改时，提交改好后的完整第三章；不改留空"
+    actions: list[ActionText] = Field(
+        default_factory=list,
+        description="3.2 速查表要改的行动组：每组一条，写改好后的这一组（group_id 照抄）；不改的组不提交",
     )
+    action_lead: str = Field(default="", description="3.2 表前导语要改时写改好后的一句；不改留空")
     declined: dict[str, str] = Field(default_factory=dict, description=DECLINED_HELP)
 
 
@@ -874,7 +990,7 @@ def action_table_markdown(
     row_status: Mapping[str, str] | None = None,
     row_places: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
-    """3.2: a lead sentence, then one five-column table per priority group.
+    """3.2: a lead sentence, then one six-column table per priority group, the group id first.
 
     The 评估内容 column is filled by the program from the cited rows' places;
     the note column carries the evidence status of the cited rows when any
@@ -895,12 +1011,19 @@ def action_table_markdown(
                 ACTION_TABLE_HEADERS,
                 (
                     [
+                        a.group_id,
                         action_content(a.row_ids, row_places or {}),
                         a.problem,
                         a.hazard,
                         a.solution,
                         "；".join(
-                            text for text in (a.note, "" if shared else note) if text
+                            text
+                            for text in (
+                                f"过渡安排：{a.interim.strip()}" if a.interim.strip() else "",
+                                a.note,
+                                "" if shared else note,
+                            )
+                            if text
                         ),
                     ]
                     for a, note in zip(members, notes, strict=True)
@@ -1001,6 +1124,8 @@ def grouped_actions(
                 solution=text.solution,
                 note=text.note,
                 row_ids=list(group["row_ids"]),
+                group_id=group["group_id"],
+                interim=text.interim,
             )
         )
     return actions
@@ -1050,9 +1175,28 @@ def action_group_findings(
         problems.append("以下组编号不存在：" + "、".join(unknown))
     if repeated := sorted({g for g in written if written.count(g) > 1}):
         problems.append("以下组写了不止一次：" + "、".join(repeated))
+    by_group = {text.group_id: text for text in texts}
+    # Rows of one group due at different times: until the last is done, how
+    # the work in between is done has to be said once, by the group.
+    if no_interim := [
+        group["group_id"]
+        for group in groups
+        if len(group.get("timeframes") or ()) > 1
+        and group["group_id"] in by_group
+        and not by_group[group["group_id"]].interim.strip()
+    ]:
+        problems.append(
+            "以下行动组里各行的时限不止一种，没有写 interim（先后关系和完成前的过渡安排）："
+            + "、".join(no_interim)
+        )
     if not problems:
         return {}
-    return {"3.2": _finding("；".join(problems), "action_groups 里每组写一条，组编号照抄。")}
+    return {
+        "3.2": _finding(
+            "；".join(problems),
+            "action_groups 里每组写一条，组编号照抄；组内时限不止一种的，在 interim 写先后关系和完成前的过渡安排。",
+        )
+    }
 
 
 def findings_overview_markdown(
@@ -1301,14 +1445,18 @@ def report_check_findings(
     rows_by_submodule: Mapping[str, Sequence[JudgmentRow]],
     slots: Mapping[str, Mapping[str, Any]],
     quote_sources: Mapping[str, Iterable[str]] | None = None,
+    copied: CopiedText | None = None,
+    hints_out: dict[str, list[str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Program check of the written sections against the slots and the ledger.
 
     Numbers are free to write; slots are recommended.  Blocking: a slot the
     program cannot fill, one object's value slot next to another object
-    alone, and text in 「」 that is not the source author's recorded words.
-    Minor: hints on written values, and a concern row whose object the
-    section never names.
+    alone, text in 「」 that is not the source author's recorded words, and
+    text copied word for word from the instructions (``copied``).
+    Hints (values that may be another object's, a concern row whose object
+    the section never names) are not certain: with ``hints_out`` they are
+    collected there instead of reaching the editor.
     """
 
     findings: dict[str, dict[str, str]] = {}
@@ -1316,6 +1464,8 @@ def report_check_findings(
         problems, hints = slot_check(text, slots)
         if quoted := quote_findings(text, (quote_sources or {}).get(section_id, ())):
             problems.append("「」里的话不是来源记录的原话：" + "、".join(quoted))
+        if copied is not None and (spans := copied.spans(text)):
+            problems.append(copied_problem(spans))
         filled = fill_slots(text, slots)
         missing = [
             row.id
@@ -1326,10 +1476,15 @@ def report_check_findings(
             hints.append("以下关注项的对象没有在本节正文点名：" + "、".join(missing))
         if leaked := process_terms(strip_slots(text)):
             problems.append("正文里出现了内部流程用语或编号：" + "、".join(leaked))
+        if hints_out is not None:
+            if hints:
+                hints_out[section_id] = list(hints)
+            hints = []
         if problems:
             findings[section_id] = _finding(
                 "；".join(problems) + ("；另请核对：" + "；".join(hints) if hints else ""),
-                SLOT_SUGGESTION + "「」里只放来源记录的原话；删去内部流程用语。",
+                SLOT_SUGGESTION + "「」里只放来源记录的原话；删去内部流程用语；"
+                + COPIED_SUGGESTION,
             )
         elif hints:
             findings[section_id] = _finding(
@@ -1424,6 +1579,9 @@ __all__ = [
     "ChiefFix",
     "DECLINED_HELP",
     "JudgmentRevision",
+    "PENDING_RELATION",
+    "RowPatch",
+    "apply_row_patches",
     "ActionText",
     "ChiefChapter3",
     "DimensionPoints",

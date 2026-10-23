@@ -1,14 +1,12 @@
 id: ledger_review_item
-version: 2.0.0
-description: One module's rows with what each cites, its relations, program checks, dossiers and doubtful photos
+version: 3.0.0
+description: One module's own rows with what each cites, program checks and doubtful photos
 adapter: json_schema
 schema:
   type: object
-  required: [module_id, program_findings, dossiers, rows, facts, rules, method]
+  required: [module_id, program_findings, rows, facts, rules, method]
   properties:
     rows:
-      type: array
-    related_rows:
       type: array
     calculations:
       type: array

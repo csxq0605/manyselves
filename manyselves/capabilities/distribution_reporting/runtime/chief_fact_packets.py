@@ -22,7 +22,7 @@ from ..domain.value_slots import fill_slots, slot_lines, slots_for_evidence
 from .grounds import GROUND_ID, grounded
 
 # A packet holds at most this many units and about this many characters.
-MAX_UNITS = 8
+MAX_UNITS = 5
 MAX_CHARS = 15000
 # A row's basis is cut to this many characters in a packet; a hazard, action
 # or gap to the shorter length.  Source records are given whole: a checker
@@ -117,7 +117,8 @@ def chief_units(
             f"3.2-{action.get('group_id')}", _CHAPTER_3, "3.2 改善行动速查表",
             f"发现问题：{action.get('problem', '')}｜风险与危害：{action.get('hazard', '')}"
             f"｜解决方案：{action.get('solution', '')}"
-            + (f"｜备注：{action['note']}" if action.get("note") else ""),
+            + (f"｜备注：{action['note']}" if action.get("note") else "")
+            + (f"｜过渡安排：{action['interim']}" if action.get("interim") else ""),
             row_ids=(group or {}).get("row_ids") or (),
         )
     return units

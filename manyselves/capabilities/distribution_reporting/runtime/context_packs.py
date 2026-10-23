@@ -180,12 +180,12 @@ class Sites:
             found[PROJECT_LEVEL] = found.pop(PROJECT_LEVEL)
         return found
 
-    def same_object_items(self, module_id: str) -> list[Any]:
-        """Other modules' records on the objects this module's records are on."""
+    def same_object_items(self, module_id: str, own: Iterable[Any] | None = None) -> list[Any]:
+        """Other modules' records on the objects this module's records (or ``own``) are on."""
 
         mine = {
             object_key(item.subject)
-            for item in self.items.values()
+            for item in (own if own is not None else self.items.values())
             if item.module_id == module_id and getattr(item, "place", None)
         }
         return [
@@ -458,6 +458,10 @@ def relation_batches(
                             "reason": relation.reason,
                             "mechanism": relation.mechanism,
                             "condition": relation.condition,
+                            **(
+                                {"status": relation.status, "missing": relation.missing}
+                                if relation.pending else {}
+                            ),
                         }
                     )
                     for row, relation in pairs
@@ -467,6 +471,23 @@ def relation_batches(
             }
         )
     return batches
+
+
+# A judge's conversation holds about this many of its module's own records;
+# a larger module is judged in groups of consecutive sections.  Each group
+# numbers its rows from its own hundred, so the groups' ids never meet.
+JUDGE_GROUP_RECORDS = 60
+GROUP_ROW_SPAN = 100
+
+
+def section_groups(
+    section_ids: Sequence[str], records: Mapping[str, int], *, budget_records: int
+) -> list[list[str]]:
+    """A module's sections in consecutive groups of about ``budget_records`` records each."""
+
+    return _batches([(sid, records.get(sid, 0)) for sid in section_ids], budget_records) or [
+        list(section_ids)
+    ]
 
 
 def writing_groups(
@@ -486,6 +507,9 @@ def writing_groups(
 
 __all__ = [
     "ATTENTION",
+    "GROUP_ROW_SPAN",
+    "JUDGE_GROUP_RECORDS",
+    "section_groups",
     "PROJECT_LEVEL",
     "Sites",
     "brief_row",

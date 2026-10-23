@@ -19,6 +19,7 @@ accepts:
 - ledger_special_topic_input
 - ledger_edit_item
 - ledger_relation_input
+- ledger_proposal_input
 - ledger_chief_fact_packet
 produces:
 - ledger_judgment_set

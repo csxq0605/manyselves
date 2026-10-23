@@ -1,6 +1,6 @@
 id: close-review
 version: 1.0.0
-description: Record one module's review findings and its targeted revision
+description: Record one judging group's review findings and apply its revisions' patches
 implementation: capability:distribution-reporting:close-review
 input_contract: ledger_close_input
 output_contract: ledger_owner_result

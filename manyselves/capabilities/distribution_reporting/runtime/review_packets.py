@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
-from .cross_module import in_knowledge_base, relation_names
+
 from .observation_ledger import shared_labels
 from .photo_reading import photo_reading_labels
 from .research.fact_context import render_fact_packet
@@ -98,18 +98,13 @@ class ReviewPackets:
             for path, sheet, columns in reference.get("column_headers") or []
         }
         self.units = tools._unit_bodies(run_id)
-        self.relation_names = relation_names(tools._relation_method(run_id))
         self.conditions = tools._judgment_conditions(run_id)
 
     def packet(self, module_id: str) -> dict[str, Any]:
+        # Only the module's own rows and what they cite: what lies between modules
+        # is the object and relation lenses'.
         rows = list(self.ledger.get(module_id, []))
-        linked = [
-            self.index[relation.row_id][1]
-            for row in rows
-            for relation in row.relations
-            if relation.row_id in self.index
-        ]
-        shown = [*rows, *linked]
+        shown = rows
         evidence_ids = list(dict.fromkeys(e for row in shown for e in row.evidence_ids))
         items = [self.items[e] for e in evidence_ids if e in self.items]
         facts_text = render_fact_packet(
@@ -134,26 +129,6 @@ class ReviewPackets:
         facts = {item.id: item.fact for item in items}
         return {
             "rows": [row.model_dump(mode="json", exclude_none=True) for row in rows],
-            "related_rows": [
-                {
-                    "for_row": row.id,
-                    "relation": relation.relation,
-                    "reason": relation.reason,
-                    **(
-                        {
-                            "in_knowledge_base": False,
-                            "mechanism": relation.mechanism,
-                            "condition": relation.condition,
-                        }
-                        if self.relation_names and not in_knowledge_base(relation, self.relation_names)
-                        else {}
-                    ),
-                    "row": self.index[relation.row_id][1].model_dump(mode="json", exclude_none=True),
-                }
-                for row in rows
-                for relation in row.relations
-                if relation.row_id in self.index
-            ],
             "calculations": calculations,
             "program_checks": program_checks(rows, facts=facts, owner_rows=owner_rows),
             "facts": facts_text,

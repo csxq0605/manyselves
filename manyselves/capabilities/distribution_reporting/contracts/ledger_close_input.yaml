@@ -1,6 +1,6 @@
 id: ledger_close_input
 version: 1.0.0
-description: One review item, its merged findings and the optional revision
+description: One review item, its merged findings and the optional revision and the second one after the program's recheck
 adapter: json_schema
 schema:
   type: object

@@ -1,6 +1,6 @@
 id: plan-judgment-relate
 version: 1.0.0
-description: Check the linker's proposals and give each author its relate item
+description: Check the linker's proposals and give each judging group with proposals its proposal item
 implementation: capability:distribution-reporting:plan-judgment-relate
 input_contract: ledger_relate_plan_input
 output_contract: ledger_relate_plan

@@ -1,8 +1,8 @@
 id: relate-judgments
-version: 1.3.0
-description: Decide which other modules' rows bear on this module's rows, before review
+version: 2.0.0
+description: Decide on its own which other modules' rows bear on this group's rows, while the linker works
 agent: report-consultant
-objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断，proposed 是跨模块专员看过全部关注和不能判定行后、对你这些行提出的关联。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。
+objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。
 input_contract: ledger_relation_input
 output_contract: ledger_relation_set
 context_fields:
@@ -11,9 +11,9 @@ constraints:
 - relation_method 是知识库的跨知识单元关联方法，relation_names 是它列出的候选关系。flagged_elsewhere 每行一句（行编号 小节｜对象｜检查点（处置）：发现）；related 的键是本模块的行，值是别的模块对同一主体的判断，同一主体可能只是同一个配电场所的同名条目，表中同一记录行才是同一设备单元；reason 里按这个层级写。
 - 知识库的关联方法是参考，不是要凑满的清单：不要求每种候选关系都连，也不要求逐条下结论。两边的事实确实能看出这条关系要核实的条件时才连；本次情况下不成立的就不连，不用写拒绝理由，愿意的话可以把关系名称放进 considered，只表示"考虑过、不成立"。
 - 知识库没有收录、但两边的事实能看出确实相关的关联也可以连：relation 自拟一个简短名称，并必须写 mechanism（两边为什么相关的机理）和 condition（这条关联成立要满足的条件，以及两边哪项事实满足了它）。这类关联没有知识库兜底，会被审查专门核对。
-- 只是同一房间、同一次检查、同一个计划或制度的不连；条件核实不了就不连。
+- 只是同一房间、同一次检查、同一个计划或制度的不连。两边的事实确实指向这条关系、但它要核实的条件里有一项本次资料核实不了时，可以连成 status 为“待核实”，并在 missing 写明还缺哪项条件、补充什么资料或检测能确认；写不出缺什么的不连。
 - relations 的键是本模块的判断行编号，值是这一行的关联，每条写：row_id（所引的别的模块的行）、relation（知识库的候选关系照抄 relation_names 里的名称）、reason（一句话：两边哪项事实满足条件，对本行结论有什么作用），知识库未收录的另写 mechanism 和 condition。不连的行不写。
-- proposed 的键是本模块的行，值是专员提议的关联（row 是另一端那一行的一句话摘要）。逐条看：两边的事实确实满足条件的，照它写进 relations（可以改写 reason，知识库未收录的照样写 mechanism 和 condition）；不成立的写进 declined_proposals，一句理由。专员只是提议，不因为是专员提的就采纳；proposed 以外你自己看出的关联照常写。
+- 跨模块专员也在同时看全部关注和不能判定的行，它提议的关联之后会单独交给你；这一步只写你自己看出的关联。
 - 这一步只记关联，不改判断行本身；关联会交给审查核对理由。不替别的模块下结论，不复述它的论证。程序会删掉所引行不存在、属于本模块，或知识库未收录又没写机理和成立条件的关联。
 tools: []
 attention_budget_tokens: 250000

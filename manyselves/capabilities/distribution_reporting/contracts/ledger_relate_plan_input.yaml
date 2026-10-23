@@ -1,7 +1,11 @@
 id: ledger_relate_plan_input
 version: 1.0.0
-description: Ledger context, the built ledger and the cross-module linker's proposals by pack
+description: Ledger context, the built ledger and the cross-module linker's proposals by pack, and the groups' own relations
 adapter: json_schema
 schema:
   type: object
   required: [context, ledger, links]
+  properties:
+    own:
+      type: object
+      description: Each judging group's own relations, so the proposals already linked are not asked again

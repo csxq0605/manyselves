@@ -83,7 +83,7 @@ def test_facts_judged_differently_stay_open_only_on_a_reviewers_blocking_finding
     assert unresolved_conflicts([differently], flagged) == [differently]
 
 
-def test_a_relation_judged_not_to_hold_goes_from_both_ends() -> None:
+def test_a_relation_judged_not_to_hold_at_both_ends_goes_from_both() -> None:
     def related(row_id: str, *others: str) -> JudgmentRow:
         row = _row(row_id, row_id.split("-")[1] + ".1", "concern", evidence="E-1")
         return JudgmentRow.model_validate({**row.model_dump(), "relations": [
@@ -94,15 +94,19 @@ def test_a_relation_judged_not_to_hold_goes_from_both_ends() -> None:
         "2.1": [related("J-2.1-1", "J-2.4-1"), related("J-2.1-2", "J-2.4-2")],
         "2.4": [related("J-2.4-1", "J-2.1-1"), related("J-2.4-2", "J-2.1-2")],
     }
-    # Both 2.1 rows drop their relation; only J-2.1-1's was judged not to hold.
+    # Both 2.1 rows drop their relation; the reviewer found J-2.1-1 and
+    # J-2.4-1 wanting, and J-2.1-2 alone (J-2.4-2 was not challenged).
     after = {
         "2.1": [related("J-2.1-1"), related("J-2.1-2")],
         "2.4": before["2.4"],
     }
-    ledger, removed = drop_mirrored_relations(before, after, ["J-2.1-1"])
+    ledger, removed = drop_mirrored_relations(before, after, ["J-2.1-1", "J-2.4-1", "J-2.1-2"])
     assert removed == [{"row_id": "J-2.4-1", "other_row_id": "J-2.1-1", "relation": "r"}]
     assert ledger["2.4"][0].relations == []
     assert [r.row_id for r in ledger["2.4"][1].relations] == ["J-2.1-2"]
+    # Only one end found wanting: the other end keeps its relation.
+    ledger, removed = drop_mirrored_relations(before, after, ["J-2.1-1"])
+    assert removed == [] and [r.row_id for r in ledger["2.4"][0].relations] == ["J-2.1-1"]
 
 
 def test_chains_and_see_also_join_the_modules_on_one_object() -> None:

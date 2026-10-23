@@ -1,6 +1,6 @@
 id: ledger-module-settle
-version: 1.0.0
-description: One module's review, the three lenses merged by row; the author revises only on blocking findings
+version: 2.0.0
+description: One judging group's review, the three lenses merged by row; the author revises only on blocking findings, the program checks the changed rows again, and sends them back once if they still fail
 tasks:
 - revise-judgments
 recovery:
@@ -10,6 +10,7 @@ state:
   item: null
   item_key: null
   revision: null
+  second_revision: null
 actions:
 - id: lens-review
   kind: set_variable
@@ -55,6 +56,39 @@ actions:
   conversation_variable: author_conversation
   input_variable: revision_input
   output_variable: revision
+# The program's row checks run again on the rows the revision changed.
+- id: recheck
+  kind: invoke_tool
+  tool: recheck-judgments
+  input_variables:
+    item: item
+    revision: revision
+  output_variable: recheck
+- id: recheck-blocking
+  kind: set_variable
+  variable: recheck_blocking
+  value_variable: recheck
+  field: blocking
+- id: route-recheck
+  kind: if
+  condition:
+    variable: recheck_blocking
+    operator: eq
+    value: true
+  then: recheck-input
+  otherwise: close
+- id: recheck-input
+  kind: set_variable
+  variable: recheck_input
+  value_variable: recheck
+  field: revision_input
+- id: revise-again
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-judgments
+  conversation_variable: author_conversation
+  input_variable: recheck_input
+  output_variable: second_revision
 - id: close
   kind: invoke_tool
   tool: close-review
@@ -62,6 +96,7 @@ actions:
     item: item
     merged: merged
     revision: revision
+    second_revision: second_revision
   output_variable: result
 - id: finish
   kind: end_workflow

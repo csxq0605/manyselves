@@ -15,11 +15,15 @@ final ledger this module derives three views, without any model:
   row records (``relations``: row, relation, reason), kept only when they
   name an existing row of another module and either follow a relation the
   knowledge base's method lists or state their own mechanism and condition
-  (marked as not in the knowledge base), and their content for the writer;
+  (marked as not in the knowledge base), and their content for the writer.
+  A relation marked 待核实 (pending) is kept when it says which condition is
+  still missing;
 - ``same_observation_rows`` and ``same_observation_findings``: rows of
   different sections that rest on the same source cells (one observation
   routed to several sections).  They are one record seen from two angles:
   not a relation, counted once, and judged at one level, the owner's.
+  ``shared_observation_groups`` takes rows sharing any routed observation,
+  not only the same set, for grading and for the chief.
 
 The program only offers candidates it can tell from the fixed structure (the
 same fact or object) and checks that a cited row exists.  Whether two rows
@@ -211,6 +215,30 @@ def same_observation_rows(
     ]
 
 
+def shared_observation_groups(
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    observation_of: Mapping[str, str],
+) -> list[list[JudgmentRow]]:
+    """For every routed observation, the rows of different sections that cite it.
+
+    A row that cites one copy of a source cell rests on that cell, whatever
+    else it also cites, so rows sharing any routed observation are one record
+    seen from several sections.  Groups with the same rows are given once.
+    """
+
+    by_observation: dict[str, dict[str, JudgmentRow]] = {}
+    for rows in ledger.values():
+        for row in rows:
+            for evidence_id in row.evidence_ids:
+                if (observation := observation_of.get(evidence_id)) is not None:
+                    by_observation.setdefault(observation, {})[row.id] = row
+    groups: dict[frozenset[str], list[JudgmentRow]] = {}
+    for rows in by_observation.values():
+        if len({row.submodule_id for row in rows.values()}) > 1:
+            groups.setdefault(frozenset(rows), list(rows.values()))
+    return list(groups.values())
+
+
 def same_observation_findings(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     observation_of: Mapping[str, str],
@@ -220,39 +248,45 @@ def same_observation_findings(
 
     ``owner_sections`` maps an observation to the section that owns it (the
     knowledge base's first route, or the ownership rules).  A concern row of
-    another section on the same observations must take the owner's risk
-    level and priority; it keeps its own angle in its text.
+    another section that cites the same observation, alone or among other
+    facts, must take the owner's risk level and priority; it keeps its own
+    angle in its text, and a reason it gives for differing is weighed in
+    revision.
     """
 
     module_of = {row.id: m for m, rows in ledger.items() for row in rows}
+    by_observation: dict[str, list[JudgmentRow]] = {}
+    for rows in ledger.values():
+        for row in rows:
+            for observation in _observations(row, observation_of) & set(owner_sections):
+                if row not in by_observation.setdefault(observation, []):
+                    by_observation[observation].append(row)
     findings: dict[str, dict[str, dict[str, str]]] = {}
-    for rows in same_observation_rows(ledger, observation_of):
-        owners = {
-            owner_sections.get(o) for row in rows for o in _observations(row, observation_of)
-        }
-        owner_rows = [row for row in rows if row.submodule_id in owners]
-        if not owner_rows:
+    for observation, rows in by_observation.items():
+        owner_section = owner_sections.get(observation)
+        owner_rows = [row for row in rows if row.submodule_id == owner_section]
+        if not owner_rows or len({row.submodule_id for row in rows}) < 2:
             continue
         owner = owner_rows[0]
         if owner.disposition != "concern":
             continue
         level = (owner.risk_level, owner.action.priority if owner.action else None)
         for row in rows:
-            if row is owner or row.submodule_id in owners or row.disposition != "concern":
+            if row.submodule_id == owner_section or row.disposition != "concern":
                 continue
             mine = (row.risk_level, row.action.priority if row.action else None)
-            if mine == level:
+            if mine == level or row.id in findings.get(module_of[row.id], {}):
                 continue
             findings.setdefault(module_of[row.id], {})[row.id] = {
                 "problem": (
-                    f"本行与 {owner.submodule_id} 的 {owner.id} 引用的是同一个表格单元格（同一观测），"
+                    f"本行与 {owner.submodule_id} 的 {owner.id} 引用了同一个表格单元格（同一观测），"
                     f"那里定为风险{owner.risk_level}、{level[1]}，本行定为风险{row.risk_level}、{mine[1]}；"
                     "同一观测在报告里只能有一个当前定级"
                 ),
                 "severity": "blocking",
                 "suggestion": (
                     f"risk_level 和优先级改成与 {owner.id} 一致，本行只写本节的视角；"
-                    "认为负责小节定级不对的，在 basis 写明理由和会改变定级的条件"
+                    "本行另有事实使定级不同、或认为负责小节定级不对的，在 responses 写明理由和会改变定级的条件"
                 ),
             }
     return findings
@@ -301,6 +335,8 @@ def checked_relations(
                     and not (relation.mechanism.strip() and relation.condition.strip())
                 ):
                     why = "知识库没有收录这种关联，又没有写机理和成立条件"
+                elif relation.pending and not relation.missing.strip():
+                    why = "标为待核实，却没有写缺哪项条件"
                 else:
                     good.append(relation)
                     continue
@@ -347,6 +383,10 @@ def related_rows(
                     "row_id": row.id,
                     "relation": relation.relation,
                     "reason": relation.reason,
+                    **(
+                        {"status": relation.status, "missing": relation.missing}
+                        if relation.pending else {}
+                    ),
                     **(
                         {}
                         if not names or in_knowledge_base(relation, names)
@@ -453,6 +493,7 @@ __all__ = [
     "related_rows",
     "same_observation_findings",
     "same_observation_rows",
+    "shared_observation_groups",
     "section_see_also",
     "see_also_by_row",
 ]

@@ -1,7 +1,17 @@
 id: ledger_apply_relations_input
 version: 1.0.0
-description: Ledger context, the built ledger and every author's relations
+description: Ledger context, the built ledger and each group's own relations and what it took of the proposals
 adapter: json_schema
 schema:
   type: object
-  required: [context, ledger, relations]
+  required: [context, ledger]
+  properties:
+    own:
+      type: object
+      description: Each judging group's own relations
+    proposals:
+      type: object
+      description: What each group took of the linker's proposals
+    relations:
+      type: object
+      description: Relations by module (runs planned before the two rounds)

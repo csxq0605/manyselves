@@ -20,18 +20,19 @@ the story is; the program checks ids and structure.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from manyselves.kernel.workflow import gather_by_key
 
-from ..domain.judgment_ledger import JudgmentRow, LinkProposals, StoryPlan
+from ..domain.judgment_ledger import JudgmentRow, LinkProposals, RelationSet, StoryPlan
 from .context_packs import (
     ATTENTION,
     Sites,
     brief_row,
     compact,
-    object_batches,
+    compact_row,
     project_map,
     relation_batches,
     row_line,
@@ -47,8 +48,10 @@ from .review_packets import ReviewPackets
 # Character budgets for one conversation's material (about two characters a
 # token); the tasks' attention budgets are the hard limit.
 LINK_PACK_CHARS = 160_000
-OBJECT_BATCH_CHARS = 120_000
-RELATION_BATCH_CHARS = 120_000
+# A reviewer's output grows with what it is given: these keep one review
+# batch to a few minutes of writing.
+OBJECT_BATCH_CHARS = 60_000
+RELATION_BATCH_CHARS = 60_000
 WRITING_GROUP_CHARS = 60_000
 
 LENSES = {"module": "模块切面", "object": "对象切面", "relation": "关联切面"}
@@ -122,13 +125,24 @@ class LedgerStageTools:
 
     # -- relations -------------------------------------------------------
 
-    def plan_relate(self, value: dict[str, Any]) -> dict[str, Any]:
-        """Each author's relate step: what it saw before, plus the linker's proposals.
+    def _groups_file(self, run_id: str) -> dict[str, Any]:
+        """The judging groups and which group wrote each row (written by build-ledger)."""
 
-        A proposal stands when both rows exist, belong to different modules
-        and do not rest on one source cell, and it is either a relation the
-        knowledge base lists or states its mechanism and condition.  It goes
-        to both rows' authors; each decides for its own rows.
+        path = self.workspace / f"Work/runs/{run_id}/ledger/groups.json"
+        if not path.is_file():
+            return {"groups": {}, "row_groups": {}}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def plan_relate(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The second relate round: the linker's proposals, each with its other end in full.
+
+        The authors have related their rows on their own while the linker
+        worked.  A proposal stands when both rows exist, belong to different
+        modules and do not rest on one source cell, and it is either a
+        relation the knowledge base lists or states its mechanism and
+        condition.  It goes to the authors of both rows, with the other row in
+        full and the records it cites, unless that author already linked the
+        two rows itself; each decides for its own rows.
         """
 
         context = value["context"]
@@ -143,6 +157,16 @@ class LedgerStageTools:
             frozenset((a.id, b.id))
             for rows in same_observation_rows(ledger, observation_of)
             for a in rows for b in rows if a.id != b.id
+        }
+        groups = self._groups_file(run_id)
+        row_groups = groups.get("row_groups") or {}
+        linked = {
+            (row_id, relation.row_id)
+            for result in (value.get("own") or {}).values()
+            for row_id, relations in (
+                RelationSet.model_validate(_plain(result)).relations.items() if result else ()
+            )
+            for relation in relations
         }
         proposed: dict[str, dict[str, list[dict[str, Any]]]] = {}
         kept: list[dict[str, Any]] = []
@@ -166,15 +190,18 @@ class LedgerStageTools:
                 else:
                     kept.append(entry)
                     for own, other in ((a, b), (b, a)):
+                        if (own, other) in linked:
+                            continue
+                        group_id = row_groups.get(own, module_of[own])
                         offer = compact({
                             "row_id": other,
                             "relation": proposal.relation,
                             "reason": proposal.reason,
                             "mechanism": proposal.mechanism,
                             "condition": proposal.condition,
-                            "row": row_line(index[other]),
+                            "other_row": compact_row(index[other]),
                         })
-                        rows = proposed.setdefault(module_of[own], {}).setdefault(own, [])
+                        rows = proposed.setdefault(group_id, {}).setdefault(own, [])
                         if all(o["row_id"] != other or o["relation"] != offer["relation"] for o in rows):
                             rows.append(offer)
                     continue
@@ -182,17 +209,39 @@ class LedgerStageTools:
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/link-proposals.json", {"kept": kept, "dropped": dropped}
         )
-        return {
-            "relate_items": [
-                {**item, **({"proposed": proposed[item["module_id"]]} if item["module_id"] in proposed else {})}
-                for item in built["relate_items"]
-            ]
+        sites = self._sites(run_id)
+        render = self._renderer(run_id)
+        modules = {
+            gid: (group or {}).get("module_id", gid)
+            for gid, group in (groups.get("groups") or {}).items()
         }
+        items = []
+        for group_id, offers in proposed.items():
+            others = [index[o["row_id"]] for entries in offers.values() for o in entries]
+            cited = [
+                sites.items[e]
+                for e in dict.fromkeys(e for row in others for e in row.evidence_ids)
+                if e in sites.items
+            ]
+            items.append({
+                "run_id": run_id,
+                "module_id": modules.get(group_id, group_id),
+                "group_id": group_id,
+                "proposed": offers,
+                "relation_names": sorted(names),
+                "facts": render(cited) or "（另一端的行没有引用记录）",
+            })
+        return {"proposal_items": items}
 
     # -- review lenses ---------------------------------------------------
 
     def plan_review(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The three review lenses, built from the related ledger and the final photo readings."""
+        """The module and relation lenses, built from the related ledger and the final readings.
+
+        The module lens reads one module's rows with what they cite, and
+        nothing of the other modules: what lies between modules is the object
+        lens's (run while the rows were related) and the relation lens's.
+        """
 
         context = value["context"]
         related = value["ledger"]
@@ -204,14 +253,6 @@ class LedgerStageTools:
         packets = ReviewPackets(self, run_id, ledger, reference, elsewhere)
         sites = self._sites(run_id)
         render = self._renderer(run_id)
-        # Every module's reviewer reads the same dossiers, ahead of its own
-        # material, so the requests share one prefix the provider can cache:
-        # the conflicts the table shows, and the facts several modules judged
-        # differently, laid side by side for the reviewers to weigh.
-        conflicts = [
-            d for d in related.get("dossiers") or []
-            if d["kind"] in {"conflict", "judged_differently"}
-        ]
         review_items = [
             {
                 "run_id": run_id,
@@ -220,46 +261,36 @@ class LedgerStageTools:
                 "program_findings": (related.get("program_findings") or {}).get(
                     module["module_id"], {}
                 ),
-                "dossiers": conflicts,
                 "photos": self._photos_to_check(ledger[module["module_id"]], reference, readings),
                 **packets.packet(module["module_id"]),
             }
             for module in context["modules"]
         ]
         method = self._relation_method(run_id)
-        object_items = [
-            {"run_id": run_id, **batch}
-            for batch in object_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
-        ]
         relation_items = [
             {"run_id": run_id, "relation_method": method or "（知识库没有关联方法）", **batch}
             for batch in relation_batches(
                 ledger, sites, render, budget_chars=RELATION_BATCH_CHARS
             )
         ]
-        self.store.write_json(
-            f"Work/runs/{run_id}/ledger/review-lenses.json",
-            {
-                "objects": [
-                    {"batch_id": b["batch_id"], "objects": b["objects"]} for b in object_items
-                ],
-                "relations": [
-                    {"batch_id": b["batch_id"], "relations": b["relations"]}
-                    for b in relation_items
-                ],
-            },
-        )
-        return {
-            "review_items": review_items,
-            "object_items": object_items,
-            "relation_items": relation_items,
-        }
+        path = self.workspace / f"Work/runs/{run_id}/ledger/review-lenses.json"
+        lenses = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        lenses["relations"] = [
+            {"batch_id": b["batch_id"], "relations": b["relations"]} for b in relation_items
+        ]
+        self.store.write_json(f"Work/runs/{run_id}/ledger/review-lenses.json", lenses)
+        return {"review_items": review_items, "relation_items": relation_items}
 
     def gather_reviews(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The three lenses' findings merged by row, one review per module to settle."""
+        """The three lenses' findings merged by row, one review per judging group to settle.
 
-        plan = value["plan"]
+        A finding on a row goes to the group that wrote the row; one on a
+        record (a fact no row covers) to the group judging that record's
+        section, or the module's first group.
+        """
+
         ledger = _ledger(value["ledger"])
+        run_id = value["ledger"]["run_id"]
         module_of = {row.id: m for m, rows in ledger.items() for row in rows}
 
         def findings(results: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -287,17 +318,54 @@ class LedgerStageTools:
                 unplaced[target] = by_lens
                 continue
             per_module.setdefault(module_id, {})[target] = merged_finding(by_lens)
-        run_id = value["ledger"]["run_id"]
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/review-lens-findings.json",
             {"by_row": by_row, "unplaced": unplaced},
         )
-        return {
-            "settle_items": [
-                {**item, "review": {"findings": per_module.get(item["module_id"], {})}}
-                for item in plan["review_items"]
-            ]
+        stored = self._groups_file(run_id)
+        groups = stored.get("groups") or {
+            module_id: {"module_id": module_id, "submodule_ids": [], "evidence_ids": [], "first": True}
+            for module_id in ledger
         }
+        row_groups = stored.get("row_groups") or {}
+        program = value["ledger"].get("program_findings") or {}
+
+        def group_of(module_id: str, target: str) -> str:
+            mine = [gid for gid, g in groups.items() if g.get("module_id") == module_id]
+            if target in row_groups and row_groups[target] in mine:
+                return row_groups[target]
+            for gid in mine:
+                if target in (groups[gid].get("evidence_ids") or ()):
+                    return gid
+            return next((gid for gid in mine if groups[gid].get("first")), mine[0] if mine else module_id)
+
+        items = []
+        for group_id, group in groups.items():
+            module_id = group.get("module_id", group_id)
+            if module_id not in ledger:
+                continue
+            own_rows = [
+                row for row in ledger[module_id]
+                if group_of(module_id, row.id) == group_id
+            ]
+            items.append({
+                "run_id": run_id,
+                "module_id": module_id,
+                "group_id": group_id,
+                "submodule_ids": list(group.get("submodule_ids") or ()),
+                "rows": [row.model_dump(mode="json", exclude_none=True) for row in own_rows],
+                "program_findings": {
+                    target: finding
+                    for target, finding in (program.get(module_id) or {}).items()
+                    if group_of(module_id, target) == group_id
+                },
+                "review": {"findings": {
+                    target: finding
+                    for target, finding in per_module.get(module_id, {}).items()
+                    if group_of(module_id, target) == group_id
+                }},
+            })
+        return {"settle_items": items}
 
     # -- story and writing ----------------------------------------------
 

@@ -1,5 +1,5 @@
 id: review-relations
-version: 1.0.0
+version: 1.1.0
 description: Review recorded cross-module relations with both rows and what they cite
 agent: report-consultant
 objective: 你现在是关联审查人，只看作者记下的跨模块关联是否成立。上面是知识库的跨知识单元关联方法和两边所引的原始记录；输入 relations 是每条关联（for_row 记下了这条关联，row_id 是所关联的行），rows 是两边判断行的全文。逐条核对。
@@ -11,6 +11,7 @@ context_fields:
 constraints:
 - 逐条看 reason 里说的条件能不能从两边的事实看出来、对 for_row 结论的作用是否说得过头；看不出来或作用说过头的，对 for_row 判 blocking，要求删掉这条关联或改成待核实。
 - 知识库没有收录的关联（relation 不在关联方法里，带 mechanism 和 condition）没有知识库兜底：专门核对机理在专业上是否成立、条件是否真能从两边的事实看出来；有一项站不住就判 blocking。
+- status 为“待核实”的关联，看 missing 写的缺口是否确实是这条关系要核实、而本次资料核实不了的条件；写得清楚的不算问题，缺口其实已经能从两边事实看出来、或 missing 说不清缺什么的，判 blocking，要求改成成立或删掉。
 - 只是同一房间、同一次检查、同一个计划或制度的，以及两边只是同缺一批资料、没有别的联系的，判 blocking，要求删掉。
 - 关联成立但 for_row 的 basis、hazard 或风险等级没有体现这层作用、或体现得过头的，判 minor 并说明。
 - findings 的键是 for_row 的行编号；同一行有几条关联有问题的写在一条意见里，写明是哪几条（row_id）。

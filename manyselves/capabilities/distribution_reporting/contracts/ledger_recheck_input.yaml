@@ -1,0 +1,7 @@
+id: ledger_recheck_input
+version: 1.0.0
+description: One judging group's settle item and the author's revision
+adapter: json_schema
+schema:
+  type: object
+  required: [item]

@@ -34,7 +34,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 VARIANTS = ("OK", "NG", "对象", "取值")
-SLOT = re.compile(r"〔([VKS]-\d{4,})(?:[:：](OK|NG|对象|取值))?〕")
+# Any suffix after the colon is recognised, so a slot written in a form the
+# program does not know (〔V-0089:文体中心配电房/1D1〕) is still a slot: it is
+# filled, checked and reported, never left raw in the report.
+SLOT = re.compile(r"〔([VKS]-\d{4,})(?:[:：]([^〔〕\n]{1,80}))?〕")
 _ID = r"[VKS]-\d{4,}"
 COUNT = re.compile(rf"〔#[:：]({_ID}(?:\s*[,，、]\s*{_ID})*)〕")
 
@@ -174,13 +177,45 @@ def slots_for_evidence(
     ]
 
 
+def _plain_name(text: str) -> str:
+    return re.sub(r"\s+", "", str(text))
+
+
+def names_own_object(slot: Mapping[str, Any], variant: str) -> bool:
+    """Whether a slot's suffix is its own object's name (the whole name or one part)."""
+
+    subject = slot.get("subject")
+    if not subject or not variant.strip():
+        return False
+    parts = {_plain_name(part) for part in str(subject).split("/") if part.strip()}
+    wanted = [_plain_name(part) for part in variant.split("/") if part.strip()]
+    return _plain_name(variant) == _plain_name(subject) or (
+        bool(wanted) and all(part in parts for part in wanted)
+    )
+
+
+def variant_kind(slot: Mapping[str, Any], variant: str | None) -> str | None:
+    """The variant a suffix stands for: a known one, 对象 for the slot's own name, else None."""
+
+    if not variant:
+        return ""
+    if variant in VARIANTS:
+        return variant
+    if names_own_object(slot, variant):
+        return "对象"
+    return None
+
+
 def _variant(slot: Mapping[str, Any], variant: str) -> str | None:
     """What a slot's variant writes, or None when this slot has no such variant."""
 
-    if variant == "对象":
+    kind = variant_kind(slot, variant)
+    if kind == "对象":
         # A space keeps a cabinet number and its value apart ("D1701 186A").
         return f"{slot['subject']} {slot['text']}" if slot.get("subject") else None
-    found = slot.get(variant)
+    if kind is None:
+        return None
+    found = slot.get(kind)
     return None if found is None else str(found)
 
 
@@ -189,8 +224,10 @@ def fill_slots(
 ) -> str:
     """Write each slot's value into the prose.
 
-    A slot the program cannot fill is left as written, or replaced with
-    ``unresolved`` when the report is composed, so no raw slot reaches it.
+    A slot the program cannot fill is left as written; when the report is
+    composed (``unresolved`` given) no raw slot reaches it: a slot that exists
+    but is written with a suffix it does not have gets its plain value, and a
+    slot that does not exist becomes ``unresolved``.
     """
 
     def value(match: re.Match[str]) -> str:
@@ -200,7 +237,7 @@ def fill_slots(
         if match.group(2):
             filled = _variant(slot, match.group(2))
             if filled is None:
-                return match.group(0) if unresolved is None else unresolved
+                return match.group(0) if unresolved is None else str(slot["text"])
             return filled
         return str(slot["text"])
 
@@ -212,6 +249,24 @@ def fill_slots(
         return str(len(subjects))
 
     return SLOT.sub(value, COUNT.sub(count, text))
+
+
+def slot_repairs(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """What composing does to the slots it cannot fill as written, for the delivery report."""
+
+    repairs = []
+    for match in SLOT.finditer(text):
+        slot = slots.get(match.group(1))
+        if slot is None:
+            repairs.append(f"{match.group(0)} 不存在，成稿写成“{UNRESOLVED}”")
+        elif match.group(2) and _variant(slot, match.group(2)) is None:
+            repairs.append(f"{match.group(0)} 的写法不对，成稿只填了数值 {slot['text']}")
+    repairs += [
+        f"{match.group(0)} 里有不存在的占位符，成稿写成“{UNRESOLVED}”"
+        for match in COUNT.finditer(text)
+        if any(slot_id not in slots for slot_id in _count_ids(match))
+    ]
+    return repairs
 
 
 def slot_findings(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:
@@ -227,7 +282,10 @@ def slot_findings(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str
         if slot is None:
             problems.append(f"占位符 {match.group(0)} 不存在")
         elif match.group(2) and _variant(slot, match.group(2)) is None:
-            problems.append(f"占位符 {match.group(0)} 没有“{match.group(2)}”这种写法")
+            problems.append(
+                f"占位符 {match.group(0)} 没有“{match.group(2)}”这种写法"
+                "（冒号后只能是 OK、NG、对象、取值，或这一格自己的对象名）"
+            )
     problems += [
         f"计数占位符 {match.group(0)} 里有不存在的占位符"
         for match in COUNT.finditer(text)
@@ -339,7 +397,7 @@ def mispaired_slots(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[s
             if (
                 slot
                 and match.group(1).startswith("V-")
-                and match.group(2) != "对象"
+                and variant_kind(slot, match.group(2)) != "对象"
                 and slot.get("subject")
                 and slot["subject"] != subject
                 and slot["subject"] not in sentence
@@ -384,7 +442,10 @@ __all__ = [
     "object_names",
     "quote_findings",
     "slot_findings",
+    "names_own_object",
     "slot_lines",
+    "slot_repairs",
     "slot_table",
+    "variant_kind",
     "slots_for_evidence",
 ]

@@ -233,15 +233,13 @@ def _replay_checks(
     run_id = state["run_id"]
     context = tools.prepare_context({"state": state})
     first = _load(run_dir / "ledger/judgments-r0.json")
-    built = tools.build_ledger({
-        "context": context,
-        "judgments": {m: {"module_id": m, "rows": rows} for m, rows in first.items()},
-    })
+    built = tools.build_ledger({"context": context, "judgments": _by_group(context, first)})
     old_review = {
         record["input"]["module_id"]: record["input"].get("program_findings") or {}
         for _path, record in results
         if isinstance(record.get("input"), dict)
-        and "dossiers" in record["input"] and "program_findings" in record["input"]
+        and "rules" in record["input"] and "program_findings" in record["input"]
+        and "facts" in record["input"]
     }
     ledger_checks = {
         module_id: {
@@ -332,7 +330,9 @@ def _replay_checks(
         for revised in revisions:
             if revised and set(revised) <= set(sections):
                 sections.update(revised)
-        edits[owner] = {"owner": owner, "sections": sections, "findings": {}}
+        edits[owner] = {
+            "owner": owner, "module_id": owner.split("#", 1)[0], "sections": sections, "findings": {},
+        }
     return {
         "final": final,
         "chief": chief,
@@ -341,6 +341,20 @@ def _replay_checks(
         "chief_checks": chief_checks,
         "edit_checks": edit_checks,
     }
+
+
+def _by_group(context: Mapping[str, Any], first: Mapping[str, list]) -> dict[str, dict]:
+    """The saved first judgments split as the current code groups the judges.
+
+    A run judged each module whole; its rows go to the group judging their section.
+    """
+
+    judgments: dict[str, dict] = {}
+    for item in context["judge_items"]:
+        sections = {sub["id"] for sub in item["submodules"]}
+        rows = [r for r in first.get(item["module_id"], []) if r.get("submodule_id") in sections]
+        judgments[item["group_id"]] = {"module_id": item["module_id"], "rows": rows}
+    return judgments
 
 
 def _chapter3_now(chapter3: Mapping[str, Any], groups: list[dict[str, Any]]) -> dict[str, Any]:

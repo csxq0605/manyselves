@@ -10,9 +10,8 @@ schema:
       type: string
     related:
       type: object
-    proposed:
-      type: object
-      description: The linker's proposals on this author's rows, by row id
+    group_id:
+      type: string
     flagged_elsewhere:
       type: array
       items:

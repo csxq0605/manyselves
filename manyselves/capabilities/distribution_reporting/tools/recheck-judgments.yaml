@@ -1,0 +1,10 @@
+id: recheck-judgments
+version: 1.0.0
+description: Run the program's row checks again on the rows a revision changed or added
+implementation: capability:distribution-reporting:recheck-judgments
+input_contract: ledger_recheck_input
+output_contract: ledger_recheck
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -229,6 +229,8 @@ def _answer(message):
         return ("submit", [{"module_id": module_id, "rows": [_row(module_id, number)]}])
     if task == "relate-judgments":
         return ("submit", [{"relations": {}}])
+    if task == "relate-proposals":
+        return ("submit", [{"relations": {}}])
     if task == "review-judgments":
         findings = {}
         if value["module_id"] == "2.4":
@@ -241,9 +243,9 @@ def _answer(message):
     if task == "revise-judgments":
         # Only blocking findings send an author back.
         assert set(value["findings"]) == {"J-2.4-1"}
-        row = _row("2.4", REPORT_MODULE_IDS.index("2.4") + 1)
-        row["basis"] = "记录显示温度偏高，需要复测。"
-        return ("submit", [{"rows": [row]}])
+        return ("submit", [{"patches": [
+            {"row_id": "J-2.4-1", "fields": {"basis": "记录显示温度偏高，需要复测。"}}
+        ]}])
     if task == "write-section":
         objects = "、".join(row["object"] for row in value["rows"]) or "本节"
         return (
@@ -271,7 +273,7 @@ def _answer(message):
             ],
         )
     if task == "revise-chief-facts":
-        # One turn answers the fact check of both chapters, with the text as edited.
+        # One turn answers the fact check of both chapters, on the version checked.
         assert set(value["findings"]) == {"1.2-重点风险-1"}
         assert value["findings"]["1.2-重点风险-1"]["grounds"]["J-2.4-1"]
         assert set(value["texts"]) == {"1.1", "1.2", "1.3", "3.1"}
@@ -473,13 +475,21 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         first = loop.received[0].content
         assert '<context name="materials">' in first and "# 项目图谱" in first
         assert f"E-{REPORT_MODULE_IDS.index(module_id) + 1:04d}" in first
-    # The linker read the flagged rows; its proposal reached both authors.
+    # The linker read the flagged rows while the authors related their own;
+    # its proposal then reached both ends, each with the other end's row.
     linkers = [loop for loop in loops if tasks_of(loop) == ["link-rows"]]
     assert len(linkers) == 1 and not linkers[0].restored
     relate_24 = next(
         _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
     )
-    assert [o["row_id"] for o in relate_24["proposed"]["J-2.4-1"]] == ["J-2.5-1"]
+    assert "proposed" not in relate_24
+    proposals_24 = next(
+        _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "relate-proposals"
+    )
+    (offer,) = proposals_24["proposed"]["J-2.4-1"]
+    assert offer["row_id"] == "J-2.5-1" and offer["other_row"]["id"] == "J-2.5-1"
+    assert tasks_of(authors["2.4"]).index("relate-proposals") == 2
+    assert "relate-proposals" not in tasks_of(authors["2.1"])
     # 2.4 revised only in its own conversation; 2.1 had nothing blocking.
     assert "revise-judgments" in tasks_of(authors["2.4"])
     assert "revise-judgments" not in tasks_of(authors["2.1"])
@@ -539,14 +549,17 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     packet = _input_of(checks[0].received[0].content)
     assert packet["units"] and {"rows", "facts", "values", "counts"} <= set(packet)
     assert all("basis" in row for row in packet["rows"])
-    # The chief's editor reads before the fact check; one turn fixes both chapters.
+    # The chief has no edit pass of its own; one turn fixes both chapters.
     edits = [
         loop for loop in loops
         if tasks_of(loop) == ["edit-sections"]
         and _input_of(loop.received[0].content)["owner"] == "chief"
     ]
-    assert len(edits) == 1
+    assert edits == []
     assert tasks_of(chief[0])[2:] == ["revise-chief-facts"]
+    # Each review reads its own module only.
+    assert "related_rows" not in _input_of(review_24)
+    assert '<context name="dossiers">' not in review_24
 
 
 def test_full_report_reaches_only_ledger_agents_and_bound_tools() -> None:
@@ -651,17 +664,20 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         task = _task(message.content)
         value = _input_of(message.content)
         if task == "review-judgments":
-            # The dossiers come first, as context shared by every module's reviewer.
-            match = re.search(r'<context name="dossiers">\n(.*?)\n</context>', message.content, re.S)
-            seen.setdefault("dossiers", {})[value["module_id"]] = json.loads(match.group(1))
+            # The module lens reads its own module only.
+            seen.setdefault("module_lens", {})[value["module_id"]] = (
+                '<context name="dossiers">' in message.content or "related_rows" in value
+            )
+        if task == "review-relations":
+            seen.setdefault("review_related", []).extend(
+                relation["row_id"] for relation in value["relations"]
+            )
         if task == "relate-judgments" and "J-2.2-1" in value.get("related", {}):
             seen["related"] = value["related"]
             return ("submit", [{"relations": {"J-2.2-1": [
                 {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "2.4 记录的温度偏高与本行同期。"},
                 {"row_id": "J-9.9-9", "relation": "负荷—发热", "reason": "不存在的行。"},
             ]}}])
-        if task == "review-judgments" and value["module_id"] == "2.2":
-            seen["review_related"] = value.get("related_rows")
         if task == "write-section" and value.get("related_rows"):
             seen["related_rows"] = value["related_rows"]
         if task in {"chief-chapter-3", "revise-chief-actions"}:
@@ -671,16 +687,15 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
     binding, accepted, _loops = await run_ledger_report(tmp_path, answer, evidence)
     run = binding.get_run(accepted["run_id"])
     assert run["run"]["status"] == "completed", run["state"].get("error")
-    # Different checkpoints are not a conflict, so the reviewers get no dossier.
-    assert all(not dossiers for dossiers in seen["dossiers"].values())
+    assert not any(seen["module_lens"].values())
     assert [entry["row_id"] for entry in seen["related"]["J-2.2-1"]] == ["J-2.4-1"]
     # The reference to a row that is not on this object is dropped.
     final = json.loads(
         (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
     )
     assert [r["row_id"] for r in final["2.2"][0]["relations"]] == ["J-2.4-1"]
-    # The reviewer of 2.2 sees the related row itself, to check the reason.
-    assert [entry["row"]["id"] for entry in seen["review_related"]] == ["J-2.4-1"]
+    # The relation lens checks the relation, with both rows.
+    assert seen["review_related"] == ["J-2.4-1"]
     assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
     (chain,) = seen["chains"]
     assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}

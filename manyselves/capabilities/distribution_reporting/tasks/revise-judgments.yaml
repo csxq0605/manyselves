@@ -1,20 +1,20 @@
 id: revise-judgments
-version: 2.2.0
+version: 3.0.0
 description: Revise only the rows a review named, in the conversation that judged them
 agent: report-consultant
-objective: 审查人和程序对你提交的判断行提出了意见。核对后只修改需要改的行。
+objective: 审查人和程序对你提交的判断行提出了意见（输入里有 recheck 的，是程序对你上一次改动的复查）。核对后只提交要改的地方。
 input_contract: ledger_revision_input
 output_contract: ledger_judgment_revision
 constraints:
 - basis 给审查看，不印进报告；concern 行的 finding 是问题表印给读者的一句话（现状，不超过 60 字），不写编号、知识单元和审查、卷宗、台账、返修等流程用语。
-- findings 必须逐条回应：意见成立就在 rows 里提交改好的完整行（行编号不变）；需要新增的行用新编号；需要删除的行编号放 removed_row_ids；意见不成立就在 responses 里写明理由，键是该意见的编号。
-- 关联（relations）已经在上一步定了：重新提交的行照抄原来的 relations；审查要求删掉或改的关联才改。
+- findings 必须逐条回应：意见成立就在 patches 里写这一行要改的字段（row_id 写行编号，fields 只写改动的字段和改好后的值，没改的字段不写）；需要新增的行把完整的行写进 rows，用新编号；需要删除的行编号放 removed_row_ids；意见不成立就在 responses 里写明理由，键是该意见的编号。
+- 关联（relations）已经在上一步定了，不用重写；审查要求删掉或改的关联，才在这一行的 fields 里写改好后的完整 relations。改完的行程序会再核对一遍，对不上的退回一次。
 - minor 意见可以顺手改，也可以不改。
 - 键是事实编号（E-…）的意见，说的是这条事实还没有任何模块判断：属于本模块某个小节的，新增判断行并写所依据的知识单元；不属于的，在 responses 里说明。
 - 把事实放在默认以外的小节时，保留或补写 placement_reason，rule_refs 写覆盖本小节的知识单元。
 - basis、hazard、checkpoint 里写的测量值（带单位的数值）只能取自本行所引的事实、计算、照片或知识单元；要用某个值，就把它的出处写进 evidence_ids、calculation_ids、photo_ids 或 rule_refs。程序会核对，对不上的退回。
 - 专家版方法里的后果（某种现状会导致什么），是那个项目的证据支持的；只有本项目的事实支持它的前提（方法里写的“前提”）时才写进 hazard，前提没有证据的，hazard 写成待核实的可能后果。
-- 没被点名的行不要重新提交。只提交本模块的行（J-本模块-…），别的模块的行改不了。
+- 没被点名的行不要改。只提交本模块的行（J-本模块-…），别的模块的行改不了。
 - concern 行的 hazard_conditions 不能为空：写明后果要在什么条件下才会发生。
 tools: []
 attention_budget_tokens: 250000

@@ -2,7 +2,7 @@ id: plan-storyline
 version: 1.0.0
 description: Settle the report's cross-module lines of evidence before any prose is written
 agent: report-consultant
-objective: 判断、关联和审查都已定下。你现在做主线规划：上面是项目图谱（含已审定的关联）；输入 rows 是全部关注和不能判定的判断行（basis 截短），object_chains 是同一对象被几个模块判断的证据链，same_observation 是同一单元格在几个小节的判断。找出全报告要贯穿的跨模块证据主线，交给各节撰稿人和总编。
+objective: 判断、关联和审查都已定下。你现在做主线规划：上面是项目图谱（含已审定的关联）；输入 rows 是全部关注和不能判定的判断行（basis 截短），object_chains 是同一对象被几个模块判断的证据链，same_observation 是引用了同一条现场记录的几个小节的判断。找出全报告要贯穿的跨模块证据主线，交给各节撰稿人和总编。
 input_contract: ledger_story_input
 output_contract: ledger_story_plan
 context_fields:

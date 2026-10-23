@@ -4,4 +4,4 @@ description: The three review lenses' items
 adapter: json_schema
 schema:
   type: object
-  required: [review_items, object_items, relation_items]
+  required: [review_items, relation_items]
