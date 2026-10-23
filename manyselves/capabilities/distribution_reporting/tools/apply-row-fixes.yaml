@@ -1,6 +1,6 @@
 id: apply-row-fixes
-version: 1.0.0
-description: Apply the authors' fixes of rows the fact check found wrong, and send the sections resting on them back to their writers
+version: 2.0.0
+description: Apply the authors' fixes of rows the fact check found wrong, and give each writer one revision - the editor's blocking findings and the sections resting on the fixed rows
 implementation: capability:distribution-reporting:apply-row-fixes
 input_contract: ledger_row_fix_input
 output_contract: ledger_row_fix_plan

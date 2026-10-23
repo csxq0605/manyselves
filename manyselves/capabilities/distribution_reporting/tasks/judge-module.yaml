@@ -1,8 +1,9 @@
 id: judge-module
-version: 1.9.0
+version: 1.10.0
 description: Judge every object and checkpoint of one module as structured rows, before any prose
 agent: report-consultant
-objective: 你现在是下面这个模块的责任专家。上面是你这一步的资料：委托与报告结构、项目图谱、本模块的全部记录（连同别的模块对同一对象的记录和项目级记录）、计算结果和程序统计、篇幅参考、本模块的知识库摘录和判断条件、本模块的专家版方法。逐个对象、逐个检查点给出判断，提交判断行。这一步只做判断，不写正文。
+objective: 你现在是下面这个模块的责任专家。下面是你这一步的资料：委托与报告结构、项目图谱、本模块的全部记录（连同别的模块对同一对象的记录和项目级记录）、计算结果和程序统计、篇幅参考、本模块的知识库摘录和判断条件、本模块的专家版方法。逐个对象、逐个检查点给出判断，提交判断行。这一步只做判断，不写正文。
+static_first: true
 input_contract: ledger_module_brief
 context_fields:
 - materials

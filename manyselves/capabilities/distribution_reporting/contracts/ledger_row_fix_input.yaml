@@ -1,5 +1,5 @@
 id: ledger_row_fix_input
-version: 1.0.0
+version: 1.1.0
 description: The final ledger, the authors' patches on the rows the fact check found wrong (by judging group), and the edited sections
 adapter: json_schema
 schema:
@@ -13,4 +13,4 @@ schema:
       description: Judging group -> the author's row patches
     edits:
       type: object
-      description: Owner -> its edited sections
+      description: Owner -> its edited sections and the editor's findings

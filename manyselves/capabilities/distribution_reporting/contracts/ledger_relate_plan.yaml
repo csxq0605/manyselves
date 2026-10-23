@@ -1,6 +1,6 @@
 id: ledger_relate_plan
-version: 2.0.0
-description: One relate item per judging group, with the linker's proposals on its rows (each with the other end's row) and the facts they cite
+version: 3.0.0
+description: One relate item per judging group, with the same room's flagged rows and the records the candidates cite
 adapter: json_schema
 schema:
   type: object

@@ -1,0 +1,30 @@
+id: ledger_cross_batch
+version: 1.0.0
+description: One slice of the cross-module review, with the scope's shared rows, records, map and relation method
+adapter: json_schema
+schema:
+  type: object
+  required: [batch_id, rows, facts, map, relation_method, relations, focus_rows]
+  properties:
+    batch_id:
+      type: string
+    scope_id:
+      type: string
+    scope:
+      type: string
+    map:
+      type: string
+    relation_method:
+      type: string
+    relation_names:
+      type: array
+    rows:
+      type: array
+    other_rows:
+      type: array
+    facts:
+      type: string
+    relations:
+      type: array
+    focus_rows:
+      type: array

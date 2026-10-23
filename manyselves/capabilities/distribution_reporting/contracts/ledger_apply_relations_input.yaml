@@ -1,6 +1,6 @@
 id: ledger_apply_relations_input
-version: 1.0.0
-description: Ledger context, the built ledger and each group's own relations and what it took of the proposals
+version: 1.1.0
+description: Ledger context, the built ledger and each group's relations
 adapter: json_schema
 schema:
   type: object
@@ -11,7 +11,7 @@ schema:
       description: Each judging group's own relations
     proposals:
       type: object
-      description: What each group took of the linker's proposals
+      description: What each group took of the linker's proposals (runs planned before the cross-module review)
     relations:
       type: object
       description: Relations by module (runs planned before the two rounds)

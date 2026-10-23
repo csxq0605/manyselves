@@ -325,7 +325,7 @@ async def test_wording_change_rewrites_only_that_module_from_that_section(
     assert set(tasks) <= {"write-section", "edit-sections", "revise-sections"}
     assert "write-section" in tasks
     first = next(m for m in messages if _task(m.content) == "write-section")
-    assert "语气更客观。" in first.content and '"submodule_id": "2.1.1"' in first.content
+    assert "语气更客观。" in first.content and '"submodule_id":"2.1.1"' in first.content
 
 
 @pytest.mark.asyncio

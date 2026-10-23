@@ -1,0 +1,129 @@
+id: ledger-chief-finish
+version: 1.0.0
+description: The chief fixes chapters 1 and 3 in one turn on the fact check and the program's findings, then writes chapter 4; it runs while the authors fix rows and the writers revise
+tasks:
+- revise-chief-facts
+- chief-chapter-4
+recovery:
+- typed-turn-recovery
+output_contract: ledger_chief_outputs
+state:
+  final: null
+  context: null
+  checked: null
+  chief_key: chief
+  chapter4: null
+  chief_fix: null
+actions:
+- id: resume-chief
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: writer
+  key_variable: chief_key
+  mode: run
+  output_variable: chief_conversation
+- id: chapter1-value
+  kind: set_variable
+  variable: chapter1
+  value_variable: checked
+  field: chapter1
+- id: chapter3-value
+  kind: set_variable
+  variable: chapter3
+  value_variable: checked
+  field: chapter3
+- id: fact-check-value
+  kind: set_variable
+  variable: fact_check
+  value_variable: checked
+  field: fact_check
+- id: fact-blocking
+  kind: set_variable
+  variable: fact_blocking
+  value_variable: checked
+  field: fact_blocking
+- id: route-fact
+  kind: if
+  condition:
+    variable: fact_blocking
+    operator: eq
+    value: true
+  then: fix
+  otherwise: apply-fix
+# Chapters 1 and 3 are fixed in one turn of the chief, on the version checked;
+# the answer holds only what changes.
+- id: fix
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-facts
+  conversation_variable: chief_conversation
+  input_variable: fact_check
+  output_variable: chief_fix
+- id: apply-fix
+  kind: invoke_tool
+  tool: apply-chief-fix
+  input_variables:
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+    fix: chief_fix
+  output_variable: draft
+- id: settle-1
+  kind: set_variable
+  variable: chapter1
+  value_variable: draft
+  field: chapter1
+- id: settle-3
+  kind: set_variable
+  variable: chapter3
+  value_variable: draft
+  field: chapter3
+- id: settle-texts
+  kind: set_variable
+  variable: texts
+  value_variable: draft
+  field: texts
+- id: settle-declined
+  kind: set_variable
+  variable: declined
+  value_variable: draft
+  field: declined
+- id: topic-flag
+  kind: set_variable
+  variable: has_topic
+  value_variable: context
+  field: has_special_topic
+- id: route-4
+  kind: if
+  condition:
+    variable: has_topic
+    operator: eq
+    value: true
+  then: topic-input
+  otherwise: collect
+- id: topic-input
+  kind: set_variable
+  variable: topic_input
+  value_variable: context
+  field: special_topic_input
+- id: chapter-4
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-4
+  conversation_variable: chief_conversation
+  input_variable: topic_input
+  output_variable: chapter4
+- id: collect
+  kind: set_variable
+  variable: outputs
+  value_variables:
+    chapter1: chapter1
+    chapter3: chapter3
+    chapter4: chapter4
+    texts: texts
+    fact_check: fact_check
+    declined: declined
+- id: finish
+  kind: end_workflow
+  output_variable: outputs
+  output_name: result

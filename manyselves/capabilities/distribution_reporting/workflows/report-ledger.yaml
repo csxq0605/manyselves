@@ -1,6 +1,6 @@
 id: report-ledger
-version: 4.0.0
-description: Judge into a ledger, relate rows (the linker first, then each author on its proposals and its own links), review through three lenses, settle per group, form the story lines from the relations, write once, then check and deliver
+version: 5.0.0
+description: Judge into a ledger, each author relating its rows right after; review the modules, the shared objects and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
 tasks: []
 recovery:
 - typed-turn-recovery
@@ -35,6 +35,7 @@ actions:
   key_input_variable: item_key
   output_variable: judgments
   max_concurrency: 5
+  lead_seconds: 5
 - id: build-ledger
   kind: invoke_tool
   tool: build-judgment-ledger
@@ -42,21 +43,26 @@ actions:
     context: context
     judgments: judgments
   output_variable: built
-- id: link-items
-  kind: set_variable
-  variable: link_items
-  value_variable: built
-  field: link_items
 - id: own-items
   kind: set_variable
   variable: own_items
   value_variable: built
   field: relate_items
-- id: object-items
+# Each author relates its rows right after judging, in its judging
+# conversation, to the rows on its objects and the same room's flagged rows.
+- id: plan-relate
+  kind: invoke_tool
+  tool: plan-judgment-relate
+  input_variables:
+    context: context
+    ledger: built
+    own_items: own_items
+  output_variable: relate_plan
+- id: relate-items
   kind: set_variable
-  variable: object_items
-  value_variable: built
-  field: object_items
+  variable: relate_items
+  value_variable: relate_plan
+  field: relate_items
 # Photos are read again while the rows are related: the choice of photos
 # rests on the rows' own dispositions, not on relations.
 - id: plan-reread
@@ -70,25 +76,22 @@ actions:
   variable: reread_items
   value_variable: reread_plan
   field: reread_items
-# Every branch holds only a map, so the three run at once: the linker, the
-# photo re-read, and the object lens (which reads the rows as judged).
 - id: relate-and-reread
   kind: parallel
   branches:
-    link: link-rows
+    relate: relate-groups
     reread: reread-photos
-    objects: review-objects
   join: join-relate
-  max_concurrency: 3
-- id: link-rows
+  max_concurrency: 2
+- id: relate-groups
   kind: map
-  items_variable: link_items
-  key_field: pack_id
-  workflow: ledger-link
+  items_variable: relate_items
+  key_field: group_id
+  workflow: ledger-module-relate
   key_input_variable: item_key
-  output_variable: links
-  max_concurrency: 6
-- id: link-done
+  output_variable: own_relations
+  max_concurrency: 8
+- id: relate-done
   kind: goto
   target: join-relate
 - id: reread-photos
@@ -103,65 +106,23 @@ actions:
 - id: reread-done
   kind: goto
   target: join-relate
-- id: review-objects
-  kind: map
-  items_variable: object_items
-  key_field: batch_id
-  workflow: ledger-object-review
-  key_input_variable: item_key
-  output_variable: object_reviews
-  max_concurrency: 6
-- id: objects-done
-  kind: goto
-  target: join-relate
 - id: join-relate
   kind: join
   parallel: relate-and-reread
   inputs:
-    link: links
+    relate: own_relations
     reread: rereads
-    objects: object_reviews
   output_variable: related_and_reread
-- id: links-value
+- id: own-relations-value
   kind: set_variable
-  variable: links
+  variable: own_relations
   value_variable: related_and_reread
-  field: link
+  field: relate
 - id: rereads-value
   kind: set_variable
   variable: rereads
   value_variable: related_and_reread
   field: reread
-- id: object-reviews-value
-  kind: set_variable
-  variable: object_reviews
-  value_variable: related_and_reread
-  field: objects
-# The linker's proposals go to the groups they concern, each with the other
-# end's row and the facts it cites; every group weighs them and adds its own
-# links in one turn.
-- id: plan-relate
-  kind: invoke_tool
-  tool: plan-judgment-relate
-  input_variables:
-    context: context
-    ledger: built
-    links: links
-    own_items: own_items
-  output_variable: relate_plan
-- id: relate-items
-  kind: set_variable
-  variable: relate_items
-  value_variable: relate_plan
-  field: relate_items
-- id: relate-groups
-  kind: map
-  items_variable: relate_items
-  key_field: group_id
-  workflow: ledger-module-relate
-  key_input_variable: item_key
-  output_variable: own_relations
-  max_concurrency: 8
 - id: apply-relations
   kind: invoke_tool
   tool: apply-judgment-relations
@@ -177,8 +138,10 @@ actions:
     ledger: related
     rereads: rereads
   output_variable: ledger
-# The module lens reads each module's own rows with what they cite; the
-# relation lens reads the relations.
+# Three reviews at once: each module's rows with what they cite; the objects
+# several modules judged; and the cross-module review, which checks the
+# relations and proposes the ones the authors missed.  Every batch map sends
+# its first request alone, so the others reuse the opening it sent.
 - id: plan-review
   kind: invoke_tool
   tool: plan-judgment-review
@@ -191,18 +154,24 @@ actions:
   variable: review_items
   value_variable: review_plan
   field: review_items
-- id: relation-items
+- id: object-items
   kind: set_variable
-  variable: relation_items
+  variable: object_items
   value_variable: review_plan
-  field: relation_items
+  field: object_items
+- id: cross-items
+  kind: set_variable
+  variable: cross_items
+  value_variable: review_plan
+  field: cross_items
 - id: review-lenses
   kind: parallel
   branches:
     modules: review-modules
-    relations: review-relations
+    objects: review-objects
+    cross: review-cross
   join: join-review
-  max_concurrency: 2
+  max_concurrency: 3
 - id: review-modules
   kind: map
   items_variable: review_items
@@ -211,18 +180,32 @@ actions:
   key_input_variable: item_key
   output_variable: module_reviews
   max_concurrency: 5
+  lead_seconds: 5
 - id: modules-done
   kind: goto
   target: join-review
-- id: review-relations
+- id: review-objects
   kind: map
-  items_variable: relation_items
+  items_variable: object_items
   key_field: batch_id
-  workflow: ledger-relation-review
+  workflow: ledger-object-review
   key_input_variable: item_key
-  output_variable: relation_reviews
+  output_variable: object_reviews
   max_concurrency: 6
-- id: relations-done
+  lead_seconds: 5
+- id: objects-done
+  kind: goto
+  target: join-review
+- id: review-cross
+  kind: map
+  items_variable: cross_items
+  key_field: batch_id
+  workflow: ledger-cross-review
+  key_input_variable: item_key
+  output_variable: cross_reviews
+  max_concurrency: 12
+  lead_seconds: 5
+- id: cross-done
   kind: goto
   target: join-review
 - id: join-review
@@ -230,18 +213,26 @@ actions:
   parallel: review-lenses
   inputs:
     modules: module_reviews
-    relations: relation_reviews
+    objects: object_reviews
+    cross: cross_reviews
   output_variable: lens_reviews
 - id: module-reviews-value
   kind: set_variable
   variable: module_reviews
   value_variable: lens_reviews
   field: modules
-- id: relation-reviews-value
+- id: object-reviews-value
   kind: set_variable
-  variable: relation_reviews
+  variable: object_reviews
   value_variable: lens_reviews
-  field: relations
+  field: objects
+- id: cross-reviews-value
+  kind: set_variable
+  variable: cross_reviews
+  value_variable: lens_reviews
+  field: cross
+# The findings merged by row, and the proposals that stand, go to the
+# authors: each settles both in one revision.
 - id: gather-reviews
   kind: invoke_tool
   tool: gather-judgment-reviews
@@ -250,7 +241,7 @@ actions:
     ledger: ledger
     module_reviews: module_reviews
     object_reviews: object_reviews
-    relation_reviews: relation_reviews
+    cross_reviews: cross_reviews
   output_variable: gathered
 - id: settle-items
   kind: set_variable
@@ -302,6 +293,7 @@ actions:
   key_input_variable: item_key
   output_variable: written
   max_concurrency: 8
+  lead_seconds: 5
 # Module sections are checked and edited while the chief writes; the chief's
 # chapters are checked by the program and the fact check inside ledger-chief.
 - id: check-report
@@ -324,6 +316,7 @@ actions:
   key_input_variable: item_key
   output_variable: edits
   max_concurrency: 8
+  lead_seconds: 5
 - id: writing-done
   kind: goto
   target: join-draft
@@ -349,18 +342,45 @@ actions:
   variable: edits
   value_variable: drafts
   field: writing
-- id: chief-outputs
+- id: chief-checked
   kind: set_variable
-  variable: chief_outputs
+  variable: chief_checked
   value_variable: drafts
   field: chief
-# Rows the fact check found carrying an error were fixed by their authors;
-# the sections resting on them are brought in line by their writers.
-- id: row-fixes
+- id: row-fix-items
   kind: set_variable
-  variable: row_fixes
-  value_variable: chief_outputs
-  field: row_fixes
+  variable: row_fix_items
+  value_variable: chief_checked
+  field: row_fix_items
+# The chief fixes chapters 1 and 3 once while the authors fix the rows that
+# carry the same errors; then each writer revises once, on the editor's
+# findings and the sections resting on the fixed rows.
+- id: finish-draft
+  kind: parallel
+  branches:
+    chief: chief-finish
+    rows: fix-rows
+  join: join-finish
+  max_concurrency: 2
+- id: chief-finish
+  kind: subworkflow
+  workflow: ledger-chief-finish
+  input_variables:
+    final: final
+    context: context
+    checked: chief_checked
+  output_variable: chief_outputs
+- id: chief-finish-done
+  kind: goto
+  target: join-finish
+- id: fix-rows
+  kind: map
+  items_variable: row_fix_items
+  key_field: group_id
+  workflow: ledger-row-fix
+  key_input_variable: item_key
+  output_variable: row_fixes
+  max_concurrency: 5
 - id: apply-row-fixes
   kind: invoke_tool
   tool: apply-row-fixes
@@ -369,31 +389,68 @@ actions:
     fixes: row_fixes
     edits: edits
   output_variable: row_fixed
+- id: section-revise-items
+  kind: set_variable
+  variable: section_revise_items
+  value_variable: row_fixed
+  field: section_revise_items
+- id: revise-sections
+  kind: map
+  items_variable: section_revise_items
+  key_field: owner
+  workflow: ledger-section-revise
+  key_input_variable: item_key
+  output_variable: section_revisions
+  max_concurrency: 8
+- id: merge-section-revisions
+  kind: invoke_tool
+  tool: merge-section-fixes
+  input_variables:
+    edits: edits
+    fixes: section_revisions
+  output_variable: merged_edits
+- id: rows-result
+  kind: set_variable
+  variable: rows_result
+  value_variables:
+    fixed: row_fixed
+    merged: merged_edits
+    row_fixes: row_fixes
+- id: rows-done
+  kind: goto
+  target: join-finish
+- id: join-finish
+  kind: join
+  parallel: finish-draft
+  inputs:
+    chief: chief_outputs
+    rows: rows_result
+  output_variable: finished
+- id: chief-outputs
+  kind: set_variable
+  variable: chief_outputs
+  value_variable: finished
+  field: chief
+- id: rows-value
+  kind: set_variable
+  variable: rows_result
+  value_variable: finished
+  field: rows
+- id: fixed-value
+  kind: set_variable
+  variable: row_fixed
+  value_variable: rows_result
+  field: fixed
 - id: fixed-ledger
   kind: set_variable
   variable: final
   value_variable: row_fixed
   field: ledger
-- id: section-fix-items
+- id: merged-value
   kind: set_variable
-  variable: section_fix_items
-  value_variable: row_fixed
-  field: section_fix_items
-- id: fix-sections
-  kind: map
-  items_variable: section_fix_items
-  key_field: owner
-  workflow: ledger-section-fix
-  key_input_variable: item_key
-  output_variable: section_fixes
-  max_concurrency: 8
-- id: merge-section-fixes
-  kind: invoke_tool
-  tool: merge-section-fixes
-  input_variables:
-    edits: edits
-    fixes: section_fixes
-  output_variable: merged_edits
+  variable: merged_edits
+  value_variable: rows_result
+  field: merged
 - id: merged-edits
   kind: set_variable
   variable: edits

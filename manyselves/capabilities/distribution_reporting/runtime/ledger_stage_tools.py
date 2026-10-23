@@ -26,7 +26,7 @@ from typing import Any
 
 from manyselves.kernel.workflow import gather_by_key
 
-from ..domain.judgment_ledger import JudgmentRow, LinkProposals, StoryLine, StoryPlan
+from ..domain.judgment_ledger import CrossReview, JudgmentRow, StoryLine, StoryPlan
 from .context_packs import (
     ATTENTION,
     PROJECT_LEVEL,
@@ -34,8 +34,9 @@ from .context_packs import (
     brief_row,
     compact,
     compact_row,
+    cross_batches,
+    object_batches,
     project_map,
-    relation_batches,
     row_line,
     writing_groups,
 )
@@ -48,11 +49,12 @@ from .review_packets import ReviewPackets
 
 # Character budgets for one conversation's material (about two characters a
 # token); the tasks' attention budgets are the hard limit.
-LINK_PACK_CHARS = 160_000
-# A reviewer's output grows with what it is given: these keep one review
-# batch to a few minutes of writing.
+# A reviewer's output grows with what it is given: this keeps one object
+# review batch to a few minutes of writing.
 OBJECT_BATCH_CHARS = 60_000
-RELATION_BATCH_CHARS = 60_000
+# The cross-module review's shared prefix (rows, records, map), about 220k
+# tokens at most; beyond it the review is split by site.
+CROSS_PREFIX_CHARS = 440_000
 # Records an author gets with its relate candidates (same objects, proposals,
 # then the same room's flagged rows while they fit).
 RELATE_FACT_CHARS = 90_000
@@ -137,21 +139,18 @@ class LedgerStageTools:
             return {"groups": {}, "row_groups": {}}
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def plan_relate(self, value: dict[str, Any]) -> dict[str, Any]:
-        """One relate round per judging group: its own linking and the linker's proposals.
+    def _checked_proposals(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]], results: Mapping[str, Any]
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """The cross-module review's proposals that stand, offered to the authors of both rows.
 
-        A proposal stands when both rows exist, belong to different modules
-        and do not rest on one source cell, and it is either a relation the
-        knowledge base lists or states its mechanism and condition.  It goes to
-        the authors of both rows, with the other row in full and the records it
-        cites; each decides for its own rows, and links what else it sees, in
-        the same turn.
+        A proposal stands when both rows exist, belong to different modules,
+        do not rest on one source cell and are not related already, and it is
+        either a relation the knowledge base lists or states its mechanism and
+        condition.  Each author gets it for its own row, with the other row in
+        full; both decide for their own rows.
         """
 
-        context = value["context"]
-        built = value["ledger"]
-        run_id = context["run_id"]
-        ledger = _ledger(built)
         module_of = {row.id: m for m, rows in ledger.items() for row in rows}
         index = {row.id: row for rows in ledger.values() for row in rows}
         names = set(relation_names(self._relation_method(run_id)))
@@ -161,21 +160,30 @@ class LedgerStageTools:
             for rows in same_observation_rows(ledger, observation_of)
             for a in rows for b in rows if a.id != b.id
         }
-        groups = self._groups_file(run_id)
-        row_groups = groups.get("row_groups") or {}
-        proposed: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        related = {
+            frozenset((row.id, relation.row_id))
+            for rows in ledger.values() for row in rows for relation in row.relations
+        }
+        row_groups = self._groups_file(run_id).get("row_groups") or {}
+        offers: dict[str, dict[str, list[dict[str, Any]]]] = {}
         kept: list[dict[str, Any]] = []
         dropped: list[dict[str, Any]] = []
-        for pack_id, result in (value.get("links") or {}).items():
-            for proposal in LinkProposals.model_validate(_plain(result)).proposals:
-                entry = {"pack_id": pack_id, **proposal.model_dump(mode="json")}
+        seen: set[tuple[frozenset[str], str]] = set()
+        for batch_id, result in results.items():
+            for proposal in CrossReview.model_validate(_plain(result) or {}).proposals:
+                entry = {"batch_id": batch_id, **proposal.model_dump(mode="json")}
                 a, b = proposal.row_id, proposal.other_row_id
+                pair = frozenset((a, b))
                 if a not in module_of or b not in module_of:
                     why = "所引的行不存在"
                 elif module_of[a] == module_of[b]:
                     why = "两行属于同一个模块"
-                elif frozenset((a, b)) in same:
+                elif pair in same:
                     why = "两行引用的是同一个表格单元格（同一观测），不是关联"
+                elif pair in related:
+                    why = "两行已经有关联"
+                elif (pair, proposal.relation.strip()) in seen:
+                    why = "重复的提议"
                 elif (
                     names
                     and proposal.relation.strip() not in names
@@ -183,25 +191,41 @@ class LedgerStageTools:
                 ):
                     why = "知识库没有收录这种关联，又没有写机理和成立条件"
                 else:
+                    seen.add((pair, proposal.relation.strip()))
                     kept.append(entry)
                     for own, other in ((a, b), (b, a)):
                         group_id = row_groups.get(own, module_of[own])
-                        offer = compact({
+                        offers.setdefault(group_id, {}).setdefault(own, []).append(compact({
                             "row_id": other,
                             "relation": proposal.relation,
                             "reason": proposal.reason,
                             "mechanism": proposal.mechanism,
                             "condition": proposal.condition,
                             "other_row": compact_row(index[other]),
-                        })
-                        rows = proposed.setdefault(group_id, {}).setdefault(own, [])
-                        if all(o["row_id"] != other or o["relation"] != offer["relation"] for o in rows):
-                            rows.append(offer)
+                        }))
                     continue
                 dropped.append({**entry, "why": why})
         self.store.write_json(
-            f"Work/runs/{run_id}/ledger/link-proposals.json", {"kept": kept, "dropped": dropped}
+            f"Work/runs/{run_id}/ledger/cross-proposals.json", {"kept": kept, "dropped": dropped}
         )
+        return offers
+
+    def plan_relate(self, value: dict[str, Any]) -> dict[str, Any]:
+        """One relate turn per judging group, right after it judged.
+
+        Each author relates its rows to the other modules' rows on the same
+        objects and the same room's flagged rows, with the records they cite;
+        what it misses is the cross-module review's to propose.
+        """
+
+        context = value["context"]
+        built = value["ledger"]
+        run_id = context["run_id"]
+        ledger = _ledger(built)
+        module_of = {row.id: m for m, rows in ledger.items() for row in rows}
+        index = {row.id: row for rows in ledger.values() for row in rows}
+        names = set(relation_names(self._relation_method(run_id)))
+        row_groups = self._groups_file(run_id).get("row_groups") or {}
         sites = self._sites(run_id)
         render = self._renderer(run_id)
         flagged = [row for rows in ledger.values() for row in rows if row.disposition in ATTENTION]
@@ -210,7 +234,6 @@ class LedgerStageTools:
         for own_item in value.get("own_items") or []:
             group_id = own_item.get("group_id") or own_item["module_id"]
             module_id = own_item["module_id"]
-            offers = proposed.get(group_id) or {}
             item = {**own_item, "relation_names": sorted(names) or own_item.get("relation_names", [])}
             mine = [
                 row for row in ledger.get(module_id, [])
@@ -221,24 +244,23 @@ class LedgerStageTools:
                 for others in (own_item.get("related") or {}).values() for other in others
                 if other.get("row_id") in index
             ))
-            offered = list(dict.fromkeys(o["row_id"] for entries in offers.values() for o in entries))
             # Rows of other modules flagged at the same distribution room (the
             # tables' room column), so links between different objects there
             # can be checked against their records too.
             places = {p for row in mine for p in sites.row_places(row)} - {PROJECT_LEVEL}
-            seen = set(related) | set(offered)
+            seen = set(related)
             same_room = [
                 row.id for row in flagged
                 if module_of[row.id] != module_id and row.id not in seen
                 and places & set(sites.row_places(row))
             ]
             # Records of the candidates, nearest first, within the budget: the
-            # proposals' and same objects' always, the same room's while they fit.
+            # same objects' always, the same room's while they fit.
             cited: list[Any] = []
             cited_ids: set[str] = set()
             kept_room: list[str] = []
             size = 0
-            for row_id in [*offered, *related, *same_room]:
+            for row_id in [*related, *same_room]:
                 new = [
                     sites.items[e] for e in index[row_id].evidence_ids
                     if e in sites.items and e not in cited_ids
@@ -251,12 +273,10 @@ class LedgerStageTools:
                 cited.extend(new)
                 cited_ids.update(record.id for record in new)
                 size += cost
-            if offers:
-                item["proposed"] = offers
             if kept_room:
                 item["same_room"] = {row_id: brief_row(index[row_id]) for row_id in kept_room}
             item["facts"] = render(cited) or "（候选行没有引用记录）"
-            candidates[group_id] = {"related": related, "same_room": kept_room, "proposed": offered}
+            candidates[group_id] = {"related": related, "same_room": kept_room}
             items.append(item)
         self.store.write_json(f"Work/runs/{run_id}/ledger/relate-candidates.json", candidates)
         return {"relate_items": items}
@@ -294,23 +314,39 @@ class LedgerStageTools:
             }
             for module in context["modules"]
         ]
-        method = self._relation_method(run_id)
-        relation_items = [
-            {"run_id": run_id, "relation_method": method or "（知识库没有关联方法）", **batch}
-            for batch in relation_batches(
-                ledger, sites, render, budget_chars=RELATION_BATCH_CHARS
-            )
+        method = self._relation_method(run_id) or "（知识库没有关联方法）"
+        # The cross-module review: every slice opens with the same map, method,
+        # rows and records, and differs only in what it is asked to decide.
+        relation_map = project_map(sites, ledger, with_relations=True)
+        cross_items = [
+            {"run_id": run_id, "map": relation_map, "relation_method": method, **batch}
+            for batch in cross_batches(ledger, sites, render, prefix_chars=CROSS_PREFIX_CHARS)
         ]
-        path = self.workspace / f"Work/runs/{run_id}/ledger/review-lenses.json"
-        lenses = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        lenses["relations"] = [
-            {"batch_id": b["batch_id"], "relations": b["relations"]} for b in relation_items
+        # The object lens reads every module's rows on objects several judged,
+        # with the final photo readings.
+        object_items = [
+            {"run_id": run_id, **batch}
+            for batch in object_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
+        ]
+        lenses = {
+            "objects": [{"batch_id": b["batch_id"], "objects": b["objects"]} for b in object_items]
+        }
+        lenses["cross"] = [
+            {"batch_id": b["batch_id"], "relations": b["relations"], "focus_rows": b["focus_rows"]}
+            for b in cross_items
         ]
         self.store.write_json(f"Work/runs/{run_id}/ledger/review-lenses.json", lenses)
-        return {"review_items": review_items, "relation_items": relation_items}
+        return {
+            "review_items": review_items,
+            "object_items": object_items,
+            "cross_items": cross_items,
+        }
 
     def gather_reviews(self, value: dict[str, Any]) -> dict[str, Any]:
         """The three lenses' findings merged by row, one review per judging group to settle.
+
+        The cross-module review's findings are the relation lens; its proposals
+        that stand go with the findings to both rows' groups.
 
         A finding on a row goes to the group that wrote the row; one on a
         record (a fact no row covers) to the group judging that record's
@@ -335,7 +371,7 @@ class LedgerStageTools:
             {
                 "module": findings(value.get("module_reviews")),
                 "object": findings(value.get("object_reviews")),
-                "relation": findings(value.get("relation_reviews")),
+                "relation": findings(value.get("cross_reviews")),
             }
         )
         per_module: dict[str, dict[str, Any]] = {}
@@ -367,6 +403,12 @@ class LedgerStageTools:
                     return gid
             return next((gid for gid in mine if groups[gid].get("first")), mine[0] if mine else module_id)
 
+        # Relations the cross-module review found missing go to both rows'
+        # authors, settled with the findings in one revision.
+        offers = self._checked_proposals(run_id, ledger, value.get("cross_reviews") or {})
+        sites = self._sites(run_id)
+        render = self._renderer(run_id)
+        index = {row.id: row for rows in ledger.values() for row in rows}
         items = []
         for group_id, group in groups.items():
             module_id = group.get("module_id", group_id)
@@ -392,8 +434,37 @@ class LedgerStageTools:
                     for target, finding in per_module.get(module_id, {}).items()
                     if group_of(module_id, target) == group_id
                 }},
+                **self._proposal_material(offers.get(group_id) or {}, own_rows, index, sites, render),
             })
         return {"settle_items": items}
+
+    @staticmethod
+    def _proposal_material(
+        offered: Mapping[str, Sequence[Mapping[str, Any]]],
+        own_rows: Sequence[JudgmentRow],
+        index: Mapping[str, JudgmentRow],
+        sites: Sites,
+        render: Any,
+    ) -> dict[str, Any]:
+        """A group's proposals, with the records of the other rows it has not read."""
+
+        if not offered:
+            return {}
+        own_ids = {row.id for row in own_rows}
+        offered = {row_id: list(entries) for row_id, entries in offered.items() if row_id in own_ids}
+        if not offered:
+            return {}
+        seen = {e for row in own_rows for e in row.evidence_ids}
+        others = [index[o["row_id"]] for entries in offered.values() for o in entries if o["row_id"] in index]
+        records = [
+            sites.items[e]
+            for e in dict.fromkeys(e for row in others for e in row.evidence_ids)
+            if e in sites.items and e not in seen
+        ]
+        return {
+            "proposed": offered,
+            "proposal_facts": render(records) or "（另一端的行没有引用别的记录）",
+        }
 
     # -- story and writing ----------------------------------------------
 
@@ -512,14 +583,16 @@ class LedgerStageTools:
                     for e in dict.fromkeys(e for row in [*rows, *related] for e in row.evidence_ids)
                     if e in sites.items
                 ]
+                # Most shared first: every writer's numbers and length
+                # reference, then the module's method, then the group's facts.
                 pack = "\n\n".join(
                     block
                     for block in [
-                        "# 本组小节所引的事实\n" + render(cited) if cited else "",
                         reference.get("numbers") or "",
                         length_reference,
                         "# 专家版方法（本模块，写正文看“写法”和“范例”）\n"
                         + (skills.get(module_id) or "（本模块没有专家版方法）"),
+                        "# 本组小节所引的事实\n" + render(cited) if cited else "",
                     ]
                     if block
                 )
@@ -591,7 +664,7 @@ def relation_lines(ledger: Mapping[str, Sequence[JudgmentRow]]) -> list[StoryLin
 
 __all__ = [
     "LENSES",
-    "LINK_PACK_CHARS",
+    "CROSS_PREFIX_CHARS",
     "LedgerStageTools",
     "merged_finding",
     "relation_lines",

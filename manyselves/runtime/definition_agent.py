@@ -631,41 +631,33 @@ class DefinitionAgentInvoker:
 
     @staticmethod
     def _prompt(task: TaskDefinition, input_value: Any, tools: ToolRegistry) -> str:
-        parts: list[str] = []
         remaining = input_value
+        blocks: dict[str, str] = {}
         if task.context_fields and isinstance(input_value, Mapping):
             remaining = dict(input_value)
             for field in task.context_fields:
                 if field not in remaining:
                     continue
                 value = remaining.pop(field)
-                text = (
-                    value
-                    if isinstance(value, str)
-                    else json.dumps(value, ensure_ascii=False, indent=2)
-                )
-                parts.append(f"<context name=\"{field}\">\n{text.strip()}\n</context>")
-        parts.append(f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>")
+                text = value if isinstance(value, str) else _compact_json(value)
+                blocks[field] = f"<context name=\"{field}\">\n{text.strip()}\n</context>"
+        static: list[str] = [f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>"]
         if task.constraints:
-            parts.append(
+            static.append(
                 "<constraints>\n"
                 + "\n".join(f"- {item}" for item in task.constraints)
                 + "\n</constraints>"
             )
-        parts.append(
-            f"<input contract=\"{task.input_contract}\">\n"
-            + json.dumps(remaining, ensure_ascii=False, indent=2)
-            + "\n</input>"
-        )
         other_tools = [name for name in tools.get_all() if name != "submit_result"]
         if other_tools:
-            parts.append("可用工具：" + "、".join(other_tools) + "。")
+            static.append("可用工具：" + "、".join(other_tools) + "。")
         submit = tools.get("submit_result")
         generic = bool(getattr(submit, "generic", False))
+        schema: list[str] = []
         if generic:
             # The generic tool declares only "an object"; the task's own schema
-            # travels here, after the shared prefix, so the cache still hits.
-            parts.append(
+            # travels in the message.
+            schema.append(
                 f"<output_schema contract=\"{task.output_contract}\">\n"
                 + json.dumps(
                     submit.output_contract.json_schema(),
@@ -674,7 +666,15 @@ class DefinitionAgentInvoker:
                 )
                 + "\n</output_schema>"
             )
-        parts.append(_submit_hint(task, generic) + "资料不足时如实写明，不要编造。")
+        body = f"<input contract=\"{task.input_contract}\">\n" + _compact_json(remaining) + "\n</input>"
+        hint = _submit_hint(task, generic) + "资料不足时如实写明，不要编造。"
+        if task.static_first:
+            # What every request of the batch shares comes first, what varies
+            # last, so a request reuses the prefix an earlier one sent.
+            shared = [blocks.pop(f) for f in task.shared_fields if f in blocks]
+            parts = [*shared, *static, *schema, *blocks.values(), body, hint]
+        else:
+            parts = [*blocks.values(), *static, body, *schema, hint]
         return "\n\n".join(parts)
 
     @staticmethod
@@ -702,6 +702,12 @@ class DefinitionAgentInvoker:
             f"<{tag}>\n{body}\n你仍是 {agent.id}，当前任务是 {task.id}。"
             f"完成后立即{_submit_hint(task, _generic(agent, task))}\n</{tag}>"
         )
+
+
+def _compact_json(value: Any) -> str:
+    """JSON without layout whitespace: the model reads it as well, for fewer tokens."""
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _store_key(task_id: str, task: TaskDefinition) -> str:

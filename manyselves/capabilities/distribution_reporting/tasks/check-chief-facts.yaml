@@ -1,8 +1,9 @@
 id: check-chief-facts
-version: 1.2.0
+version: 1.3.0
 description: Check a few units of chapters 1 and 3 against the rows and records they rest on
 agent: report-consultant
 objective: 你现在是核对员。下面是报告第一、三章里的几个条目（units），以及它们所引或点名的判断行（rows）、这些行所引的原始记录（facts）、相关数值（values）和各列的计数与取值（每个条目的 counts）。只核对事实，不看文字写法和组织方式。
+static_first: true
 input_contract: ledger_chief_fact_packet
 output_contract: ledger_grounded_findings
 constraints:

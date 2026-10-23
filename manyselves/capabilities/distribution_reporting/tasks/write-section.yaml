@@ -1,8 +1,9 @@
 id: write-section
-version: 1.10.0
+version: 1.11.0
 description: Write one submodule's prose from the settled judgment rows, in a writer conversation of its own
 agent: report-consultant
-objective: 判断已经定下来。你是这几个小节的撰稿人，现在按专家版的写法写下面这个小节的正文。第一节的上面是这组小节的资料（所引事实、程序统计、篇幅参考、本模块的专家版方法），后面各节沿用。
+objective: 判断已经定下来。你是这几个小节的撰稿人，现在按专家版的写法写下面这个小节的正文。第一节附有这组小节的资料（所引事实、程序统计、篇幅参考、本模块的专家版方法），后面各节沿用。
+static_first: true
 input_contract: ledger_section_brief
 context_fields:
 - pack

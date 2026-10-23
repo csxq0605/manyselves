@@ -1,11 +1,11 @@
 id: ledger_relate_plan_input
-version: 2.0.0
-description: Ledger context, the built ledger, the cross-module linker's proposals by pack, and each judging group's relate item
+version: 3.0.0
+description: Ledger context, the built ledger and each judging group's relate item
 adapter: json_schema
 schema:
   type: object
-  required: [context, ledger, links, own_items]
+  required: [context, ledger, own_items]
   properties:
     own_items:
       type: array
-      description: One relate item per judging group (built by build-ledger), to which its proposals are added
+      description: One relate item per judging group (built by build-ledger), to which the same room's flagged rows and the candidates' records are added

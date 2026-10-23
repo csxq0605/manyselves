@@ -235,10 +235,10 @@ class CandidateReview(_Model):
 
 
 class DeclinedProposal(_Model):
-    """A relation the linker proposed for one of the author's rows, not taken."""
+    """A relation proposed for one of the author's rows, not taken."""
 
     row_id: str = Field(pattern=r"^J-", description="本模块的判断行编号")
-    other_row_id: str = Field(pattern=r"^J-", description="专员提议关联的别的模块的行")
+    other_row_id: str = Field(pattern=r"^J-", description="提议关联的别的模块的行")
     reason: str = Field(min_length=1, description="一句话：为什么本次不成立")
 
 
@@ -255,12 +255,12 @@ class RelationSet(_Model):
     )
     declined_proposals: list[DeclinedProposal] = Field(
         default_factory=list,
-        description="专员提议、但你判断本次不成立的关联，每条写一句理由；采纳的写进 relations",
+        description="提议、但你判断本次不成立的关联，每条写一句理由；采纳的写进 relations",
     )
 
 
 class LinkProposal(_Model):
-    """One relation between rows of two modules, proposed by the cross-module linker."""
+    """One relation between rows of two modules, proposed by the cross-module review."""
 
     row_id: str = Field(pattern=r"^J-", description="一端的判断行编号")
     other_row_id: str = Field(pattern=r"^J-", description="另一端、别的模块的判断行编号")
@@ -278,12 +278,29 @@ class LinkProposal(_Model):
     )
 
 
-class LinkProposals(_Model):
-    """What one linker found between the rows it was given."""
+class RelationFinding(_Model):
+    """One problem with the relations recorded on a row."""
 
+    problem: str = Field(min_length=1, description="哪条关联（写明 row_id）有什么问题，照原文写出两边的事实")
+    severity: Literal["blocking", "minor"] = Field(
+        description="blocking=关联不成立或作用说过头，要删；minor=成立，但行的依据没有体现或体现过头"
+    )
+    suggestion: str = Field(default="", description="怎么改：删掉哪条，或依据里补写或收回什么")
+
+
+class CrossReview(_Model):
+    """The cross-module review of one slice: the relations checked, and the ones missing."""
+
+    findings: dict[str, RelationFinding] = Field(
+        default_factory=dict,
+        description="键是记下这条关联的行（for_row）；同一行几条关联有问题的写在一条里。没有问题时留空",
+    )
     proposals: list[LinkProposal] = Field(
         default_factory=list,
-        description="提议的跨模块关联；两边的事实看不出条件的不提，宁缺不凑",
+        description=(
+            "作者没有连、但两边的事实确实能看出条件的跨模块关联，至少一端在 focus_rows 里；"
+            "交给两边作者确认。宁缺不凑，没有就留空"
+        ),
     )
 
 
@@ -346,6 +363,17 @@ class JudgmentRevision(_Model):
     responses: dict[str, str] = Field(
         default_factory=dict,
         description="Finding target to the reason it was not changed",
+    )
+    relations: dict[str, list[RowRelation]] = Field(
+        default_factory=dict,
+        description=(
+            "采纳的跨模块审查提议：键是本模块的行编号，值是给这一行新加的关联（不重写这一行已有的关联）；"
+            "没有提议或都不采纳时留空"
+        ),
+    )
+    declined_proposals: list[DeclinedProposal] = Field(
+        default_factory=list,
+        description="不采纳的提议，每条写一句理由",
     )
 
 
@@ -1566,7 +1594,8 @@ __all__ = [
     "relation_pairs",
     "DeclinedProposal",
     "LinkProposal",
-    "LinkProposals",
+    "CrossReview",
+    "RelationFinding",
     "StoryLine",
     "StoryPlan",
     "RelationSet",

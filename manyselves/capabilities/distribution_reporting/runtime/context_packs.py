@@ -10,13 +10,14 @@ comparison it is asked to make are there in full:
 - ``judge_facts``: a judge reads its own module's records, every other
   module's records on the same objects, the project-level records (summary
   sheets and documents that belong to no site) and the unassigned ones.
-- ``linker_packs``: the cross-module linker reads every flagged row in full
-  with the records they cite.  When that is too much for one conversation it
-  is split by site, and a system-level linker reads the rows that belong to
-  no single site with every flagged row in one line.
-- ``object_batches`` and ``relation_batches``: the object reviewer reads all
-  modules' rows and records on objects judged by several modules; the
-  relation reviewer reads both rows of each relation and what they cite.
+- ``object_batches``: the object reviewer reads all modules' rows and
+  records on objects judged by several modules.
+- ``cross_batches``: the cross-module reviewer reads every flagged row and
+  every end of a relation in full, with the records they cite, as one prefix
+  shared by every slice; a slice is the relations it checks and the rows it
+  searches for missing ones.  When the prefix is too much for one
+  conversation it is split by site, and a system-level scope reads the rows
+  that belong to no single site with every flagged row in one line.
 - ``writing_groups``: a writer reads its sections' rows, what they cite, the
   rows they relate to and the story lines through them.
 - ``compact_row``: a row without its empty fields; ``brief_row`` is what the
@@ -296,53 +297,6 @@ def _cited(rows: Iterable[JudgmentRow], sites: Sites) -> list[Any]:
     ]
 
 
-def linker_packs(
-    ledger: Mapping[str, Sequence[JudgmentRow]],
-    sites: Sites,
-    render: Render,
-    *,
-    budget_chars: int,
-) -> list[dict[str, Any]]:
-    """The cross-module linker's work: one pack, or one per site plus a system-level one."""
-
-    flagged = _flagged(ledger)
-    rows = [row for _module, row in flagged]
-    whole = {
-        "pack_id": "L-全部",
-        "scope": "全部配电房和项目级记录",
-        "rows": [compact_row(row) for row in rows],
-        "facts": render(_cited(rows, sites)),
-    }
-    if _size(whole["rows"]) + _size(whole["facts"]) <= budget_chars:
-        return [whole]
-    by_site: dict[str, list[JudgmentRow]] = {}
-    for row in rows:
-        by_site.setdefault(sites.site_of(row), []).append(row)
-    packs = []
-    for number, (site, site_rows) in enumerate(by_site.items(), start=1):
-        if site == PROJECT_LEVEL:
-            continue
-        packs.append(
-            {
-                "pack_id": f"L-{number:02d}",
-                "scope": f"配电房：{site}",
-                "rows": [compact_row(row) for row in site_rows],
-                "facts": render(_cited(site_rows, sites)),
-            }
-        )
-    system_rows = by_site.get(PROJECT_LEVEL, [])
-    packs.append(
-        {
-            "pack_id": "L-系统",
-            "scope": "跨配电房和项目级：不属于单个配电房的行，对照全部关注和不能判定行",
-            "rows": [compact_row(row) for row in system_rows],
-            "other_rows": [row_line(row) for row in rows if row not in system_rows],
-            "facts": render(_cited(system_rows, sites)),
-        }
-    )
-    return packs
-
-
 def _batches(
     entries: Sequence[tuple[str, int]], budget_chars: int
 ) -> list[list[str]]:
@@ -416,25 +370,51 @@ def object_batches(
     return batches
 
 
-PENDING_BATCH_RELATIONS = 10
+# A cross-module reviewer's output grows with what it is asked to decide: each
+# relation takes about as long to think through, so a slice holds a few, and
+# the rows it searches for missing relations are bounded too.
+CROSS_SLICE_RELATIONS = 8
+CROSS_SLICE_FOCUS_ROWS = 40
 
 
-def relation_batches(
+def _relation_entry(row: JudgmentRow, relation: Any) -> dict[str, Any]:
+    return compact(
+        {
+            "for_row": row.id,
+            "row_id": relation.row_id,
+            "relation": relation.relation,
+            "reason": relation.reason,
+            "mechanism": relation.mechanism,
+            "condition": relation.condition,
+            **(
+                {"status": relation.status, "missing": relation.missing}
+                if relation.pending else {}
+            ),
+        }
+    )
+
+
+def cross_batches(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     sites: Sites,
     render: Render,
     *,
-    budget_chars: int,
+    prefix_chars: int,
 ) -> list[dict[str, Any]]:
-    """Every recorded relation, in batches.
+    """The cross-module review: one shared prefix, cut into slices that vary only at the end.
 
-    A relation that holds is reviewed with both rows in full and what both
-    cite.  A pending one is only checked for a clear condition and two rows
-    that bear on it, so pending relations go together in batches of their
-    own, with both rows briefly and no records.
+    The prefix is every flagged row and every end of a recorded relation in
+    full, with the records they cite; every slice of a scope carries it the
+    same, so the slices after the first reuse it.  A slice is a few sites'
+    relations to check and their flagged rows (focus_rows) to search for
+    relations the authors did not record.  When the prefix is too big for one
+    conversation the review is split by site as the linker was, and a
+    system-level scope reads the rows that belong to no single site with every
+    flagged row in one line.
     """
 
     index = _index(ledger)
+    flagged = [row for _module, row in _flagged(ledger)]
     relations = [
         (row, relation)
         for rows in ledger.values()
@@ -443,88 +423,100 @@ def relation_batches(
         if relation.row_id in index
     ]
 
-    def entry(row: JudgmentRow, relation: Any) -> dict[str, Any]:
-        return compact(
-            {
-                "for_row": row.id,
-                "row_id": relation.row_id,
-                "relation": relation.relation,
-                "reason": relation.reason,
-                "mechanism": relation.mechanism,
-                "condition": relation.condition,
-                **(
-                    {"status": relation.status, "missing": relation.missing}
-                    if relation.pending else {}
-                ),
-            }
-        )
+    def ends(of: Sequence[JudgmentRow], with_relations: Sequence[tuple[JudgmentRow, Any]]) -> list[JudgmentRow]:
+        seen: dict[str, JudgmentRow] = {row.id: row for row in of}
+        for row, relation in with_relations:
+            seen.setdefault(row.id, row)
+            seen.setdefault(relation.row_id, index[relation.row_id][1])
+        return list(seen.values())
 
+    def scope(
+        scope_id: str,
+        label: str,
+        focus: Sequence[JudgmentRow],
+        mine: Sequence[tuple[JudgmentRow, Any]],
+        others: Sequence[JudgmentRow] = (),
+    ) -> dict[str, Any]:
+        rows = ends(focus, mine)
+        prefix: dict[str, Any] = {
+            "rows": [compact_row(row) for row in rows],
+            "facts": render(_cited(rows, sites)) or "（这些行没有引用记录）",
+        }
+        if others:
+            prefix["other_rows"] = [row_line(row) for row in others]
+        return {
+            "scope_id": scope_id, "scope": label, "prefix": prefix,
+            "focus": list(focus), "relations": list(mine),
+        }
+
+    scopes = [scope("X", "全部配电房和项目级记录", flagged, relations)]
+    if _size(scopes[0]["prefix"]) > prefix_chars:
+        by_site: dict[str, list[JudgmentRow]] = {}
+        for row in flagged:
+            by_site.setdefault(sites.site_of(row), []).append(row)
+        system = by_site.pop(PROJECT_LEVEL, [])
+        scopes = []
+        placed: set[str] = set()
+        for number, (site, site_rows) in enumerate(by_site.items(), start=1):
+            ids = {row.id for row in site_rows}
+            placed |= ids
+            scopes.append(scope(
+                f"X{number:02d}", f"配电房：{site}", site_rows,
+                [(r, rel) for r, rel in relations if r.id in ids],
+            ))
+        # Relations on rows of no single site, and the system-level rows' own
+        # search, go to a scope that sees every flagged row in one line.
+        system_ids = {row.id for row in system}
+        scopes.append(scope(
+            "X系统", "跨配电房和项目级：不属于单个配电房的行，对照全部关注和不能判定行",
+            system,
+            [(r, rel) for r, rel in relations if r.id not in placed],
+            [row for row in flagged if row.id not in system_ids],
+        ))
     batches: list[dict[str, Any]] = []
-    held = [(row, relation) for row, relation in relations if not relation.pending]
-    costs = [
-        (
-            f"{row.id}>{relation.row_id}",
-            _size(compact_row(row))
-            + _size(compact_row(index[relation.row_id][1]))
-            + len(render(_cited([row, index[relation.row_id][1]], sites))),
-        )
-        for row, relation in held
-    ]
-    by_key = {f"{row.id}>{relation.row_id}": (row, relation) for row, relation in held}
-    for keys in _batches(costs, budget_chars):
-        pairs = [by_key[key] for key in keys]
-        rows = {}
-        for row, relation in pairs:
-            rows[row.id] = row
-            rows[relation.row_id] = index[relation.row_id][1]
-        batches.append(
-            {
-                "batch_id": f"R-{len(batches) + 1:02d}",
-                "relations": [entry(row, relation) for row, relation in pairs],
-                "rows": [compact_row(row) for row in rows.values()],
-                "facts": render(_cited(rows.values(), sites)),
-            }
-        )
-    pending = [(row, relation) for row, relation in relations if relation.pending]
-    costs = [
-        (
-            f"{row.id}>{relation.row_id}",
-            _size(entry(row, relation))
-            + _size(brief_row(row))
-            + _size(brief_row(index[relation.row_id][1])),
-        )
-        for row, relation in pending
-    ]
-    by_key = {f"{row.id}>{relation.row_id}": (row, relation) for row, relation in pending}
-    # Pending entries are small, but each still takes the reviewer about as
-    # long to think through as an established one, so a batch holds a few.
-    chunks = [
-        keys[start:start + PENDING_BATCH_RELATIONS]
-        for keys in _batches(costs, budget_chars)
-        for start in range(0, len(keys), PENDING_BATCH_RELATIONS)
-    ]
-    for keys in chunks:
-        pairs = [by_key[key] for key in keys]
-        rows = {}
-        for row, relation in pairs:
-            rows[row.id] = row
-            rows[relation.row_id] = index[relation.row_id][1]
-        batches.append(
-            {
-                "batch_id": f"P-{len(batches) + 1:02d}",
-                "pending": True,
-                "relations": [entry(row, relation) for row, relation in pairs],
-                "rows": [brief_row(row) for row in rows.values()],
-                "facts": "（这一批都是待核实的关联，只核对条件写得清不清楚、两边的行是否指向这条关系，不附原始记录）",
-            }
-        )
+    for entry in scopes:
+        # Slices follow the sites, so a slice's relations and focus rows sit together.
+        by_site: dict[str, tuple[list[str], list[tuple[JudgmentRow, Any]]]] = {}
+        for row in entry["focus"]:
+            by_site.setdefault(sites.site_of(row), ([], []))[0].append(row.id)
+        for row, relation in entry["relations"]:
+            by_site.setdefault(sites.site_of(row), ([], []))[1].append((row, relation))
+        slices: list[tuple[list[str], list[tuple[JudgmentRow, Any]]]] = []
+        for focus_ids, site_relations in by_site.values():
+            parts = max(
+                -(-len(site_relations) // CROSS_SLICE_RELATIONS),
+                -(-len(focus_ids) // CROSS_SLICE_FOCUS_ROWS),
+                1,
+            )
+            for part in range(parts):
+                piece = (
+                    focus_ids[part::parts],
+                    site_relations[part::parts],
+                )
+                last = slices[-1] if slices else None
+                if (
+                    last is not None
+                    and len(last[0]) + len(piece[0]) <= CROSS_SLICE_FOCUS_ROWS
+                    and len(last[1]) + len(piece[1]) <= CROSS_SLICE_RELATIONS
+                ):
+                    last[0].extend(piece[0])
+                    last[1].extend(piece[1])
+                else:
+                    slices.append((list(piece[0]), list(piece[1])))
+        for focus_ids, slice_relations in slices:
+            batches.append(
+                {
+                    "batch_id": f"{entry['scope_id']}-{len(batches) + 1:02d}",
+                    "scope_id": entry["scope_id"],
+                    "scope": entry["scope"],
+                    **entry["prefix"],
+                    "relations": [_relation_entry(row, relation) for row, relation in slice_relations],
+                    "focus_rows": focus_ids,
+                }
+            )
     return batches
 
 
-# A judge's conversation holds about this many of its module's own records;
-# only a larger module is judged in groups of consecutive sections (splitting
-# a module that fits gains no time and loses the shared cache).  Each group
-# numbers its rows from its own hundred, so the groups' ids never meet.
 JUDGE_GROUP_RECORDS = 160
 GROUP_ROW_SPAN = 100
 
@@ -565,10 +557,9 @@ __all__ = [
     "compact",
     "compact_row",
     "finding_of",
-    "linker_packs",
     "object_batches",
     "project_map",
-    "relation_batches",
+    "cross_batches",
     "row_line",
     "writing_groups",
 ]

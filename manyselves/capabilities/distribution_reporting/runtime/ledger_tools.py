@@ -85,8 +85,6 @@ from .context_packs import (
     Sites,
     brief_row,
     compact_row,
-    linker_packs,
-    object_batches,
     project_map,
     section_groups,
 )
@@ -107,11 +105,7 @@ from .cross_module import (
 from .delivery_tools import DeliveryTools
 from .grounds import grounded
 from .joint_dossiers import build_dossiers
-from .ledger_stage_tools import (
-    LINK_PACK_CHARS,
-    OBJECT_BATCH_CHARS,
-    LedgerStageTools,
-)
+from .ledger_stage_tools import LedgerStageTools
 from .models.agentic import (
     EditedReportSubmission,
     ModuleSubmission,
@@ -615,6 +609,28 @@ def _judge_item(
     }
 
 
+def _with_added_relations(
+    rows: Sequence[JudgmentRow], added: Mapping[str, Sequence[Any]], module_id: str
+) -> list[JudgmentRow]:
+    """Rows with the relations an author adopted from proposals, each pair and name once."""
+
+    result = []
+    for row in rows:
+        new = [r for r in added.get(row.id) or [] if not _foreign_row(row.id, module_id)]
+        if not new:
+            result.append(row)
+            continue
+        relations = [r.model_dump(mode="json") for r in row.relations]
+        seen = {(r["row_id"], r["relation"]) for r in relations}
+        for relation in new:
+            value = _plain(relation)
+            if (value.get("row_id"), value.get("relation")) not in seen:
+                relations.append(value)
+                seen.add((value.get("row_id"), value.get("relation")))
+        result.append(JudgmentRow.model_validate({**row.model_dump(mode="json"), "relations": relations}))
+    return result
+
+
 def _with_instruction(brief: dict[str, Any], instructions: Sequence[str] | None) -> dict[str, Any]:
     """Add a revision's wording change to one section's writing brief."""
 
@@ -807,9 +823,11 @@ class LedgerTools(LedgerStageTools):
                 render_calculations(calculations, calculation_gaps),
                 render_statistics(statistic_lines),
             ]
-            # What every judge of a module reads comes first and the group's
-            # own records last, so the groups of one module (and, for the
-            # first blocks, every judge) start with the same text.
+            # Most shared first: what every judge reads (the assignment, the
+            # map, the numbers, the length reference and the judging
+            # conditions), then what a module's groups share, then the group's
+            # own records.  A judge that starts after another reuses what that
+            # one sent, as far as their text is the same.
             judge_materials = {
                 group["group_id"]: "\n\n".join(
                     block
@@ -818,8 +836,8 @@ class LedgerTools(LedgerStageTools):
                         fact_map,
                         *numbers,
                         length_reference,
-                        knowledge_by_module[group["module_id"]],
                         conditions_block,
+                        knowledge_by_module[group["module_id"]],
                         "# 专家版方法（本模块，分判断方法、写法、范例、核对要点）\n"
                         + (module_skills.get(group["module_id"]) or "（本模块没有专家版方法）"),
                         (
@@ -980,14 +998,19 @@ class LedgerTools(LedgerStageTools):
             "run_id": run_id,
             "modules": modules,
             # Each judge starts a conversation of its own from these materials.
-            "judge_items": [
-                _judge_item(
-                    next(m for m in modules if m["module_id"] == group["module_id"]),
-                    group,
-                    judge_materials[group["group_id"]],
-                )
-                for group in judge_groups
-            ],
+            # The biggest group first: the judges map sends it alone to write
+            # the shared opening, and it is the one that takes longest.
+            "judge_items": sorted(
+                (
+                    _judge_item(
+                        next(m for m in modules if m["module_id"] == group["module_id"]),
+                        group,
+                        judge_materials[group["group_id"]],
+                    )
+                    for group in judge_groups
+                ),
+                key=lambda item: -len(item["materials"]),
+            ),
             # Which group judges which sections and records, for routing later steps.
             "groups": {
                 group["group_id"]: {
@@ -1149,40 +1172,15 @@ class LedgerTools(LedgerStageTools):
             },
         )
         sites = self._sites(run_id)
-        render = self._renderer(run_id)
         judged_map = project_map(sites, ledger)
-        # The object lens reads the rows as judged, while the rows are related
-        # and the photos read again: it needs neither.
-        object_items = [
-            {"run_id": run_id, **batch}
-            for batch in object_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
-        ]
-        self.store.write_json(
-            f"Work/runs/{run_id}/ledger/review-lenses.json",
-            {"objects": [
-                {"batch_id": b["batch_id"], "objects": b["objects"]} for b in object_items
-            ]},
-        )
         self.store.write_text(f"Work/runs/{run_id}/ledger/project-map-judged.md", judged_map)
-        method = self._relation_method(run_id)
         return {
             "run_id": run_id,
             "ledger": dumped,
             "program_findings": findings,
             "dossiers": dossiers,
-            # The cross-module linker reads every flagged row in full.
-            "link_items": [
-                {
-                    "run_id": run_id,
-                    "map": judged_map,
-                    "relation_method": method or "（知识库没有关联方法）",
-                    "relation_names": relation_names(method),
-                    **pack,
-                }
-                for pack in linker_packs(ledger, sites, render, budget_chars=LINK_PACK_CHARS)
-            ],
-            # Each author first relates its rows on its own, while the linker
-            # works; the linker's proposals come to it afterwards.
+            # Each author relates its rows right after judging, to the rows on
+            # the same objects and the same room's flagged rows (plan-relate).
             "relate_items": [
                 {
                     "run_id": run_id,
@@ -1199,7 +1197,6 @@ class LedgerTools(LedgerStageTools):
                 for group_id, group in groups.items()
                 if group["module_id"] in ledger
             ],
-            "object_items": object_items,
             "review_items": [],
         }
 
@@ -1235,7 +1232,6 @@ class LedgerTools(LedgerStageTools):
         names = relation_names(self._relation_method(run_id))
         observation_of, owner_sections = self._observation_map(run_id)
         ledger, dropped = checked_relations(ledger, names, observation_of)
-        self._record_linker_overlap(run_id, ledger)
         program_findings = {
             module_id: dict(found) for module_id, found in built["program_findings"].items()
         }
@@ -1281,27 +1277,33 @@ class LedgerTools(LedgerStageTools):
             "dossiers": built.get("dossiers") or [],
         }
 
-    def _record_linker_overlap(
-        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
+    def _record_cross_proposals(
+        self,
+        run_id: str,
+        ledger: Mapping[str, Sequence[JudgmentRow]],
+        adopted: Mapping[str, Mapping[str, Sequence[Any]]],
+        declined: Mapping[str, Sequence[Any]],
     ) -> None:
-        """What the linker added beyond what the authors were given, by kind.
+        """What the cross-module review added beyond the authors' own relations, by kind.
 
-        For each relation the authors took from a proposal: whether the other
-        end was already among that group's candidates with its records (same
-        object or same room), and how the two rows stand (same object, same
-        distribution room, different rooms, or a project-level record).  The
-        next run decides from this whether the linker is still needed.
+        A proposal counts as added when, after the checks, a relation between
+        its two rows stands that the authors had not recorded when they
+        related.  Kinds: same object, same distribution room, different rooms,
+        or a project-level record.  The next run decides from this whether the
+        search for missing relations still pays.
         """
 
         base = self.workspace / f"Work/runs/{run_id}/ledger"
-        proposals_path, candidates_path = base / "link-proposals.json", base / "relate-candidates.json"
-        if not proposals_path.is_file() or not candidates_path.is_file():
+        path = base / "cross-proposals.json"
+        if not path.is_file():
             return
-        kept = json.loads(proposals_path.read_text(encoding="utf-8")).get("kept") or []
-        candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
-        proposed = {frozenset((p["row_id"], p["other_row_id"])) for p in kept}
-        row_groups = self._groups_file(run_id).get("row_groups") or {}
-        index = {row.id: (module_id, row) for module_id, rows in ledger.items() for row in rows}
+        kept = json.loads(path.read_text(encoding="utf-8")).get("kept") or []
+        index = {row.id: row for rows in ledger.values() for row in rows}
+        standing = {
+            frozenset((row.id, relation.row_id))
+            for rows in ledger.values() for row in rows for relation in row.relations
+            if relation.row_id in index
+        }
         sites = self._sites(run_id)
 
         def kind(a: JudgmentRow, b: JudgmentRow) -> str:
@@ -1313,35 +1315,27 @@ class LedgerTools(LedgerStageTools):
                 return "项目级"
             return "同配电房" if pa & pb else "不同配电房"
 
-        taken: dict[frozenset[str], dict[str, Any]] = {}
-        own: dict[str, int] = {}
-        for module_id, rows in ledger.items():
-            for row in rows:
-                for relation in row.relations:
-                    if relation.row_id not in index:
-                        continue
-                    other = index[relation.row_id][1]
-                    pair = frozenset((row.id, other.id))
-                    if pair not in proposed:
-                        k = kind(row, other)
-                        own[k] = own.get(k, 0) + 1
-                        continue
-                    group = candidates.get(row_groups.get(row.id, module_id)) or {}
-                    given = set(group.get("related") or []) | set(group.get("same_room") or [])
-                    entry = taken.setdefault(pair, {
-                        "rows": sorted(pair), "kind": kind(row, other), "in_candidates": False,
-                    })
-                    entry["in_candidates"] = entry["in_candidates"] or other.id in given
-        summary: dict[str, dict[str, int]] = {}
-        for entry in taken.values():
-            counts = summary.setdefault(entry["kind"], {"taken": 0, "in_candidates": 0})
-            counts["taken"] += 1
-            counts["in_candidates"] += int(entry["in_candidates"])
-        self.store.write_json(f"Work/runs/{run_id}/ledger/linker-overlap.json", {
+        adopted_pairs = {
+            frozenset((row_id, _plain(r).get("row_id")))
+            for rels in adopted.values() for row_id, items in rels.items() for r in items
+        }
+        added: dict[frozenset[str], dict[str, Any]] = {}
+        for proposal in kept:
+            pair = frozenset((proposal["row_id"], proposal["other_row_id"]))
+            if pair in adopted_pairs and pair in standing and pair <= set(index):
+                a, b = (index[r] for r in sorted(pair))
+                added.setdefault(pair, {"rows": sorted(pair), "kind": kind(a, b),
+                                        "relation": proposal["relation"]})
+        by_kind: dict[str, int] = {}
+        for entry in added.values():
+            by_kind[entry["kind"]] = by_kind.get(entry["kind"], 0) + 1
+        self.store.write_json(f"Work/runs/{run_id}/ledger/cross-proposals-outcome.json", {
             "proposals_kept": len(kept),
-            "taken_by_kind": summary,
-            "authors_own_by_kind": own,
-            "taken": sorted(taken.values(), key=lambda e: e["rows"]),
+            "relations_added": len(added),
+            "added_by_kind": by_kind,
+            "declined": sum(len(v) for v in declined.values()),
+            "added": sorted(added.values(), key=lambda e: e["rows"]),
+            "declined_by_module": {k: list(v) for k, v in declined.items()},
         })
 
     def _relation_sets(self, run_id: str, value: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1552,13 +1546,16 @@ class LedgerTools(LedgerStageTools):
             target: _combined(program.get(target), reviewed.get(target))
             for target in dict.fromkeys([*program, *reviewed])
         }
+        # The cross-module review's proposals on this group's rows go back with
+        # the findings: the author decides on both in one turn.
+        proposals = {
+            key: item[key] for key in ("proposed", "proposal_facts") if item.get(key)
+        } if item.get("proposed") else {}
         return {
             "findings": findings,
             "foreign_findings": foreign,
             "blocking": _blocking(findings),
-            # Relations were settled before review; only blocking findings
-            # send the author back.
-            "revise": _blocking(findings),
+            "revise": _blocking(findings) or bool(proposals),
             "revision_input": {
                 "findings": {
                     target: finding
@@ -1570,6 +1567,7 @@ class LedgerTools(LedgerStageTools):
                     for target, finding in findings.items()
                     if finding.get("severity") != "blocking"
                 },
+                **proposals,
             },
         }
 
@@ -1634,7 +1632,12 @@ class LedgerTools(LedgerStageTools):
             changed: dict[str, JudgmentRow] = {}
             removed: list[str] = []
             responses: dict[str, Any] = {}
+            added: dict[str, list[Any]] = {}
+            declined: list[Any] = []
             for part in submitted:
+                for row_id, relations in (part.get("relations") or {}).items():
+                    added.setdefault(row_id, []).extend(_plain(r) for r in relations or [])
+                declined.extend(part.get("declined_proposals") or [])
                 base = [changed.get(row.id, row) for row in rows] + [
                     row for row_id, row in changed.items() if row_id not in {r.id for r in rows}
                 ]
@@ -1646,6 +1649,8 @@ class LedgerTools(LedgerStageTools):
                 "rows": _dump_rows(list(changed.values())),
                 "removed_row_ids": list(dict.fromkeys(removed)),
                 "responses": responses,
+                **({"relations": added} if added else {}),
+                **({"declined_proposals": declined} if declined else {}),
             }
         return {
             "owner": item.get("module_id") or item.get("owner"),
@@ -1666,6 +1671,8 @@ class LedgerTools(LedgerStageTools):
         changed: list[dict[str, Any]] = []
         removed: list[str] = []
         unanswered: dict[str, list[str]] = {}
+        adopted: dict[str, dict[str, list[Any]]] = {}
+        declined_proposals: dict[str, list[Any]] = {}
         for key, review in reviews.items():
             module_id = review.get("module_id") or key
             revision = review.get("revision")
@@ -1699,6 +1706,11 @@ class LedgerTools(LedgerStageTools):
                 revised, reference.get("summary_evidence_ids") or ()
             )
             ledger[module_id] = apply_revisions(ledger[module_id], revised, dropped)
+            if added := revision.get("relations"):
+                ledger[module_id] = _with_added_relations(ledger[module_id], added, module_id)
+                adopted[module_id] = {row_id: list(rels) for row_id, rels in added.items()}
+            if revision.get("declined_proposals"):
+                declined_proposals[module_id] = list(revision["declined_proposals"])
             changed.extend({"module_id": module_id, **row} for row in _dump_rows(revised))
             removed.extend(dropped)
             answered = (
@@ -1726,6 +1738,7 @@ class LedgerTools(LedgerStageTools):
         names = relation_names(self._relation_method(run_id))
         observation_of, _owners = self._observation_map(run_id)
         ledger, dropped_relations = checked_relations(ledger, names, observation_of)
+        self._record_cross_proposals(run_id, ledger, adopted, declined_proposals)
         self._write_knowledge_candidates(run_id, ledger, names)
         conflicts = unresolved_conflicts(dossiers, lens_findings.get("by_row") or {})
         chains = object_chains(dossiers, ledger)
@@ -2211,9 +2224,10 @@ class LedgerTools(LedgerStageTools):
         return {"fact_items": packets}
 
     def apply_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The fact check's findings and the program's certain text problems, for one fix.
+        """The fact check's findings and the program's certain problems, for one fix.
 
-        The chief has no edit pass of its own: what the program finds certain
+        The program's check of chapter 1's tables joins too.  The chief has no
+        edit pass of its own: what the program finds certain
         in the drawn sections (process words, slots it cannot fill, copied
         instructions, tables written again) joins the fact check, so the chief
         fixes everything on the one version that was checked.
@@ -2233,6 +2247,10 @@ class LedgerTools(LedgerStageTools):
             findings = checked["check"]["findings"]
             for section_id, finding in program.items():
                 findings[section_id] = _combined(findings.get(section_id), finding)
+            # The program's check of chapter 1's tables, made when it was
+            # written, is fixed in the same turn.
+            for key, finding in ((_plain(value.get("check1")) or {}).get("findings") or {}).items():
+                findings[key] = _combined(findings.get(key), finding)
             checked["check"]["texts"] = texts
             blocking = _blocking(findings)
             checked["check"]["blocking"] = blocking
@@ -2269,10 +2287,12 @@ class LedgerTools(LedgerStageTools):
         return list(items.values())
 
     def apply_row_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The fact check's row fixes on the final ledger, and the sections to bring in line.
+        """The fact check's row fixes on the final ledger, and each writer's one revision.
 
         A changed row's own section, and every section whose rows relate to it,
-        is sent back to its writer with the row before and after.
+        goes back to its writer with the row before and after, together with
+        the editor's blocking findings on that writer's sections: each writer
+        revises once.
         """
 
         final = dict(value["ledger"])
@@ -2291,84 +2311,104 @@ class LedgerTools(LedgerStageTools):
             row_id: row for row_id, row in changed.items()
             if row_id in before and row != before[row_id]
         }
-        if not changed:
-            return {"ledger": final, "section_fix_items": [], "changed_rows": []}
-        ledger = {
-            m: [changed.get(row.id, row) for row in rows] for m, rows in ledger.items()
-        }
-        final["ledger"] = {m: _dump_rows(rows) for m, rows in ledger.items()}
-        owners = {
-            section["submodule_id"]: group["group_id"]
-            for group in final.get("writing_items") or []
-            for section in group.get("sections") or []
-        }
-        written = {
-            owner: set((edit or {}).get("sections") or {})
-            for owner, edit in (value.get("edits") or {}).items()
-        }
+        edits = {owner: dict(_plain(edit) or {}) for owner, edit in (value.get("edits") or {}).items()}
         per_owner: dict[str, dict[str, Any]] = {}
-
-        def send(section_id: str, row: JudgmentRow) -> None:
-            owner = owners.get(section_id)
-            if owner is None or section_id not in written.get(owner, set()):
-                return
-            old = before[row.id]
-            fields = [
-                name for name in ("finding", "hazard", "risk_level", "action", "basis")
-                if getattr(old, name) != getattr(row, name)
-            ]
-            item = per_owner.setdefault(owner, {"findings": {}, "minor": {}})
-            note = (
-                f"判断行 {row.id}（{row.object}｜{row.checkpoint}）按事实核对改了"
-                + ("、".join(fields) or "措辞")
-                + f"。原来的发现：{old.finding}；现在：{row.finding}。"
-            )
-            earlier = item["findings"].get(section_id)
-            item["findings"][section_id] = {
-                "problem": f"{earlier['problem']}；{note}" if earlier else note,
-                "severity": "blocking",
-                "suggestion": "本节正文和风险分析里沿用了原来说法的，改成与现在的判断行一致；没有沿用的原样提交。",
-            }
-
-        for row in changed.values():
-            send(row.submodule_id, row)
-            for rows in ledger.values():
-                for other in rows:
-                    if other.submodule_id != row.submodule_id and any(
-                        r.row_id == row.id for r in other.relations
-                    ):
-                        send(other.submodule_id, row)
         run_id = final["run_id"]
-        self.store.write_json(
-            f"Work/runs/{run_id}/ledger/fact-row-fixes.json",
-            {
-                "rows": _dump_rows(list(changed.values())),
-                "sections": {owner: list(item["findings"]) for owner, item in per_owner.items()},
-            },
-        )
+        if changed:
+            ledger = {
+                m: [changed.get(row.id, row) for row in rows] for m, rows in ledger.items()
+            }
+            final["ledger"] = {m: _dump_rows(rows) for m, rows in ledger.items()}
+            owners = {
+                section["submodule_id"]: group["group_id"]
+                for group in final.get("writing_items") or []
+                for section in group.get("sections") or []
+            }
+            written = {owner: set(edit.get("sections") or {}) for owner, edit in edits.items()}
+
+            def send(section_id: str, row: JudgmentRow) -> None:
+                owner = owners.get(section_id)
+                if owner is None or section_id not in written.get(owner, set()):
+                    return
+                old = before[row.id]
+                fields = [
+                    name for name in ("finding", "hazard", "risk_level", "action", "basis")
+                    if getattr(old, name) != getattr(row, name)
+                ]
+                found = per_owner.setdefault(owner, {})
+                note = (
+                    f"判断行 {row.id}（{row.object}｜{row.checkpoint}）按事实核对改了"
+                    + ("、".join(fields) or "措辞")
+                    + f"。原来的发现：{old.finding}；现在：{row.finding}。"
+                )
+                earlier = found.get(section_id)
+                found[section_id] = {
+                    "problem": f"{earlier['problem']}；{note}" if earlier else note,
+                    "severity": "blocking",
+                    "suggestion": "本节正文和风险分析里沿用了原来说法的，改成与现在的判断行一致；没有沿用的原样提交。",
+                }
+
+            for row in changed.values():
+                send(row.submodule_id, row)
+                for rows in ledger.values():
+                    for other in rows:
+                        if other.submodule_id != row.submodule_id and any(
+                            r.row_id == row.id for r in other.relations
+                        ):
+                            send(other.submodule_id, row)
+            self.store.write_json(
+                f"Work/runs/{run_id}/ledger/fact-row-fixes.json",
+                {
+                    "rows": _dump_rows(list(changed.values())),
+                    "sections": {owner: list(found) for owner, found in per_owner.items()},
+                },
+            )
+        items = []
+        for owner, edit in edits.items():
+            asked = dict((edit.get("revision_input") or {}).get("findings") or {})
+            for section_id, finding in (per_owner.get(owner) or {}).items():
+                asked[section_id] = _combined(asked.get(section_id), finding)
+            if not asked:
+                continue
+            findings = dict(edit.get("findings") or {})
+            for section_id, finding in (per_owner.get(owner) or {}).items():
+                findings[section_id] = _combined(findings.get(section_id), finding)
+            items.append({
+                "owner": owner,
+                "run_id": edit.get("run_id") or run_id,
+                **({"module_id": edit["module_id"]} if edit.get("module_id") else {}),
+                "sections": dict(edit.get("sections") or {}),
+                "findings": findings,
+                "revision_input": {
+                    "findings": asked,
+                    "minor": dict((edit.get("revision_input") or {}).get("minor") or {}),
+                },
+            })
+        return {"ledger": final, "changed_rows": list(changed), "section_revise_items": items}
+
+    def hold_edit(self, value: dict[str, Any]) -> dict[str, Any]:
+        """An editor's findings, held until the fact check's row fixes join them."""
+
+        item, merged = value["item"], value["merged"]
         return {
-            "ledger": final,
-            "changed_rows": list(changed),
-            "section_fix_items": [
-                {"owner": owner, "run_id": run_id, **item} for owner, item in per_owner.items()
-            ],
+            "owner": item["owner"],
+            **({"module_id": item["module_id"]} if item.get("module_id") else {}),
+            "run_id": item.get("run_id"),
+            "sections": dict(item.get("sections") or {}),
+            "findings": merged["findings"],
+            "revision_input": merged["revision_input"] if merged.get("blocking") else {},
         }
 
     def merge_section_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The writers' revised sections, put into the edited sections."""
+        """The writers' revisions in place of their edited sections."""
 
-        edits = {owner: dict(edit) for owner, edit in (value.get("edits") or {}).items()}
-        for owner, revision in (value.get("fixes") or {}).items():
-            sections = (_plain(revision) or {}).get("sections") or {}
-            if owner not in edits or not sections:
-                continue
-            merged = dict(edits[owner].get("sections") or {})
-            if isinstance(sections, list):
-                sections = {s["submodule_id"]: s["text"] for s in sections if isinstance(s, Mapping)}
-            for section_id, text in sections.items():
-                if section_id in merged:
-                    merged[section_id] = text
-            edits[owner]["sections"] = merged
+        edits = {owner: dict(_plain(edit) or {}) for owner, edit in (value.get("edits") or {}).items()}
+        for owner, revised in (value.get("fixes") or {}).items():
+            revised = _plain(revised) or {}
+            if owner in edits and revised.get("sections"):
+                edits[owner] = {**edits[owner], **revised}
+        for edit in edits.values():
+            edit.pop("revision_input", None)
         return {"edits": edits}
 
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -2978,6 +3018,7 @@ class LedgerTools(LedgerStageTools):
             "apply-chief-facts": self.apply_chief_facts,
             "apply-row-fixes": self.apply_row_fixes,
             "merge-section-fixes": self.merge_section_fixes,
+            "hold-edit": self.hold_edit,
             "check-report": self.check_report,
             "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,

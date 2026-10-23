@@ -201,7 +201,7 @@ async def test_production_binding_runs_the_agent_through_the_generic_invoker(
         "run_id": accepted["run_id"],
         "outputs": [{"id": "result", "kind": "value", "value": 10}],
     }
-    assert len(prompts) == 1 and '"value": 4' in prompts[0]
+    assert len(prompts) == 1 and '"value":4' in prompts[0]
     assert "按规则把 value 调整" in prompts[0]
     assert cost["usage"]["totals"]["provider_attempts"] == 0
 

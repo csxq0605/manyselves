@@ -1,14 +1,14 @@
 id: ledger_row_fix_plan
-version: 1.0.0
-description: The final ledger with the fixed rows, and one revision item per writer whose sections rest on them
+version: 2.0.0
+description: The final ledger with the fixed rows, and one revision per writer - the editor's blocking findings with the sections resting on the fixed rows
 adapter: json_schema
 schema:
   type: object
-  required: [ledger, section_fix_items, changed_rows]
+  required: [ledger, section_revise_items, changed_rows]
   properties:
     ledger:
       type: object
-    section_fix_items:
+    section_revise_items:
       type: array
     changed_rows:
       type: array

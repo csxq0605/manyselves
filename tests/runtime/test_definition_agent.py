@@ -204,7 +204,7 @@ async def test_submission_is_validated_and_returned(tmp_path: Path) -> None:
     assert outcome.status == "ok" and outcome.result == {"answer": "yes"}
     prompt = harness.loops[0].received[0].content
     assert "Answer the question in one word." in prompt
-    assert '"text": "q"' in prompt and "Be brief." in prompt
+    assert '"text":"q"' in prompt and "Be brief." in prompt
     assert harness.loops[0].kwargs["system_prompt"] == "You answer questions."
 
 
@@ -437,7 +437,7 @@ async def test_fork_starts_from_the_source_history(tmp_path: Path) -> None:
     assert outcome.result == {"answer": "forked"}
     source_loop, fork_loop = harness.loops
     assert fork_loop.restored[0][0].content == source_loop.history[0].content
-    assert '"text": "context"' in fork_loop.restored[0][0].content
+    assert '"text":"context"' in fork_loop.restored[0][0].content
 
 
 @pytest.mark.asyncio
@@ -510,6 +510,45 @@ async def test_context_fields_are_sent_as_text_ahead_of_the_task(tmp_path: Path)
     assert prompt.startswith('<context name="background">\nline one\nline two\n</context>')
     assert prompt.index("</context>") < prompt.index('<task id="answer-question">')
     assert "background" not in prompt[prompt.index("<input"):]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_task_sends_the_shared_part_first_and_what_varies_last(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = _task().model_copy(update={
+        "context_fields": ["own", "common"],
+        "shared_fields": ["common"],
+        "static_first": True,
+    })
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "own": "mine", "common": "everyone's"},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    prompt = harness.loops[0].received[0].content
+    order = [
+        prompt.index('<context name="common">'),
+        prompt.index('<task id="answer-question">'),
+        prompt.index('<context name="own">'),
+        prompt.index("<input"),
+    ]
+    assert order == sorted(order)
+    assert '"text":"q"' in prompt[prompt.index("<input"):]
 
 
 @pytest.mark.asyncio
@@ -678,7 +717,7 @@ async def test_re_execution_replays_unchanged_turns_and_reruns_changed_ones(
     assert changed[1].result == {"answer": "forked again"}
     assert len(harness.loops) == 3
     restored = harness.loops[-1].restored[0]
-    assert '"text": "context"' in restored[0].content
+    assert '"text":"context"' in restored[0].content
     history = tmp_path / "Work" / "runs" / RUN_ID / "conversations"
     assert len(list(history.glob("*.json"))) == 2
 

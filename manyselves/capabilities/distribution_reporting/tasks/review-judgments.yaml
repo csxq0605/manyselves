@@ -1,8 +1,9 @@
 id: review-judgments
-version: 3.0.0
+version: 3.1.0
 description: Review one module's judgment rows against exactly what each row cites
 agent: report-consultant
-objective: 你现在是下面这个模块的审查人，只审本模块。上面是这些判断行所引的事实（facts）、知识单元（rules）和本模块的专家版判断方法（method）；输入里是判断行、所引计算、程序挑出要看的行和读图有疑问的照片。逐行核对判断是否由它所引的资料推出。模块之间的事（同一对象几个模块的结论、跨模块关联）由对象审查和关联审查负责，这里不看。
+objective: 你现在是下面这个模块的审查人，只审本模块。下面先是这些判断行所引的事实（facts）、知识单元（rules）和本模块的专家版判断方法（method）；输入里是判断行、所引计算、程序挑出要看的行和读图有疑问的照片。逐行核对判断是否由它所引的资料推出。模块之间的事（同一对象几个模块的结论、跨模块关联）由对象审查和关联审查负责，这里不看。
+static_first: true
 input_contract: ledger_review_item
 output_contract: review-findings
 context_fields:

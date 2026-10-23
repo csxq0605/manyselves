@@ -204,30 +204,22 @@ def _answer(message):
     content = message.content
     task = _task(content)
     value = _input_of(content)
-    if task == "link-rows":
-        ids = [row["id"] for row in value["rows"]]
-        if {"J-2.4-1", "J-2.5-1"} <= set(ids):
-            return ("submit", [{"proposals": [{
+    if task == "review-cross-module":
+        # The rows are in the shared prefix; the slice says what to decide.
+        if "J-2.4-1" in value["focus_rows"] and "J-2.5-1" in content:
+            return ("submit", [{"findings": {}, "proposals": [{
                 "row_id": "J-2.4-1", "other_row_id": "J-2.5-1", "relation": "缺资料影响判断",
                 "reason": "缺少SOP使温度偏高的处置无法核对。",
                 "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
             }]}])
-        return ("submit", [{"proposals": []}])
-    if task in {"review-objects", "review-relations"}:
+        return ("submit", [{"findings": {}, "proposals": []}])
+    if task == "review-objects":
         return ("submit", [{"findings": {}}])
     if task == "judge-module":
         module_id = value["module_id"]
         number = REPORT_MODULE_IDS.index(module_id) + 1
         return ("submit", [{"module_id": module_id, "rows": [_row(module_id, number)]}])
     if task == "relate-judgments":
-        # 2.4 takes the linker's proposal on its row, in the same turn as its own links.
-        offers = (value.get("proposed") or {}).get("J-2.4-1") or []
-        if value["module_id"] == "2.4" and offers:
-            return ("submit", [{"relations": {"J-2.4-1": [{
-                "row_id": "J-2.5-1", "relation": offers[0]["relation"],
-                "reason": "缺少SOP使温度偏高的处置无法核对。",
-                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
-            }]}}])
         return ("submit", [{"relations": {}}])
     if task == "review-judgments":
         findings = {}
@@ -239,15 +231,31 @@ def _answer(message):
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-judgments":
-        # Only blocking findings send an author back.
-        assert set(value["findings"]) == {"J-2.4-1"}
+        offers = value.get("proposed") or {}
         if value.get("fact_check"):
+            assert set(value["findings"]) == {"J-2.4-1"}
             return ("submit", [{"patches": [
                 {"row_id": "J-2.4-1", "fields": {"finding": "温度偏高，待复测确认。"}}
             ]}])
-        return ("submit", [{"patches": [
-            {"row_id": "J-2.4-1", "fields": {"basis": "记录显示温度偏高，需要复测。"}}
-        ]}])
+        if not value["findings"]:
+            # Only a proposal sends 2.5 back; it declines.
+            assert set(offers) == {"J-2.5-1"}
+            return ("submit", [{"declined_proposals": [{
+                "row_id": "J-2.5-1", "other_row_id": "J-2.4-1", "reason": "SOP 缺失与温度无关。",
+            }]}])
+        # Only blocking findings send an author back, with the proposals on its rows.
+        assert set(value["findings"]) == {"J-2.4-1"}
+        (offer,) = offers["J-2.4-1"]
+        return ("submit", [{
+            "patches": [
+                {"row_id": "J-2.4-1", "fields": {"basis": "记录显示温度偏高，需要复测。"}}
+            ],
+            "relations": {"J-2.4-1": [{
+                "row_id": offer["row_id"], "relation": offer["relation"],
+                "reason": "缺少SOP使温度偏高的处置无法核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]},
+        }])
     if task == "write-section":
         objects = "、".join(row["object"] for row in value["rows"]) or "本节"
         return (
@@ -482,30 +490,33 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         first = loop.received[0].content
         assert '<context name="materials">' in first and "# 项目图谱" in first
         assert f"E-{REPORT_MODULE_IDS.index(module_id) + 1:04d}" in first
-    # The linker read the flagged rows first; its proposal then reached both
-    # ends in their one relate turn, each with the other end's row.
-    linkers = [loop for loop in loops if tasks_of(loop) == ["link-rows"]]
-    assert len(linkers) == 1 and not linkers[0].restored
+    # Each author related right after judging, with no proposals; the
+    # cross-module review read one shared prefix and proposed what was
+    # missing, which reached both ends in their one revision.
+    crosses = [loop for loop in loops if tasks_of(loop) == ["review-cross-module"]]
+    assert len(crosses) == 1 and not crosses[0].restored
+    cross = crosses[0].received[0].content
+    # Shared prefix first, then the task, then what this slice decides.
+    assert cross.index('<context name="rows">') < cross.index("<task id=") < cross.index("<input contract=")
     relate_24 = next(
         _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
     )
-    (offer,) = relate_24["proposed"]["J-2.4-1"]
-    assert offer["row_id"] == "J-2.5-1" and offer["other_row"]["id"] == "J-2.5-1"
+    assert "proposed" not in relate_24
     assert tasks_of(authors["2.4"]).count("relate-judgments") == 1
-    # The candidates come with the records they cite, and the run records
-    # what the linker added beyond them.
-    relate_24_text = next(
-        m.content for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
+    settle_24 = next(
+        _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "revise-judgments"
     )
-    assert "记录总数：1" in relate_24_text.split("<context name=\"facts\">")[1]
-    overlap = json.loads((tmp_path / f"Work/runs/{RUN_ID}/ledger/linker-overlap.json").read_text(encoding="utf-8"))
-    assert overlap["proposals_kept"] == 1
-    assert sum(k["taken"] for k in overlap["taken_by_kind"].values()) == 1
-    assert "proposed" not in next(
-        _input_of(m.content) for m in authors["2.1"].received if _task(m.content) == "relate-judgments"
-    )
-    # 2.4 revised only in its own conversation; 2.1 had nothing blocking.
+    (offer,) = settle_24["proposed"]["J-2.4-1"]
+    assert offer["row_id"] == "J-2.5-1" and offer["other_row"]["id"] == "J-2.5-1"
+    assert "J-2.5-1" in settle_24["proposal_facts"] or settle_24["proposal_facts"]
+    outcome = json.loads((ledger_dir / "cross-proposals-outcome.json").read_text(encoding="utf-8"))
+    assert outcome["proposals_kept"] == 1
+    assert outcome["relations_added"] == 1 and outcome["declined"] == 1
+    assert [r["row_id"] for r in final["2.4"][0]["relations"]] == ["J-2.5-1"]
+    # 2.4 revised only in its own conversation; 2.1 had nothing blocking and
+    # no proposal; 2.5 revised for the proposal alone.
     assert "revise-judgments" in tasks_of(authors["2.4"])
+    assert "revise-judgments" in tasks_of(authors["2.5"])
     assert "revise-judgments" not in tasks_of(authors["2.1"])
     # Before review, every author weighs what other modules flagged
     # (the concern of 2.4, the data gap of 2.5) in its own conversation.
@@ -532,7 +543,8 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         for loop in loops
         if tasks_of(loop)[:1] == ["write-section"]
     }
-    assert "revise-sections" in tasks_of(writers["2.1"])
+    # Each writer revises once: 2.1 on the editor's finding.
+    assert tasks_of(writers["2.1"]).count("revise-sections") == 1
     # 2.4 has no editor finding; it revises once, only for the fact-check row fix.
     fix_24 = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "revise-sections"]
     assert len(fix_24) == 1 and "温度偏高，待复测确认。" in json.dumps(fix_24[0], ensure_ascii=False)
@@ -684,7 +696,7 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
             seen.setdefault("module_lens", {})[value["module_id"]] = (
                 '<context name="dossiers">' in message.content or "related_rows" in value
             )
-        if task == "review-relations":
+        if task == "review-cross-module":
             seen.setdefault("review_related", []).extend(
                 relation["row_id"] for relation in value["relations"]
             )
@@ -710,9 +722,9 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
     )
     assert [r["row_id"] for r in final["2.2"][0]["relations"]] == ["J-2.4-1"]
-    # The relation lens checks the relations: 2.2's own, and the linker's
-    # proposal 2.4 took.
-    assert sorted(seen["review_related"]) == ["J-2.4-1", "J-2.5-1"]
+    # The cross-module review checks the authors' relations (2.2's own); the
+    # relation it proposed is settled by the authors after it.
+    assert sorted(seen["review_related"]) == ["J-2.4-1"]
     assert [
         [entry["row_id"] for entry in rows]
         for section_id, rows in seen["related_rows"].items() if section_id.startswith("2.2")

@@ -10,10 +10,9 @@ from manyselves.capabilities.distribution_reporting.runtime.context_packs import
     Sites,
     brief_row,
     compact,
-    linker_packs,
+    cross_batches,
     object_batches,
     project_map,
-    relation_batches,
     writing_groups,
 )
 from manyselves.capabilities.distribution_reporting.runtime.ledger_stage_tools import (
@@ -88,16 +87,34 @@ def test_the_map_places_records_and_flagged_rows_by_site_and_object() -> None:
     assert "只引汇总表或项目级资料" in judged and "J-2.1-1" in judged
 
 
-def test_the_linker_reads_every_flagged_row_or_splits_by_site() -> None:
+def test_the_cross_review_shares_one_prefix_or_splits_by_site() -> None:
     sites = Sites(ITEMS)
-    (whole,) = linker_packs(LEDGER, sites, _render, budget_chars=100_000)
+    (whole,) = cross_batches(LEDGER, sites, _render, prefix_chars=100_000)
     assert [r["id"] for r in whole["rows"]] == ["J-2.1-1", "J-2.2-1", "J-2.4-1"]
-    split = linker_packs(LEDGER, sites, _render, budget_chars=10)
+    assert sorted(whole["focus_rows"]) == ["J-2.1-1", "J-2.2-1", "J-2.4-1"]
+    split = cross_batches(LEDGER, sites, _render, prefix_chars=10)
     assert [p["scope"] for p in split] == ["配电房：A房", split[-1]["scope"]]
     assert [r["id"] for r in split[0]["rows"]] == ["J-2.2-1", "J-2.4-1"]
     system = split[-1]
     assert [r["id"] for r in system["rows"]] == ["J-2.1-1"]
     assert [line.split()[0] for line in system["other_rows"]] == ["J-2.2-1", "J-2.4-1"]
+
+
+def test_slices_of_one_scope_differ_only_in_what_they_decide() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import context_packs
+
+    relations = [
+        {"row_id": "J-2.4-1", "relation": f"关系{n}", "reason": "同一柜"} for n in range(9)
+    ]
+    ledger = {**LEDGER, "2.2": [_row("J-2.2-1", ["E-1"], relations=relations)]}
+    batches = cross_batches(ledger, Sites(ITEMS), _render, prefix_chars=100_000)
+    assert len(batches) >= 2
+    shared = ("rows", "facts")
+    assert all(b[key] == batches[0][key] for b in batches for key in shared)
+    checked = [r for b in batches for r in b["relations"]]
+    assert len(checked) == 9
+    assert all(len(b["relations"]) <= context_packs.CROSS_SLICE_RELATIONS for b in batches)
+    assert sorted(r for b in batches for r in b["focus_rows"]) == ["J-2.1-1", "J-2.2-1", "J-2.4-1"]
 
 
 def test_objects_several_modules_judged_go_to_the_object_lens_with_all_records() -> None:
@@ -106,18 +123,20 @@ def test_objects_several_modules_judged_go_to_the_object_lens_with_all_records()
     assert batch["facts"].split("\n") == ["E-1 温度=NG", "E-2 x=OK", "E-5 x=OK"]
 
 
-def test_relations_go_to_the_relation_lens_with_both_rows() -> None:
+def test_relations_go_to_the_cross_review_with_both_rows() -> None:
     ledger = {
         **LEDGER,
         "2.2": [_row("J-2.2-1", ["E-1"], relations=[
-            {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "同一柜"},
+            {"row_id": "J-2.4-2", "relation": "负荷—发热", "reason": "同一柜"},
         ])],
     }
-    (batch,) = relation_batches(ledger, Sites(ITEMS), _render, budget_chars=100_000)
+    (batch,) = cross_batches(ledger, Sites(ITEMS), _render, prefix_chars=100_000)
     assert batch["relations"] == [
-        {"for_row": "J-2.2-1", "row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "同一柜"}
+        {"for_row": "J-2.2-1", "row_id": "J-2.4-2", "relation": "负荷—发热", "reason": "同一柜"}
     ]
-    assert {r["id"] for r in batch["rows"]} == {"J-2.2-1", "J-2.4-1"}
+    # The other end is in the prefix in full, though it is not flagged.
+    assert "J-2.4-2" in {r["id"] for r in batch["rows"]}
+    assert "E-3 x=OK" in batch["facts"]
 
 
 def test_rows_lose_their_empty_fields_and_the_chief_reads_them_briefly() -> None:
@@ -147,7 +166,7 @@ def test_lens_findings_on_one_row_are_merged_and_labelled() -> None:
     assert merged["problem"] == "（模块切面）依据不足；（对象切面）铭牌不符"
 
 
-def test_pending_relations_get_a_light_batch_of_their_own_and_no_story_line() -> None:
+def test_pending_relations_are_marked_for_the_light_check_and_join_no_story_line() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.ledger_stage_tools import (
         relation_lines,
     )
@@ -160,10 +179,9 @@ def test_pending_relations_get_a_light_batch_of_their_own_and_no_story_line() ->
              "status": "待核实", "missing": "缺红外复测"},
         ])],
     }
-    held, pending = relation_batches(ledger, Sites(ITEMS), _render, budget_chars=100_000)
-    assert held["batch_id"].startswith("R-") and len(held["relations"]) == 1
-    assert pending["batch_id"].startswith("P-") and pending["pending"] is True
-    assert pending["relations"][0]["missing"] == "缺红外复测"
-    assert "E-3" not in str(pending["facts"])
+    (batch,) = cross_batches(ledger, Sites(ITEMS), _render, prefix_chars=100_000)
+    held, pending = batch["relations"]
+    assert "status" not in held
+    assert pending["status"] == "待核实" and pending["missing"] == "缺红外复测"
     (line,) = relation_lines(ledger)
     assert line.row_ids == ["J-2.2-1", "J-2.4-1"] and line.title == "负荷—发热"

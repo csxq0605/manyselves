@@ -1,8 +1,8 @@
 id: relate-judgments
-version: 3.1.0
-description: Weigh the linker's proposals on this group's rows and decide which other modules' rows bear on them, in one turn
+version: 4.0.0
+description: Right after judging, decide which other modules' rows bear on this group's rows, in one turn
 agent: report-consultant
-objective: 五个模块都判断完了，跨模块专员也看过了全部关注和不能判定的行。proposed 是专员对你这些行提出的关联（每条带另一端那一行的全文 other_row，facts 是另一端所引的事实原文）；flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断，same_room 是别的模块在你这些行所在配电房判为关注或不能判定的其他行；facts 是这些候选行所引记录的原文。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。
+objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断，same_room 是别的模块在你这些行所在配电房判为关注或不能判定的其他行；facts 是这些候选行所引记录的原文。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。你漏看的，审查阶段的跨模块审查会再提给你确认。
 input_contract: ledger_relation_input
 output_contract: ledger_relation_set
 context_fields:
@@ -15,7 +15,6 @@ constraints:
 - 只是同一房间、同一次检查、同一个计划或制度的不连。条件要用两边的记录核实：你自己的记录，加上 facts 里另一端的记录；核实不了就不连。只有一种情况可以连成 status 为“待核实”：两边的事实确实指向这条关系，而它要核实的某项条件在本次全部资料里都没有记录（不是没给你看，而是没测、没填），这时在 missing 写明缺哪项、补充什么资料或检测能确认。facts 里有记录、只是你没去对照的，不算待核实。
 - relations 的键是本模块的判断行编号，值是这一行的关联，每条写：row_id（所引的别的模块的行）、relation（知识库的候选关系照抄 relation_names 里的名称）、reason（一句话：两边哪项事实满足条件，对本行结论有什么作用），知识库未收录的另写 mechanism 和 condition。不连的行不写。
 - same_room 的行和你的行是不同对象，只有两边记录确实满足一条关系的条件时才连（例如上下级供电、同一回路、同一故障的不同表现），同处一个配电房本身不是理由。
-- 专员的提议逐条判断：专员只是提议，不因为是专员提的就采纳；判断用你自己的行、另一端的行（other_row）和 facts 里的原文，另一端的结论以它的行为准。采纳的写进 relations，不成立的写进 declined_proposals，一句理由。没有 proposed 的就只写你自己看出的关联。
 - 这一步只记关联，不改判断行本身；关联会交给审查核对理由。不替别的模块下结论，不复述它的论证。程序会删掉所引行不存在、属于本模块，或知识库未收录又没写机理和成立条件的关联。
 tools: []
 needs_history: true

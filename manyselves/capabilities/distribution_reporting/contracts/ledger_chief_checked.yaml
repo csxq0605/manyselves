@@ -1,0 +1,7 @@
+id: ledger_chief_checked
+version: 1.0.0
+description: Chapters 1 and 3 as written, the fact check and the program's findings for the chief's one fix, and the rows the authors fix
+adapter: json_schema
+schema:
+  type: object
+  required: [chapter1, chapter3, fact_check, row_fix_items]
