@@ -29,9 +29,9 @@ from .storage import ReportingStore
 
 MATCH_TEXT = {
     "matches": "程序比对：照片读数与记录数值一致",
-    # The table cell is the fact; a photo that reads otherwise is not evidence
-    # of a conflict, it is a reading that could not be confirmed.
-    "conflicts": "程序比对：照片读数未能确认，以表格记录为准",
+    # The table cell is the fact and a photo only adds to it; a photo that
+    # reads otherwise is simply not used.
+    "conflicts": "程序比对：照片读数与表格记录不符，照片读数不用，以表格记录为准",
     "cannot_tell": "程序比对：无可比数值",
 }
 UNSTABLE = "读数不稳定（两次读图不一致），照片读数不作为事实"
@@ -101,126 +101,6 @@ def compare_readings(
     if mismatched:
         return "conflicts", "；".join(mismatched)
     return "matches", "记录值在照片中可见：" + "、".join(matched)
-
-
-def readings_agree(first: list[dict[str, Any]], second: list[dict[str, Any]]) -> tuple[bool, str]:
-    """Two independent readings of one photo agree on every quantity both read."""
-
-    def legible(readings):
-        return {
-            r["quantity"]: float(r["value"])
-            for r in readings
-            if r.get("legible") and r.get("value") is not None
-        }
-
-    one, two = legible(first), legible(second)
-    differing = [
-        f"{quantity}：{one.get(quantity, '看不清')} / {two.get(quantity, '看不清')}"
-        for quantity in sorted(set(one) | set(two))
-        if quantity not in one or quantity not in two or not _close(one[quantity], two[quantity])
-    ]
-    if differing:
-        return False, "两次读数不一致，读数待核：" + "；".join(differing)
-    return True, "两次读数一致"
-
-
-def unread_labels(transcription: list[dict[str, Any]]) -> list[str]:
-    """Items a reading left blank or could not read: what a second reading looks at."""
-
-    return list(dict.fromkeys(
-        str(item.get("label"))
-        for item in transcription
-        if item.get("label") and (not item.get("legible") or not str(item.get("text") or "").strip())
-    ))
-
-
-def unread_agree(
-    first: list[dict[str, Any]], second: list[dict[str, Any]], labels: list[str]
-) -> tuple[bool, str]:
-    """A second reading that reads text where the first saw a blank or nothing legible disagrees."""
-
-    def by_label(entries):
-        return {str(e.get("label")): e for e in entries if e.get("label")}
-
-    one, two = by_label(first), by_label(second)
-    differing = []
-    for label in labels:
-        again = two.get(label)
-        text = str((again or {}).get("text") or "").strip()
-        if again is None or not again.get("legible") or not text:
-            continue
-        before = one.get(label) or {}
-        said = "看不清" if not before.get("legible") else "空白"
-        differing.append(f"{label}：首读为{said}，复读为“{text}”")
-    if differing:
-        return False, "两次读图不一致，读数待核：" + "；".join(differing)
-    return True, ""
-
-
-# A re-read also sees the photo's four quarters (overlapping a little),
-# enlarged so their long edge is at most this many pixels.
-TILE_OVERLAP = 0.1
-TILE_MAX_EDGE = 1568
-QUARTERS = ("左上", "右上", "左下", "右下")
-
-
-def zoom_tiles(workspace: Path, photo_path: str, out_dir: str, stem: str) -> list[dict[str, str]]:
-    """The photo's four quarters, enlarged, written under ``out_dir``.
-
-    A reading of the whole photo misread a clamp meter display some 60x25
-    pixels wide and read unlit segments of a digit display as lit; an
-    enlarged quarter gives those the pixels a reading needs.  Returns
-    nothing when the image cannot be opened.
-    """
-
-    from PIL import Image, UnidentifiedImageError
-
-    try:
-        image = Image.open(Path(workspace) / photo_path)
-        image.load()
-    except (OSError, UnidentifiedImageError):
-        return []
-    image = image.convert("RGB")
-    width, height = image.size
-    half_w, half_h = width / 2, height / 2
-    pad_w, pad_h = width * TILE_OVERLAP / 2, height * TILE_OVERLAP / 2
-    target = Path(workspace) / out_dir
-    target.mkdir(parents=True, exist_ok=True)
-    tiles = []
-    for n, (left, top) in enumerate(((0, 0), (half_w, 0), (0, half_h), (half_w, half_h))):
-        box = (
-            max(0, int(left - pad_w)), max(0, int(top - pad_h)),
-            min(width, int(left + half_w + pad_w)), min(height, int(top + half_h + pad_h)),
-        )
-        tile = image.crop(box)
-        scale = TILE_MAX_EDGE / max(tile.size)
-        if scale > 1:
-            tile = tile.resize(
-                (round(tile.width * scale), round(tile.height * scale)), Image.Resampling.LANCZOS
-            )
-        name = f"{stem}-{n + 1}.jpg"
-        tile.save(target / name, format="JPEG", quality=90)
-        tiles.append({
-            "path": f"{out_dir}/{name}", "media_type": "image/jpeg",
-            "part": f"{QUARTERS[n]}四分之一（放大）",
-        })
-    return tiles
-
-
-def rests_on_photo(rows: list[Any], reading: PhotoReading, bound: Mapping[str, Any]) -> bool:
-    """Whether a judgment rests on what the photo shows rather than on the table.
-
-    The table cell is the fact and the photo backs it; a second reading only
-    matters where the photo is the source: a row marked 照片待核, or a number
-    the photo shows that the table records do not hold.
-    """
-
-    if any(getattr(row, "evidence_status", None) == "照片待核" for row in rows):
-        return True
-    return any(
-        r.get("legible") and r.get("value") is not None and not bound.get(r.get("quantity"))
-        for r in reading.readings
-    )
 
 
 def photo_readings_ref(run_id: str) -> str:
@@ -489,14 +369,9 @@ def build_photo_reading_tool_implementations(
 
 
 __all__ = [
-    "rests_on_photo",
-    "zoom_tiles",
     "compare_readings",
     "declared_quantities",
     "photo_records",
-    "readings_agree",
-    "unread_agree",
-    "unread_labels",
     "PhotoReadingTools",
     "build_photo_reading_tool_implementations",
     "load_photo_readings",

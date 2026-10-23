@@ -1,0 +1,7 @@
+id: ledger_chief_fix_source
+version: 1.0.0
+description: The fact check's merged findings with the chief's current chapters (chapter 1 and 3 as the chief submitted them)
+adapter: json_schema
+schema:
+  type: object
+  required: [fact_check, chapter1, chapter3]

@@ -1,7 +1,0 @@
-id: ledger_reread_input
-version: 1.0.0
-description: The ledger state after relations, and the second photo readings when there are any
-adapter: json_schema
-schema:
-  type: object
-  required: [ledger]

@@ -219,6 +219,31 @@ def _variant(slot: Mapping[str, Any], variant: str) -> str | None:
     return None if found is None else str(found)
 
 
+# A list slot written straight after a count ("共25项〔S-0001〕",
+# "共〔K-0012〕项〔S-0001〕") is set off in brackets; elsewhere ("各柜〔S-…〕")
+# it stands as written.
+_SEPARATED = set("，。；：、,.;:（(【[“\"'「 \n\t|")
+
+
+def _list_text(slot: Mapping[str, Any]) -> str:
+    """A status list without its raw status labels when only one status has objects.
+
+    "NG a、b" reads as raw table text in prose; the sentence already names the
+    status it counts.  With several statuses, each is labelled "NG：…".
+    """
+
+    groups = [
+        (key, slot[key]) for key in slot
+        if key not in {"text", "label", "evidence_ids", "取值", "subject", "unit", "value"}
+        and isinstance(slot[key], str) and slot[key] and slot[key] != EMPTY
+    ]
+    if not groups:
+        return str(slot["text"])
+    if len(groups) == 1:
+        return groups[0][1]
+    return "；".join(f"{key}：{objects}" for key, objects in groups)
+
+
 def fill_slots(
     text: str, slots: Mapping[str, Mapping[str, Any]], *, unresolved: str | None = None
 ) -> str:
@@ -228,6 +253,11 @@ def fill_slots(
     composed (``unresolved`` given) no raw slot reaches it: a slot that exists
     but is written with a suffix it does not have gets its plain value, and a
     slot that does not exist becomes ``unresolved``.
+
+    A value carries its unit, so a unit the prose repeats right after the slot
+    ("〔K-0001〕kVA", "〔K-0154〕倍") is written once.  An object list written
+    straight after a word is set off in brackets, and a list of one status
+    drops the raw status label.
     """
 
     def value(match: re.Match[str]) -> str:
@@ -239,6 +269,14 @@ def fill_slots(
             if filled is None:
                 return match.group(0) if unresolved is None else str(slot["text"])
             return filled
+        if match.group(1).startswith("S-"):
+            listed = _list_text(slot)
+            clause = text[:match.start()]
+            for n in range(len(clause) - 1, -1, -1):
+                if clause[n] in _SEPARATED:
+                    clause = clause[n + 1:]
+                    break
+            return f"（{listed}）" if re.search(r"[0-9〕]", clause) else listed
         return str(slot["text"])
 
     def count(match: re.Match[str]) -> str:
@@ -248,7 +286,20 @@ def fill_slots(
         subjects = {slots[slot_id].get("subject") or slot_id for slot_id in ids}
         return str(len(subjects))
 
-    return SLOT.sub(value, COUNT.sub(count, text))
+    text = COUNT.sub(count, text)
+    out: list[str] = []
+    position = 0
+    for match in SLOT.finditer(text):
+        out.append(text[position:match.start()])
+        filled = value(match)
+        out.append(filled)
+        position = match.end()
+        slot = slots.get(match.group(1))
+        unit = str((slot or {}).get("unit") or "")
+        if unit and filled.endswith(unit) and text.startswith(unit, position):
+            position += len(unit)
+    out.append(text[position:])
+    return "".join(out)
 
 
 def slot_repairs(text: str, slots: Mapping[str, Mapping[str, Any]]) -> list[str]:

@@ -1,7 +1,0 @@
-id: ledger_reread_plan
-version: 1.0.0
-description: Photos a problem or a gap rests on, to be read once more
-adapter: json_schema
-schema:
-  type: object
-  required: [reread_items]

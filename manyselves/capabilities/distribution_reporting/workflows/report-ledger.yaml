@@ -1,5 +1,5 @@
 id: report-ledger
-version: 5.0.0
+version: 5.2.0
 description: Judge into a ledger, each author relating its rows right after; review the modules, the shared objects and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
 tasks: []
 recovery:
@@ -63,26 +63,6 @@ actions:
   variable: relate_items
   value_variable: relate_plan
   field: relate_items
-# Photos are read again while the rows are related: the choice of photos
-# rests on the rows' own dispositions, not on relations.
-- id: plan-reread
-  kind: invoke_tool
-  tool: plan-photo-reread
-  input_variables:
-    ledger: built
-  output_variable: reread_plan
-- id: reread-items
-  kind: set_variable
-  variable: reread_items
-  value_variable: reread_plan
-  field: reread_items
-- id: relate-and-reread
-  kind: parallel
-  branches:
-    relate: relate-groups
-    reread: reread-photos
-  join: join-relate
-  max_concurrency: 2
 - id: relate-groups
   kind: map
   items_variable: relate_items
@@ -91,38 +71,8 @@ actions:
   key_input_variable: item_key
   output_variable: own_relations
   max_concurrency: 8
-- id: relate-done
-  kind: goto
-  target: join-relate
-- id: reread-photos
-  kind: map
-  items_variable: reread_items
-  key_field: photo_id
-  workflow: ledger-photo-reread
-  key_input_variable: item_key
-  output_variable: rereads
-  errors_variable: reread_errors
-  max_concurrency: 4
-- id: reread-done
-  kind: goto
-  target: join-relate
-- id: join-relate
-  kind: join
-  parallel: relate-and-reread
-  inputs:
-    relate: own_relations
-    reread: rereads
-  output_variable: related_and_reread
-- id: own-relations-value
-  kind: set_variable
-  variable: own_relations
-  value_variable: related_and_reread
-  field: relate
-- id: rereads-value
-  kind: set_variable
-  variable: rereads
-  value_variable: related_and_reread
-  field: reread
+# Photos are read once, while the material is prepared: they only add to the
+# table records, which decide, so none is read again.
 - id: apply-relations
   kind: invoke_tool
   tool: apply-judgment-relations
@@ -130,13 +80,6 @@ actions:
     context: context
     ledger: built
     own: own_relations
-  output_variable: related
-- id: apply-reread
-  kind: invoke_tool
-  tool: apply-photo-reread
-  input_variables:
-    ledger: related
-    rereads: rereads
   output_variable: ledger
 # Three reviews at once: each module's rows with what they cite; the objects
 # several modules judged; and the cross-module review, which checks the
@@ -354,12 +297,14 @@ actions:
   field: row_fix_items
 # The chief fixes chapters 1 and 3 once while the authors fix the rows that
 # carry the same errors; then each writer revises once, on the editor's
-# findings and the sections resting on the fixed rows.
+# findings and the sections resting on the fixed rows.  Both branches are
+# subworkflows: a branch that calls a writing tool directly would make the
+# compiler run the branches one after the other.
 - id: finish-draft
   kind: parallel
   branches:
     chief: chief-finish
-    rows: fix-rows
+    rows: rows-finish
   join: join-finish
   max_concurrency: 2
 - id: chief-finish
@@ -373,49 +318,14 @@ actions:
 - id: chief-finish-done
   kind: goto
   target: join-finish
-- id: fix-rows
-  kind: map
-  items_variable: row_fix_items
-  key_field: group_id
-  workflow: ledger-row-fix
-  key_input_variable: item_key
-  output_variable: row_fixes
-  max_concurrency: 5
-- id: apply-row-fixes
-  kind: invoke_tool
-  tool: apply-row-fixes
+- id: rows-finish
+  kind: subworkflow
+  workflow: ledger-rows-finish
   input_variables:
-    ledger: final
-    fixes: row_fixes
+    final: final
     edits: edits
-  output_variable: row_fixed
-- id: section-revise-items
-  kind: set_variable
-  variable: section_revise_items
-  value_variable: row_fixed
-  field: section_revise_items
-- id: revise-sections
-  kind: map
-  items_variable: section_revise_items
-  key_field: owner
-  workflow: ledger-section-revise
-  key_input_variable: item_key
-  output_variable: section_revisions
-  max_concurrency: 8
-- id: merge-section-revisions
-  kind: invoke_tool
-  tool: merge-section-fixes
-  input_variables:
-    edits: edits
-    fixes: section_revisions
-  output_variable: merged_edits
-- id: rows-result
-  kind: set_variable
-  variable: rows_result
-  value_variables:
-    fixed: row_fixed
-    merged: merged_edits
-    row_fixes: row_fixes
+    row_fix_items: row_fix_items
+  output_variable: rows_result
 - id: rows-done
   kind: goto
   target: join-finish

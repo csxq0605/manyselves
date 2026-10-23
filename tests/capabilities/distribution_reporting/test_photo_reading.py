@@ -238,7 +238,7 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     # The table record stands: a reading that differs shows no numbers to cite.
     assert (
         "P-0001：柜内进线端子的热像图；照片日期：2025-06-12 10:31；"
-        "程序比对：照片读数未能确认，以表格记录为准" in packet
+        "程序比对：照片读数与表格记录不符，照片读数不用，以表格记录为准" in packet
     )
     assert "60.2" not in packet
     assert "逐张读图结果" in packet
@@ -254,7 +254,6 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
 def test_program_compares_structured_readings_by_quantity_and_names_another_record() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
         compare_readings,
-        readings_agree,
     )
 
     bound = {"residual_current": [11.3]}
@@ -269,29 +268,6 @@ def test_program_compares_structured_readings_by_quantity_and_names_another_reco
     assert compare_readings(read(23, quantity="ambient_temperature"), bound)[0] == "cannot_tell"
     match, reason = compare_readings(read(2.9), bound, others)
     assert match == "conflicts" and "E-7" in reason
-    assert readings_agree(read(11.3), read(11.27))[0] is True
-    agrees, why = readings_agree(read(11.3), read(2.9))
-    assert agrees is False and "读数待核" in why
-
-
-def test_items_a_first_reading_left_blank_or_illegible_are_read_again_and_compared() -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
-        unread_agree,
-        unread_labels,
-    )
-
-    first = [
-        {"label": "1月", "text": "√", "legible": True},
-        {"label": "5月", "text": "", "legible": True},
-        {"label": "面板读数", "text": "", "legible": False},
-    ]
-    labels = unread_labels(first)
-    assert labels == ["5月", "面板读数"]
-    agrees, why = unread_agree(first, [{"label": "5月", "text": "√ 王", "legible": True}], labels)
-    assert agrees is False and "5月：首读为空白" in why
-    # A second reading that also sees nothing, or leaves the item out, settles nothing.
-    assert unread_agree(first, [{"label": "5月", "text": "", "legible": True}], labels)[0] is True
-    assert unread_agree(first, [], labels)[0] is True
 
 
 def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
@@ -319,45 +295,6 @@ def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
     assert [p["photo_id"] for p in photos_to_check([row], reference, readings)] == ["P-2", "P-3"]
 
 
-
-
-def test_a_photo_is_read_again_only_where_a_judgment_rests_on_it() -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
-        PhotoReading,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
-        rests_on_photo,
-    )
-
-    def reading(*readings):
-        return PhotoReading(photo_id="P-1", visible="v", record_match="cannot_tell", reason="r",
-                            needs_review=False, readings=list(readings))
-
-    table_row = SimpleNamespace(evidence_status="现场确认")
-    photo_row = SimpleNamespace(evidence_status="照片待核")
-    shown = {"quantity": "temperature", "value": 48.7, "legible": True}
-    # A photo backing a table record is not read again ...
-    assert not rests_on_photo([table_row], reading(), {})
-    assert not rests_on_photo([table_row], reading(shown), {"temperature": [48.7]})
-    # ... one the author marked 照片待核, or one showing a number the table lacks, is.
-    assert rests_on_photo([photo_row], reading(), {})
-    assert rests_on_photo([table_row], reading(shown), {})
-
-
-def test_a_reread_sees_the_photo_and_its_four_quarters_enlarged(tmp_path: Path) -> None:
-    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import zoom_tiles
-
-    Image.new("RGB", (908, 1215), "white").save(tmp_path / "p.jpg")
-    tiles = zoom_tiles(tmp_path, "p.jpg", "tiles", "P-1")
-    assert [t["part"][:2] for t in tiles] == ["左上", "右上", "左下", "右下"]
-    for tile in tiles:
-        with Image.open(tmp_path / tile["path"]) as image:
-            assert max(image.size) == 1568
-    assert zoom_tiles(tmp_path, "missing.jpg", "tiles", "P-2") == []
-    reread = load_distribution_reporting_capability()[1].require(
-        DefinitionKind.TASK, "photo-reread"
-    )
-    assert reread.image.list_field == "images"
 
 
 def test_labels_follow_the_table_and_leave_out_what_the_photo_cannot_show() -> None:

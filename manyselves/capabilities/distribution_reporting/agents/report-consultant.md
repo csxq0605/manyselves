@@ -14,6 +14,7 @@ accepts:
 - ledger_section_brief
 - ledger_chief_input
 - ledger_chief_check
+- ledger_chief_fix_input
 - ledger_special_topic_input
 - ledger_edit_item
 - ledger_relation_input

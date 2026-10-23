@@ -517,7 +517,7 @@ def cross_batches(
     return batches
 
 
-JUDGE_GROUP_RECORDS = 160
+JUDGE_GROUP_RECORDS = 60
 GROUP_ROW_SPAN = 100
 
 

@@ -1,6 +1,6 @@
 id: ledger-chief-finish
-version: 1.0.0
-description: The chief fixes chapters 1 and 3 in one turn on the fact check and the program's findings, then writes chapter 4; it runs while the authors fix rows and the writers revise
+version: 2.0.0
+description: Chapters 1 and 3 are fixed in one turn of a conversation of its own, on the fact check and the program's findings with only the parts they point at; the chief then writes chapter 4; it runs while the authors fix rows and the writers revise
 tasks:
 - revise-chief-facts
 - chief-chapter-4
@@ -48,16 +48,32 @@ actions:
     variable: fact_blocking
     operator: eq
     value: true
-  then: fix
+  then: fix-input
   otherwise: apply-fix
-# Chapters 1 and 3 are fixed in one turn of the chief, on the version checked;
-# the answer holds only what changes.
+# Chapters 1 and 3 are fixed in one turn, in a conversation of its own: the
+# findings with the rows and records they cite, and only the parts of the
+# chapters they point at.  The answer holds only what changes.
+- id: fix-input
+  kind: invoke_tool
+  tool: chief-fix-input
+  input_variables:
+    fact_check: fact_check
+    chapter1: chapter1
+    chapter3: chapter3
+  output_variable: fix_input
+- id: open-fix
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: chief-fix
+  key_variable: chief_key
+  mode: run
+  output_variable: fix_conversation
 - id: fix
   kind: invoke_agent
   agent: report-consultant
   task: revise-chief-facts
-  conversation_variable: chief_conversation
-  input_variable: fact_check
+  conversation_variable: fix_conversation
+  input_variable: fix_input
   output_variable: chief_fix
 - id: apply-fix
   kind: invoke_tool

@@ -286,7 +286,12 @@ def _answer(message):
         # One turn answers the fact check of both chapters, on the version checked.
         assert set(value["findings"]) == {"1.2-重点风险-1"}
         assert value["findings"]["1.2-重点风险-1"]["grounds"]["J-2.4-1"]
-        assert set(value["texts"]) == {"1.1", "1.2", "1.3", "3.1"}
+        # Only what the findings point at: section 1.2, chapter 1 in full
+        # because a table of it is pointed at, and the 3.2 group that cites
+        # the same row (same_elsewhere).
+        assert set(value["texts"]) == {"1.2"}
+        assert value["chapter1"]["key_risks"]
+        assert [action["group_id"] for action in value["actions"]] == ["G-01"]
         return ("submit", [{"sections": {"1.2": "总体良好，个别对象温度偏高需复测。"}}])
     if task in {"chief-chapter-1", "revise-chief-overview"}:
         return (
@@ -584,7 +589,10 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
         and _input_of(loop.received[0].content)["owner"] == "chief"
     ]
     assert edits == []
-    assert tasks_of(chief[0])[2:] == ["revise-chief-facts"]
+    # The fix runs in a conversation of its own, not in the chief's.
+    assert "revise-chief-facts" not in tasks_of(chief[0])
+    fixes = [loop for loop in loops if tasks_of(loop) == ["revise-chief-facts"]]
+    assert len(fixes) == 1 and not fixes[0].restored
     # Each review reads its own module only.
     assert "related_rows" not in _input_of(review_24)
     assert '<context name="dossiers">' not in review_24

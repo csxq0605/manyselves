@@ -111,9 +111,7 @@ from .models.agentic import (
     ModuleSubmission,
     ObservationAssessment,
     PartAssessment,
-    PhotoReadingSubmission,
 )
-from .models.photo_reading import PhotoReadingInput
 from .models.reporting import (
     EvidenceItem,
     PhotoAsset,
@@ -124,18 +122,10 @@ from .models.reporting import (
 from .module_authoring_preparation import load_template_skill
 from .observation_ledger import build_observation_ledger, shared_labels
 from .photo_reading import (
-    compare_readings,
     load_photo_readings,
-    photo_expected_ref,
     photo_reading_labels,
     photo_readings_ref,
-    photo_records,
     reading_label,
-    readings_agree,
-    rests_on_photo,
-    unread_agree,
-    unread_labels,
-    zoom_tiles,
 )
 from .report_revision import (
     SECTION_NOTE,
@@ -1373,146 +1363,6 @@ class LedgerTools(LedgerStageTools):
                 into["declined_proposals"].extend(chosen.get("declined_proposals") or [])
         return merged
 
-    # -- photo re-read ------------------------------------------------------
-
-    def plan_reread(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The photos a problem or a gap rests on, to be read once more, independently.
-
-        The table record is the fact and a photo backs it, so a photo is read
-        again only where a judgment rests on the photo itself (see
-        ``rests_on_photo``): a row the author marked 照片待核, or a number the
-        photo shows that the table does not hold.  The second reading also
-        gets the photo's four quarters enlarged.  The reader gets no recorded
-        values and not what the first reading said, only the date it found,
-        so that a dated record's blanks after that date are not taken for
-        missed ones.
-        """
-
-        state = value["ledger"]
-        run_id = state["run_id"]
-        reference = self._reference(run_id)
-        assets = reference.get("photos") or {}
-        headers = {
-            (str(path), str(sheet)): dict(columns)
-            for path, sheet, columns in reference.get("column_headers") or []
-        }
-        readings = load_photo_readings(self.workspace, run_id)
-        expected = self._photo_expected(run_id)
-        ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
-        cited: dict[str, list[JudgmentRow]] = {}
-        for rows in ledger.values():
-            for row in rows:
-                if row.disposition in {"concern", "undetermined"}:
-                    for photo_id in row.photo_ids:
-                        cited.setdefault(photo_id, []).append(row)
-        index = ProjectEvidenceIndex(self.workspace, run_id)
-        items = index.items() if index.path.is_file() else []
-        by_id = {item.id: item for item in items}
-        planned = []
-        for photo_id, rows in cited.items():
-            reading = readings.get(photo_id)
-            asset = assets.get(photo_id)
-            if reading is None or asset is None:
-                continue
-            bound_values = (expected.get(photo_id) or {}).get("bound") or {}
-            if not rests_on_photo(rows, reading, bound_values):
-                continue
-            bound = [by_id[e] for e in reading.evidence_ids if e in by_id]
-            if not bound:
-                continue
-            records, quantities = photo_records(bound, items)
-            sheet, cell = asset.get("sheet"), asset.get("cell")
-            column = re.sub(r"\d+", "", cell or "")
-            header = headers.get((bound[0].source.path.as_posix(), sheet or ""), {}).get(column)
-            images = [{"path": asset["path"], "media_type": asset["media_type"], "part": "整张照片"}]
-            images += zoom_tiles(
-                self.workspace, asset["path"], f"Work/runs/{run_id}/ledger/photo-tiles", photo_id
-            )
-            planned.append(
-                PhotoReadingInput(
-                    run_id=run_id,
-                    photo_id=photo_id,
-                    photo_path=asset["path"],
-                    media_type=asset["media_type"],
-                    photo_sheet=sheet,
-                    photo_cell=cell,
-                    column_header=header,
-                    records=records,
-                    quantities=quantities,
-                    check_labels=unread_labels(reading.transcription),
-                    photo_date=reading.photo_date,
-                    images=images,
-                ).model_dump(mode="json")
-            )
-        return {"reread_items": planned}
-
-    def _photo_expected(self, run_id: str) -> dict[str, Any]:
-        path = self.workspace / photo_expected_ref(run_id)
-        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-
-    def apply_reread(self, value: dict[str, Any]) -> dict[str, Any]:
-        """Compare each second reading with the first; disagreeing numbers are to be checked.
-
-        The review packets are drawn again so a reviewer sees a photo whose
-        two readings disagree.
-        """
-
-        state = dict(value["ledger"])
-        run_id = state["run_id"]
-        readings = load_photo_readings(self.workspace, run_id)
-        expected = self._photo_expected(run_id)
-        changed = False
-        for photo_id, result in (value.get("rereads") or {}).items():
-            reading = readings.get(photo_id)
-            if reading is None or not result:
-                continue
-            second = PhotoReadingSubmission.model_validate(_plain(result))
-            agrees, reason = readings_agree(
-                reading.readings, [r.model_dump(mode="json") for r in second.readings]
-            )
-            seen, unread = unread_agree(
-                reading.transcription,
-                [entry.model_dump(mode="json") for entry in second.transcription],
-                unread_labels(reading.transcription),
-            )
-            if not seen:
-                agrees, reason = False, "；".join(r for r in (reason if not agrees else "", unread) if r)
-            # Either reading showing the recorded value is enough: the photo
-            # shows the record.
-            match, match_reason = reading.record_match, reading.reason
-            if match == "conflicts":
-                bound = expected.get(photo_id) or {}
-                again, again_reason = compare_readings(
-                    [r.model_dump(mode="json") for r in second.readings],
-                    bound.get("bound") or {}, bound.get("same_subject") or {},
-                )
-                if again == "matches":
-                    match, match_reason = "matches", f"复读：{again_reason}"
-                    agrees, reason = True, "首读与记录不同，复读与记录一致"
-            readings[photo_id] = reading.model_copy(update={
-                "record_match": match,
-                "reason": match_reason,
-                "reread_agrees": agrees,
-                "reread_reason": reason,
-                "needs_review": not agrees or match == "conflicts",
-            })
-            changed = True
-        if changed:
-            self.store.write_json(photo_readings_ref(run_id), {
-                "run_id": run_id,
-                "readings": [
-                    r.model_dump(mode="json")
-                    for r in sorted(readings.values(), key=lambda r: r.photo_id)
-                ],
-            })
-            reference = self._reference(run_id)
-            ledger = {m: _rows(rows) for m, rows in state["ledger"].items()}
-            state["review_items"] = [
-                {**item, "photos": photos_to_check(ledger[item["module_id"]], reference, readings)}
-                for item in state.get("review_items") or []
-            ]
-        return state
-
     def merge_findings(self, value: dict[str, Any]) -> dict[str, Any]:
         """Keep program and reviewer findings side by side.
 
@@ -2386,6 +2236,44 @@ class LedgerTools(LedgerStageTools):
             })
         return {"ledger": final, "changed_rows": list(changed), "section_revise_items": items}
 
+    def chief_fix_input(self, value: dict[str, Any]) -> dict[str, Any]:
+        """What the chief's one fix needs, for a conversation of its own.
+
+        The findings with the rows and records they cite (grounds), the text
+        sections they or their same_elsewhere point at, chapter 1 in full
+        only when one of its tables is pointed at (the fix then submits it
+        whole), and the 3.2 groups pointed at.  Nothing else of the chapters.
+        """
+
+        check = _plain(value["fact_check"])
+        findings = check.get("findings") or {}
+        places = set(findings)
+        for finding in findings.values():
+            for ref in finding.get("same_elsewhere") or []:
+                if match := re.search(r"（([^（）]+)）\s*$", str(ref)):
+                    places.add(match.group(1))
+        texts = {
+            section_id: text
+            for section_id, text in (check.get("texts") or {}).items()
+            if any(place == section_id or place.startswith(section_id + "-") for place in places)
+        }
+        result: dict[str, Any] = {
+            "findings": findings,
+            "blocking": bool(check.get("blocking")),
+            "texts": texts,
+        }
+        if any(re.match(r"1\.2-(健康度|重点风险|阶段)", place) for place in places):
+            result["chapter1"] = _plain(value["chapter1"])
+        groups = {place.split("-", 1)[1] for place in places if place.startswith("3.2-")}
+        actions = [
+            action
+            for action in (_plain(value["chapter3"]).get("actions") or [])
+            if str(action.get("group_id")) in groups
+        ]
+        if actions:
+            result["actions"] = actions
+        return result
+
     def hold_edit(self, value: dict[str, Any]) -> dict[str, Any]:
         """An editor's findings, held until the fact check's row fixes join them."""
 
@@ -3006,8 +2894,6 @@ class LedgerTools(LedgerStageTools):
             "plan-judgment-review": self.plan_review,
             "gather-judgment-reviews": self.gather_reviews,
             "apply-story-lines": self.apply_story,
-            "plan-photo-reread": self.plan_reread,
-            "apply-photo-reread": self.apply_reread,
             "merge-review-findings": self.merge_findings,
             "recheck-judgments": self.recheck_judgments,
             "close-review": self.close_review,
@@ -3019,6 +2905,7 @@ class LedgerTools(LedgerStageTools):
             "apply-row-fixes": self.apply_row_fixes,
             "merge-section-fixes": self.merge_section_fixes,
             "hold-edit": self.hold_edit,
+            "chief-fix-input": self.chief_fix_input,
             "check-report": self.check_report,
             "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,

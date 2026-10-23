@@ -1,14 +1,14 @@
 id: revise-chief-facts
-version: 2.0.0
+version: 3.0.0
 description: Answer the fact check of chapters 1 and 3 in one turn
 agent: report-consultant
-objective: 核对员逐条核对了你写的第一、三章，程序也查了正文；下面是要改的问题，核对员的每条注明了所在位置（where）和所引材料原文（grounds）。一次改好两章，只提交改动。
-input_contract: ledger_chief_check
+objective: 你现在是总编。核对员逐条核对了总编写的第一、三章，程序也查了正文；下面是要改的问题，每条的键是所在位置，grounds 是所引判断行和记录的原文。一并给出这些问题指到的正文小节（texts）、第一章的表被指到时的完整第一章（chapter1）、被指到的 3.2 行动组（actions），其余内容不在这里，也不用改。一次改好，只提交改动。
+input_contract: ledger_chief_fix_input
 output_contract: ledger_chief_fix
 constraints:
 - 先对照 grounds 里的材料原文核对每条意见：意见成立的照改；意见与所引材料不符或材料不支持的，不改，在 declined 里写意见的条目编号和一句理由。
-- 意见在正文段落或 3.1 里的，在 sections 里提交那一节改好后的完整正文（1.1、1.2、1.3、3.1）；当前正文见 texts。没改的小节不提交。
-- 意见在第一章的表（健康度、重点风险、阶段）里的，提交改好后的完整 chapter1；不改留空。意见在 3.2 速查表里的，在 actions 里提交要改的行动组，每组一条、写改好后的这一组（group_id 照抄），没改的组不提交；表前导语要改时写 action_lead。
+- 意见在正文段落或 3.1 里的，在 sections 里提交那一节改好后的完整正文（1.1、1.2、1.3、3.1）；当前正文见 texts。没改的小节不提交；texts 里没有的小节不提交。
+- 意见在第一章的表（健康度、重点风险、阶段）里的，在给出的 chapter1 上改好，提交完整的 chapter1（其中的正文字段照给出的原样保留，正文改动写在 sections）；不改留空。意见在 3.2 速查表里的，在给出的 actions 上改，提交要改的行动组，每组一条、写改好后的这一组（group_id 照抄），没改的组不提交；表前导语要改时写 action_lead。
 - 意见带 same_elsewhere 时，那里列的是引用同一判断行的其他条目：改了这里的数量、对象或结论，那些地方写的同一内容也要一致。
 - 只改意见指出的问题，其余内容保持不变。占位符（〔V-…〕〔K-…〕〔S-…〕）原样保留；数量和档位用占位符，不自己数。
 tools: []
