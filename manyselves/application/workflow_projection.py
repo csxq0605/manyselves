@@ -375,6 +375,7 @@ class WorkflowProjectionFacade:
                 "status": str(run.get("status") or ""),
                 "root": None,
                 "events": [],
+                "spans": {},
             }
 
     def _find_workflow(

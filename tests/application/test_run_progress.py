@@ -198,3 +198,29 @@ def test_workflow_agents_count_as_busy_until_they_go_idle() -> None:
     projection.observe(StatusChange(agent_type=writer, status=AgentStatus.IDLE))
     assert projection.busy_agents(known={"main": "idle"}) == {}
     assert projection.busy_agents(known=(), stale_after_seconds=-1) == {}
+
+
+def test_spans_time_each_step_from_its_first_start_to_its_last_finish(tmp_path: Path) -> None:
+    def event(kind: str, action: str, ts: str | None) -> dict:
+        row = {"kind": kind, "run_id": "run-1", "workflow_id": "root", "action_id": action, "data": {}}
+        if ts:
+            row["ts"] = ts
+        return row
+
+    reader = _write(
+        tmp_path,
+        {"run_id": "run-1", "workflow_id": "root", "status": "running",
+         "next_action_id": "fan", "actions": {}},
+        events=[
+            event("action.started", "prep", None),
+            event("action.started", "fan", "2026-10-23T14:00:00+00:00"),
+            event("action.started", "fan", "2026-10-23T14:00:05+00:00"),
+            event("action.completed", "fan", "2026-10-23T14:01:00+00:00"),
+            event("action.completed", "fan", "2026-10-23T14:00:30+00:00"),
+        ],
+    )
+
+    spans = reader.read("run-1")["spans"]
+    assert spans == {
+        "root/fan": {"start": "2026-10-23T14:00:00+00:00", "end": "2026-10-23T14:01:00+00:00"}
+    }

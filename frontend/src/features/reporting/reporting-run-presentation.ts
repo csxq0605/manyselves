@@ -188,3 +188,31 @@ const itemNouns: Readonly<Record<string, string>> = {
 export function reportingItemNoun(workflowId: string): string {
   return itemNouns[workflowId] ?? "任务";
 }
+
+/** A stage a person follows: a name and the workflow steps it covers. */
+export interface ReportingStage {
+  readonly label: string;
+  /** `workflow/action` ids, in order. */
+  readonly steps: readonly string[];
+}
+
+const fr = (ids: string) => ids.split(" ").map((id) => `full-report/${id}`);
+const rl = (ids: string) => ids.split(" ").map((id) => `report-ledger/${id}`);
+
+const stagesByWorkflow: Readonly<Record<string, readonly ReportingStage[]>> = {
+  "full-report": [
+    { label: "准备资料", steps: fr("initialize-full-report project-preparation-for-full-report run-reporting-preparation attach-reporting-preparation project-preparation-for-readiness run-evidence-readiness attach-readiness-preparation") },
+    { label: "读照片", steps: fr("run-photo-reading attach-readiness-to-context build-reporting-state") },
+    { label: "判断", steps: rl("prepare judge-modules build-ledger") },
+    { label: "关联", steps: rl("plan-relate relate-groups apply-relations") },
+    { label: "审查", steps: rl("plan-review review-lenses review-modules review-objects review-cross gather-reviews") },
+    { label: "返修", steps: rl("settle-modules finalize-ledger apply-story") },
+    { label: "写作与核对", steps: rl("draft write-modules check-report edit-pass chief-summary") },
+    { label: "修订收尾", steps: [...rl("finish-draft chief-finish rows-finish compose"), ...fr("publish-full-report")] },
+  ],
+};
+
+/** The stages of a Workflow, or none when it has no stage list of its own. */
+export function reportingStages(workflowId: string): readonly ReportingStage[] | null {
+  return stagesByWorkflow[workflowId] ?? null;
+}

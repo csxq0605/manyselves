@@ -3394,6 +3394,14 @@
             "title": "Runid",
             "type": "string"
           },
+          "spans": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Spans",
+            "type": "object"
+          },
           "status": {
             "title": "Status",
             "type": "string"

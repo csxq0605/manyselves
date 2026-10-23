@@ -128,3 +128,4 @@ class WorkflowProgressResponse(BaseModel):
     status: str
     root: dict[str, Any] | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
+    spans: dict[str, dict[str, Any]] = Field(default_factory=dict)

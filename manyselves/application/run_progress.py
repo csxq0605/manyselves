@@ -93,6 +93,7 @@ class RunProgressReader:
             "status": str(state.get("status") or ""),
             "root": _describe(state, plan, depth=0) if plan else None,
             "events": _recent_events(events_path, run_id),
+            "spans": _action_spans(events_path, run_id),
         }
         with self._lock:
             self._cache[run_id] = (key, view)
@@ -384,6 +385,42 @@ def _step_status(
         if order.index(action_id) < order.index(current):
             return "skipped"
     return str(recorded or "pending")
+
+
+def _action_spans(path: Path, run_id: str) -> dict[str, dict[str, str | None]]:
+    """When each ``workflow/action`` first started and last finished.
+
+    Read from the timestamps on the event trace; lines written before
+    timestamps existed give nothing.  A step that runs once per map item
+    spans from its first start to its last finish.
+    """
+
+    spans: dict[str, dict[str, str | None]] = {}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if '"ts"' not in line or '"action.' not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("run_id") != run_id or not event.get("ts"):
+                    continue
+                kind = event.get("kind")
+                if kind not in {"action.started", "action.completed", "action.failed"}:
+                    continue
+                key = f"{event.get('workflow_id')}/{event.get('action_id')}"
+                span = spans.setdefault(key, {"start": None, "end": None})
+                ts = str(event["ts"])
+                if kind == "action.started":
+                    if span["start"] is None or ts < span["start"]:
+                        span["start"] = ts
+                elif span["end"] is None or ts > span["end"]:
+                    span["end"] = ts
+    except OSError:
+        return {}
+    return spans
 
 
 def _recent_events(path: Path, run_id: str) -> list[dict[str, Any]]:

@@ -135,3 +135,47 @@
   .runtime-page__progress-body { grid-template-columns: 1fr; }
   .runtime-page__progress-events { border-left: 0; border-top: 1px solid #ecece9; padding: 12px 0 0; }
 }
+/* The page: a title line, the Run's stages, the latest errors, and details folded away. */
+.runtime-page { display: grid; gap: 12px; max-width: min(860px, calc(100vw - 96px)) !important; }
+.runtime-page__title { align-items: baseline; display: flex; justify-content: space-between; }
+.runtime-page__title h1 { font-size: 22px; letter-spacing: -.02em; margin: 0; }
+.run-stages { max-height: none; }
+.run-stages__head { align-items: baseline; display: flex; gap: 10px; margin-bottom: 8px; }
+.run-stages__head h2 { margin: 0; }
+.run-stages__head small { color: #6b6f76; font-size: 12px; margin-left: auto; }
+.run-stages__pill { background: #ecece7; border-radius: 999px; color: #5f625f; font-size: 11px; padding: 3px 8px; }
+.run-stages__pill--running { background: #e7f5eb; color: #24723b; }
+.run-stages__pill--waiting { background: #fbf1dc; color: #8a5b0d; }
+.run-stages__pill--failed { background: #fdecea; color: #a8332a; }
+.run-stages__list { list-style: none; margin: 0; padding: 0; }
+.run-stages__stage { align-items: center; border-top: 1px solid #f0f0ed; display: grid; gap: 4px 12px; grid-template-columns: 10px minmax(0, 1fr) 64px 64px; padding: 9px 0; }
+.run-stages__stage:first-child { border-top: 0; }
+.run-stages__dot { background: #d6d7d3; border-radius: 50%; height: 10px; width: 10px; }
+.run-stages__status { color: #6b6f76; font-size: 12px; }
+.run-stages__time { color: #8a8d90; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.run-stages__line { color: #4a4d50; font-size: 12px; grid-column: 2 / -1; overflow-wrap: anywhere; }
+.run-stages__stage--completed .run-stages__dot { background: #3c9a5a; }
+.run-stages__stage--completed .run-stages__status { color: #3d5f45; }
+.run-stages__stage--running, .run-stages__stage--waiting { background: #f3f7fd; margin: 0 -16px; padding: 9px 16px; }
+.run-stages__stage--running .run-stages__dot { animation: run-progress-pulse 1.2s ease-in-out infinite; background: #2f7ee6; }
+.run-stages__stage--running .run-stages__label, .run-stages__stage--running .run-stages__status { color: #1f4f8c; font-weight: 600; }
+.run-stages__stage--waiting .run-stages__dot { background: #c88a1d; }
+.run-stages__stage--failed .run-stages__dot { background: #c53b3b; }
+.run-stages__stage--failed .run-stages__label, .run-stages__stage--failed .run-stages__status { color: #a8332a; font-weight: 600; }
+.run-stages__stage--pending { color: #9a9d9f; }
+.runtime-page .runtime-page__errors { margin-top: 0; }
+.runtime-page__errors .operations-list strong { color: #a8332a; font-size: 13px; font-weight: 500; }
+.runtime-page__more { max-height: none; }
+.runtime-page__more summary { color: #6b6f76; cursor: pointer; font-size: 13px; }
+.runtime-page__more summary small { color: #9a9d9f; margin-left: 8px; }
+.runtime-page__more-body { display: grid; gap: 16px; margin-top: 14px; }
+.runtime-page__more h3 { color: #6b6f76; font-size: 12px; font-weight: 600; margin: 0 0 8px; }
+.runtime-page__more .operations-list { max-height: 280px; overflow-y: auto; }
+
+/* Inside the folded details: one tool or Agent per line, long ids cut short. */
+.runtime-page__more .operations-list li { grid-template-columns: auto minmax(0, 1fr) auto; }
+.runtime-page__more section[aria-labelledby="runtime-tools"] .operations-list li { grid-template-columns: minmax(0, 1fr); }
+.runtime-page__more .operations-list strong,
+.runtime-page__more .operations-list span:not(.runtime-page__signal) {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 13px;
+}

@@ -160,6 +160,8 @@ export interface RunProgressResponse {
   readonly events: readonly RunProgressEvent[];
   readonly root: RunProgressNode | null;
   readonly runId: string;
+  /** `workflow/action` → when it first started and last finished (ISO times). */
+  readonly spans?: Readonly<Record<string, { readonly end: string | null; readonly start: string | null }>>;
   readonly status: string;
   readonly workflowId: string;
 }

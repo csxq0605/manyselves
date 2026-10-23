@@ -2463,6 +2463,12 @@ export interface components {
             } | null;
             /** Runid */
             runId: string;
+            /** Spans */
+            spans?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             /** Status */
             status: string;
             /** Workflowid */
