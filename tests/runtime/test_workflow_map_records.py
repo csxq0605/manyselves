@@ -665,3 +665,44 @@ async def test_set_variable_builds_an_object_from_variables(tmp_path: Path) -> N
     )
 
     assert completed.outputs["result"] == {"a": 1, "b": {"n": 2}}
+
+
+@pytest.mark.asyncio
+async def test_map_saves_running_items_at_most_once_a_second(tmp_path: Path) -> None:
+    import asyncio
+
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(
+        registry,
+        _map_parent(max_concurrency=10),
+    )
+    saved: list[WorkflowState] = []
+
+    class CountingStore(FileWorkflowStateStore):
+        def save(self, state: WorkflowState) -> None:
+            saved.append(state)
+            super().save(state)
+
+    async def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        await asyncio.sleep(0.05)
+        return {"total": arguments["item"]["n"]}
+
+    store = CountingStore(tmp_path)
+    host = WorkflowRuntimeHost(build_builtin_executor_registry(), store, InMemoryWorkflowEventSink())
+    state = WorkflowState.for_plan("map-saves", plan)
+    state.variables["items"] = [{"id": f"i{n}", "n": n} for n in range(20)]
+    completed = await host.execute(
+        plan, state, RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert len(completed.outputs["result"]) == 20
+    running_saves = [
+        s for s in saved
+        if s.map_states.get("score-all")
+        and all(v.get("status") == WorkflowStatus.RUNNING for v in s.map_states["score-all"].values())
+    ]
+    # 20 items start together: their running steps share one save, not one each.
+    assert len(running_saves) <= 2
+    assert completed.map_states == {}

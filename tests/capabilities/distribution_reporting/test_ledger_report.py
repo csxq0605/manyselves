@@ -583,6 +583,17 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     packet = _input_of(checks[0].received[0].content)
     assert packet["units"] and {"rows", "facts", "values", "counts"} <= set(packet)
     assert all("basis" in row for row in packet["rows"])
+    # Chapter 3 is checked while chapter 1 is written, chapter 1 after it;
+    # the two batches' packets never share an id and join for the one fix.
+    packets = [_input_of(loop.received[0].content) for loop in checks]
+    by_batch = {
+        prefix: [p for p in packets if p["packet_id"].startswith(prefix)] for prefix in ("F3-", "F1-")
+    }
+    assert by_batch["F3-"] and by_batch["F1-"] and len(packets) == sum(map(len, by_batch.values()))
+    assert all(u["unit_id"].startswith("3.") for p in by_batch["F3-"] for u in p["units"])
+    assert all(u["unit_id"].startswith("1.") for p in by_batch["F1-"] for u in p["units"])
+    joined = json.loads((ledger_dir / "chief-fact-packets.json").read_text(encoding="utf-8"))
+    assert sorted(p["packet_id"] for p in joined) == sorted(p["packet_id"] for p in packets)
     # The chief has no edit pass of its own; one turn fixes both chapters.
     edits = [
         loop for loop in loops

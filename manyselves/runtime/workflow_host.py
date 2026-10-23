@@ -46,6 +46,8 @@ RUN_STOPPED_BEFORE = "run stopped before step"
 # provider to store the prefix it read.  The provider builds that entry within
 # seconds and does not say when it is done.
 LEAD_CACHE_SETTLE_SECONDS = 3.0
+# How often a Map saves its running items (completed or failed ones at once).
+MAP_CHECKPOINT_SECONDS = 1.0
 
 
 class WorkflowRuntimeEvent(BaseModel):
@@ -480,9 +482,30 @@ class WorkflowRuntimeHost:
             # A tool may run in a worker thread; set the event on the loop.
             event_loop.call_soon_threadsafe(lead_started.set)
 
-        def checkpoint_item(key: str, current: WorkflowState) -> None:
-            item_states[key] = current.model_dump(mode="json")
+        # Every item step would save the whole Run; with many items starting
+        # at once that blocks the loop for seconds.  Running steps are saved
+        # at most once a second; an item that completes or fails at once.
+        unsaved: dict[str, WorkflowState] = {}
+        save_timer: list[asyncio.TimerHandle | None] = [None]
+        last_save = [float("-inf")]
+
+        def save_items() -> None:
+            if save_timer[0] is not None:
+                save_timer[0].cancel()
+                save_timer[0] = None
+            for unsaved_key, current in unsaved.items():
+                item_states[unsaved_key] = current.model_dump(mode="json")
+            unsaved.clear()
+            last_save[0] = time.monotonic()
             checkpoint(_checkpoint_view(state, map_states={action.id: dict(item_states)}))
+
+        def checkpoint_item(key: str, current: WorkflowState) -> None:
+            unsaved[key] = current
+            waited = time.monotonic() - last_save[0]
+            if current.status is not WorkflowStatus.RUNNING or waited >= MAP_CHECKPOINT_SECONDS:
+                save_items()
+            elif save_timer[0] is None:
+                save_timer[0] = event_loop.call_later(MAP_CHECKPOINT_SECONDS - waited, save_items)
 
         async def execute_item(key: str, item: Any) -> WorkflowState:
             saved = saved_states.get(key)
@@ -556,13 +579,21 @@ class WorkflowRuntimeHost:
                         f"has no output {action.child_output_name}"
                     )
                 snapshot = _completed_nested_state_snapshot(completed)
+                unsaved.pop(key, None)
                 item_states[key] = snapshot
                 return WorkflowState.model_validate(snapshot)
 
-        outcomes = await asyncio.gather(
-            *(execute_item(key, item) for key, item in items),
-            return_exceptions=True,
-        )
+        try:
+            outcomes = await asyncio.gather(
+                *(execute_item(key, item) for key, item in items),
+                return_exceptions=True,
+            )
+        finally:
+            # The Map's own result is saved by its caller; a late timed save
+            # must not write the item states back after that.
+            if save_timer[0] is not None:
+                save_timer[0].cancel()
+                save_timer[0] = None
         results: dict[str, Any] = {}
         errors: dict[str, str] = {}
         completed_items: list[tuple[str, WorkflowState]] = []

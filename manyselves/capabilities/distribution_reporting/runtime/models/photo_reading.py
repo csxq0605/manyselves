@@ -8,7 +8,7 @@ from pydantic import Field
 
 from .agentic import StrictModel
 
-PHOTO_READING_LANES = ("1", "2", "3", "4")
+PHOTO_READING_LANES = ("1", "2", "3", "4", "5", "6", "7", "8")
 
 
 class RecordValue(StrictModel):

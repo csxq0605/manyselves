@@ -2122,21 +2122,30 @@ class LedgerTools(LedgerStageTools):
         return {"findings": findings, "blocking": _blocking(findings)}
 
     def plan_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
-        """Chapters 1 and 3 cut into small packets for a fact check (see chief_fact_packets)."""
+        """Chapters 1 and 3 cut into small packets for a fact check (see chief_fact_packets).
+
+        ``chapter`` ("3" or "1") plans one chapter only: chapter 3 is checked
+        while the chief writes chapter 1, and chapter 1 once it is written.
+        """
 
         final = value["ledger"]
         run_id = final["run_id"]
         ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        chapter = str(value.get("chapter") or "")
+        if chapter not in {"", "1", "3"}:
+            raise ValueError(f"plan-chief-facts: unknown chapter {chapter!r}")
         packets = chief_fact_packets(
-            chapter1=_plain(value.get("chapter1")),
-            chapter3=_plain(value.get("chapter3")),
+            chapter1=None if chapter == "3" else _plain(value.get("chapter1")),
+            chapter3=None if chapter == "1" else _plain(value.get("chapter3")),
             ledger=ledger,
             groups=final.get("action_groups") or [],
             slots=self._slots(run_id),
             fact_texts=self._reference(run_id).get("fact_texts") or {},
             run_id=run_id,
+            prefix=f"F{chapter}-" if chapter else "F-",
         )
-        self.store.write_json(f"Work/runs/{run_id}/ledger/chief-fact-packets.json", packets)
+        name = f"chief-fact-packets-{chapter}" if chapter else "chief-fact-packets"
+        self.store.write_json(f"Work/runs/{run_id}/ledger/{name}.json", packets)
         return {"fact_items": packets}
 
     def apply_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -2149,10 +2158,17 @@ class LedgerTools(LedgerStageTools):
         fixes everything on the one version that was checked.
         """
 
-        checked = apply_fact_findings(
-            value.get("packets") or [], _plain(value.get("results") or {})
-        )
+        # Chapter 3's packets, checked while chapter 1 was written, join
+        # chapter 1's.
+        early = _plain(value.get("chapter3_facts")) or {}
+        packets = [*(early.get("packets") or []), *(value.get("packets") or [])]
+        results = {**(early.get("results") or {}), **_plain(value.get("results") or {})}
+        checked = apply_fact_findings(packets, results)
         final = value.get("ledger")
+        if final and early:
+            self.store.write_json(
+                f"Work/runs/{final['run_id']}/ledger/chief-fact-packets.json", packets
+            )
         if final and value.get("chapter1") and value.get("chapter3"):
             run_id = final["run_id"]
             chief = {"chapter1": _plain(value["chapter1"]), "chapter3": _plain(value["chapter3"])}

@@ -285,8 +285,13 @@ def chief_fact_packets(
     edited: Mapping[str, str] | None = None,
     max_units: int = MAX_UNITS,
     max_chars: int = MAX_CHARS,
+    prefix: str = "F-",
 ) -> list[dict[str, Any]]:
-    """The fact-check packets: units with their rows, records, values and counts."""
+    """The fact-check packets: units with their rows, records, values and counts.
+
+    ``prefix`` starts every packet id, so packets planned in separate batches
+    (chapter 3 while chapter 1 is written, then chapter 1) never share one.
+    """
 
     rows = {row.id: row for module_rows in ledger.values() for row in module_rows}
     module_of = {row.id: m for m, module_rows in ledger.items() for row in module_rows}
@@ -373,7 +378,7 @@ def chief_fact_packets(
 
     def new(module: str) -> dict[str, Any]:
         return {
-            "run_id": run_id, "packet_id": f"F-{len(packets) + 1:02d}", "module": module,
+            "run_id": run_id, "packet_id": f"{prefix}{len(packets) + 1:02d}", "module": module,
             "units": [], "rows": {}, "facts": {}, "values": {}, "counts": {},
         }
 
