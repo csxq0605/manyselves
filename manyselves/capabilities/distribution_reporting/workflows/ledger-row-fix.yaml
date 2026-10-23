@@ -1,11 +1,11 @@
-id: ledger-module-relate-proposals
+id: ledger-row-fix
 version: 1.0.0
-description: One author weighs the linker's proposals on its rows, each with the other end's row and facts, in its judging conversation
+description: One judging group's author fixes the rows the fact check found carrying an error, in its judging conversation
 tasks:
-- relate-proposals
+- revise-judgments
 recovery:
 - typed-turn-recovery
-output_contract: ledger_relation_set
+output_contract: ledger_judgment_revision
 state:
   item: null
   item_key: null
@@ -17,14 +17,14 @@ actions:
   key_variable: item_key
   mode: run
   output_variable: author_conversation
-- id: relate
+- id: revise
   kind: invoke_agent
   agent: report-consultant
-  task: relate-proposals
+  task: revise-judgments
   conversation_variable: author_conversation
   input_variable: item
-  output_variable: relations
+  output_variable: revision
 - id: finish
   kind: end_workflow
-  output_variable: relations
+  output_variable: revision
   output_name: result

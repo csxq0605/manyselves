@@ -100,9 +100,12 @@ def brief_row(row: JudgmentRow, *, basis_chars: int = 120) -> dict[str, Any]:
             "hazard": row.hazard,
             "action": row.action.model_dump(mode="json") if row.action else None,
             "gap": row.gap.model_dump(mode="json") if row.gap else None,
+            # The chief argues from relations that hold; a pending one stays
+            # with its section in chapter 2.
             "relations": [
                 {"row_id": r.row_id, "relation": r.relation, "reason": r.reason}
                 for r in row.relations
+                if not r.pending
             ],
             "basis": _cut(row.basis, basis_chars),
         }
@@ -267,6 +270,7 @@ def project_map(
             for rows in ledger.values()
             for row in rows
             for relation in row.relations
+            if not relation.pending
         ]
         if relations:
             lines.append("\n## 已记下的跨模块关联（行 → 所关联的行：关系；理由）")
@@ -412,6 +416,9 @@ def object_batches(
     return batches
 
 
+PENDING_BATCH_RELATIONS = 10
+
+
 def relation_batches(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     sites: Sites,
@@ -419,7 +426,13 @@ def relation_batches(
     *,
     budget_chars: int,
 ) -> list[dict[str, Any]]:
-    """Every recorded relation with both rows and what both cite, in batches."""
+    """Every recorded relation, in batches.
+
+    A relation that holds is reviewed with both rows in full and what both
+    cite.  A pending one is only checked for a clear condition and two rows
+    that bear on it, so pending relations go together in batches of their
+    own, with both rows briefly and no records.
+    """
 
     index = _index(ledger)
     relations = [
@@ -429,6 +442,25 @@ def relation_batches(
         for relation in row.relations
         if relation.row_id in index
     ]
+
+    def entry(row: JudgmentRow, relation: Any) -> dict[str, Any]:
+        return compact(
+            {
+                "for_row": row.id,
+                "row_id": relation.row_id,
+                "relation": relation.relation,
+                "reason": relation.reason,
+                "mechanism": relation.mechanism,
+                "condition": relation.condition,
+                **(
+                    {"status": relation.status, "missing": relation.missing}
+                    if relation.pending else {}
+                ),
+            }
+        )
+
+    batches: list[dict[str, Any]] = []
+    held = [(row, relation) for row, relation in relations if not relation.pending]
     costs = [
         (
             f"{row.id}>{relation.row_id}",
@@ -436,11 +468,10 @@ def relation_batches(
             + _size(compact_row(index[relation.row_id][1]))
             + len(render(_cited([row, index[relation.row_id][1]], sites))),
         )
-        for row, relation in relations
+        for row, relation in held
     ]
-    by_key = {f"{row.id}>{relation.row_id}": (row, relation) for row, relation in relations}
-    batches = []
-    for number, keys in enumerate(_batches(costs, budget_chars), start=1):
+    by_key = {f"{row.id}>{relation.row_id}": (row, relation) for row, relation in held}
+    for keys in _batches(costs, budget_chars):
         pairs = [by_key[key] for key in keys]
         rows = {}
         for row, relation in pairs:
@@ -448,35 +479,53 @@ def relation_batches(
             rows[relation.row_id] = index[relation.row_id][1]
         batches.append(
             {
-                "batch_id": f"R-{number:02d}",
-                "relations": [
-                    compact(
-                        {
-                            "for_row": row.id,
-                            "row_id": relation.row_id,
-                            "relation": relation.relation,
-                            "reason": relation.reason,
-                            "mechanism": relation.mechanism,
-                            "condition": relation.condition,
-                            **(
-                                {"status": relation.status, "missing": relation.missing}
-                                if relation.pending else {}
-                            ),
-                        }
-                    )
-                    for row, relation in pairs
-                ],
+                "batch_id": f"R-{len(batches) + 1:02d}",
+                "relations": [entry(row, relation) for row, relation in pairs],
                 "rows": [compact_row(row) for row in rows.values()],
                 "facts": render(_cited(rows.values(), sites)),
+            }
+        )
+    pending = [(row, relation) for row, relation in relations if relation.pending]
+    costs = [
+        (
+            f"{row.id}>{relation.row_id}",
+            _size(entry(row, relation))
+            + _size(brief_row(row))
+            + _size(brief_row(index[relation.row_id][1])),
+        )
+        for row, relation in pending
+    ]
+    by_key = {f"{row.id}>{relation.row_id}": (row, relation) for row, relation in pending}
+    # Pending entries are small, but each still takes the reviewer about as
+    # long to think through as an established one, so a batch holds a few.
+    chunks = [
+        keys[start:start + PENDING_BATCH_RELATIONS]
+        for keys in _batches(costs, budget_chars)
+        for start in range(0, len(keys), PENDING_BATCH_RELATIONS)
+    ]
+    for keys in chunks:
+        pairs = [by_key[key] for key in keys]
+        rows = {}
+        for row, relation in pairs:
+            rows[row.id] = row
+            rows[relation.row_id] = index[relation.row_id][1]
+        batches.append(
+            {
+                "batch_id": f"P-{len(batches) + 1:02d}",
+                "pending": True,
+                "relations": [entry(row, relation) for row, relation in pairs],
+                "rows": [brief_row(row) for row in rows.values()],
+                "facts": "（这一批都是待核实的关联，只核对条件写得清不清楚、两边的行是否指向这条关系，不附原始记录）",
             }
         )
     return batches
 
 
 # A judge's conversation holds about this many of its module's own records;
-# a larger module is judged in groups of consecutive sections.  Each group
+# only a larger module is judged in groups of consecutive sections (splitting
+# a module that fits gains no time and loses the shared cache).  Each group
 # numbers its rows from its own hundred, so the groups' ids never meet.
-JUDGE_GROUP_RECORDS = 60
+JUDGE_GROUP_RECORDS = 160
 GROUP_ROW_SPAN = 100
 
 

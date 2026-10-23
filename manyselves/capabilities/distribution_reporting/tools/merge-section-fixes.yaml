@@ -1,0 +1,10 @@
+id: merge-section-fixes
+version: 1.0.0
+description: Put the writers' sections, brought in line with the fixed rows, into the edited sections
+implementation: capability:distribution-reporting:merge-section-fixes
+input_contract: ledger_section_fix_merge_input
+output_contract: ledger_section_fix_merge
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

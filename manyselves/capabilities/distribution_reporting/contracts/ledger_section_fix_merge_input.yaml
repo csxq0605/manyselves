@@ -1,0 +1,12 @@
+id: ledger_section_fix_merge_input
+version: 1.0.0
+description: The edited sections by owner and the writers' revised sections
+adapter: json_schema
+schema:
+  type: object
+  required: [edits]
+  properties:
+    edits:
+      type: object
+    fixes:
+      type: object

@@ -137,13 +137,21 @@ class TaskDefinition(DefinitionBase):
         ),
     )
     image: TaskImageInput | None = None
+    needs_history: bool = Field(
+        default=False,
+        description=(
+            "The task reads what earlier turns of its conversation hold, so a "
+            "turn over its budget is sent whole instead of starting afresh"
+        ),
+    )
     attention_budget_tokens: int | None = Field(
         default=None,
         ge=1,
         description=(
             "Largest request (system prompt, history, task input and tools) "
-            "this task may send.  A larger one fails before it is sent and is "
-            "never truncated: the workflow must split the work instead"
+            "this task should send.  Over it, the turn starts afresh from its "
+            "own input; still over, it is sent whole and noted.  Nothing is "
+            "truncated, and only a request over the model's window fails"
         ),
     )
 

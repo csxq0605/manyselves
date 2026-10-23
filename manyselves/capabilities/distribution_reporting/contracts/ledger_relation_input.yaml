@@ -1,6 +1,6 @@
 id: ledger_relation_input
-version: 1.1.0
-description: Other modules' flagged rows and the knowledge base's relation method, for one author
+version: 2.0.0
+description: Other modules' flagged rows, the linker's proposals on this group's rows and the relation method, for one author
 adapter: json_schema
 schema:
   type: object
@@ -22,3 +22,9 @@ schema:
       type: array
       items:
         type: string
+    proposed:
+      type: object
+      description: Row id of this group -> the linker's proposals on it, each with other_row (the other end's row in full)
+    facts:
+      type: string
+      description: The facts the proposals' other ends cite, as recorded

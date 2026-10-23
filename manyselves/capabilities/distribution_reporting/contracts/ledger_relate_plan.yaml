@@ -1,7 +1,7 @@
 id: ledger_relate_plan
-version: 1.0.0
-description: One proposal item per judging group that has proposals, each with the other end's row and facts
+version: 2.0.0
+description: One relate item per judging group, with the linker's proposals on its rows (each with the other end's row) and the facts they cite
 adapter: json_schema
 schema:
   type: object
-  required: [proposal_items]
+  required: [relate_items]

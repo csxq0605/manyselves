@@ -2172,7 +2172,139 @@ class LedgerTools(LedgerStageTools):
             blocking = _blocking(findings)
             checked["check"]["blocking"] = blocking
             checked["blocking"] = blocking
+        checked["row_fix_items"] = self._row_fix_items(final, checked.pop("row_fixes", None) or {})
         return checked
+
+    def _row_fix_items(
+        self, final: Mapping[str, Any] | None, row_fixes: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
+        """The fact check's findings on rows, one revision item per judging group."""
+
+        if not final or not row_fixes:
+            return []
+        run_id = final["run_id"]
+        ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        module_of = {row.id: m for m, rows in ledger.items() for row in rows}
+        row_groups = self._groups_file(run_id).get("row_groups") or {}
+        items: dict[str, dict[str, Any]] = {}
+        for row_id, finding in row_fixes.items():
+            if row_id not in module_of:
+                continue
+            module_id = module_of[row_id]
+            group_id = row_groups.get(row_id, module_id)
+            item = items.setdefault(group_id, {
+                "run_id": run_id,
+                "module_id": module_id,
+                "group_id": group_id,
+                "findings": {},
+                "minor": {},
+                "fact_check": True,
+            })
+            item["findings"][row_id] = dict(finding)
+        return list(items.values())
+
+    def apply_row_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The fact check's row fixes on the final ledger, and the sections to bring in line.
+
+        A changed row's own section, and every section whose rows relate to it,
+        is sent back to its writer with the row before and after.
+        """
+
+        final = dict(value["ledger"])
+        ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        before = {row.id: row for rows in ledger.values() for row in rows}
+        changed: dict[str, JudgmentRow] = {}
+        for result in (value.get("fixes") or {}).values():
+            patch = _plain(result) or {}
+            if not patch:
+                continue
+            new_rows, _removed, _problems = apply_row_patches(
+                [changed.get(r.id, r) for r in before.values()], patch
+            )
+            changed.update({row.id: row for row in new_rows})
+        changed = {
+            row_id: row for row_id, row in changed.items()
+            if row_id in before and row != before[row_id]
+        }
+        if not changed:
+            return {"ledger": final, "section_fix_items": [], "changed_rows": []}
+        ledger = {
+            m: [changed.get(row.id, row) for row in rows] for m, rows in ledger.items()
+        }
+        final["ledger"] = {m: _dump_rows(rows) for m, rows in ledger.items()}
+        owners = {
+            section["submodule_id"]: group["group_id"]
+            for group in final.get("writing_items") or []
+            for section in group.get("sections") or []
+        }
+        written = {
+            owner: set((edit or {}).get("sections") or {})
+            for owner, edit in (value.get("edits") or {}).items()
+        }
+        per_owner: dict[str, dict[str, Any]] = {}
+
+        def send(section_id: str, row: JudgmentRow) -> None:
+            owner = owners.get(section_id)
+            if owner is None or section_id not in written.get(owner, set()):
+                return
+            old = before[row.id]
+            fields = [
+                name for name in ("finding", "hazard", "risk_level", "action", "basis")
+                if getattr(old, name) != getattr(row, name)
+            ]
+            item = per_owner.setdefault(owner, {"findings": {}, "minor": {}})
+            note = (
+                f"判断行 {row.id}（{row.object}｜{row.checkpoint}）按事实核对改了"
+                + ("、".join(fields) or "措辞")
+                + f"。原来的发现：{old.finding}；现在：{row.finding}。"
+            )
+            earlier = item["findings"].get(section_id)
+            item["findings"][section_id] = {
+                "problem": f"{earlier['problem']}；{note}" if earlier else note,
+                "severity": "blocking",
+                "suggestion": "本节正文和风险分析里沿用了原来说法的，改成与现在的判断行一致；没有沿用的原样提交。",
+            }
+
+        for row in changed.values():
+            send(row.submodule_id, row)
+            for rows in ledger.values():
+                for other in rows:
+                    if other.submodule_id != row.submodule_id and any(
+                        r.row_id == row.id for r in other.relations
+                    ):
+                        send(other.submodule_id, row)
+        run_id = final["run_id"]
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/fact-row-fixes.json",
+            {
+                "rows": _dump_rows(list(changed.values())),
+                "sections": {owner: list(item["findings"]) for owner, item in per_owner.items()},
+            },
+        )
+        return {
+            "ledger": final,
+            "changed_rows": list(changed),
+            "section_fix_items": [
+                {"owner": owner, "run_id": run_id, **item} for owner, item in per_owner.items()
+            ],
+        }
+
+    def merge_section_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The writers' revised sections, put into the edited sections."""
+
+        edits = {owner: dict(edit) for owner, edit in (value.get("edits") or {}).items()}
+        for owner, revision in (value.get("fixes") or {}).items():
+            sections = (_plain(revision) or {}).get("sections") or {}
+            if owner not in edits or not sections:
+                continue
+            merged = dict(edits[owner].get("sections") or {})
+            if isinstance(sections, list):
+                sections = {s["submodule_id"]: s["text"] for s in sections if isinstance(s, Mapping)}
+            for section_id, text in sections.items():
+                if section_id in merged:
+                    merged[section_id] = text
+            edits[owner]["sections"] = merged
+        return {"edits": edits}
 
     def check_report(self, value: dict[str, Any]) -> dict[str, Any]:
         run_id = value["ledger"]["run_id"]
@@ -2779,6 +2911,8 @@ class LedgerTools(LedgerStageTools):
             "plan-chief-facts": self.plan_chief_facts,
             "apply-chief-fix": self.apply_chief_fix,
             "apply-chief-facts": self.apply_chief_facts,
+            "apply-row-fixes": self.apply_row_fixes,
+            "merge-section-fixes": self.merge_section_fixes,
             "check-report": self.check_report,
             "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,

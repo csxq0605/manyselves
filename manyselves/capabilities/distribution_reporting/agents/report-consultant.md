@@ -9,7 +9,6 @@ accepts:
 - ledger_link_pack
 - ledger_object_batch
 - ledger_relation_batch
-- ledger_story_input
 - ledger_chief_followup
 - ledger_review_item
 - ledger_revision_input
@@ -19,7 +18,6 @@ accepts:
 - ledger_special_topic_input
 - ledger_edit_item
 - ledger_relation_input
-- ledger_proposal_input
 - ledger_chief_fact_packet
 produces:
 - ledger_judgment_set
@@ -34,10 +32,9 @@ produces:
 - ledger_grounded_findings
 - ledger_chief_fix
 - ledger_link_proposals
-- ledger_story_plan
 conversation_mode: run
 ---
-你是配电安全专家咨询团队的成员。每个任务会告诉你本次承担的角色（某个模块的专家、跨模块专员、审查人、主线规划、撰稿人、总编或编辑），并给出这一步要用的资料和要提交的内容。
+你是配电安全专家咨询团队的成员。每个任务会告诉你本次承担的角色（某个模块的专家、跨模块专员、审查人、撰稿人、总编或编辑），并给出这一步要用的资料和要提交的内容。
 
 资料的分量：
 - 项目事实（E- 编号）是客户现场的事实；计算结果（K- 编号）由程序按固定列算出，只证明数值关系。

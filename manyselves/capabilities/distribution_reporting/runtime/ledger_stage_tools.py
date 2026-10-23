@@ -26,7 +26,7 @@ from typing import Any
 
 from manyselves.kernel.workflow import gather_by_key
 
-from ..domain.judgment_ledger import JudgmentRow, LinkProposals, RelationSet, StoryPlan
+from ..domain.judgment_ledger import JudgmentRow, LinkProposals, StoryLine, StoryPlan
 from .context_packs import (
     ATTENTION,
     Sites,
@@ -134,15 +134,14 @@ class LedgerStageTools:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def plan_relate(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The second relate round: the linker's proposals, each with its other end in full.
+        """One relate round per judging group: its own linking and the linker's proposals.
 
-        The authors have related their rows on their own while the linker
-        worked.  A proposal stands when both rows exist, belong to different
-        modules and do not rest on one source cell, and it is either a
-        relation the knowledge base lists or states its mechanism and
-        condition.  It goes to the authors of both rows, with the other row in
-        full and the records it cites, unless that author already linked the
-        two rows itself; each decides for its own rows.
+        A proposal stands when both rows exist, belong to different modules
+        and do not rest on one source cell, and it is either a relation the
+        knowledge base lists or states its mechanism and condition.  It goes to
+        the authors of both rows, with the other row in full and the records it
+        cites; each decides for its own rows, and links what else it sees, in
+        the same turn.
         """
 
         context = value["context"]
@@ -160,14 +159,6 @@ class LedgerStageTools:
         }
         groups = self._groups_file(run_id)
         row_groups = groups.get("row_groups") or {}
-        linked = {
-            (row_id, relation.row_id)
-            for result in (value.get("own") or {}).values()
-            for row_id, relations in (
-                RelationSet.model_validate(_plain(result)).relations.items() if result else ()
-            )
-            for relation in relations
-        }
         proposed: dict[str, dict[str, list[dict[str, Any]]]] = {}
         kept: list[dict[str, Any]] = []
         dropped: list[dict[str, Any]] = []
@@ -190,8 +181,6 @@ class LedgerStageTools:
                 else:
                     kept.append(entry)
                     for own, other in ((a, b), (b, a)):
-                        if (own, other) in linked:
-                            continue
                         group_id = row_groups.get(own, module_of[own])
                         offer = compact({
                             "row_id": other,
@@ -211,27 +200,24 @@ class LedgerStageTools:
         )
         sites = self._sites(run_id)
         render = self._renderer(run_id)
-        modules = {
-            gid: (group or {}).get("module_id", gid)
-            for gid, group in (groups.get("groups") or {}).items()
-        }
         items = []
-        for group_id, offers in proposed.items():
-            others = [index[o["row_id"]] for entries in offers.values() for o in entries]
-            cited = [
-                sites.items[e]
-                for e in dict.fromkeys(e for row in others for e in row.evidence_ids)
-                if e in sites.items
-            ]
-            items.append({
-                "run_id": run_id,
-                "module_id": modules.get(group_id, group_id),
-                "group_id": group_id,
-                "proposed": offers,
-                "relation_names": sorted(names),
-                "facts": render(cited) or "（另一端的行没有引用记录）",
-            })
-        return {"proposal_items": items}
+        for own_item in value.get("own_items") or []:
+            group_id = own_item.get("group_id") or own_item["module_id"]
+            offers = proposed.get(group_id) or {}
+            item = {**own_item, "relation_names": sorted(names) or own_item.get("relation_names", [])}
+            if offers:
+                others = [index[o["row_id"]] for entries in offers.values() for o in entries]
+                cited = [
+                    sites.items[e]
+                    for e in dict.fromkeys(e for row in others for e in row.evidence_ids)
+                    if e in sites.items
+                ]
+                item["proposed"] = offers
+                item["facts"] = render(cited) or "（另一端的行没有引用记录）"
+            else:
+                item["facts"] = "（专员没有对本组的行提出关联）"
+            items.append(item)
+        return {"relate_items": items}
 
     # -- review lenses ---------------------------------------------------
 
@@ -392,7 +378,12 @@ class LedgerStageTools:
         }
 
     def apply_story(self, value: dict[str, Any]) -> dict[str, Any]:
-        """Check the story lines and plan the writing and the chief's input with them."""
+        """Story lines, and the writing and the chief's input planned with them.
+
+        Without a planned story, the lines are the program's: rows joined by
+        relations that hold, across at least two modules.  A pending relation
+        stays with its sections in chapter 2 and joins no line.
+        """
 
         final = dict(value["ledger"])
         run_id = final["run_id"]
@@ -401,9 +392,10 @@ class LedgerStageTools:
         lines: list[dict[str, Any]] = []
         dropped: list[dict[str, Any]] = []
         story = value.get("story")
-        for number, line in enumerate(
-            StoryPlan.model_validate(_plain(story)).lines if story else [], start=1
-        ):
+        planned = (
+            StoryPlan.model_validate(_plain(story)).lines if story else relation_lines(ledger)
+        )
+        for number, line in enumerate(planned, start=1):
             ids = [row_id for row_id in dict.fromkeys(line.row_ids) if row_id in index]
             modules = {index[row_id][0] for row_id in ids}
             if len(ids) < 2 or len(modules) < 2:
@@ -512,9 +504,53 @@ class LedgerStageTools:
         return photos_to_check(rows, reference, readings)
 
 
+def relation_lines(ledger: Mapping[str, Sequence[JudgmentRow]]) -> list[StoryLine]:
+    """Rows joined by relations that hold, one line per connected set across modules."""
+
+    module_of = {row.id: m for m, rows in ledger.items() for row in rows}
+    index = {row.id: row for rows in ledger.values() for row in rows}
+    parent: dict[str, str] = {}
+
+    def find(row_id: str) -> str:
+        while parent.setdefault(row_id, row_id) != row_id:
+            parent[row_id] = parent[parent[row_id]]
+            row_id = parent[row_id]
+        return row_id
+
+    names: dict[frozenset[str], list[str]] = {}
+    for rows in ledger.values():
+        for row in rows:
+            for relation in row.relations:
+                if relation.pending or relation.row_id not in index:
+                    continue
+                parent[find(row.id)] = find(relation.row_id)
+                names.setdefault(frozenset((row.id, relation.row_id)), []).append(relation)
+    sets: dict[str, list[str]] = {}
+    for row_id in list(parent):
+        sets.setdefault(find(row_id), []).append(row_id)
+    lines = []
+    for members in sets.values():
+        ordered = sorted(members, key=lambda rid: (index[rid].submodule_id, rid))
+        if len({module_of[rid] for rid in ordered}) < 2:
+            continue
+        relations = [
+            relation
+            for pair, found in names.items() if pair <= set(ordered)
+            for relation in found
+        ]
+        titles = list(dict.fromkeys(r.relation for r in relations))
+        lines.append(StoryLine(
+            title="；".join(titles),
+            conclusion="；".join(dict.fromkeys(r.reason for r in relations)),
+            row_ids=ordered,
+        ))
+    return lines
+
+
 __all__ = [
     "LENSES",
     "LINK_PACK_CHARS",
     "LedgerStageTools",
     "merged_finding",
+    "relation_lines",
 ]

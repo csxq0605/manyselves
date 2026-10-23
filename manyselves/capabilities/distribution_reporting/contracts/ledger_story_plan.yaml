@@ -1,5 +1,0 @@
-id: ledger_story_plan
-version: 1.0.0
-description: The cross-module lines of evidence the report carries
-adapter: pydantic
-model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:StoryPlan

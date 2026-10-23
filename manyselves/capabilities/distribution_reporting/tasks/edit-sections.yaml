@@ -1,5 +1,5 @@
 id: edit-sections
-version: 2.0.0
+version: 2.1.0
 description: Editorial pass over one owner's finished sections
 agent: report-consultant
 objective: 你现在是编辑。上面是这部分的专家版方法。通读下面这部分成稿（sections），对照它所依据的判断行（rows）和所引的别处判断行（cited_rows），只看组织方式是否与专家版范例一致、有没有重复论证、有没有台账里没有的新结论。
@@ -15,6 +15,7 @@ constraints:
 - 重复判为 minor：同一对象的证据状态反复标注、“资料未提供，见数据缺口表”一节内写了多次、免责句或说明句、依据段复述判断方法、别的小节负责的数据在本节又列一遍。
 - 以下也判为 blocking：正文把一件事写得比它的来源更重（来源记录、所引判断行写的是“资料未提供”“可能”“待核实”“来源作者意见”“照片待核”，正文写成“缺失”“将会”“已确认”或事实）；同一检查项在同样的口径下（同一检查要求、同一类对象），正文对不同对象下了不同结论，又没有写出差别的理由。
 - 有 cited_rows 时（总编各章，或第二章小节引用的别的模块的行），逐条对照所引判断行：结论、风险或措施比所引行更强的判为 blocking，例如把“资料未提供”写成“缺失/无资质”，把“可能”写成“将会”，把来源作者意见写成已确认事实，把照片待核写成事实。
+- cited_rows 的 for_rows 里 status 为“待核实”的关联，正文要写成有条件的联系（还缺 missing 写的那项才能确认）；写成已经成立、或拿它加重、解释本节结论的，判 blocking，要求按 missing 改成条件句。status 没写的是成立的关联，照常对照。
 - 没有问题时提交空的 findings。
 tools: []
 attention_budget_tokens: 200000

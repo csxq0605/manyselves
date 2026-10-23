@@ -145,3 +145,25 @@ def test_lens_findings_on_one_row_are_merged_and_labelled() -> None:
     merged = merged_finding(gathered["J-2.4-1"])
     assert merged["severity"] == "blocking"
     assert merged["problem"] == "（模块切面）依据不足；（对象切面）铭牌不符"
+
+
+def test_pending_relations_get_a_light_batch_of_their_own_and_no_story_line() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_stage_tools import (
+        relation_lines,
+    )
+
+    ledger = {
+        **LEDGER,
+        "2.2": [_row("J-2.2-1", ["E-1"], relations=[
+            {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "同一柜"},
+            {"row_id": "J-2.4-2", "relation": "温升—绝缘", "reason": "同房",
+             "status": "待核实", "missing": "缺红外复测"},
+        ])],
+    }
+    held, pending = relation_batches(ledger, Sites(ITEMS), _render, budget_chars=100_000)
+    assert held["batch_id"].startswith("R-") and len(held["relations"]) == 1
+    assert pending["batch_id"].startswith("P-") and pending["pending"] is True
+    assert pending["relations"][0]["missing"] == "缺红外复测"
+    assert "E-3" not in str(pending["facts"])
+    (line,) = relation_lines(ledger)
+    assert line.row_ids == ["J-2.2-1", "J-2.4-1"] and line.title == "负荷—发热"

@@ -22,7 +22,7 @@ from ..domain.value_slots import fill_slots, slot_lines, slots_for_evidence
 from .grounds import GROUND_ID, grounded
 
 # A packet holds at most this many units and about this many characters.
-MAX_UNITS = 5
+MAX_UNITS = 8
 MAX_CHARS = 15000
 # A row's basis is cut to this many characters in a packet; a hazard, action
 # or gap to the shorter length.  Source records are given whole: a checker
@@ -162,6 +162,8 @@ def _row_view(row: JudgmentRow) -> dict[str, Any]:
         "evidence_ids": list(row.evidence_ids),
         "basis": _cut(row.basis),
     }
+    if row.finding:
+        view["finding"] = _cut(row.finding)
     if row.risk_level:
         view["risk_level"] = row.risk_level
     if row.hazard:
@@ -259,7 +261,12 @@ def chief_fact_packets(
             "values": values,
         })
 
-    order = sorted(range(len(prepared)), key=lambda i: (prepared[i]["module"], i))
+    # Within a dimension, units resting on the same rows sit next to each
+    # other, so a packet carries each row and its records once.
+    order = sorted(
+        range(len(prepared)),
+        key=lambda i: (prepared[i]["module"], min(prepared[i]["rows"], default="~"), i),
+    )
     packets: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
 
@@ -340,6 +347,7 @@ def apply_fact_findings(
         for unit in packet["units"]
     }
     findings: dict[str, Any] = {}
+    row_fixes: dict[str, list[dict[str, str]]] = {}
     for packet in packets:
         result = results.get(packet["packet_id"])
         found = (result or {}).get("findings") if isinstance(result, Mapping) else None
@@ -355,6 +363,17 @@ def apply_fact_findings(
                 for other, (place, rested) in rests.items()
                 if other != unit_id and rows & rested
             ))
+            held = {row["id"] for row in packet["rows"]}
+            also = [
+                r for r in dict.fromkeys(finding.pop("rows_also", None) or ())
+                if r in held
+            ] if finding.get("severity") == "blocking" else []
+            finding.pop("rows_also", None)
+            for row_id in also:
+                row_fixes.setdefault(row_id, []).append({
+                    "problem": f"{where[unit_id]}写的说法，判断行自己也这样写：{finding.get('problem', '')}",
+                    "suggestion": finding.get("suggestion", ""),
+                })
             findings[unit_id] = {
                 **finding,
                 "problem": f"{where[unit_id]}：{finding.get('problem', '')}",
@@ -362,7 +381,20 @@ def apply_fact_findings(
                 **({"same_elsewhere": elsewhere[:SAME_ELSEWHERE]} if elsewhere else {}),
             }
     blocking = any(f.get("severity") == "blocking" for f in findings.values())
-    return {"check": {"findings": findings, "blocking": blocking}, "blocking": blocking}
+    return {
+        "check": {"findings": findings, "blocking": blocking},
+        "blocking": blocking,
+        # Errors the cited rows carry themselves: their authors fix the rows,
+        # so the problem tables and chapter 2 change with chapters 1 and 3.
+        "row_fixes": {
+            row_id: {
+                "problem": "；".join(f["problem"] for f in found),
+                "severity": "blocking",
+                "suggestion": "；".join(f["suggestion"] for f in found if f["suggestion"]),
+            }
+            for row_id, found in row_fixes.items()
+        },
+    }
 
 
 __all__ = [

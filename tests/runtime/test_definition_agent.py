@@ -732,9 +732,7 @@ def test_rejected_attempts_are_dropped_but_other_tools_stay() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_request_over_its_attention_budget_fails_before_it_is_sent(
-    tmp_path: Path,
-) -> None:
+async def test_a_request_over_its_budget_is_still_sent_and_noted(tmp_path: Path) -> None:
     harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
     invoker = harness.invoker()
 
@@ -749,6 +747,68 @@ async def test_a_request_over_its_attention_budget_fails_before_it_is_sent(
 
     outcome = await _run(harness, steps)
 
+    assert outcome.status == "ok"
+    notes = (tmp_path / f"Work/runs/{RUN_ID}/budget-notes.jsonl").read_text(encoding="utf-8")
+    assert '"sent_over_budget"' in notes
+
+
+@pytest.mark.asyncio
+async def test_a_turn_over_budget_with_history_starts_afresh(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        [("submit", [{"answer": "one"}]), ("submit", [{"answer": "two"}])],
+        [],
+    )
+    invoker = harness.invoker()
+    conversation = _conversation("a")
+
+    async def steps():
+        try:
+            await invoker.invoke_with_recovery(
+                harness.agent, _task(), {"text": "问" * 400},
+                conversation, task_id="first", recovery_policy=POLICY,
+            )
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=300), {"text": "第二问"},
+                conversation, task_id="second", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok" and outcome.result == {"answer": "two"}
+    contents = [m.content for m in harness.loops[0].history if m.role == "user"]
+    assert all("问" * 400 not in (c or "") for c in contents)
+    notes = (tmp_path / f"Work/runs/{RUN_ID}/budget-notes.jsonl").read_text(encoding="utf-8")
+    assert '"fresh_conversation"' in notes
+
+
+@pytest.mark.asyncio
+async def test_only_a_request_over_the_model_window_fails(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    harness.services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=harness.bus,
+        active_provider=SimpleNamespace(context_window=80),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=50), {"text": "问" * 200},
+                _conversation("a"), task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
     assert outcome.status == "failed"
-    assert "attention budget exceeded" in (outcome.error or "")
+    assert "model's window" in (outcome.error or "")
     assert not harness.loops or not harness.loops[0].received

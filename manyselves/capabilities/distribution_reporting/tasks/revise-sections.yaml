@@ -13,5 +13,6 @@ constraints:
 - minor 意见可以顺手改，也可以不改。
 - 意见附了 grounds（所引材料原文）时，先对照：意见与所引材料不符、或材料并不支持它的，不按它改，在 declined 里写意见编号和一句理由；只有“无法核对”的意见也同样先核对再决定。
 tools: []
+needs_history: true
 attention_budget_tokens: 200000
 recovery: typed-turn-recovery

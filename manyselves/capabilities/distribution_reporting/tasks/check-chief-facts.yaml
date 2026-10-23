@@ -1,5 +1,5 @@
 id: check-chief-facts
-version: 1.1.0
+version: 1.2.0
 description: Check a few units of chapters 1 and 3 against the rows and records they rest on
 agent: report-consultant
 objective: 你现在是核对员。下面是报告第一、三章里的几个条目（units），以及它们所引或点名的判断行（rows）、这些行所引的原始记录（facts）、相关数值（values）和各列的计数与取值（每个条目的 counts）。只核对事实，不看文字写法和组织方式。
@@ -12,6 +12,7 @@ constraints:
 - 材料里没有、无法核对的，不判为问题；所引行的依据（basis）没有给出的，按“无法核对”处理，不判 blocking。
 - 每条意见在 grounds 里写它依据的材料编号：说明正确内容的判断行（J-…）、原始记录（E-…）、数值或计数（V-/K-/S-…），只填本包材料里有的。blocking 意见没有本包里的编号，程序会降为 minor 并标“无法核对”。
 - findings 的键是条目的 unit_id。severity：blocking=事实写错（数量、档位、对象、数值不对，或说法比所引行更重），必须改；minor=可以更准确但不影响事实。problem 写清哪里不对、正确的是什么，suggestion 写怎么改。
+- 条目里错误的说法如果在所引判断行自己的 finding、hazard 或 action 里也照样写着（与这一行的 basis 或原始记录不符），把这些行的编号写进 rows_also：程序会把意见同时交给这一行的作者改判断行，第二章和问题表才能一起改对。只是条目写错、判断行本身没错的，不填 rows_also。
 - 没有问题时提交空的 findings。
 tools: []
 attention_budget_tokens: 200000

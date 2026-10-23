@@ -10,3 +10,4 @@ constraints:
 - 只依据台账和事实；资料不足的部分如实写明。
 tools: []
 recovery: typed-turn-recovery
+needs_history: true

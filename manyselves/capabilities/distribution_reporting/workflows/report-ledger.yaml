@@ -1,8 +1,7 @@
 id: report-ledger
-version: 3.0.0
-description: Judge into a ledger in section groups, relate rows (authors on their own while the linker works, then its proposals), review through three lenses, settle per group, plan the story lines, write once, then check and deliver
-tasks:
-- plan-storyline
+version: 4.0.0
+description: Judge into a ledger, relate rows (the linker first, then each author on its proposals and its own links), review through three lenses, settle per group, form the story lines from the relations, write once, then check and deliver
+tasks: []
 recovery:
 - typed-turn-recovery
 input_contract: reporting_tool_input
@@ -71,18 +70,16 @@ actions:
   variable: reread_items
   value_variable: reread_plan
   field: reread_items
-# Every branch holds only a map, so the four run at once: the linker, each
-# group's author relating its own rows, the photo re-read, and the object
-# lens (which reads the rows as judged).
+# Every branch holds only a map, so the three run at once: the linker, the
+# photo re-read, and the object lens (which reads the rows as judged).
 - id: relate-and-reread
   kind: parallel
   branches:
     link: link-rows
-    own: relate-own
     reread: reread-photos
     objects: review-objects
   join: join-relate
-  max_concurrency: 4
+  max_concurrency: 3
 - id: link-rows
   kind: map
   items_variable: link_items
@@ -92,17 +89,6 @@ actions:
   output_variable: links
   max_concurrency: 6
 - id: link-done
-  kind: goto
-  target: join-relate
-- id: relate-own
-  kind: map
-  items_variable: own_items
-  key_field: group_id
-  workflow: ledger-module-relate
-  key_input_variable: item_key
-  output_variable: own_relations
-  max_concurrency: 8
-- id: own-done
   kind: goto
   target: join-relate
 - id: reread-photos
@@ -133,7 +119,6 @@ actions:
   parallel: relate-and-reread
   inputs:
     link: links
-    own: own_relations
     reread: rereads
     objects: object_reviews
   output_variable: related_and_reread
@@ -142,11 +127,6 @@ actions:
   variable: links
   value_variable: related_and_reread
   field: link
-- id: own-value
-  kind: set_variable
-  variable: own_relations
-  value_variable: related_and_reread
-  field: own
 - id: rereads-value
   kind: set_variable
   variable: rereads
@@ -158,7 +138,8 @@ actions:
   value_variable: related_and_reread
   field: objects
 # The linker's proposals go to the groups they concern, each with the other
-# end's row and the facts it cites; groups without proposals are not asked.
+# end's row and the facts it cites; every group weighs them and adds its own
+# links in one turn.
 - id: plan-relate
   kind: invoke_tool
   tool: plan-judgment-relate
@@ -166,20 +147,20 @@ actions:
     context: context
     ledger: built
     links: links
-    own: own_relations
+    own_items: own_items
   output_variable: relate_plan
-- id: proposal-items
+- id: relate-items
   kind: set_variable
-  variable: proposal_items
+  variable: relate_items
   value_variable: relate_plan
-  field: proposal_items
-- id: relate-proposals
+  field: relate_items
+- id: relate-groups
   kind: map
-  items_variable: proposal_items
+  items_variable: relate_items
   key_field: group_id
-  workflow: ledger-module-relate-proposals
+  workflow: ledger-module-relate
   key_input_variable: item_key
-  output_variable: proposal_relations
+  output_variable: own_relations
   max_concurrency: 8
 - id: apply-relations
   kind: invoke_tool
@@ -188,7 +169,6 @@ actions:
     context: context
     ledger: built
     own: own_relations
-    proposals: proposal_relations
   output_variable: related
 - id: apply-reread
   kind: invoke_tool
@@ -293,32 +273,14 @@ actions:
     ledger: ledger
     reviews: reviews
   output_variable: settled
-# The story lines are settled before any prose, so each section carries its
-# end of a cross-module line and the chief starts from the same lines.
-- id: story-input
-  kind: set_variable
-  variable: story_input
-  value_variable: settled
-  field: story_input
-- id: open-story
-  kind: create_conversation
-  agent: report-consultant
-  conversation_key: story
-  mode: run
-  output_variable: story_conversation
-- id: plan-story
-  kind: invoke_agent
-  agent: report-consultant
-  task: plan-storyline
-  conversation_variable: story_conversation
-  input_variable: story_input
-  output_variable: story
+# The story lines are the relations that hold, joined by the program, settled
+# before any prose so each section carries its end of a line and the chief
+# starts from the same lines.
 - id: apply-story
   kind: invoke_tool
   tool: apply-story-lines
   input_variables:
     ledger: settled
-    story: story
   output_variable: final
 - id: writing-items
   kind: set_variable
@@ -392,6 +354,51 @@ actions:
   variable: chief_outputs
   value_variable: drafts
   field: chief
+# Rows the fact check found carrying an error were fixed by their authors;
+# the sections resting on them are brought in line by their writers.
+- id: row-fixes
+  kind: set_variable
+  variable: row_fixes
+  value_variable: chief_outputs
+  field: row_fixes
+- id: apply-row-fixes
+  kind: invoke_tool
+  tool: apply-row-fixes
+  input_variables:
+    ledger: final
+    fixes: row_fixes
+    edits: edits
+  output_variable: row_fixed
+- id: fixed-ledger
+  kind: set_variable
+  variable: final
+  value_variable: row_fixed
+  field: ledger
+- id: section-fix-items
+  kind: set_variable
+  variable: section_fix_items
+  value_variable: row_fixed
+  field: section_fix_items
+- id: fix-sections
+  kind: map
+  items_variable: section_fix_items
+  key_field: owner
+  workflow: ledger-section-fix
+  key_input_variable: item_key
+  output_variable: section_fixes
+  max_concurrency: 8
+- id: merge-section-fixes
+  kind: invoke_tool
+  tool: merge-section-fixes
+  input_variables:
+    edits: edits
+    fixes: section_fixes
+  output_variable: merged_edits
+- id: merged-edits
+  kind: set_variable
+  variable: edits
+  value_variable: merged_edits
+  field: edits
 - id: compose
   kind: invoke_tool
   tool: compose-report

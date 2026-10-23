@@ -46,7 +46,7 @@ from .agent_execution import (
 from .agent_memo import FileAgentTurnMemo, file_digest, turn_key
 from .agent_recovery import AgentRecoveryDriver
 from .agent_results import FileAgentResultStore
-from .context_budget import estimate_request_tokens
+from .context_budget import estimate_request_tokens, provider_context_window
 from .conversation_history import (
     FileConversationHistoryStore,
     drop_rejected_attempts,
@@ -103,6 +103,28 @@ class DefinitionAgentInvoker:
         self.results = FileAgentResultStore(self.workspace, run_id)
         self.histories = FileConversationHistoryStore(self.workspace, run_id)
         self.memo = FileAgentTurnMemo(self.workspace, run_id)
+
+    def _note_budget(
+        self,
+        task: Any,
+        conversation: ConversationRecord,
+        action: str,
+        estimate: int,
+        sent: int,
+    ) -> None:
+        """Record a turn that went over its task's budget and what was done instead."""
+
+        path = self.workspace / f"Work/runs/{self.run_id}/budget-notes.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "task_id": task.id,
+                "conversation_id": conversation.conversation_id,
+                "action": action,
+                "budget": task.attention_budget_tokens,
+                "estimate": estimate,
+                "sent": sent,
+            }, ensure_ascii=False) + "\n")
 
     async def close(self) -> None:
         await self.execution.close_workflow(self.workflow_id)
@@ -209,24 +231,49 @@ class DefinitionAgentInvoker:
         prompt = self._prompt(task, input_value, tools)
         before = _history_of(existing, restore)
         if task.attention_budget_tokens is not None:
-            estimate = estimate_request_tokens(
-                system_prompt=agent.instructions,
-                history=before,
-                prompt=prompt,
-                tool_schemas=tools.get_definitions(),
-                images=len(images),
-            )
-            if estimate > task.attention_budget_tokens:
-                # Never truncated: the workflow has to split this work.
-                return AgentInvocationOutcome(
-                    status="failed",
-                    session_id=conversation.external_session_id,
-                    error=(
-                        f"{ATTENTION_BUDGET_EXCEEDED}: task {task.id} would send about "
-                        f"{estimate} tokens, above its budget of "
-                        f"{task.attention_budget_tokens}"
-                    ),
+            # The budget is where the work changes course, never where it
+            # fails or is cut: over it, the turn starts afresh from its own
+            # input (every task that continues a conversation carries what it
+            # needs, or says it reads its history); still over, it is sent
+            # whole with a note.  Only a request the model's window cannot
+            # hold fails.
+            def estimate_for(history: list[dict[str, Any]]) -> int:
+                return estimate_request_tokens(
+                    system_prompt=agent.instructions,
+                    history=history,
+                    prompt=prompt,
+                    tool_schemas=tools.get_definitions(),
+                    images=len(images),
                 )
+
+            estimate = estimate_for(before)
+            if estimate > task.attention_budget_tokens and before and not task.needs_history:
+                fresh = estimate_for([])
+                if fresh < estimate:
+                    self._note_budget(
+                        task, conversation, "fresh_conversation", estimate, fresh
+                    )
+                    if existing is not None:
+                        replace = getattr(existing.loop, "replace_conversation", None)
+                        if callable(replace):
+                            replace([])
+                    restore = None
+                    before = []
+                    estimate = fresh
+            if estimate > task.attention_budget_tokens:
+                window = provider_context_window(
+                    self.services.agent_defaults, self.services.active_provider
+                )
+                if estimate > window:
+                    return AgentInvocationOutcome(
+                        status="failed",
+                        session_id=conversation.external_session_id,
+                        error=(
+                            f"{ATTENTION_BUDGET_EXCEEDED}: task {task.id} would send about "
+                            f"{estimate} tokens, above the model's window of {window}"
+                        ),
+                    )
+                self._note_budget(task, conversation, "sent_over_budget", estimate, estimate)
         memo_key = turn_key(
             system_prompt=agent.instructions,
             prompt=prompt,

@@ -1,5 +1,5 @@
 id: ledger_relation_batch
-version: 1.0.0
+version: 1.1.0
 description: Recorded cross-module relations with both rows, what they cite and the relation method
 adapter: json_schema
 schema:
@@ -10,6 +10,9 @@ schema:
       type: string
     relations:
       type: array
+    pending:
+      type: boolean
+      description: Every relation in this batch is pending; rows are brief and no records are attached
     rows:
       type: array
     facts:

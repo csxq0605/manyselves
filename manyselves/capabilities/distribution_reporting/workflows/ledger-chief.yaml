@@ -1,6 +1,6 @@
 id: ledger-chief
-version: 2.0.0
-description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger; chapters 1 and 3 are fact-checked in small packets, the program checks their text, and the chief fixes both in one turn
+version: 3.0.0
+description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger; chapters 1 and 3 are fact-checked in small packets, the program checks their text, the chief fixes both in one turn while the authors fix the rows that carry the same errors
 tasks:
 - chief-chapter-3
 - revise-chief-actions
@@ -17,6 +17,7 @@ state:
   chief_key: chief
   chapter4: null
   chief_fix: null
+  row_fixes: {}
   # Chapter 1 reads the chief input already in the conversation.
   chief_followup:
     note: 依据同上：上文的总编资料、输入和你提交的第三章
@@ -144,6 +145,20 @@ actions:
   variable: fact_blocking
   value_variable: fact_checks
   field: blocking
+- id: row-fix-items
+  kind: set_variable
+  variable: row_fix_items
+  value_variable: fact_checks
+  field: row_fix_items
+# The chief fixes chapters 1 and 3 while the authors fix the rows that carry
+# the same errors, so the problem tables and chapter 2 follow.
+- id: fixes
+  kind: parallel
+  branches:
+    chief: route-fact
+    rows: fix-rows
+  join: join-fixes
+  max_concurrency: 2
 - id: route-fact
   kind: if
   condition:
@@ -151,7 +166,7 @@ actions:
     operator: eq
     value: true
   then: fix
-  otherwise: apply-fix
+  otherwise: chief-fix-done
 # Chapters 1 and 3 are fixed in one turn of the chief, on the version checked;
 # the answer holds only what changes.
 - id: fix
@@ -161,6 +176,37 @@ actions:
   conversation_variable: chief_conversation
   input_variable: fact_check
   output_variable: chief_fix
+- id: chief-fix-done
+  kind: goto
+  target: join-fixes
+- id: fix-rows
+  kind: map
+  items_variable: row_fix_items
+  key_field: group_id
+  workflow: ledger-row-fix
+  key_input_variable: item_key
+  output_variable: row_fixes
+  max_concurrency: 5
+- id: rows-done
+  kind: goto
+  target: join-fixes
+- id: join-fixes
+  kind: join
+  parallel: fixes
+  inputs:
+    chief: chief_fix
+    rows: row_fixes
+  output_variable: fixed
+- id: chief-fix-value
+  kind: set_variable
+  variable: chief_fix
+  value_variable: fixed
+  field: chief
+- id: row-fixes-value
+  kind: set_variable
+  variable: row_fixes
+  value_variable: fixed
+  field: rows
 - id: apply-fix
   kind: invoke_tool
   tool: apply-chief-fix
@@ -225,6 +271,7 @@ actions:
     texts: texts
     fact_check: fact_check
     declined: declined
+    row_fixes: row_fixes
 - id: finish
   kind: end_workflow
   output_variable: outputs
