@@ -1,12 +1,12 @@
 import { QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import type { ApiGateway } from "../../api/gateway";
 import { AppProviders } from "../../app/providers";
-import { HistoryPage } from "./HistoryPage";
+import { HistoryPage, HistorySessionRoutePage } from "./HistoryPage";
 
 function LocationProbe() {
   return <output data-testid="location">{useLocation().pathname}</output>;
@@ -57,7 +57,65 @@ function renderHistory(count: number) {
   );
 }
 
+function readOnlyGateway(requests: string[]): ApiGateway {
+  return {
+    ...gatewayWithConversations(0),
+    requestJson: async <T,>(path: string): Promise<T> => {
+      requests.push(path);
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "",
+          conversations: [{
+            active: false, name: "上次运行", preview: "开始报告", projectId: "run-f",
+            sessionId: "old-run", timestamp: "2026-10-23T10:00:00Z",
+          }],
+          projectId: "run-f",
+          readOnly: true,
+        } as T;
+      }
+      if (path.startsWith("/api/v1/conversations/old-run/messages?")) {
+        return {
+          messages: [
+            { message_id: "m1", role: "user", content: "开始报告", ts: "2026-10-23T10:00:00Z" },
+            { role: "agent", content: "已开始", ts: "2026-10-23T10:00:05Z" },
+          ],
+          projectId: "run-f",
+          sessionId: "old-run",
+        } as T;
+      }
+      throw new Error(`unexpected request: ${path}`);
+    },
+  };
+}
+
 describe("HistoryPage", () => {
+  it("opens another project's conversation to read, without switching anything", async () => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    const gateway = readOnlyGateway(requests);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <AppProviders queryClient={queryClient}>
+        <MemoryRouter initialEntries={["/projects/run-f/history"]}>
+          <Routes>
+            <Route path="/projects/:projectId/history" element={<HistoryPage gateway={gateway} projectId="run-f" />} />
+            <Route path="/projects/:projectId/history/:sessionId" element={<HistorySessionRoutePage gateway={gateway} />} />
+          </Routes>
+          <LocationProbe />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    expect(await screen.findByRole("note")).toHaveTextContent("只读");
+    expect(screen.queryByRole("button", { name: "新对话" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("上次运行"));
+
+    expect(await screen.findByText("已开始")).toBeVisible();
+    expect(screen.getByTestId("location")).toHaveTextContent("/projects/run-f/history/old-run");
+    expect(screen.queryByRole("button", { name: /重编辑/ })).not.toBeInTheDocument();
+    expect(requests.some((path) => path.includes("/activate"))).toBe(false);
+  });
+
   it("paginates long conversation history instead of rendering every session at once", async () => {
     const user = userEvent.setup();
     renderHistory(25);

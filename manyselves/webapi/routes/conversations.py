@@ -14,6 +14,7 @@ from ...application.errors import (
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
+from ...application.project_registry import InvalidProjectId, ProjectNotFound
 from ..errors import ApiError
 from ..schemas.conversations import (
     ConversationActiveSessionResponse,
@@ -31,6 +32,16 @@ router = APIRouter(prefix="/conversations", dependencies=[Depends(require_authen
 
 def _project_id(request: Request, requested: str | None) -> str:
     return requested or request_runtime_state(request).project_registry.active_project_id
+
+
+def _other_project_root(request: Request, project_id: str):
+    """The folder of a project this service is not bound to, for reading only."""
+    try:
+        return request_runtime_state(request).project_registry.project_root(project_id)
+    except (InvalidProjectId, ProjectNotFound) as error:
+        raise ApiError(
+            status_code=404, code=error.code, message=str(error), retryable=False
+        ) from error
 
 
 def _response(item: dict) -> ConversationResponse:
@@ -85,6 +96,16 @@ async def list_conversations(
     try:
         async with facade.read_transaction():
             bound_project_id = _project_id(request, project_id)
+            if bound_project_id != service.project_id:
+                # Another project: its history can be read, not changed.
+                root = _other_project_root(request, bound_project_id)
+                items = service.list_other_project(root, bound_project_id, agent_id)
+                return ConversationListResponse(
+                    projectId=bound_project_id,
+                    conversations=[_response(item) for item in items],
+                    activeSessionId="",
+                    readOnly=True,
+                )
             items, active = service.list(agent_id, project_id=bound_project_id)
             return ConversationListResponse(
                 projectId=bound_project_id,
@@ -116,6 +137,33 @@ async def messages(
                 messages=service.messages(agent_id),
             )
     except ConversationProjectMismatchError as error:
+        raise _error(error) from error
+
+
+@router.get("/{session_id}/messages", response_model=ConversationMessagesResponse)
+async def session_messages(
+    request: Request,
+    session_id: str,
+    project_id: str | None = Query(default=None, alias="projectId", min_length=1),
+    agent_id: str = Query("main", alias="agentId"),
+):
+    """Read one stored conversation of any project, without activating either."""
+    state = request_runtime_state(request)
+    service = state.conversation_service
+    try:
+        async with state.runtime_facade.read_transaction():
+            bound_project_id = _project_id(request, project_id)
+            root = (
+                service.workspace
+                if bound_project_id == service.project_id
+                else _other_project_root(request, bound_project_id)
+            )
+            return ConversationMessagesResponse(
+                sessionId=session_id,
+                projectId=bound_project_id,
+                messages=service.session_messages(root, bound_project_id, session_id, agent_id),
+            )
+    except ConversationNotFoundError as error:
         raise _error(error) from error
 
 

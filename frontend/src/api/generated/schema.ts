@@ -352,6 +352,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Messages
+         * @description Read one stored conversation of any project, without activating either.
+         */
+        get: operations["get_api_v1_conversations_session_id_messages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -1359,6 +1379,11 @@ export interface components {
             conversations: components["schemas"]["ConversationResponse"][];
             /** Projectid */
             projectId: string;
+            /**
+             * Readonly
+             * @default false
+             */
+            readOnly: boolean;
         };
         /** ConversationMessagesResponse */
         ConversationMessagesResponse: {
@@ -3504,6 +3529,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_conversations_session_id_messages: {
+        parameters: {
+            query?: {
+                projectId?: string | null;
+                agentId?: string;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationMessagesResponse"];
                 };
             };
             /** @description Request validation failed */

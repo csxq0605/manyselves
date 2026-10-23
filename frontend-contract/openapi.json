@@ -373,6 +373,11 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "readOnly": {
+            "default": false,
+            "title": "Readonly",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5054,6 +5059,88 @@
           }
         ],
         "summary": "Activate Conversation"
+      }
+    },
+    "/api/v1/conversations/{session_id}/messages": {
+      "get": {
+        "description": "Read one stored conversation of any project, without activating either.",
+        "operationId": "get_api_v1_conversations_session_id_messages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMessagesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Session Messages"
       }
     },
     "/api/v1/events": {

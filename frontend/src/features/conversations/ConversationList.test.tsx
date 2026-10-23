@@ -33,6 +33,7 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
     interrupt: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),
     list: async () => snapshot(),
     messages: async (projectId) => ({ messages: [], projectId, sessionId: "s1" }),
+    sessionMessages: async (projectId, sessionId) => ({ messages: [], projectId, sessionId }),
     rename: async (projectId, sessionId, name) => ({ ...sessions[0]!, name, projectId, sessionId }),
     rollback: async () => ({ commandId: crypto.randomUUID(), conversationHistory: [], restoredFiles: 0, status: "accepted" }),
     sendFileContext: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),

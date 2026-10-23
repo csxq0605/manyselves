@@ -34,6 +34,8 @@ class ConversationListResponse(BaseModel):
     project_id: str = Field(alias="projectId")
     conversations: list[ConversationResponse]
     active_session_id: str = Field(alias="activeSessionId")
+    # True for a project the service is not bound to: listed from its folder, not changeable.
+    read_only: bool = Field(default=False, alias="readOnly")
 
 
 class ConversationMessagesResponse(BaseModel):

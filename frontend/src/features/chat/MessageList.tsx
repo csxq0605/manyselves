@@ -47,6 +47,8 @@ export interface MessageListProps {
   readonly messages: readonly Record<string, unknown>[];
   readonly onHistoryChanged?: (() => void) | undefined;
   readonly projectId: string;
+  /** Show the conversation only: no edit, resend or rollback. */
+  readonly readOnly?: boolean | undefined;
   readonly requestEdit?: ((message: ChatMessage) => string | null) | undefined;
   readonly runtimeSummary?: MessageListRuntimeSummary | undefined;
 }
@@ -89,6 +91,7 @@ export function MessageList({
   messages,
   onHistoryChanged,
   projectId,
+  readOnly = false,
   runtimeSummary,
   requestEdit = (message) => window.prompt("编辑消息后重新发送", message.content),
 }: MessageListProps) {
@@ -313,7 +316,7 @@ export function MessageList({
                   {messageMeta(message)}
                 </header>
                 <p className="message__bubble">{message.content}</p>
-                {(message.role === "user" && message.messageId) || attachedCheckpointId ? (
+                {!readOnly && ((message.role === "user" && message.messageId) || attachedCheckpointId) ? (
                   <div className="message__actions">
                     {message.role === "user" && message.messageId ? (
                       <button
@@ -340,7 +343,7 @@ export function MessageList({
                     ) : null}
                   </div>
                 ) : null}
-                {message.role === "checkpoint" && message.checkpointId ? (
+                {!readOnly && message.role === "checkpoint" && message.checkpointId ? (
                   <button
                     disabled={pendingId !== null}
                     onClick={() => void rollback(message)}

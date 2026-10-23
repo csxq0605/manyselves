@@ -1,12 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import { formatShanghaiDateTime } from "../../app/date-time";
 import { useConversationStore } from "../../store/conversation-store";
+import { MessageList } from "../chat/MessageList";
 import { createConversationApi } from "../conversations/conversation-api";
 import { cacheCreatedConversation } from "../conversations/conversation-cache";
+import "../conversations/conversation.css";
 import "./history-page.css";
 
 const historyPageSize = 20;
@@ -21,6 +23,10 @@ const copy = {
   newConversation: "\u65b0\u5bf9\u8bdd",
   nextPage: "\u4e0b\u4e00\u9875",
   previousPage: "\u4e0a\u4e00\u9875",
+  readOnly: "只读：这不是服务当前绑定的项目，可以查看历史对话，不能继续对话。",
+  backToHistory: "← 返回历史会话",
+  sessionLoadFailed: "会话内容加载失败",
+  loadingSession: "正在加载会话内容…",
   reload: "\u91cd\u65b0\u52a0\u8f7d",
   title: "\u5386\u53f2\u4f1a\u8bdd",
 };
@@ -54,7 +60,14 @@ export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
     setPagination({ page: nextPage(page), projectId });
   }
 
+  const readOnly = conversations.data?.readOnly === true;
+
   async function activateSession(sessionId: string) {
+    if (readOnly) {
+      // Another project: open the stored conversation to read, switch nothing.
+      navigate(`/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(sessionId)}`);
+      return;
+    }
     try {
       await api.activate(projectId, sessionId, "main");
       setActiveSession(projectId, sessionId);
@@ -82,14 +95,17 @@ export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
           <p className="history-page__eyebrow">PROJECT / {projectId}</p>
           <h1>{copy.title}</h1>
         </div>
-        <button
-          className="history-page__new-button"
-          onClick={() => void createNewConversation()}
-          type="button"
-        >
-          {copy.newConversation}
-        </button>
+        {readOnly ? null : (
+          <button
+            className="history-page__new-button"
+            onClick={() => void createNewConversation()}
+            type="button"
+          >
+            {copy.newConversation}
+          </button>
+        )}
       </header>
+      {readOnly ? <p className="history-page__read-only" role="note">{copy.readOnly}</p> : null}
 
       {conversations.isPending ? (
         <p role="status">{copy.loadingHistory}</p>
@@ -103,9 +119,11 @@ export function HistoryPage({ gateway, projectId }: HistoryPageProps) {
       ) : conversations.data.conversations.length === 0 ? (
         <div className="history-page__empty">
           <p>{copy.empty}</p>
-          <button onClick={() => void createNewConversation()} type="button">
-            {copy.createFirst}
-          </button>
+          {readOnly ? null : (
+            <button onClick={() => void createNewConversation()} type="button">
+              {copy.createFirst}
+            </button>
+          )}
         </div>
       ) : (
         <div className="history-page__panel">
@@ -164,4 +182,50 @@ export function HistoryRoutePage({ gateway }: { readonly gateway: ApiGateway }) 
   const { projectId } = useParams();
   if (!projectId) return <p role="alert">{copy.historyRouteInvalid}</p>;
   return <HistoryPage gateway={gateway} projectId={projectId} />;
+}
+
+export interface HistorySessionPageProps {
+  readonly gateway: ApiGateway;
+  readonly projectId: string;
+  readonly sessionId: string;
+}
+
+/** One stored conversation, read only: works for a project the server is not bound to. */
+export function HistorySessionPage({ gateway, projectId, sessionId }: HistorySessionPageProps) {
+  const api = useMemo(() => createConversationApi(gateway), [gateway]);
+  const session = useQuery({
+    queryFn: () => api.sessionMessages(projectId, sessionId, "main"),
+    queryKey: ["conversations", projectId, "main", "session", sessionId],
+  });
+  return (
+    <section className="history-page history-page--session">
+      <header className="history-page__header">
+        <div>
+          <p className="history-page__eyebrow">PROJECT / {projectId}</p>
+          <h1>{copy.title}</h1>
+        </div>
+        <Link to={`/projects/${encodeURIComponent(projectId)}/history`}>{copy.backToHistory}</Link>
+      </header>
+      {session.isPending ? <p role="status">{copy.loadingSession}</p> : session.isError ? (
+        <div>
+          <p role="alert">{copy.sessionLoadFailed}</p>
+          <button onClick={() => void session.refetch()} type="button">{copy.reload}</button>
+        </div>
+      ) : (
+        <MessageList
+          agentId="main"
+          api={api}
+          messages={session.data.messages}
+          projectId={projectId}
+          readOnly
+        />
+      )}
+    </section>
+  );
+}
+
+export function HistorySessionRoutePage({ gateway }: { readonly gateway: ApiGateway }) {
+  const { projectId, sessionId } = useParams();
+  if (!projectId || !sessionId) return <p role="alert">{copy.historyRouteInvalid}</p>;
+  return <HistorySessionPage gateway={gateway} projectId={projectId} sessionId={sessionId} />;
 }

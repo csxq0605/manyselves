@@ -16,6 +16,7 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
     interrupt: async () => ({ commandId: "cmd", status: "accepted" }),
     list: async (projectId) => ({ activeSessionId: "s1", conversations: [], projectId }),
     messages: async (projectId) => ({ messages: [], projectId, sessionId: "s1" }),
+    sessionMessages: async (projectId, sessionId) => ({ messages: [], projectId, sessionId }),
     rename: async () => { throw new Error("unused"); },
     rollback: async () => ({ commandId: "cmd", conversationHistory: [], restoredFiles: 0, status: "accepted" }),
     sendFileContext: async () => ({ commandId: "cmd", status: "accepted" }),

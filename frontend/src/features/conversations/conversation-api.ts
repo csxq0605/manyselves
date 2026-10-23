@@ -9,9 +9,11 @@ type GeneratedConversationListSnapshot = components["schemas"]["ConversationList
 type GeneratedConversationMessagesSnapshot = components["schemas"]["ConversationMessagesResponse"];
 
 export type ConversationSummary = GeneratedConversationSummary & { readonly projectId: string };
-export type ConversationListSnapshot = Omit<GeneratedConversationListSnapshot, "conversations"> & {
+export type ConversationListSnapshot = Omit<GeneratedConversationListSnapshot, "conversations" | "readOnly"> & {
   readonly conversations: readonly ConversationSummary[];
   readonly projectId: string;
+  /** A project the server is not bound to: its history can be read, not changed. */
+  readonly readOnly?: boolean;
 };
 export type ConversationMessagesSnapshot = GeneratedConversationMessagesSnapshot & {
   readonly projectId: string;
@@ -38,6 +40,8 @@ export interface ConversationApi {
   interrupt(agentId: string, idempotencyKey: string): Promise<AcceptedCommand>;
   list(projectId: string, agentId: string): Promise<ConversationListSnapshot>;
   messages(projectId: string, agentId: string): Promise<ConversationMessagesSnapshot>;
+  /** One stored conversation of any project, read only; the project need not be the active one. */
+  sessionMessages(projectId: string, sessionId: string, agentId: string): Promise<ConversationMessagesSnapshot>;
   rename(projectId: string, sessionId: string, name: string, agentId: string): Promise<ConversationSummary>;
   rollback(
     projectId: string,
@@ -110,6 +114,9 @@ export function createConversationApi(gateway: ApiGateway): ConversationApi {
     ),
     messages: (projectId, agentId) => gateway.requestJson<ConversationMessagesSnapshot>(
       `/api/v1/conversations/messages?${projectAgentQuery(projectId, agentId)}`,
+    ),
+    sessionMessages: (projectId, sessionId, agentId) => gateway.requestJson<ConversationMessagesSnapshot>(
+      `/api/v1/conversations/${encodeURIComponent(sessionId)}/messages?${projectAgentQuery(projectId, agentId)}`,
     ),
     rename: (projectId, sessionId, name, agentId) => gateway.requestJson<ConversationSummary>(
       `/api/v1/conversations/${encodeURIComponent(sessionId)}`,
