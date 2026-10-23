@@ -790,3 +790,18 @@ async def test_every_step_reads_the_tree_of_the_run_and_writes_only_its_sections
     markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(encoding="utf-8")
     assert "2.4.2" in markdown
     assert not re.search(r"^#+ 2\.4\.3", markdown, re.M)
+
+
+def test_chapter_1_is_checked_in_its_own_branch_without_waiting_for_chapter_3() -> None:
+    from manyselves.kernel.definitions import DefinitionKind
+
+    _capability, registry = load_capability(CAPABILITY_FILE)
+    chief = registry.require(DefinitionKind.WORKFLOW, "ledger-chief")
+    ids = [action["id"] for action in chief.actions]
+    parallel = next(a for a in chief.actions if a["id"] == "chapter-1-and-facts-3")
+    chapter_1 = ids[ids.index(parallel["branches"]["chapter1"]):ids.index("chapter-1-done")]
+    chapter_3 = ids[ids.index(parallel["branches"]["facts3"]):ids.index("facts-3-done")]
+    # Chapter 1 is written, then checked, in one branch; chapter 3's packets in the other.
+    assert chapter_1[:3] == ["chapter-1", "check-1", "plan-facts"] and "fact-check" in chapter_1
+    assert "fact-check-3" in chapter_3 and "chapter-1" not in chapter_3
+    assert ids.index("apply-facts") > ids.index(parallel["join"])

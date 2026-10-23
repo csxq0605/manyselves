@@ -1,5 +1,5 @@
 id: ledger-chief
-version: 5.2.0
+version: 5.3.0
 description: The chief merges actions and writes chapters 3 and 1 from the ledger; chapters 1 and 3 are fact-checked in small packets while the program checks their tables and text, chapter 3 while the chief writes chapter 1. The one fix and chapter 4 follow in ledger-chief-finish, while the authors fix the rows that carry the same errors
 tasks:
 - chief-chapter-3
@@ -66,7 +66,8 @@ actions:
   input_variable: check3
   output_variable: chapter3
 # Chapter 3 is fact-checked while the chief writes chapter 1; chapter 1's
-# packets follow once it is written.  Neither batch reads the other.
+# packets are checked in the same branch as soon as it is written, without
+# waiting for chapter 3's.  Neither batch reads the other.
 - id: chapter-1-and-facts-3
   kind: parallel
   branches:
@@ -89,12 +90,40 @@ actions:
     chapter3: chapter3
     chapter1: chapter1
   output_variable: check1
+# Chapter 1 is fact-checked as written; the program's findings on its
+# tables join the fact check's, for the one fix.
+- id: plan-facts
+  kind: invoke_tool
+  tool: plan-chief-facts
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter1: chapter1
+    chapter: fact_chapter_1
+  output_variable: fact_plan
+- id: fact-items
+  kind: set_variable
+  variable: fact_items
+  value_variable: fact_plan
+  field: fact_items
+- id: fact-check
+  kind: map
+  items_variable: fact_items
+  key_field: packet_id
+  workflow: ledger-chief-fact-check
+  key_input_variable: item_key
+  output_variable: fact_results
+  errors_variable: fact_errors
+  max_concurrency: 32
+  lead_seconds: 30
 - id: chapter-one
   kind: set_variable
   variable: chapter_one
   value_variables:
     chapter1: chapter1
     check1: check1
+    packets: fact_items
+    results: fact_results
 - id: chapter-1-done
   kind: goto
   target: join-chapter-1
@@ -157,32 +186,16 @@ actions:
   variable: chapter3_facts
   value_variable: chapter_one_and_facts
   field: facts3
-# Chapter 1 is fact-checked as written; the program's findings on its
-# tables join the fact check's, for the one fix.
-- id: plan-facts
-  kind: invoke_tool
-  tool: plan-chief-facts
-  input_variables:
-    ledger: final
-    chapter3: chapter3
-    chapter1: chapter1
-    chapter: fact_chapter_1
-  output_variable: fact_plan
-- id: fact-items
+- id: fact-items-1-value
   kind: set_variable
   variable: fact_items
-  value_variable: fact_plan
-  field: fact_items
-- id: fact-check
-  kind: map
-  items_variable: fact_items
-  key_field: packet_id
-  workflow: ledger-chief-fact-check
-  key_input_variable: item_key
-  output_variable: fact_results
-  errors_variable: fact_errors
-  max_concurrency: 32
-  lead_seconds: 30
+  value_variable: chapter_one
+  field: packets
+- id: fact-results-1-value
+  kind: set_variable
+  variable: fact_results
+  value_variable: chapter_one
+  field: results
 - id: apply-facts
   kind: invoke_tool
   tool: apply-chief-facts
