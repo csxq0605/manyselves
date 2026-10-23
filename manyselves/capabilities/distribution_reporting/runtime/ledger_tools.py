@@ -79,6 +79,7 @@ from ..domain.value_slots import (
 from .assets import runtime_photo_ids
 from .chief_fact_packets import apply_fact_findings, chief_fact_packets
 from .context_packs import (
+    PROJECT_LEVEL,
     GROUP_ROW_SPAN,
     JUDGE_GROUP_RECORDS,
     Sites,
@@ -1234,6 +1235,7 @@ class LedgerTools(LedgerStageTools):
         names = relation_names(self._relation_method(run_id))
         observation_of, owner_sections = self._observation_map(run_id)
         ledger, dropped = checked_relations(ledger, names, observation_of)
+        self._record_linker_overlap(run_id, ledger)
         program_findings = {
             module_id: dict(found) for module_id, found in built["program_findings"].items()
         }
@@ -1278,6 +1280,69 @@ class LedgerTools(LedgerStageTools):
             "program_findings": program_findings,
             "dossiers": built.get("dossiers") or [],
         }
+
+    def _record_linker_overlap(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
+    ) -> None:
+        """What the linker added beyond what the authors were given, by kind.
+
+        For each relation the authors took from a proposal: whether the other
+        end was already among that group's candidates with its records (same
+        object or same room), and how the two rows stand (same object, same
+        distribution room, different rooms, or a project-level record).  The
+        next run decides from this whether the linker is still needed.
+        """
+
+        base = self.workspace / f"Work/runs/{run_id}/ledger"
+        proposals_path, candidates_path = base / "link-proposals.json", base / "relate-candidates.json"
+        if not proposals_path.is_file() or not candidates_path.is_file():
+            return
+        kept = json.loads(proposals_path.read_text(encoding="utf-8")).get("kept") or []
+        candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+        proposed = {frozenset((p["row_id"], p["other_row_id"])) for p in kept}
+        row_groups = self._groups_file(run_id).get("row_groups") or {}
+        index = {row.id: (module_id, row) for module_id, rows in ledger.items() for row in rows}
+        sites = self._sites(run_id)
+
+        def kind(a: JudgmentRow, b: JudgmentRow) -> str:
+            if set(sites.row_subjects(a)) & set(sites.row_subjects(b)):
+                return "同对象"
+            pa = set(sites.row_places(a)) - {PROJECT_LEVEL}
+            pb = set(sites.row_places(b)) - {PROJECT_LEVEL}
+            if not pa or not pb:
+                return "项目级"
+            return "同配电房" if pa & pb else "不同配电房"
+
+        taken: dict[frozenset[str], dict[str, Any]] = {}
+        own: dict[str, int] = {}
+        for module_id, rows in ledger.items():
+            for row in rows:
+                for relation in row.relations:
+                    if relation.row_id not in index:
+                        continue
+                    other = index[relation.row_id][1]
+                    pair = frozenset((row.id, other.id))
+                    if pair not in proposed:
+                        k = kind(row, other)
+                        own[k] = own.get(k, 0) + 1
+                        continue
+                    group = candidates.get(row_groups.get(row.id, module_id)) or {}
+                    given = set(group.get("related") or []) | set(group.get("same_room") or [])
+                    entry = taken.setdefault(pair, {
+                        "rows": sorted(pair), "kind": kind(row, other), "in_candidates": False,
+                    })
+                    entry["in_candidates"] = entry["in_candidates"] or other.id in given
+        summary: dict[str, dict[str, int]] = {}
+        for entry in taken.values():
+            counts = summary.setdefault(entry["kind"], {"taken": 0, "in_candidates": 0})
+            counts["taken"] += 1
+            counts["in_candidates"] += int(entry["in_candidates"])
+        self.store.write_json(f"Work/runs/{run_id}/ledger/linker-overlap.json", {
+            "proposals_kept": len(kept),
+            "taken_by_kind": summary,
+            "authors_own_by_kind": own,
+            "taken": sorted(taken.values(), key=lambda e: e["rows"]),
+        })
 
     def _relation_sets(self, run_id: str, value: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         """Each module's relations: its groups' own linking, then what they took of the proposals.

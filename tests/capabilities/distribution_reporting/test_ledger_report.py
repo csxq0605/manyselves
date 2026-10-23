@@ -492,6 +492,15 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     (offer,) = relate_24["proposed"]["J-2.4-1"]
     assert offer["row_id"] == "J-2.5-1" and offer["other_row"]["id"] == "J-2.5-1"
     assert tasks_of(authors["2.4"]).count("relate-judgments") == 1
+    # The candidates come with the records they cite, and the run records
+    # what the linker added beyond them.
+    relate_24_text = next(
+        m.content for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
+    )
+    assert "记录总数：1" in relate_24_text.split("<context name=\"facts\">")[1]
+    overlap = json.loads((tmp_path / f"Work/runs/{RUN_ID}/ledger/linker-overlap.json").read_text(encoding="utf-8"))
+    assert overlap["proposals_kept"] == 1
+    assert sum(k["taken"] for k in overlap["taken_by_kind"].values()) == 1
     assert "proposed" not in next(
         _input_of(m.content) for m in authors["2.1"].received if _task(m.content) == "relate-judgments"
     )

@@ -1,5 +1,5 @@
 id: ledger_relation_input
-version: 2.0.0
+version: 2.1.0
 description: Other modules' flagged rows, the linker's proposals on this group's rows and the relation method, for one author
 adapter: json_schema
 schema:
@@ -25,6 +25,9 @@ schema:
     proposed:
       type: object
       description: Row id of this group -> the linker's proposals on it, each with other_row (the other end's row in full)
+    same_room:
+      type: object
+      description: Row id of another module's flagged row at the same distribution room (the table's room column) -> that row briefly
     facts:
       type: string
-      description: The facts the proposals' other ends cite, as recorded
+      description: The records the candidates cite (proposals' other ends, related rows, same-room rows), as recorded

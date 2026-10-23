@@ -29,6 +29,7 @@ from manyselves.kernel.workflow import gather_by_key
 from ..domain.judgment_ledger import JudgmentRow, LinkProposals, StoryLine, StoryPlan
 from .context_packs import (
     ATTENTION,
+    PROJECT_LEVEL,
     Sites,
     brief_row,
     compact,
@@ -52,6 +53,9 @@ LINK_PACK_CHARS = 160_000
 # batch to a few minutes of writing.
 OBJECT_BATCH_CHARS = 60_000
 RELATION_BATCH_CHARS = 60_000
+# Records an author gets with its relate candidates (same objects, proposals,
+# then the same room's flagged rows while they fit).
+RELATE_FACT_CHARS = 90_000
 WRITING_GROUP_CHARS = 60_000
 
 LENSES = {"module": "模块切面", "object": "对象切面", "relation": "关联切面"}
@@ -200,23 +204,61 @@ class LedgerStageTools:
         )
         sites = self._sites(run_id)
         render = self._renderer(run_id)
+        flagged = [row for rows in ledger.values() for row in rows if row.disposition in ATTENTION]
         items = []
+        candidates: dict[str, dict[str, list[str]]] = {}
         for own_item in value.get("own_items") or []:
             group_id = own_item.get("group_id") or own_item["module_id"]
+            module_id = own_item["module_id"]
             offers = proposed.get(group_id) or {}
             item = {**own_item, "relation_names": sorted(names) or own_item.get("relation_names", [])}
-            if offers:
-                others = [index[o["row_id"]] for entries in offers.values() for o in entries]
-                cited = [
-                    sites.items[e]
-                    for e in dict.fromkeys(e for row in others for e in row.evidence_ids)
-                    if e in sites.items
+            mine = [
+                row for row in ledger.get(module_id, [])
+                if row_groups.get(row.id, group_id) == group_id
+            ]
+            related = list(dict.fromkeys(
+                other["row_id"]
+                for others in (own_item.get("related") or {}).values() for other in others
+                if other.get("row_id") in index
+            ))
+            offered = list(dict.fromkeys(o["row_id"] for entries in offers.values() for o in entries))
+            # Rows of other modules flagged at the same distribution room (the
+            # tables' room column), so links between different objects there
+            # can be checked against their records too.
+            places = {p for row in mine for p in sites.row_places(row)} - {PROJECT_LEVEL}
+            seen = set(related) | set(offered)
+            same_room = [
+                row.id for row in flagged
+                if module_of[row.id] != module_id and row.id not in seen
+                and places & set(sites.row_places(row))
+            ]
+            # Records of the candidates, nearest first, within the budget: the
+            # proposals' and same objects' always, the same room's while they fit.
+            cited: list[Any] = []
+            cited_ids: set[str] = set()
+            kept_room: list[str] = []
+            size = 0
+            for row_id in [*offered, *related, *same_room]:
+                new = [
+                    sites.items[e] for e in index[row_id].evidence_ids
+                    if e in sites.items and e not in cited_ids
                 ]
+                cost = len(render(new)) if new else 0
+                if row_id in same_room:
+                    if size + cost > RELATE_FACT_CHARS:
+                        continue
+                    kept_room.append(row_id)
+                cited.extend(new)
+                cited_ids.update(record.id for record in new)
+                size += cost
+            if offers:
                 item["proposed"] = offers
-                item["facts"] = render(cited) or "（另一端的行没有引用记录）"
-            else:
-                item["facts"] = "（专员没有对本组的行提出关联）"
+            if kept_room:
+                item["same_room"] = {row_id: brief_row(index[row_id]) for row_id in kept_room}
+            item["facts"] = render(cited) or "（候选行没有引用记录）"
+            candidates[group_id] = {"related": related, "same_room": kept_room, "proposed": offered}
             items.append(item)
+        self.store.write_json(f"Work/runs/{run_id}/ledger/relate-candidates.json", candidates)
         return {"relate_items": items}
 
     # -- review lenses ---------------------------------------------------
