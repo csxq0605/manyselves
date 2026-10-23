@@ -1,6 +1,6 @@
 id: ledger-module-settle
-version: 2.0.0
-description: One judging group's review, the three lenses merged by row; the author revises only on blocking findings, the program checks the changed rows again, and sends them back once if they still fail
+version: 2.1.0
+description: One judging group's review, the three lenses merged by row; the author revises only on blocking findings, the program checks the changed rows and the group's record coverage again, and sends them back while they still fail, at most twice
 tasks:
 - revise-judgments
 recovery:
@@ -11,6 +11,7 @@ state:
   item_key: null
   revision: null
   second_revision: null
+  third_revision: null
 actions:
 - id: lens-review
   kind: set_variable
@@ -89,6 +90,41 @@ actions:
   conversation_variable: author_conversation
   input_variable: recheck_input
   output_variable: second_revision
+# The second revision is checked the same way, on both revisions together:
+# a record either of them dropped goes back once more.
+- id: recheck-again
+  kind: invoke_tool
+  tool: recheck-judgments
+  input_variables:
+    item: item
+    revision: revision
+    second_revision: second_revision
+  output_variable: recheck_again
+- id: recheck-again-blocking
+  kind: set_variable
+  variable: recheck_again_blocking
+  value_variable: recheck_again
+  field: blocking
+- id: route-recheck-again
+  kind: if
+  condition:
+    variable: recheck_again_blocking
+    operator: eq
+    value: true
+  then: recheck-again-input
+  otherwise: close
+- id: recheck-again-input
+  kind: set_variable
+  variable: recheck_again_input
+  value_variable: recheck_again
+  field: revision_input
+- id: revise-last
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-judgments
+  conversation_variable: author_conversation
+  input_variable: recheck_again_input
+  output_variable: third_revision
 - id: close
   kind: invoke_tool
   tool: close-review
@@ -97,6 +133,7 @@ actions:
     merged: merged
     revision: revision
     second_revision: second_revision
+    third_revision: third_revision
   output_variable: result
 - id: finish
   kind: end_workflow

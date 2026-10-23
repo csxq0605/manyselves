@@ -394,6 +394,15 @@ class LedgerStageTools:
         row_groups = stored.get("row_groups") or {}
         program = value["ledger"].get("program_findings") or {}
 
+        unassigned = set(self._reference(run_id).get("unassigned_evidence_ids") or ())
+
+        def in_group(module_id: str, target: str, group_id: str) -> bool:
+            # A finding on a record with no section goes to every group of
+            # the module, like the record itself.
+            if target in unassigned:
+                return groups.get(group_id, {}).get("module_id", group_id) == module_id
+            return group_of(module_id, target) == group_id
+
         def group_of(module_id: str, target: str) -> str:
             mine = [gid for gid, g in groups.items() if g.get("module_id") == module_id]
             if target in row_groups and row_groups[target] in mine:
@@ -427,12 +436,12 @@ class LedgerStageTools:
                 "program_findings": {
                     target: finding
                     for target, finding in (program.get(module_id) or {}).items()
-                    if group_of(module_id, target) == group_id
+                    if in_group(module_id, target, group_id)
                 },
                 "review": {"findings": {
                     target: finding
                     for target, finding in per_module.get(module_id, {}).items()
-                    if group_of(module_id, target) == group_id
+                    if in_group(module_id, target, group_id)
                 }},
                 **self._proposal_material(offers.get(group_id) or {}, own_rows, index, sites, render),
             })

@@ -115,3 +115,33 @@ def test_findings_go_back_together_and_only_grounded_blocking_ones_send_the_chie
         "1.2-重点风险-1": {"problem": "13 应为 14", "severity": "blocking", "suggestion": "", "grounds": []},
     }}})
     assert ungrounded["blocking"] is False
+
+
+def test_a_fix_is_put_back_piece_by_piece() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import ChiefFix
+    from manyselves.capabilities.distribution_reporting.runtime.chief_fact_packets import (
+        chief_pieces,
+        place_chief_fix,
+    )
+
+    pieces = chief_pieces(CHAPTER1, CHAPTER3)
+    assert pieces["units"]["1.2-段2"] == "其余正常。"
+    fix = ChiefFix.model_validate({
+        "units": {"1.2-段2": "其余未见异常。", "1.9-段1": "x"},
+        "key_risks": {"1.2-重点风险-1": {**CHAPTER1["key_risks"][0], "description": "d2"}},
+    })
+    one, three, unplaced = place_chief_fix(CHAPTER1, CHAPTER3, fix)
+    assert one["overall_assessment"] == "A房 1# 柜电流偏高。\n其余未见异常。"
+    assert one["key_risks"][0]["description"] == "d2"
+    assert one["assessment_background"] == CHAPTER1["assessment_background"]
+    assert three == CHAPTER3 and unplaced == ["1.9-段1"]
+
+
+def test_a_record_a_revision_drops_is_found() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import _rows_after
+
+    rows = [_row("J-2.1-01", "A", "E-1"), _row("J-2.1-02", "B", "E-2")]
+    after = _rows_after(rows, [{"patches": [{"row_id": "J-2.1-01", "fields": {"evidence_ids": ["E-2"]}}]}])
+    assert {e for row in after for e in row.evidence_ids} == {"E-2"}
+    after = _rows_after(rows, [{"removed_row_ids": ["J-2.1-02"]}])
+    assert [row.id for row in after] == ["J-2.1-01"]

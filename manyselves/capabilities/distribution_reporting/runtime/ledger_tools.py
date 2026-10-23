@@ -402,6 +402,20 @@ def _with_table_terms(
     return merged
 
 
+def _rows_after(rows: Sequence[JudgmentRow], revisions: Sequence[Mapping[str, Any]]) -> list[JudgmentRow]:
+    """A group's rows with its revisions' patches applied in order."""
+
+    current = {row.id: row for row in rows}
+    for part in revisions:
+        if not part:
+            continue
+        new_rows, dropped, _problems = apply_row_patches(list(current.values()), part)
+        current.update({row.id: row for row in new_rows})
+        for row_id in dropped:
+            current.pop(row_id, None)
+    return list(current.values())
+
+
 def placement_findings(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     unassigned_ids: Sequence[str],
@@ -839,7 +853,14 @@ class LedgerTools(LedgerStageTools):
                         + "和不属于某个配电房的项目级记录（汇总表、收资资料），供对照，不由你判断。"
                         "别的对象上的记录只在项目图谱里列出位置和条数。\n\n"
                         + fact_blocks[group["group_id"]],
-                        unassigned_block if group["first"] else "",
+                        # Records with no section reach every group of a
+                        # split module: which section they fit is the
+                        # author's call, so no group may miss them.
+                        unassigned_block
+                        + (
+                            "\n本模块分组判断，每组都会看到这些记录：只判断属于你负责的小节的，其余的不用管。"
+                            if unassigned_block and group["split"] else ""
+                        ),
                     ]
                     if block
                 )
@@ -1422,19 +1443,26 @@ class LedgerTools(LedgerStageTools):
         }
 
     def recheck_judgments(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The program's row checks again, on the rows a revision changed or added.
+        """The program's row checks again, after a revision.
 
-        A patch that cannot be applied, or a changed row the checks send back
-        (an id it cannot cite, a value it does not hold, copied instructions),
-        is blocking and goes back to the author once more.
+        On the rows the latest revision changed or added: a patch that cannot
+        be applied, or a changed row the checks send back (an id it cannot
+        cite, a value it does not hold, copied instructions), is blocking.
+        On the whole group: a record the group's rows cited before the
+        revisions and no row cites after them (and no other group's row
+        cites) is blocking too, keyed by the record.  Either goes back to the
+        author once more.
         """
 
         item = value["item"]
         run_id = str(item["run_id"])
         module_id = str(item["module_id"])
-        revision = _plain(value.get("revision")) or {}
+        revisions = [
+            _plain(r) for r in (value.get("revision"), value.get("second_revision")) if r
+        ] or [{}]
         rows = _rows(item.get("rows") or [])
-        changed, _removed, problems = apply_row_patches(rows, revision)
+        base = _rows_after(rows, revisions[:-1])
+        changed, _removed, problems = apply_row_patches(base, revisions[-1])
         changed = [row for row in changed if not _foreign_row(row.id, module_id)]
         module = (self._groups_file(run_id).get("modules") or {}).get(module_id) or {}
         reference = self._reference(run_id)
@@ -1464,9 +1492,45 @@ class LedgerTools(LedgerStageTools):
                 {"problem": problem, "severity": "blocking",
                  "suggestion": "按字段名重交这一行的改动；新增的行写进 rows"},
             )
+        for evidence_id, row_ids in self._lost_records(run_id, rows, revisions).items():
+            found[evidence_id] = _combined(
+                found.get(evidence_id),
+                {
+                    "problem": (
+                        f"这条记录修订前由 {'、'.join(row_ids)} 引用，修订后本组和别的组都没有行引用它；"
+                        "每条记录都要有判断，不能在修订中丢掉"
+                    ),
+                    "severity": "blocking",
+                    "suggestion": "在原来的行或改后的行的 evidence_ids 里放回这条记录，或新增一行判断它",
+                },
+            )
         return {
             "blocking": bool(found),
             "revision_input": {"findings": found, "minor": {}, "recheck": True},
+        }
+
+    def _lost_records(
+        self, run_id: str, rows: list[JudgmentRow], revisions: Sequence[Mapping[str, Any]]
+    ) -> dict[str, list[str]]:
+        """Records the group's rows cited before the revisions and no row cites after them."""
+
+        before: dict[str, list[str]] = {}
+        for row in rows:
+            for evidence_id in row.evidence_ids:
+                before.setdefault(evidence_id, []).append(row.id)
+        after = {e for row in _rows_after(rows, revisions) for e in row.evidence_ids}
+        own = {row.id for row in rows}
+        path = self.workspace / f"Work/runs/{run_id}/ledger/judgments-r1.json"
+        others: set[str] = set()
+        if path.is_file():
+            for module_rows in json.loads(path.read_text(encoding="utf-8")).values():
+                for row in module_rows:
+                    if row.get("id") not in own:
+                        others.update(row.get("evidence_ids") or ())
+        return {
+            evidence_id: row_ids
+            for evidence_id, row_ids in before.items()
+            if evidence_id not in after and evidence_id not in others
         }
 
     def close_review(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -1475,7 +1539,9 @@ class LedgerTools(LedgerStageTools):
         item = value["item"]
         revision = None
         submitted = [
-            _plain(r) for r in (value.get("revision"), value.get("second_revision")) if r
+            _plain(r)
+            for r in (value.get("revision"), value.get("second_revision"), value.get("third_revision"))
+            if r
         ]
         if submitted:
             rows = _rows(item.get("rows") or [])
