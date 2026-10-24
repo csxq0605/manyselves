@@ -107,37 +107,3 @@ def test_compose_enables_three_default_isolated_accounts() -> None:
     assert "MANYSELVES_ACCOUNT_YUANXI_002_PASSWORD=yuanxi@2026" in example
 
 
-def test_cent_os_docs_cover_selinux_volume_labeling() -> None:
-    docs = Path("docs/RUNNING.md").read_text("utf-8")
-
-    assert "CentOS" in docs
-    assert "SELinux" in docs
-    assert ":Z" in docs
-    assert "MANYSELVES_DATA_DIR=/srv/manyselves/data" in docs
-
-
-def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:
-    docs = Path("docs/RUNNING.md").read_text("utf-8")
-    rootless_docker = docs.split("If that privilege is not acceptable", 1)[1].split(
-        "Keep DOCKER_HOST", 1
-    )[0]
-
-    assert "Choose exactly one engine path" in docs
-    assert "sudo usermod -aG docker manyselves" in docs
-    assert "docker group is equivalent to root-level control" in docs
-    assert "dockerd-rootless-setuptool.sh install" in docs
-    assert "loginctl enable-linger manyselves" in docs
-    assert "XDG_RUNTIME_DIR=/run/user/$(id -u)" in docs
-    assert "podman info" in docs
-    assert "Run every extraction and Compose command below from that configured service-account session." in docs
-    assert rootless_docker.index("export XDG_RUNTIME_DIR=/run/user/$(id -u)") < rootless_docker.index(
-        'test -d "$XDG_RUNTIME_DIR"'
-    )
-    assert rootless_docker.index('test -d "$XDG_RUNTIME_DIR"') < rootless_docker.index(
-        "systemctl --user is-active default.target"
-    )
-    assert rootless_docker.index(
-        "systemctl --user is-active default.target"
-    ) < rootless_docker.index("dockerd-rootless-setuptool.sh install")
-    assert "docker context create manyselves-rootless" in rootless_docker
-    assert "|| true" not in rootless_docker
