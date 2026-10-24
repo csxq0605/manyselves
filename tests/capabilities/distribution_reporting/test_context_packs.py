@@ -11,7 +11,6 @@ from manyselves.capabilities.distribution_reporting.runtime.context_packs import
     brief_row,
     compact,
     cross_batches,
-    object_batches,
     project_map,
     writing_groups,
 )
@@ -115,12 +114,6 @@ def test_slices_of_one_scope_differ_only_in_what_they_decide() -> None:
     assert len(checked) == 9
     assert all(len(b["relations"]) <= context_packs.CROSS_SLICE_RELATIONS for b in batches)
     assert sorted(r for b in batches for r in b["focus_rows"]) == ["J-2.1-1", "J-2.2-1", "J-2.4-1"]
-
-
-def test_objects_several_modules_judged_go_to_the_object_lens_with_all_records() -> None:
-    (batch,) = object_batches(LEDGER, Sites(ITEMS), _render, budget_chars=100_000)
-    assert batch["objects"] == [{"object": "A房/1#柜", "row_ids": ["J-2.2-1", "J-2.4-1"]}]
-    assert batch["facts"].split("\n") == ["E-1 温度=NG", "E-2 x=OK", "E-5 x=OK"]
 
 
 def test_relations_go_to_the_cross_review_with_both_rows() -> None:

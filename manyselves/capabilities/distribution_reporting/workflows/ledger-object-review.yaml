@@ -1,6 +1,6 @@
 id: ledger-object-review
 version: 1.0.0
-description: One batch of the object lens, reviewed in a conversation of its own
+description: One batch of the same-case lens, reviewed in a conversation of its own
 tasks:
 - review-objects
 recovery:

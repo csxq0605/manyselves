@@ -10,8 +10,9 @@ comparison it is asked to make are there in full:
 - ``judge_facts``: a judge reads its own module's records, every other
   module's records on the same objects, the project-level records (summary
   sheets and documents that belong to no site) and the unassigned ones.
-- ``object_batches``: the object reviewer reads all modules' rows and
-  records on objects judged by several modules.
+- ``case_batches`` (``case_review``): the same-case reviewer reads every
+  row on one column of one table, across rooms and modules, with that
+  column's records.
 - ``cross_batches``: the cross-module reviewer reads every flagged row and
   every end of a relation in full, with the records they cite, as one prefix
   shared by every slice; a slice is the relations it checks and the rows it
@@ -370,62 +371,6 @@ def _batches(
     return batches
 
 
-def object_batches(
-    ledger: Mapping[str, Sequence[JudgmentRow]],
-    sites: Sites,
-    render: Render,
-    *,
-    budget_chars: int,
-) -> list[dict[str, Any]]:
-    """Objects several modules judged, with all their rows and records, in batches."""
-
-    by_subject: dict[str, list[tuple[str, JudgmentRow]]] = {}
-    for module_id, rows in ledger.items():
-        for row in rows:
-            for subject in sites.row_subjects(row):
-                by_subject.setdefault(subject, []).append((module_id, row))
-    records: dict[str, list[Any]] = {}
-    for item in sites.items.values():
-        if getattr(item, "place", None):
-            records.setdefault(item.subject, []).append(item)
-    shared = [
-        subject
-        for subject, judged in by_subject.items()
-        if len({module for module, _row in judged}) >= 2
-    ]
-    costs = [
-        (
-            subject,
-            sum(_size(compact_row(row)) for _m, row in by_subject[subject])
-            + len(render(records.get(subject, []))),
-        )
-        for subject in shared
-    ]
-    batches = []
-    for number, subjects in enumerate(_batches(costs, budget_chars), start=1):
-        rows = list(
-            {row.id: row for subject in subjects for _m, row in by_subject[subject]}.values()
-        )
-        items = list(
-            {item.id: item for subject in subjects for item in records.get(subject, [])}.values()
-        )
-        batches.append(
-            {
-                "batch_id": f"O-{number:02d}",
-                "objects": [
-                    {
-                        "object": subject,
-                        "row_ids": [row.id for _m, row in by_subject[subject]],
-                    }
-                    for subject in subjects
-                ],
-                "rows": [compact_row(row) for row in rows],
-                "facts": render(items),
-            }
-        )
-    return batches
-
-
 # A cross-module reviewer's output grows with what it is asked to decide: each
 # relation takes about as long to think through, so a slice holds a few, and
 # the rows it searches for missing relations are bounded too.
@@ -613,7 +558,6 @@ __all__ = [
     "compact",
     "compact_row",
     "finding_of",
-    "object_batches",
     "project_map",
     "cross_batches",
     "row_line",

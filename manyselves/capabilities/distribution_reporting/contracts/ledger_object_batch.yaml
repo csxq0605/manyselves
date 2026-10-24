@@ -1,14 +1,14 @@
 id: ledger_object_batch
-version: 1.0.0
-description: Objects several modules judged, with every module's rows on them and all their records
+version: 2.0.0
+description: Cases (one column of one table) two or more rows rest on, with every row on them and the column's records
 adapter: json_schema
 schema:
   type: object
-  required: [batch_id, objects, rows, facts]
+  required: [batch_id, cases, rows, facts]
   properties:
     batch_id:
       type: string
-    objects:
+    cases:
       type: array
     rows:
       type: array

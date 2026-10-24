@@ -27,6 +27,7 @@ from typing import Any
 from manyselves.kernel.workflow import gather_by_key
 
 from ..domain.judgment_ledger import CrossReview, JudgmentRow, StoryLine, StoryPlan
+from .case_review import case_batches
 from .context_packs import (
     ATTENTION,
     PROJECT_LEVEL,
@@ -35,7 +36,6 @@ from .context_packs import (
     compact,
     compact_row,
     cross_batches,
-    object_batches,
     project_map,
     row_line,
     writing_groups,
@@ -288,8 +288,9 @@ class LedgerStageTools:
         """The module and relation lenses, built from the related ledger and the final readings.
 
         The module lens reads one module's rows with what they cite, and
-        nothing of the other modules: what lies between modules is the object
-        lens's (run while the rows were related) and the relation lens's.
+        nothing of the other modules: what lies between modules is the
+        same-case lens's (every row on one column of one table, together) and
+        the relation lens's.
         """
 
         context = value["context"]
@@ -323,14 +324,14 @@ class LedgerStageTools:
             {"run_id": run_id, "map": relation_map, "relation_method": method, **batch}
             for batch in cross_batches(ledger, sites, render, prefix_chars=CROSS_PREFIX_CHARS)
         ]
-        # The object lens reads every module's rows on objects several judged,
-        # with the final photo readings.
+        # The same-case lens reads every row on one column of one table
+        # together, across rooms and modules, with that column's records.
         object_items = [
             {"run_id": run_id, **batch}
-            for batch in object_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
+            for batch in case_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
         ]
         lenses = {
-            "objects": [{"batch_id": b["batch_id"], "objects": b["objects"]} for b in object_items]
+            "cases": [{"batch_id": b["batch_id"], "cases": b["cases"]} for b in object_items]
         }
         lenses["cross"] = [
             {"batch_id": b["batch_id"], "relations": b["relations"], "focus_rows": b["focus_rows"]}
