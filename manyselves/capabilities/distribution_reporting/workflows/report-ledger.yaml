@@ -1,5 +1,5 @@
 id: report-ledger
-version: 5.3.0
+version: 5.4.0
 description: Judge into a ledger, each author relating its rows right after; review the modules, the shared objects and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
 tasks: []
 recovery:
@@ -221,6 +221,34 @@ actions:
   variable: writing_items
   value_variable: final
   field: writing_items
+# review_mode "joint" (the default) edits each writer's sections and checks
+# the facts of the chapter 1 and 3 units on its rows in one pass, after both
+# drafts; "separate" keeps the editor and the fact check apart, each running
+# beside the other draft.  Either gives the same drafts to what follows.
+- id: review-mode
+  kind: set_variable
+  variable: review_mode
+  value_variable: context
+  field: review_mode
+- id: choose-review
+  kind: if
+  condition:
+    variable: review_mode
+    operator: eq
+    value: separate
+  then: draft
+  otherwise: joint-draft
+- id: joint-draft
+  kind: subworkflow
+  workflow: ledger-joint-draft
+  input_variables:
+    final: final
+    context: context
+    writing_items: writing_items
+  output_variable: drafts
+- id: joint-done
+  kind: goto
+  target: module-edits
 - id: draft
   kind: parallel
   branches:

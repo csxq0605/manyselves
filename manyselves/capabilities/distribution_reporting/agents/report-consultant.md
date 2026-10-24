@@ -19,6 +19,7 @@ accepts:
 - ledger_edit_item
 - ledger_relation_input
 - ledger_chief_fact_packet
+- ledger_joint_review_item
 produces:
 - ledger_judgment_set
 - ledger_judgment_revision

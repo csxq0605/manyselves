@@ -39,7 +39,9 @@ from .template_skills import (
 )
 
 _SPACE = re.compile(r"\s+")
-FINDING_ACTIONS = ("review", "edit")
+# A joint review (ledger-joint-review) edits sections and checks chapter 1
+# and 3 units in one result; its section findings are the editor's.
+FINDING_ACTIONS = ("review", "edit", "joint-review")
 
 
 def lesson_root(run_id: str) -> str:
@@ -77,8 +79,11 @@ def collect_findings(workspace: Path, source_run_id: str) -> list[dict[str, Any]
             result = record.get("result") or {}
             source = record.get("input") or {}
             owner = str(source.get("module_id") or source.get("owner") or conversation.name)
+            sections = source.get("sections") or {}
             for target, finding in sorted((result.get("findings") or {}).items()):
                 if not isinstance(finding, Mapping) or not finding.get("problem"):
+                    continue
+                if action == "joint-review" and target not in sections:
                     continue
                 found.append(
                     {

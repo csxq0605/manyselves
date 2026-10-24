@@ -1,0 +1,7 @@
+id: ledger_joint_review_input
+version: 1.0.0
+description: Final ledger, written sections and chapters 1 and 3 as written
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, written, chapter1, chapter3]

@@ -1,0 +1,10 @@
+id: plan-joint-review
+version: 1.0.0
+description: One review item per writer, its sections with the chapter 1 and 3 units resting on its rows, each under the size limit
+implementation: capability:distribution-reporting:plan-joint-review
+input_contract: ledger_joint_review_input
+output_contract: ledger_joint_review_plan
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

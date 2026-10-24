@@ -18,6 +18,7 @@ here does one deterministic step on ordinary files of the current Run:
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -164,6 +165,32 @@ from .template_skills import (
 
 _ROLES_FILE = Path(__file__).resolve().parents[1] / "domain/module-roles.yaml"
 CHIEF_OWNER = "chief"
+
+# The checks after writing: "joint" reads each writer's sections and the
+# chapter 1 and 3 units resting on its rows in one pass; "separate" keeps the
+# editor and the fact check apart (ledger-edit-pass, ledger-chief).
+REVIEW_MODES = ("joint", "separate")
+# One joint review's input stays under this many characters; more units go to
+# a further item with the same leading material.
+JOINT_MAX_CHARS = 300_000
+# A joint review holds at most this many units, a section counting as two, so
+# a writer's work runs as several reviews side by side rather than one long one
+# (in run 23g one writer's rows carried 64 of the 137 units).
+JOINT_MAX_UNITS = 8
+SECTION_UNITS = 2
+# What a joint item carries beyond an edit item.
+_JOINT_KEYS = ("review_id", "map", "units", "unit_rows", "facts", "values", "counts")
+
+
+def review_mode(state: Mapping[str, Any]) -> str:
+    """The run's review mode: the request's, else MANYSELVES_REVIEW_MODE, else joint."""
+
+    mode = str(
+        state.get("review_mode") or os.environ.get("MANYSELVES_REVIEW_MODE") or REVIEW_MODES[0]
+    ).strip()
+    if mode not in REVIEW_MODES:
+        raise ValueError(f"review_mode must be one of {REVIEW_MODES}, not {mode!r}")
+    return mode
 # Chief sections the edit pass reads as text; 3.1 is drawn from its two
 # structured layers first.
 CHIEF_SECTIONS = {
@@ -1068,6 +1095,7 @@ class LedgerTools(LedgerStageTools):
             "special_topic_input": {"plan": plan_value},
             "has_special_topic": plan_value is not None,
             "chief_key": CHIEF_OWNER,
+            "review_mode": review_mode(state),
             **({"revision": revision_plan} if revision_plan is not None else {}),
         }
 
@@ -2527,6 +2555,180 @@ class LedgerTools(LedgerStageTools):
             items.append(self._chief_item(run_id, chief, value["ledger"]))
         return {"edit_items": items}
 
+    def plan_joint_review(self, value: dict[str, Any]) -> dict[str, Any]:
+        """One review per writer: its sections and the chief's units on its rows.
+
+        Each item opens with the writer's own pack and the project map, so it
+        reuses the writer's cached prefix; it holds the edit item (sections,
+        rows, program findings) and the chapter 1 and 3 units whose rows sit
+        in the writer's sections, with their rows, records, values and counts.
+        Units on no writer's rows go to items opening with the map and story
+        lines.  An item holding ``JOINT_MAX_UNITS`` (a section counting as
+        ``SECTION_UNITS``) or that would pass ``JOINT_MAX_CHARS`` passes its
+        further units to a next item with the same opening, reviewed side by
+        side; nothing is cut.
+        """
+
+        final = value["ledger"]
+        run_id = final["run_id"]
+        edit_items = self.check_report({"ledger": final, "written": value["written"]})["edit_items"]
+        ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
+        row_section = {row.id: row.submodule_id for rows in ledger.values() for row in rows}
+        unit_packets = chief_fact_packets(
+            chapter1=_plain(value.get("chapter1")),
+            chapter3=_plain(value.get("chapter3")),
+            ledger=ledger,
+            groups=final.get("action_groups") or [],
+            slots=self._slots(run_id),
+            fact_texts=self._reference(run_id).get("fact_texts") or {},
+            run_id=run_id,
+            max_units=1,
+            prefix="U-",
+        )
+        chief_input = final.get("chief_input") or {}
+        project = {k: chief_input[k] for k in ("map", "story_lines") if chief_input.get(k)}
+        owner_of = {sid: item["owner"] for item in edit_items for sid in item["sections"]}
+        first_owner: dict[str, str] = {}
+        for item in edit_items:
+            first_owner.setdefault(str(item.get("module_id") or item["owner"]), item["owner"])
+
+        def owner_for(packet: Mapping[str, Any]) -> str | None:
+            owners = [
+                owner_of[row_section[row["id"]]]
+                for row in packet["rows"]
+                if row_section.get(row["id"]) in owner_of
+            ]
+            if owners:
+                return max(dict.fromkeys(owners), key=owners.count)
+            return first_owner.get(str(packet.get("module")))
+
+        def size(item: Mapping[str, Any]) -> int:
+            return len(json.dumps(item, ensure_ascii=False))
+
+        def opening(owner: str | None) -> dict[str, Any]:
+            if owner is None:
+                return {"run_id": run_id, **project}
+            base = by_owner[owner][0]
+            lead = {k: base[k] for k in ("pack", "method") if k in base}
+            return {
+                "run_id": run_id, "owner": owner,
+                **({"module_id": base["module_id"]} if base.get("module_id") else {}),
+                **lead, **({"map": project["map"]} if project.get("map") else {}),
+            }
+
+        by_owner: dict[str | None, list[dict[str, Any]]] = {}
+        for item in edit_items:
+            by_owner[item["owner"]] = [{
+                "review_id": item["owner"],
+                **{k: item[k] for k in ("run_id", "owner", "module_id", "pack", "method") if k in item},
+                **({"map": project["map"]} if project.get("map") else {}),
+                **{k: v for k, v in item.items() if k not in {"run_id", "owner", "module_id", "pack", "method"}},
+            }]
+
+        def add_unit(item: dict[str, Any], packet: Mapping[str, Any]) -> dict[str, Any]:
+            lead = str(item.get("pack") or "")
+            rows = {row["id"]: row for row in item.get("unit_rows") or []}
+            rows.update({row["id"]: row for row in packet["rows"]})
+            return {
+                **item,
+                "units": [*(item.get("units") or []), *packet["units"]],
+                "unit_rows": list(rows.values()),
+                # A record already in the writer's pack is not sent twice.
+                "facts": {
+                    **(item.get("facts") or {}),
+                    **{e: t for e, t in packet["facts"].items() if e not in lead},
+                },
+                "values": {**(item.get("values") or {}), **packet["values"]},
+                "counts": {**(item.get("counts") or {}), **packet["counts"]},
+            }
+
+        def full(item: Mapping[str, Any], trial: Mapping[str, Any]) -> bool:
+            held = len(item.get("units") or [])
+            room = JOINT_MAX_UNITS - SECTION_UNITS * len(item.get("sections") or {})
+            # A unit alone is never cut: an item holding nothing takes it.
+            busy = held or "sections" in item
+            return bool(held >= room or (busy and size(trial) > JOINT_MAX_CHARS))
+
+        for packet in unit_packets:
+            owner = owner_for(packet)
+            chain = by_owner.setdefault(owner, [])
+            if not chain:
+                chain.append({"review_id": f"{CHIEF_OWNER}#1", **opening(None)})
+            trial = add_unit(chain[-1], packet)
+            if full(chain[-1], trial):
+                name = owner if owner is not None else CHIEF_OWNER
+                chain.append({"review_id": f"{name}#{len(chain) + 1}", **opening(owner)})
+                trial = add_unit(chain[-1], packet)
+            chain[-1] = trial
+        items = [item for chain in by_owner.values() for item in chain]
+        self.store.write_json(f"Work/runs/{run_id}/ledger/joint-review-items.json", items)
+        return {"review_items": items}
+
+    def apply_joint_review(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The joint reviews, split back into the editor's and the fact check's results.
+
+        Section findings go through the editor's merge and hold, unit findings
+        through the fact check's grounding and the chief's program findings:
+        what follows (the chief's one fix, the row fixes, each writer's one
+        revision) is the same as with separate passes.  A review that failed
+        leaves its sections with the program's findings only.
+        """
+
+        items = [dict(item) for item in _plain(value.get("items") or [])]
+        results = _plain(value.get("results") or {})
+        packets: list[dict[str, Any]] = []
+        fact_results: dict[str, Any] = {}
+        section_findings: dict[str, dict[str, Any]] = {}
+        bases: dict[str, dict[str, Any]] = {}
+        for item in items:
+            result = results.get(item["review_id"])
+            found = dict((result or {}).get("findings") or {}) if isinstance(result, Mapping) else {}
+            units = item.get("units") or []
+            unit_ids = {unit["unit_id"] for unit in units}
+            if units:
+                packets.append({
+                    "packet_id": item["review_id"], "units": units,
+                    "rows": item.get("unit_rows") or [], "facts": item.get("facts") or {},
+                    "values": item.get("values") or {}, "counts": item.get("counts") or {},
+                })
+                fact_results[item["review_id"]] = {
+                    "findings": {k: f for k, f in found.items() if k in unit_ids}
+                }
+            owner = item.get("owner")
+            if owner is None:
+                continue
+            if "sections" in item:
+                bases[owner] = {k: v for k, v in item.items() if k not in _JOINT_KEYS}
+            # rows_also belongs to the fact check of a unit only.
+            section_findings.setdefault(owner, {}).update({
+                k: {key: v for key, v in f.items() if key != "rows_also"}
+                for k, f in found.items() if k not in unit_ids and isinstance(f, Mapping)
+            })
+        edits = {}
+        for owner, base in bases.items():
+            merged = self.merge_findings(
+                {"item": base, "review": {"findings": section_findings.get(owner, {})}}
+            )
+            edits[owner] = self.hold_edit({"item": base, "merged": merged})
+        checked = self.apply_chief_facts({
+            "packets": packets,
+            "results": fact_results,
+            "ledger": value["ledger"],
+            "chapter1": value.get("chapter1"),
+            "chapter3": value.get("chapter3"),
+            "check1": value.get("check1"),
+        })
+        return {
+            "writing": edits,
+            "chief": {
+                "chapter1": _plain(value.get("chapter1")),
+                "chapter3": _plain(value.get("chapter3")),
+                "fact_check": checked["check"],
+                "fact_blocking": checked["blocking"],
+                "row_fix_items": checked["row_fix_items"],
+            },
+        }
+
     def _chief_item(
         self, run_id: str, chief: Mapping[str, Any], final: Mapping[str, Any]
     ) -> dict[str, Any]:
@@ -3039,6 +3241,8 @@ class LedgerTools(LedgerStageTools):
             "hold-edit": self.hold_edit,
             "chief-fix-input": self.chief_fix_input,
             "check-report": self.check_report,
+            "plan-joint-review": self.plan_joint_review,
+            "apply-joint-review": self.apply_joint_review,
             "recheck-edit": self.recheck_edit,
             "close-edit": self.close_edit,
             "compose-report": self.compose_report,
@@ -3046,4 +3250,4 @@ class LedgerTools(LedgerStageTools):
         return {tool_id: plain(method) for tool_id, method in methods.items()}
 
 
-__all__ = ["CHIEF_OWNER", "CHIEF_SECTIONS", "LedgerTools"]
+__all__ = ["CHIEF_OWNER", "CHIEF_SECTIONS", "JOINT_MAX_CHARS", "JOINT_MAX_UNITS", "REVIEW_MODES", "SECTION_UNITS", "LedgerTools", "review_mode"]

@@ -1,0 +1,7 @@
+id: ledger_joint_review_results
+version: 1.0.0
+description: The joint review items, the reviews by item and the program's check of chapter 1
+adapter: json_schema
+schema:
+  type: object
+  required: [items, ledger, chapter1, chapter3]
