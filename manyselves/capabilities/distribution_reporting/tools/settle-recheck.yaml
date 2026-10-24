@@ -1,0 +1,10 @@
+id: settle-recheck
+version: 1.0.0
+description: The program's recheck and the faithfulness check of a revision, as one; either sends the writer back once
+implementation: capability:distribution-reporting:settle-recheck
+input_contract: ledger_settle_recheck_input
+output_contract: ledger_merged_findings
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

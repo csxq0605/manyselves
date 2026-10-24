@@ -324,6 +324,27 @@ def checkpoints_of(items: Sequence[Any]) -> dict[str, str]:
     }
 
 
+CHANGED, DECLINED, UNHANDLED = "改了", "拒了", "没处理"
+
+
+def _reconciled(
+    asked: Mapping[str, Any],
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    declined: Mapping[str, Any],
+) -> dict[str, str]:
+    """Each finding a revision was asked to answer, by what the revision did with it."""
+
+    return {
+        key: (
+            DECLINED if key in declined
+            else CHANGED if key in after and str(after[key]) != str(before.get(key, ""))
+            else UNHANDLED
+        )
+        for key in asked
+    }
+
+
 def _combined(
     program: Mapping[str, Any] | None, reviewed: Mapping[str, Any] | None
 ) -> dict[str, Any]:
@@ -1990,6 +2011,17 @@ class LedgerTools(LedgerStageTools):
             for module_id, rows in json.loads(path.read_text(encoding="utf-8")).items()
         }
 
+    def _settled_rows(self, run_id: str) -> dict[str, list[JudgmentRow]]:
+        """The rows after the authors' fixes; before them, the final rows."""
+
+        path = self.workspace / f"Work/runs/{run_id}/ledger/judgments-settled.json"
+        if not path.is_file():
+            return self._final_rows(run_id)
+        return {
+            module_id: _rows(rows)
+            for module_id, rows in json.loads(path.read_text(encoding="utf-8")).items()
+        }
+
     def _ledger_material(self, run_id: str) -> dict[str, str]:
         """The run's final rows, source records and value slots by id, for grounds."""
 
@@ -2560,6 +2592,8 @@ class LedgerTools(LedgerStageTools):
                     "minor": dict((edit.get("revision_input") or {}).get("minor") or {}),
                 },
             })
+        # The rows as they stand after the fixes, for the checks after revision.
+        self.store.write_json(f"Work/runs/{run_id}/ledger/judgments-settled.json", final["ledger"])
         chief = dict(_plain(value.get("checked")) or {})
         if chief and changed:
             check = dict(chief.get("fact_check") or {})
@@ -3035,12 +3069,100 @@ class LedgerTools(LedgerStageTools):
                 **({"chief_fix": "主编返修提交了不存在的位置：" + "、".join(unplaced)} if unplaced else {}),
             },
         )
-        return {
+        # A second fix (``earlier`` is the first one's draft) keeps what the
+        # first declined and is not checked again.
+        earlier = _plain(value.get("earlier")) or {}
+        drafted = {
             "chapter1": chapter1,
             "chapter3": chapter3,
             "texts": texts,
-            "declined": dict(fix.declined),
+            "declined": {**dict(earlier.get("declined") or {}), **dict(fix.declined)},
         }
+        if earlier or not fix.model_dump(exclude_defaults=True):
+            return {**drafted, "check_item": {}, "has_check": False, "reconciled": {}}
+        # What the fix changed is checked against the ledger once: the units
+        # whose text changed, with their rows (as the authors left them),
+        # records, values and counts.
+        unit_kw = {
+            "ledger": self._settled_rows(run_id) or {m: _rows(r) for m, r in final["ledger"].items()},
+            "groups": final.get("action_groups") or [],
+            "slots": self._slots(run_id),
+            "fact_texts": self._reference(run_id).get("fact_texts") or {},
+            "run_id": run_id,
+            "max_units": 1,
+            "prefix": "R-",
+            "gap_labels": gap_labels(self._gap_entries(run_id)),
+        }
+        before = {
+            unit["unit_id"]: str(unit.get("text", ""))
+            for packet in chief_fact_packets(
+                chapter1=_plain(value["chapter1"]), chapter3=_plain(value["chapter3"]), **unit_kw
+            )
+            for unit in packet["units"]
+        }
+        after_packets = chief_fact_packets(chapter1=chapter1, chapter3=chapter3, **unit_kw)
+        after = {unit["unit_id"]: str(unit.get("text", "")) for p in after_packets for unit in p["units"]}
+        item: dict[str, Any] = {}
+        for packet in after_packets:
+            units = [u for u in packet["units"] if before.get(u["unit_id"]) != str(u.get("text", ""))]
+            if not units:
+                continue
+            rows = {row["id"]: row for row in item.get("unit_rows") or []}
+            rows.update({row["id"]: row for row in packet["rows"]})
+            item = {
+                "review_id": "chief-recheck",
+                "run_id": run_id,
+                "units": [*(item.get("units") or []), *units],
+                "unit_rows": list(rows.values()),
+                **{
+                    key: {**(item.get(key) or {}), **(packet.get(key) or {})}
+                    for key in ("facts", "values", "counts")
+                },
+            }
+        asked = {
+            key: finding
+            for key, finding in ((_plain(value.get("fact_check")) or {}).get("findings") or {}).items()
+            if key in before
+        }
+        reconciled = _reconciled(
+            asked, before, after | {k: None for k in before if k not in after},
+            fix.declined,
+        )
+        return {**drafted, "check_item": item, "has_check": bool(item), "reconciled": reconciled}
+
+    def settle_chief_recheck(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The faithfulness check of the chief's fix and the findings it left unanswered.
+
+        Blocking findings on the changed units, held to the ledger they cite,
+        and each blocking finding of the fact check the fix neither changed
+        nor declined, send the chief back once.  Minor findings are kept for
+        the delivery report.
+        """
+
+        draft = dict(_plain(value.get("draft")) or {})
+        run_id = str(value["ledger"]["run_id"])
+        asked = dict((_plain(value.get("fact_check")) or {}).get("findings") or {})
+        item = draft.get("check_item") or {}
+        unit_ids = {unit["unit_id"] for unit in item.get("units") or []}
+        checked = {
+            k: {key: v for key, v in f.items() if key != "rows_also"}
+            for k, f in ((_plain(value.get("check")) or {}).get("findings") or {}).items()
+            if k in unit_ids and isinstance(f, Mapping)
+        }
+        held = grounded(checked, self._ledger_material(run_id))
+        findings = {k: f for k, f in held.items() if f.get("severity") == "blocking"}
+        for key, status in (draft.get("reconciled") or {}).items():
+            if status == UNHANDLED and (asked.get(key) or {}).get("severity") == "blocking":
+                findings[key] = {
+                    **asked[key],
+                    "problem": "这条必须修改的意见没有处理（本条没有改，也没有说明不改的理由）："
+                    + str(asked[key].get("problem", "")),
+                }
+        self._record_hints(run_id, "chief_revision_check", {
+            **{k: f["problem"] for k, f in held.items() if f.get("severity") != "blocking"},
+            **{f"对账 {k}": status for k, status in (draft.get("reconciled") or {}).items()},
+        })
+        return {"fact_check": {"findings": findings}, "blocking": _blocking(findings)}
 
     def _chief_program_findings(
         self, run_id: str, texts: Mapping[str, str], *, hints_out: dict[str, list[str]] | None
@@ -3165,10 +3287,107 @@ class LedgerTools(LedgerStageTools):
         if item["owner"] == CHIEF_OWNER and changed:
             findings = self._chief_text_findings(findings, changed)
         findings = {key: f for key, f in findings.items() if key in changed}
+        # Each finding the writer was asked to fix: changed, declined, or not
+        # handled; a blocking one not handled goes back with the recheck.
+        asked = dict((item.get("revision_input") or {}).get("findings") or {})
+        reconciled = _reconciled(
+            asked, dict(item.get("sections") or {}), changed, (revision.get("declined") or {})
+        )
+        for key, status in reconciled.items():
+            if status == UNHANDLED and asked[key].get("severity") == "blocking":
+                findings[key] = _combined(findings.get(key), {
+                    "problem": "这条必须修改的意见没有处理（本节没有改，也没有说明不改的理由）："
+                    + str(asked[key].get("problem", "")),
+                    "severity": "blocking",
+                    "suggestion": str(asked[key].get("suggestion", "")),
+                })
+        check_item = self._revision_check_item(item, changed) if run_id else {}
         return {
             "findings": findings,
             "blocking": _blocking(findings),
             "revision_input": {"findings": findings, "minor": {}},
+            "reconciled": reconciled,
+            "check_item": check_item,
+            "has_check": bool(check_item),
+            "owner": item["owner"],
+            **({"run_id": run_id} if run_id else {}),
+        }
+
+    def _revision_check_item(
+        self, item: Mapping[str, Any], changed: Mapping[str, str]
+    ) -> dict[str, Any]:
+        """The faithfulness check on what a revision changed, and only that.
+
+        The changed sections with the rows they rest on (as the authors left
+        them), the rows related to those and the records both cite: the same
+        side of the ledger the joint review read, cut to the changed sections.
+        """
+
+        if not changed:
+            return {}
+        run_id = str(item["run_id"])
+        ledger = self._settled_rows(run_id)
+        own = [row for rows in ledger.values() for row in rows if row.submodule_id in changed]
+        cited = related_rows(own, ledger)
+        index = {row.id: row for rows in ledger.values() for row in rows}
+        fact_texts = self._reference(run_id).get("fact_texts") or {}
+        facts = {
+            e: str(fact_texts.get(e, ""))
+            for row_id in [row.id for row in own] + [entry["row_id"] for entry in cited]
+            if row_id in index
+            for e in index[row_id].evidence_ids
+        }
+        return {
+            "review_id": f"{item['owner']}-recheck",
+            "run_id": run_id,
+            "owner": item["owner"],
+            **({"module_id": item["module_id"]} if item.get("module_id") else {}),
+            "sections": dict(changed),
+            "rows": [compact_row(row) for row in own],
+            **({"cited_rows": cited} if cited else {}),
+            **({"facts": facts} if facts else {}),
+        }
+
+    def settle_recheck(self, value: dict[str, Any]) -> dict[str, Any]:
+        """The program's recheck and the faithfulness check of a revision, as one.
+
+        The check's blocking findings on the changed sections (held to the
+        ledger they cite) join the program's; either sends the writer back
+        once, as the program's recheck alone did.  Minor findings are kept
+        for the delivery report and reach no writer.
+        """
+
+        recheck = dict(_plain(value.get("recheck")) or {})
+        findings = dict(recheck.get("findings") or {})
+        item = recheck.get("check_item") or {}
+        checked = dict((_plain(value.get("check")) or {}).get("findings") or {})
+        minor: dict[str, Any] = {}
+        if item and checked:
+            run_id = str(item["run_id"])
+            held = grounded(
+                {
+                    k: {key: v for key, v in f.items() if key != "rows_also"}
+                    for k, f in checked.items()
+                    if k in (item.get("sections") or {}) and isinstance(f, Mapping)
+                },
+                self._ledger_material(run_id),
+            )
+            for key, finding in held.items():
+                if finding.get("severity") == "blocking":
+                    findings[key] = _combined(findings.get(key), finding)
+            minor = {k: f["problem"] for k, f in held.items() if f.get("severity") != "blocking"}
+        if recheck.get("run_id"):
+            # For the delivery report: what the check left as minor, and what
+            # the revision did with each finding it was asked to answer.
+            self._record_hints(str(recheck["run_id"]), f"revision_check_{recheck.get('owner')}", {
+                **minor,
+                **{f"对账 {k}": status for k, status in (recheck.get("reconciled") or {}).items()},
+            })
+        return {
+            "findings": findings,
+            "blocking": _blocking(findings),
+            "revision_input": {"findings": findings, "minor": {}},
+            "reconciled": recheck.get("reconciled") or {},
         }
 
     def close_edit(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -3182,6 +3401,7 @@ class LedgerTools(LedgerStageTools):
             ),
             "findings": value["merged"]["findings"],
             **({"recheck_findings": recheck["findings"]} if recheck.get("findings") else {}),
+            **({"reconciled": recheck["reconciled"]} if recheck.get("reconciled") else {}),
             **({"declined": declined} if (declined := {
                 **((value.get("revision") or {}).get("declined") or {}),
                 **((value.get("recheck_revision") or {}).get("declined") or {}),
@@ -3490,6 +3710,8 @@ class LedgerTools(LedgerStageTools):
             "plan-joint-review": self.plan_joint_review,
             "apply-joint-review": self.apply_joint_review,
             "recheck-edit": self.recheck_edit,
+            "settle-recheck": self.settle_recheck,
+            "settle-chief-recheck": self.settle_chief_recheck,
             "close-edit": self.close_edit,
             "compose-report": self.compose_report,
         }

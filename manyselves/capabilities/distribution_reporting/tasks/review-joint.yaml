@@ -1,5 +1,5 @@
 id: review-joint
-version: 2.1.0
+version: 2.2.0
 description: Check that one writer's sections and the chapter 1 and 3 units resting on its rows say what the ledger says, in one pass
 agent: report-consultant
 objective: 你现在是核对员。台账（判断行）已经过同类情况审查，是这一步的标准：这里只看正文和条目是否忠于台账，不重新判断判断行本身对不对，也不审组织方式、分段和篇幅。输入里有两类内容，按各自的规则看：一、这部分成稿（sections），对照它所依据的判断行（rows）、与这些行有关联的别处判断行（cited_rows）、这些行所引的原始记录（facts，就是写手拿到的那一批，别的模块的也在内）和本节所在的跨模块主线（story_lines），看有没有台账里没有的说法、有没有写得与台账不同；二、报告第一、三章里依据这些判断行的条目（units），以及它们所引或点名的判断行（unit_rows）、原始记录（facts）、相关数值（values）和各列的计数与取值（counts），只核对事实，不看文字写法和组织方式。两类内容有一类没有的，只看另一类。
@@ -20,6 +20,7 @@ constraints:
 - 条目：逐个核对三件事：一、写出的数量、档位、对象和数值是否与 unit_rows、facts、values、counts 一致（例如总数少算一个、几档漏了一档、数值配到了别的对象上）；二、说法是否比所引行更重（把“资料未提供”写成“缺失/没有”，把“可能”写成“将会”，把来源作者意见写成已确认，把照片待核写成事实，风险等级高于所引行）；三、几行合并成一句时有没有改动对象或数值。这三类错误判 blocking。
 - 条目：条目里自己做的专业推理和综合判断（几项证据合起来说明什么、先做什么）不算问题，只要不和所引行、原始记录矛盾，也不比它们说得更重。句中的数量可能是挑选出来的一部分（例如“其中两台”），先看上下文再判断是否写错。材料里没有、无法核对的，不判为问题；所引行的依据（basis）没有给出的，按“无法核对”处理，不判 blocking。
 - 成稿和条目：错误的说法如果在所引判断行（rows、cited_rows 或 unit_rows）自己的 finding、hazard 或 action 里也照样写着（与这一行的 basis 或所引记录不符），把这些行的编号写进 rows_also：程序会把意见同时交给这一行的作者改判断行，改好的行再带到所有引用它的小节和条目。只是正文或条目写错、判断行本身没错的，不填 rows_also。
+- review_id 以 -recheck 结尾的，是修订之后的核对：只给了这次改过的小节或条目，只核对它们是否忠于台账，规则同上；改动是按之前的意见做的，不因为与原稿不同就判为问题。
 - 没有问题时提交空的 findings。
 tools: []
 attention_budget_tokens: 300000

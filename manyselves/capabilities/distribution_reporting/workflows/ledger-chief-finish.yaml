@@ -1,8 +1,9 @@
 id: ledger-chief-finish
-version: 2.0.0
-description: Chapters 1 and 3 are fixed in one turn of a conversation of its own, on the fact check and the program's findings with only the parts they point at; the chief then writes chapter 4; it runs after the authors fixed rows, while the writers revise
+version: 3.0.0
+description: Chapters 1 and 3 are fixed in one turn of a conversation of its own, on the fact check and the program's findings with only the parts they point at; the changed units are checked against the ledger once and a blocking finding, or a blocking finding left unanswered, sends the chief back once; the chief then writes chapter 4; it runs after the authors fixed rows, while the writers revise
 tasks:
 - revise-chief-facts
+- review-joint
 - chief-chapter-4
 recovery:
 - typed-turn-recovery
@@ -14,6 +15,7 @@ state:
   chief_key: chief
   chapter4: null
   chief_fix: null
+  revision_check: null
 actions:
 - id: resume-chief
   kind: resolve_conversation
@@ -83,6 +85,110 @@ actions:
     chapter1: chapter1
     chapter3: chapter3
     fix: chief_fix
+    fact_check: fact_check
+  output_variable: draft
+# What the fix changed is checked against the ledger once, in a fresh
+# conversation, on the changed units, their rows and records only.
+- id: has-check
+  kind: set_variable
+  variable: has_check
+  value_variable: draft
+  field: has_check
+- id: check-route
+  kind: if
+  condition:
+    variable: has_check
+    operator: eq
+    value: true
+  then: check-item
+  otherwise: settle-1
+- id: check-item
+  kind: set_variable
+  variable: check_item
+  value_variable: draft
+  field: check_item
+- id: open-check
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: chief-revision-check
+  key_variable: chief_key
+  mode: run
+  output_variable: check_conversation
+- id: check
+  kind: invoke_agent
+  agent: report-consultant
+  task: review-joint
+  conversation_variable: check_conversation
+  input_variable: check_item
+  output_variable: revision_check
+- id: settle-check
+  kind: invoke_tool
+  tool: settle-chief-recheck
+  input_variables:
+    ledger: final
+    fact_check: fact_check
+    draft: draft
+    check: revision_check
+  output_variable: recheck
+- id: recheck-blocking
+  kind: set_variable
+  variable: recheck_blocking
+  value_variable: recheck
+  field: blocking
+- id: recheck-route
+  kind: if
+  condition:
+    variable: recheck_blocking
+    operator: eq
+    value: true
+  then: recheck-findings
+  otherwise: settle-1
+- id: recheck-findings
+  kind: set_variable
+  variable: recheck_fact_check
+  value_variable: recheck
+  field: fact_check
+- id: draft-1
+  kind: set_variable
+  variable: draft_chapter1
+  value_variable: draft
+  field: chapter1
+- id: draft-3
+  kind: set_variable
+  variable: draft_chapter3
+  value_variable: draft
+  field: chapter3
+- id: refix-input
+  kind: invoke_tool
+  tool: chief-fix-input
+  input_variables:
+    fact_check: recheck_fact_check
+    chapter1: draft_chapter1
+    chapter3: draft_chapter3
+  output_variable: refix_input
+- id: resume-fix
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: chief-fix
+  key_variable: chief_key
+  mode: run
+  output_variable: fix_conversation
+- id: refix
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-facts
+  conversation_variable: fix_conversation
+  input_variable: refix_input
+  output_variable: chief_refix
+- id: apply-refix
+  kind: invoke_tool
+  tool: apply-chief-fix
+  input_variables:
+    ledger: final
+    chapter1: draft_chapter1
+    chapter3: draft_chapter3
+    fix: chief_refix
+    earlier: draft
   output_variable: draft
 - id: settle-1
   kind: set_variable

@@ -300,7 +300,10 @@ def _answer(message):
         assert "chapter1" not in value and "texts" not in value
         assert [action["group_id"] for action in value["actions"]] == ["G-01"]
         risk = {**value["key_risks"]["1.2-重点风险-1"], "description": "个别对象温度偏高需复测"}
-        return ("submit", [{"key_risks": {"1.2-重点风险-1": risk}}])
+        # The 3.2 group did not use the row's old words: declined, so the
+        # reconciliation does not send it back.
+        declined = {"3.2-G-01": "本组没有沿用原来的说法"} if "3.2-G-01" in value["findings"] else {}
+        return ("submit", [{"key_risks": {"1.2-重点风险-1": risk}, "declined": declined}])
     if task in {"chief-chapter-1", "revise-chief-overview"}:
         return (
             "submit",
@@ -341,6 +344,9 @@ def _answer(message):
                     "rows_also": ["J-2.4-1"],
                 }
         return ("submit", [{"findings": findings}])
+    if task == "review-joint" and str(value.get("review_id", "")).endswith("-recheck"):
+        # The check after a revision finds the changed text faithful.
+        return ("submit", [{"findings": {}}])
     if task == "review-joint":
         # The editor's and the fact check's answers, in one review.
         findings = {}
@@ -658,7 +664,15 @@ async def test_joint_review_edits_and_checks_in_one_pass_on_rows_and_records(
     assert not [loop for loop in loops if tasks_of(loop)[:1] in (["edit-sections"], ["check-chief-facts"])]
     reviews = [loop for loop in loops if tasks_of(loop) == ["review-joint"]]
     assert reviews and all(not loop.restored for loop in reviews)
-    items = {_input_of(loop.received[0].content)["review_id"]: loop.received[0].content for loop in reviews}
+    every = {_input_of(loop.received[0].content)["review_id"]: loop.received[0].content for loop in reviews}
+    items = {rid: c for rid, c in every.items() if not rid.endswith("-recheck")}
+    # After the revisions, a fresh check reads only what changed: 2.1's one
+    # revised section with its rows and records, and the chief's fixed units.
+    rechecks = {rid: _input_of(c) for rid, c in every.items() if rid.endswith("-recheck")}
+    assert set(rechecks["2.1-recheck"]["sections"]) == {next(iter(REPORT_TAXONOMY["2.1"].submodules))}
+    assert rechecks["2.1-recheck"]["rows"] and "units" not in rechecks["2.1-recheck"]
+    assert "chief-recheck" in rechecks and "sections" not in rechecks["chief-recheck"]
+    assert {u["unit_id"] for u in rechecks["chief-recheck"]["units"]} >= {"1.2-重点风险-1"}
     writers = {
         _input_of(loop.received[0].content)["submodule_id"]: loop
         for loop in loops if tasks_of(loop)[:1] == ["write-section"]
@@ -935,3 +949,44 @@ def test_chapter_1_is_checked_in_its_own_branch_without_waiting_for_chapter_3() 
     assert chapter_1[:3] == ["chapter-1", "check-1", "plan-facts"] and "fact-check" in chapter_1
     assert "fact-check-3" in chapter_3 and "chapter-1" not in chapter_3
     assert ids.index("apply-facts") > ids.index(parallel["join"])
+
+
+def test_a_revision_is_reconciled_and_checked_on_what_it_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import ledger_tools
+
+    tools = ledger_tools.LedgerTools(tmp_path)
+    monkeypatch.setattr(tools, "_slots", lambda run_id: {})
+    monkeypatch.setattr(tools, "_copied", lambda run_id: None)
+    monkeypatch.setattr(tools, "_record_hints", lambda *a: None)
+    monkeypatch.setattr(tools, "_revision_check_item", lambda item, changed: {
+        "review_id": "2.4-recheck", "run_id": "r", "owner": "2.4", "sections": dict(changed)} if changed else {})
+    monkeypatch.setattr(tools, "_ledger_material", lambda run_id: {"J-2.4-1": "row", "E-1": "fact"})
+    asked = {
+        "2.4.1": {"problem": "a", "severity": "blocking", "suggestion": "s"},
+        "2.4.2": {"problem": "b", "severity": "blocking", "suggestion": "s"},
+        "2.4.3": {"problem": "c", "severity": "blocking", "suggestion": "s"},
+    }
+    item = {"owner": "2.4", "run_id": "r", "sections": {"2.4.1": "旧", "2.4.2": "旧", "2.4.3": "旧"},
+            "revision_input": {"findings": asked}}
+    revision = {"sections": {"2.4.1": "新"}, "declined": {"2.4.2": "材料不支持"}}
+    recheck = tools.recheck_edit({"item": item, "merged": {"findings": asked}, "revision": revision})
+    # Changed, declined, not handled; only the one not handled goes back.
+    assert recheck["reconciled"] == {"2.4.1": "改了", "2.4.2": "拒了", "2.4.3": "没处理"}
+    assert set(recheck["findings"]) == {"2.4.3"} and recheck["blocking"]
+    # The check reads the changed section only.
+    assert recheck["check_item"]["sections"] == {"2.4.1": "新"}
+    settled = tools.settle_recheck({"recheck": recheck, "check": {"findings": {
+        "2.4.1": {"problem": "加了台账没有的原因", "severity": "blocking", "suggestion": "删去",
+                  "grounds": ["J-2.4-1"], "rows_also": ["J-2.4-1"]},
+        "2.4.2": {"problem": "不是这次改的", "severity": "blocking", "suggestion": "x", "grounds": ["E-1"]},
+        "2.4.9": {"problem": "措辞", "severity": "minor", "suggestion": "x", "grounds": ["E-1"]},
+    }}})
+    assert set(settled["findings"]) == {"2.4.1", "2.4.3"} and settled["blocking"]
+    assert "rows_also" not in settled["findings"]["2.4.1"]
+    assert settled["revision_input"]["findings"] == settled["findings"]
+    # A blocking finding without grounds is not checkable and sends nothing back.
+    quiet = tools.settle_recheck({"recheck": {**recheck, "findings": {}}, "check": {"findings": {
+        "2.4.1": {"problem": "p", "severity": "blocking", "suggestion": "s", "grounds": []}}}})
+    assert quiet["findings"] == {} and not quiet["blocking"]

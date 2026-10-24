@@ -1,0 +1,7 @@
+id: ledger_chief_recheck
+version: 1.0.0
+description: What sends the chief back once after its fix, as a fact check
+adapter: json_schema
+schema:
+  type: object
+  required: [fact_check, blocking]

@@ -1,0 +1,10 @@
+id: settle-chief-recheck
+version: 1.0.0
+description: The faithfulness check of the chief's fix and the fact-check findings it left unanswered; a blocking one sends the chief back once
+implementation: capability:distribution-reporting:settle-chief-recheck
+input_contract: ledger_chief_recheck_input
+output_contract: ledger_chief_recheck
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

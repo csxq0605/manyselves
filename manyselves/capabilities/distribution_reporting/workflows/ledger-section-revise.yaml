@@ -1,8 +1,9 @@
 id: ledger-section-revise
-version: 2.0.0
-description: One writer revises once, on the editor's findings and the rows the fact check fixed, in its writing conversation; the program checks the revision once
+version: 3.0.0
+description: One writer revises once, on the editor's findings and the rows the fact check fixed, in its writing conversation; the program reconciles the findings and checks the revision, a fresh review checks the changed sections against the ledger, and a blocking finding of either sends the writer back once
 tasks:
 - revise-sections
+- review-joint
 recovery:
 - typed-turn-recovery
 output_contract: ledger_owner_result
@@ -12,6 +13,7 @@ state:
   revision: null
   recheck: null
   recheck_revision: null
+  revision_check: null
 actions:
 - id: resume-writer
   kind: resolve_conversation
@@ -49,6 +51,47 @@ actions:
     item: item
     merged: merged
     revision: revision
+  output_variable: recheck
+# What the revision changed is checked against the ledger once, in a fresh
+# conversation, on the changed sections, their rows and records only.
+- id: has-check
+  kind: set_variable
+  variable: has_check
+  value_variable: recheck
+  field: has_check
+- id: check-route
+  kind: if
+  condition:
+    variable: has_check
+    operator: eq
+    value: true
+  then: check-item
+  otherwise: settle
+- id: check-item
+  kind: set_variable
+  variable: check_item
+  value_variable: recheck
+  field: check_item
+- id: open-check
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: revision-check
+  key_variable: item_key
+  mode: run
+  output_variable: check_conversation
+- id: check
+  kind: invoke_agent
+  agent: report-consultant
+  task: review-joint
+  conversation_variable: check_conversation
+  input_variable: check_item
+  output_variable: revision_check
+- id: settle
+  kind: invoke_tool
+  tool: settle-recheck
+  input_variables:
+    recheck: recheck
+    check: revision_check
   output_variable: recheck
 - id: recheck-blocking
   kind: set_variable
