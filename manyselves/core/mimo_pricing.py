@@ -345,19 +345,3 @@ def format_mimo_cost(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def calculate_mimo_v25_pro_cost(rows: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-    """Backward-compatible alias for older callers."""
-
-    return calculate_mimo_cost(rows, default_model="mimo-v2.5-pro")
-
-
-def calculate_mimo_v25_pro_run_cost(workspace: Path, run_id: str) -> dict[str, Any] | None:
-    """Backward-compatible alias for older callers."""
-
-    return calculate_mimo_run_cost(workspace, run_id, default_model="mimo-v2.5-pro")
-
-
-def format_mimo_v25_pro_cost(report: dict[str, Any]) -> str:
-    """Backward-compatible alias for older callers."""
-
-    return format_mimo_cost(report)

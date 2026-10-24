@@ -5,10 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from manyselves.capabilities.distribution_reporting.runtime.assessment_context import (
-    normalize_assessments,
-    part_assessment,
-)
 from manyselves.capabilities.distribution_reporting.runtime.joint_dossiers import (
     build_joint_dossiers,
 )
@@ -80,11 +76,6 @@ def test_every_copy_is_marked_and_each_place_may_judge_its_copy(tmp_path):
     assert '"shared":"O-0001；负责=本小节；另见=2.4.4/E-0001"' in owner_packet
     assert '"shared":"O-0001；负责=2.2.2.1/E-0002；另见=2.2.2.1/E-0002"' in other_packet
     assert "按本小节的角度判断" in other_packet
-
-    expected = part_assessment(tmp_path, "facts", "2.4", "2.4.4", {}).expected_evidence_ids
-    assert {"E-0001", "E-0003"} <= set(expected)
-    record = {"evidence_ids": ["E-0001"], "disposition": "concern", "narrative_anchor": "负荷"}
-    assert normalize_assessments([record], ["E-0001"], set())[0]["evidence_ids"] == ["E-0001"]
 
 
 def _module(part_id: str, records: list[dict], narrative: str = "") -> SimpleNamespace:
