@@ -11,7 +11,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 def test_manyselves_brand_values_and_icon() -> None:
     assert PRODUCT_NAME == "Manyselves"
     assert TAGLINE == "One runtime. Many selves."
-    assert DESCRIPTOR_EN == "A local workspace for document-defined agent teams."
+    assert DESCRIPTOR_EN == "A file-defined multi-agent runtime with durable workflows and reconstructible execution."
     assert APP_ICON_PATH == REPOSITORY_ROOT / "manyselves/resources/icon.png"
     assert APP_ICON_PATH.is_file()
 

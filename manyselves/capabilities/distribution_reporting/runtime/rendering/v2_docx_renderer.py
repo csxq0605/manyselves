@@ -909,13 +909,6 @@ def is_inline_analysis_line(line: str) -> bool:
     return bool(re.match(r"^【(根因|直接影响|恶化条件|建议|风险分析|结论|现状描述)】", clean))
 
 
-def is_label_line(line: str) -> bool:
-    return bool(re.match(
-        r"^(?:【)?(现状描述|风险等级|资料来源|方法论依据|核查方法|判定依据|风险分析|整改建议|参考标准|潜在风险|后续建议|结论|建议)(?:】)?[:：]",
-        clean_inline_marks(line),
-    ))
-
-
 def is_exact_label_line(line: str) -> bool:
     clean = clean_inline_marks(clean_markdown_heading(clean_block_markup(line)))
     clean = clean.rstrip("：:").strip()
@@ -1272,13 +1265,6 @@ def apply_list_numbering(paragraph, num_id: int) -> None:
     p_pr.append(num_pr)
 
 
-def remove_paragraph_outline_level(paragraph) -> None:
-    p_pr = paragraph._p.get_or_add_pPr()
-    outline = p_pr.find(qn("w:outlineLvl"))
-    if outline is not None:
-        p_pr.remove(outline)
-
-
 def set_paragraph_outline_level(paragraph, outline_level: int) -> None:
     p_pr = paragraph._p.get_or_add_pPr()
     outline = p_pr.find(qn("w:outlineLvl"))
@@ -1286,25 +1272,6 @@ def set_paragraph_outline_level(paragraph, outline_level: int) -> None:
         outline = OxmlElement("w:outlineLvl")
         p_pr.append(outline)
     outline.set(qn("w:val"), str(max(0, min(outline_level, 8))))
-
-
-def restore_template_heading_numbering(paragraph, level: int) -> None:
-    """Restore the outline numbering used by the bundled Word template."""
-    if level < 1 or level > 4:
-        return
-    p_pr = paragraph._p.get_or_add_pPr()
-    num_pr = p_pr.find(qn("w:numPr"))
-    if num_pr is not None:
-        p_pr.remove(num_pr)
-
-    num_pr = OxmlElement("w:numPr")
-    ilvl = OxmlElement("w:ilvl")
-    ilvl.set(qn("w:val"), str(level - 1))
-    num_id = OxmlElement("w:numId")
-    num_id.set(qn("w:val"), "1")
-    num_pr.append(ilvl)
-    num_pr.append(num_id)
-    p_pr.append(num_pr)
 
 
 def format_table_cell_paragraph(paragraph, header: bool = False) -> None:
@@ -1632,135 +1599,6 @@ def photo_payload_from_table_cell(value: Any, model: dict[str, Any] | None) -> d
     }
 
 
-def set_table_widths(table, column_count: int) -> None:
-    header_texts = []
-    if table.rows:
-        header_texts = [clean_text(cell.text) for cell in table.rows[0].cells]
-    width_maps = {
-        3: [4.2, 6.4, 6.4],
-        4: [3.2, 4.6, 5.8, 3.8],
-        5: [1.5, 2.6, 7.0, 2.2, 4.0],
-        6: [2.3, 2.3, 2.7, 4.2, 4.0, 2.8],
-        7: [2.3, 3.0, 1.5, 1.6, 2.2, 1.8, 1.6],
-        8: [2.0, 2.0, 1.8, 1.5, 1.7, 2.4, 2.2, 3.0],
-        9: [2.0, 2.0, 2.4, 2.3, 2.2, 2.2, 2.4, 2.4, 2.2],
-        11: [1.4, 1.8, 1.5, 2.0, 2.8, 1.4, 1.4, 3.0, 2.0, 1.7, 2.2],
-    }
-    if column_count == 6 and {"序号", "章节", "问题", "优先级", "建议", "预期收益"}.issubset(set(header_texts)):
-        weights = [1.1, 3.0, 4.5, 1.5, 4.2, 3.2]
-    else:
-        weights = width_maps.get(column_count)
-    if not weights:
-        weights = [
-            max(
-                1.0,
-                min(
-                    6.0,
-                    max(
-                        (
-                            len(clean_text(row.cells[index].text))
-                            for row in table.rows
-                            if index < len(row.cells)
-                        ),
-                        default=1,
-                    )
-                    ** 0.5,
-                ),
-            )
-            for index in range(column_count)
-        ]
-    usable_width = table_usable_width_cm(table)
-    weight_total = sum(weights)
-    total_twips = cm_to_twips(usable_width)
-    width_twips = [
-        int(total_twips * (weight / weight_total))
-        for weight in weights[:-1]
-    ]
-    width_twips.append(total_twips - sum(width_twips))
-    set_fixed_table_layout(table)
-    set_table_total_width(table, total_twips)
-    set_table_grid_widths(table, width_twips)
-    for row in table.rows:
-        for index, cell in enumerate(row.cells):
-            if index < len(width_twips):
-                cell.width = Cm(width_twips[index] / 567)
-                set_cell_width(cell, width_twips[index])
-
-
-def table_usable_width_cm(table) -> float:
-    try:
-        sections = table.part.document.sections
-        widths = [
-            (
-                section.page_width.cm
-                - section.left_margin.cm
-                - section.right_margin.cm
-            )
-            for section in sections
-            if section.page_width is not None
-            and section.left_margin is not None
-            and section.right_margin is not None
-        ]
-    except Exception:
-        widths = []
-    # Use the narrowest retained section so one table geometry remains safe
-    # after Word repaginates the document or updates fields.
-    return max(1.0, min(widths, default=15.0))
-
-
-def set_table_total_width(table, width_twips: int) -> None:
-    tbl_pr = table._tbl.tblPr
-    tbl_w = tbl_pr.find(qn("w:tblW"))
-    if tbl_w is None:
-        tbl_w = OxmlElement("w:tblW")
-        tbl_pr.insert(0, tbl_w)
-    tbl_w.set(qn("w:w"), str(width_twips))
-    tbl_w.set(qn("w:type"), "dxa")
-    tbl_ind = tbl_pr.find(qn("w:tblInd"))
-    if tbl_ind is None:
-        tbl_ind = OxmlElement("w:tblInd")
-        tbl_pr.append(tbl_ind)
-    tbl_ind.set(qn("w:w"), "0")
-    tbl_ind.set(qn("w:type"), "dxa")
-
-
-def set_fixed_table_layout(table) -> None:
-    tbl_pr = table._tbl.tblPr
-    layout = tbl_pr.find(qn("w:tblLayout"))
-    if layout is None:
-        layout = OxmlElement("w:tblLayout")
-        tbl_pr.append(layout)
-    layout.set(qn("w:type"), "fixed")
-
-
-def set_table_grid_widths(table, widths_twips: list[int]) -> None:
-    tbl = table._tbl
-    grid = tbl.tblGrid
-    if grid is None:
-        grid = OxmlElement("w:tblGrid")
-        tbl.insert(0, grid)
-    for child in list(grid):
-        grid.remove(child)
-    for width_twips in widths_twips:
-        col = OxmlElement("w:gridCol")
-        col.set(qn("w:w"), str(width_twips))
-        grid.append(col)
-
-
-def set_cell_width(cell, width_twips: int) -> None:
-    tc_pr = cell._tc.get_or_add_tcPr()
-    tc_w = tc_pr.find(qn("w:tcW"))
-    if tc_w is None:
-        tc_w = OxmlElement("w:tcW")
-        tc_pr.append(tc_w)
-    tc_w.set(qn("w:w"), str(width_twips))
-    tc_w.set(qn("w:type"), "dxa")
-
-
-def cm_to_twips(value: float) -> int:
-    return int(float(value) * 567)
-
-
 TABLE_SECTION_MAP = {
     1: "2.1.1",
     2: "2.1.2",
@@ -1784,81 +1622,6 @@ TABLE_SECTION_MAP = {
     20: "2.5.3.3",
     21: "2.5.5",
 }
-
-
-def fill_template_tables(document: Document, model: dict[str, Any]) -> None:
-    sections = model.get("sections") or {}
-    action_rows = model.get("action_rows") or []
-    for table_index, table in enumerate(document.tables, start=1):
-        if table_index == 22:
-            fill_action_table(table, action_rows)
-            continue
-        section_id = TABLE_SECTION_MAP.get(table_index)
-        if not section_id:
-            continue
-        fill_issue_table(table, get_section_issues(sections, section_id), section_id, model)
-
-
-def fill_issue_table(table, issues: list[dict[str, Any]], section_id: str, model: dict[str, Any] | None = None) -> None:
-    col_count = len(table.columns)
-    headers = headers_for_table(col_count)
-    reset_table(table, headers)
-    detail_rows = detail_rows_for_section(model or {}, section_id) if col_count == 6 else []
-    if detail_rows:
-        for detail in detail_rows[:12]:
-            add_table_row(table, detail_issue_row(detail, model or {}))
-        set_table_widths(table, col_count)
-        return
-    if not issues:
-        add_table_row(table, placeholder_row(col_count, section_id))
-        set_table_widths(table, col_count)
-        return
-    for issue in issues[:12]:
-        add_table_row(table, issue_row(issue, col_count))
-    set_table_widths(table, col_count)
-
-
-def fill_action_table(table, rows: list[dict[str, Any]]) -> None:
-    headers = ["类别 / Category", "话题 / Topic", "优先级 / Priority", "收益 / Profit", "备注 / Comments"]
-    reset_table(table, headers)
-    if not rows:
-        add_table_row(table, ["待核实", "上传资料中未识别到明确改善项", "待核实", "补充资料后重新生成", ""])
-        set_table_widths(table, len(table.columns))
-        return
-    for row in rows[:40]:
-        add_table_row(table, [
-            row.get("类别") or row.get("category") or "待归类",
-            row.get("问题/主题") or row.get("problem") or "",
-            row.get("优先级") or row.get("priority") or "待核实",
-            row.get("建议措施") or row.get("recommendation") or "结合现场资料制定整改措施",
-            row.get("备注") or row.get("evidence") or "",
-        ])
-    set_table_widths(table, len(table.columns))
-
-
-def reset_table(table, headers: list[str]) -> None:
-    while len(table.rows) > 1:
-        table._tbl.remove(table.rows[-1]._tr)
-    if not table.rows:
-        table.add_row()
-    write_cells(table.rows[0].cells, headers)
-    format_row(table.rows[0], header=True)
-
-
-def add_table_row(table, values: list[Any]) -> None:
-    row = table.add_row()
-    write_cells(row.cells, values)
-    format_row(row, header=False)
-
-
-def write_cells(cells, values: list[Any]) -> None:
-    for index, cell in enumerate(cells):
-        header = ""
-        value = values[index] if index < len(values) else ""
-        if isinstance(value, dict) and "photo_refs" in value:
-            write_photo_cell(cell, value)
-        else:
-            cell.text = normalize_table_cell_value(value, header)
 
 
 def reset_photo_insertion_count() -> None:
@@ -2041,22 +1804,6 @@ def cell_width_cm(cell) -> float:
     return value / 567.0
 
 
-def format_row(row, header: bool) -> None:
-    for cell in row.cells:
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-        set_cell_margins(cell, top=100, start=80, bottom=100, end=80)
-        if header:
-            shade_cell(cell, TABLE_HEADER_FILL)
-        if cell_has_drawing(cell):
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            set_cell_margins(cell, top=40, start=40, bottom=40, end=40)
-            for paragraph in cell.paragraphs:
-                format_photo_cell_paragraph(paragraph)
-            continue
-        for paragraph in cell.paragraphs:
-            format_table_cell_paragraph(paragraph, header=header)
-
-
 def cell_has_drawing(cell) -> bool:
     return bool(cell._tc.xpath(".//w:drawing"))
 
@@ -2083,36 +1830,6 @@ def shade_cell(cell, fill: str) -> None:
         shd = OxmlElement("w:shd")
         tc_pr.append(shd)
     shd.set(qn("w:fill"), fill)
-
-
-def headers_for_table(col_count: int) -> list[str]:
-    if col_count <= 2:
-        return ["项目", "内容"][:col_count]
-    if col_count == 3:
-        return ["位置/范围", "问题描述", "整改建议"]
-    if col_count == 4:
-        return ["位置/范围", "问题描述", "整改建议", "备注"]
-    if col_count == 5:
-        return ["类别", "问题/主题", "优先级", "建议措施", "备注"]
-    if col_count == 6:
-        return ["位置", "设备类型", "柜号及回路号", "问题描述", "建议", "现场图片"]
-    if col_count == 7:
-        return ["设备/区域", "绝缘检测", "局放/温度", "导通检测", "保护性能", "动作验证", "备注"]
-    if col_count == 8:
-        return ["配电室", "设备", "容量/参数", "负荷分配", "额定容量", "运行数据", "负荷率", "备注"]
-    return ["配电室", "设备", "容量/参数", "负荷分配", "额定容量", "运行数据", "负荷率", "风险", "备注"][:col_count]
-
-
-def placeholder_row(col_count: int, section_id: str) -> list[str]:
-    title = heading_by_number().get(section_id, ("待核实", 4))[0]
-    base = ["待核实", "待核实", "待补充", f"{title}未在上传资料中识别到明确异常", "结合现场资料进一步核实", ""]
-    if col_count == 2:
-        return [title, "上传资料中未识别到明确异常，建议现场核实。"]
-    if col_count == 3:
-        return ["待核实", f"{title}未识别到明确异常", "结合现场资料进一步核实"]
-    if col_count == 4:
-        return ["待核实", f"{title}未识别到明确异常", "结合现场资料进一步核实", "待补充"]
-    return (base + ["待核实"] * col_count)[:col_count]
 
 
 def detail_rows_for_section(model: dict[str, Any], section_id: str) -> list[dict[str, Any]]:
@@ -2146,21 +1863,6 @@ def row_policy_status(row: dict[str, Any]) -> str:
     return text or "unknown"
 
 
-def detail_issue_row(detail: dict[str, Any], model: dict[str, Any]) -> list[Any]:
-    return [
-        clean_text(detail.get("position") or "待核实位置"),
-        clean_text(detail.get("device_type") or "待核实设备"),
-        clean_text(detail.get("cabinet_or_loop_no") or "待核实"),
-        clean_text(detail.get("issue_description") or detail.get("problem") or "待核实问题"),
-        clean_text(detail.get("suggestion") or detail.get("recommendation") or "结合现场资料进一步核实。"),
-        {
-            "photo_refs": detail.get("photo_refs") or [],
-            "photo_status": detail.get("photo_status") or "",
-            "photo_manifest": model.get("photo_manifest") or [],
-        },
-    ]
-
-
 def detail_markdown_table_row(detail: dict[str, Any]) -> list[Any]:
     photo_refs = [
         clean_text(ref)
@@ -2178,85 +1880,8 @@ def detail_markdown_table_row(detail: dict[str, Any]) -> list[Any]:
     ]
 
 
-def issue_row(issue: dict[str, Any], col_count: int) -> list[str]:
-    problem = clean_text(issue.get("problem") or issue.get("description") or "待核实问题")
-    rule = issue_rule(issue) or {}
-    recommendation = combine_recommendations(issue.get("recommendation"), rule.get("recommendation"))
-    priority = clean_text(issue.get("priority") or issue.get("risk_level") or "待核实")
-    location = safe_location(
-        issue.get("location"),
-        issue.get("position"),
-        issue.get("位置"),
-        issue.get("位置/范围"),
-        extract_location_from_text(problem),
-    )
-    source_note = clean_text(issue.get("evidence") or issue.get("source") or "上传资料")
-    category = safe_device_type(
-        issue.get("equipment_type"),
-        issue.get("device_type"),
-        issue.get("设备类型"),
-        infer_device_type(str(issue.get("section_id") or ""), problem),
-    )
-    if col_count == 2:
-        return [category, problem]
-    if col_count == 3:
-        return [location, problem, recommendation]
-    if col_count == 4:
-        return [location, problem, recommendation, priority]
-    if col_count == 5:
-        return [category, problem, priority, recommendation, source_note]
-    if col_count == 6:
-        return [location, category, "待核实", problem, recommendation, missing_photo_text()]
-    if col_count == 7:
-        return [category, "待核实", problem, "待核实", priority, recommendation, source_note]
-    if col_count == 8:
-        return [location, category, "待核实", problem, "待核实", "待核实", priority, recommendation]
-    return [location, category, "待核实", problem, "待核实", "待核实", priority, recommendation, "待核实"][:col_count]
-
-
 def issue_table_headers() -> list[str]:
     return ["位置", "设备类型", "柜号及回路号", "问题描述", "建议", "现场图片"]
-
-
-def issue_problem_table_row(
-    issue: dict[str, Any],
-    problem: str,
-    recommendation: str,
-    suggestion_lines: list[str] | None = None,
-) -> list[str]:
-    location = safe_location(
-        issue.get("location"),
-        issue.get("position"),
-        issue.get("位置"),
-        issue.get("位置/范围"),
-        issue.get("room"),
-        issue.get("配电室"),
-        extract_location_from_text(problem),
-    )
-    equipment_type = safe_device_type(
-        issue.get("equipment_type"),
-        issue.get("device_type"),
-        issue.get("设备类型"),
-        infer_device_type(str(issue.get("section_id") or ""), problem),
-    )
-    cabinet = first_nonempty(
-        issue.get("cabinet"),
-        issue.get("loop"),
-        issue.get("柜号及回路号"),
-        issue.get("柜号"),
-        issue.get("回路号"),
-        issue.get("circuit"),
-    )
-    advice = "；".join(suggestion_lines or []) if suggestion_lines else recommendation
-    photo = first_nonempty(issue.get("现场图片"), issue.get("photo"), issue.get("image"), issue.get("照片编号"), missing_photo_text())
-    return [
-        normalize_table_cell_value(location, "位置"),
-        normalize_table_cell_value(equipment_type, "设备类型"),
-        normalize_table_cell_value(cabinet, "柜号及回路号"),
-        clean_text(problem),
-        clean_text(advice),
-        normalize_table_cell_value(photo, "现场图片"),
-    ]
 
 
 def normalize_issue_markdown_table(
@@ -2510,130 +2135,11 @@ def add_report_content(document: Document, report_text: str, model: dict[str, An
         write_markdown_table(document, document.add_paragraph(), table_buffer, model)
 
 
-def normalize_report_text(report_text: str) -> str:
-    text = re.sub(r"<think>.*?</think>", "", report_text or "", flags=re.DOTALL | re.IGNORECASE).strip()
-    return trim_to_required_report(text)
-
-
-def trim_to_required_report(report_text: str) -> str:
-    stop_patterns = [
-        r"资料缺失/待补充/待核实.*声明",
-        r"报告编制说明",
-        r"配电安全专家咨询报告\s*[·\-]\s*草稿",
-        r"如有疑问",
-    ]
-    kept: list[str] = []
-    for raw_line in report_text.splitlines():
-        line = clean_inline_marks(raw_line.strip())
-        if any(re.search(pattern, line) for pattern in stop_patterns):
-            break
-        kept.append(raw_line)
-    return "\n".join(kept).strip()
-
-
 def markdown_table(headers: list[str], rows: list[list[Any]]) -> list[str]:
     result = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     for row in rows:
         result.append("| " + " | ".join(clean_table_cell(value) for value in row) + " |")
     return result
-
-
-def status_block_lines(
-    situation: str,
-    conclusion: str,
-    risk: str,
-    suggestions: list[str],
-) -> list[str]:
-    """Render every KU paragraph with the required fixed label structure."""
-    lines: list[str] = []
-    situation = clean_text(situation)
-    conclusion = clean_text(conclusion)
-    risk = clean_text(risk)
-    suggestions = [clean_text(item).strip("。；;") for item in suggestions if clean_text(item)]
-    if situation:
-        lines.extend(["【现状描述】", situation, ""])
-    lines.extend(["【结论】", conclusion or "该检测项因资料不足，本次评估暂按待核实处理。", ""])
-    if risk:
-        lines.extend(["【风险分析】", risk, ""])
-    lines.append("【建议】")
-    if suggestions:
-        for suggestion in suggestions:
-            lines.append(f"• {suggestion}。")
-    else:
-        lines.append("• 结合现场资料制定整改措施。")
-    lines.append("")
-    return lines
-
-
-def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], action_rows: list[dict[str, Any]]) -> str:
-    """Build chapter 3.1 from structured KU status results, not generic prose."""
-    ng_count = attention_count = ok_count = 0
-    for issue in issues:
-        label = issue_status_label(issue, issue_rule(issue) or {})
-        if label == "NG":
-            ng_count += 1
-        elif label == "一般":
-            attention_count += 1
-        elif label == "OK":
-            ok_count += 1
-    section_counts = model.get("issue_counts_by_section") or []
-    section_parts = []
-    for item in section_counts:
-        if not isinstance(item, dict):
-            continue
-        title = clean_text(item.get("section_title"))
-        count = int(item.get("issue_count") or 0)
-        if title and count:
-            section_parts.append(f"{title}{count}项")
-    distribution = "、".join(section_parts) if section_parts else "暂无明确分布"
-    action_count = len(action_rows)
-    return (
-        f"本次评估共形成 NG 项 {ng_count} 项、一般/关注项 {attention_count} 项、OK 项 {ok_count} 项。"
-        f"问题分布为：{distribution}。"
-        f"其中需纳入改善行动列表的问题共 {action_count} 项，应按照第 3.2 节优先级安排整改、复核与闭环。"
-    )
-
-
-def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], action_rows: list[dict[str, Any]]) -> str:
-    """Build chapter 3.1 according to the rulebook's five-dimension summary template."""
-    dimensions = [
-        ("2.1", "系统架构"),
-        ("2.2", "环境工况"),
-        ("2.3", "故障保护"),
-        ("2.4", "设备/元件状态"),
-        ("2.5", "运维管理"),
-    ]
-    grouped: dict[str, list[dict[str, Any]]] = {prefix: [] for prefix, _ in dimensions}
-    for issue in issues:
-        section_id = str(issue.get("section_id") or "")
-        for prefix, _title in dimensions:
-            if section_id == prefix or section_id.startswith(prefix + "."):
-                grouped[prefix].append(issue)
-                break
-
-    risk_lines: list[str] = []
-    dimension_blocks: list[str] = []
-    for index, (prefix, title) in enumerate(dimensions, 1):
-        items = grouped[prefix]
-        ng_items = [item for item in items if normalized_status_label(item) == "NG"]
-        attention_items = [item for item in items if normalized_status_label(item) == "一般"]
-        evaluation = dimension_evaluation_word(len(ng_items), len(attention_items))
-        if ng_items or attention_items:
-            risk_lines.append(f"{index}）{dimension_risk_brief(title, ng_items, attention_items)}")
-        dimension_blocks.extend([
-            title,
-            dimension_summary_sentence(title, evaluation, items, ng_items, attention_items),
-            "",
-        ])
-
-    if not risk_lines:
-        risk_lines.append("1）本次资料未识别到明确 NG 或一般项，建议继续按既定巡检周期跟踪复核。")
-
-    lines = ["风险汇总如下："]
-    lines.extend(risk_lines)
-    lines.extend(["", "详述见下：", ""])
-    lines.extend(dimension_blocks)
-    return "\n".join(lines).strip()
 
 
 def visual_environment_lines(model: dict[str, Any]) -> list[str]:
@@ -2731,17 +2237,6 @@ def concise_recommendation_text(value: Any, max_points: int = 2, max_point_chars
     return "；".join(f"{index}. {point}" for index, point in enumerate(points, 1))
 
 
-def normalized_status_label(issue: dict[str, Any]) -> str:
-    label = issue_status_label(issue, issue_rule(issue) or {})
-    if label == "NG" or "NG" in str(label).upper():
-        return "NG"
-    if any(token in str(label) for token in ["一般", "关注"]):
-        return "一般"
-    if label == "OK" or "OK" in str(label).upper():
-        return "OK"
-    return str(label)
-
-
 def dimension_evaluation_word(ng_count: int, attention_count: int) -> str:
     if ng_count == 0 and attention_count == 0:
         return "完善"
@@ -2750,48 +2245,6 @@ def dimension_evaluation_word(ng_count: int, attention_count: int) -> str:
     if 1 <= ng_count <= 2 and attention_count <= 2:
         return "存在不足"
     return "问题较多，亟需整改"
-
-
-def issue_short_topic(issue: dict[str, Any]) -> str:
-    text = clean_text(issue.get("problem") or issue.get("description") or issue.get("section_title") or "")
-    text = re.sub(r"^(现象|问题|结论|风险)[:：]\s*", "", text)
-    text = re.sub(r"[。；;].*$", "", text).strip()
-    if len(text) > 34:
-        text = text[:34].rstrip() + "…"
-    return text
-
-
-def dimension_risk_brief(title: str, ng_items: list[dict[str, Any]], attention_items: list[dict[str, Any]]) -> str:
-    focus_items = (ng_items + attention_items)[:3]
-    topics = [topic for item in focus_items if (topic := issue_short_topic(item))]
-    if topics:
-        return f"{title}方面存在{'、'.join(topics)}等问题；"
-    return f"{title}方面存在需跟踪复核的问题；"
-
-
-def dimension_summary_sentence(
-    title: str,
-    evaluation: str,
-    items: list[dict[str, Any]],
-    ng_items: list[dict[str, Any]],
-    attention_items: list[dict[str, Any]],
-) -> str:
-    if not items:
-        return f"{title}本次未识别到明确异常，整体评价为{evaluation}，建议按既定周期保持巡检、检测和台账复核。"
-    topics = [topic for item in (ng_items + attention_items)[:4] if (topic := issue_short_topic(item))]
-    topic_text = "、".join(topics) if topics else "相关核查项"
-    prefix = f"{title}{evaluation}，本次识别 NG 项 {len(ng_items)} 项、一般/关注项 {len(attention_items)} 项。"
-    if title == "系统架构":
-        extra = "若涉及供电路径单一或自动切换能力不足，应重点提升供电连续性和故障恢复能力；若涉及负荷分配问题，应同步复核容量裕度和回路负载匹配。"
-    elif title == "环境工况":
-        extra = "应重点关注电能质量、设备发热、局放和物理环境条件对设备寿命及故障概率的影响。"
-    elif title == "故障保护":
-        extra = "应围绕保护方案、定值配合、零序/漏电及过压欠压防护能力进行专项复核。"
-    elif title == "设备/元件状态":
-        extra = "应重点处理设备品质、安装规范、标识接地、封堵和带病运行等影响本质安全的问题。"
-    else:
-        extra = "应完善 SOP/EOP、图纸资料、巡检维护、智能化手段、LOTO、生命周期和备件管理，推动问题闭环。"
-    return f"{prefix}主要集中在{topic_text}。{extra}"
 
 
 def clean_action_remark(value: Any) -> str:
@@ -2975,26 +2428,6 @@ def issue_status_label(issue: dict[str, Any], rule: dict[str, Any]) -> str:
     return "待核实"
 
 
-def status_conclusion_text(section_id: str, item_name: str, status_label: str, problem: str) -> str:
-    """Build KU conclusion text using the fixed acceptance template."""
-    item_name = clean_text(item_name) or heading_by_number().get(section_id, ("该检测项", 3))[0]
-    problem = clean_text(problem)
-    detail = strip_status_tail(problem)
-    if status_label == "OK":
-        return f"经评估，{item_name}满足要求/未发现异常。{detail or '当前上传资料未显示该项存在明确异常。'}。"
-    if status_label == "一般":
-        risk_hint = attention_risk_hint(section_id, detail)
-        return f"经评估，{item_name}存在关注项/部分指标接近限值。{detail}。{risk_hint}。"
-    if status_label == "NG":
-        severity = severity_hint(section_id, detail)
-        return f"经评估，{item_name}存在不合格项/安全隐患。{detail}。{severity}。"
-    if status_label == "数据冲突":
-        return f"经评估，{item_name}存在数据异常，当前资料口径不一致。{detail}。建议核实原始记录后重新确认判定。"
-    if status_label == "数据缺失":
-        return f"{item_name}因数据缺失，本次评估未能给出明确结论。建议补充{missing_fields_hint(section_id)}后重新评估。"
-    return f"{item_name}因资料不足，本次评估暂按待核实处理。建议补充{missing_fields_hint(section_id)}后重新评估。"
-
-
 def strip_status_tail(text: str) -> str:
     text = clean_text(text)
     text = re.sub(
@@ -3003,47 +2436,6 @@ def strip_status_tail(text: str) -> str:
         text,
     )
     return text.strip(" ，。") or clean_text(text)
-
-
-def attention_risk_hint(section_id: str, detail: str) -> str:
-    if section_id == "2.1.1":
-        if "80" in detail or "负荷率" in detail:
-            return "后续产能提升或负荷增长后可能面临过载风险"
-    if section_id == "2.1.5" and any(token in detail for token in ["谐波", "电容柜", "无功"]):
-        return "谐波环境下继续使用普通电容柜可能带来运行可靠性风险"
-    if section_id == "2.2.1.1" and any(token in detail for token in ["谐波", "THD", "THDu"]):
-        return "谐波水平接近限值时可能加剧设备发热，并增加与电容柜共振的风险"
-    if section_id == "2.2.1.2" and any(token in detail for token in ["晃电", "暂降", "扰动", "失电"]):
-        return "后续敏感负荷增加或扰动频次上升后可能造成设备停机和生产中断"
-    if section_id == "2.2.1.3" and any(token in detail for token in ["冲击", "启动"]):
-        return "频繁启动或冲击负荷可能引发母线电压波动并影响同母线设备稳定运行"
-    if section_id == "2.2.2.1" and any(token in detail for token in ["温度", "温升", "发热", "过热"]):
-        return "温升异常若持续存在，可能造成连接点劣化并进一步放大接触电阻"
-    if section_id == "2.2.2.2" and "局放" in detail:
-        return "局放检测和监测不足时，绝缘缺陷可能无法及时发现"
-    if section_id == "2.2.2.3" and any(token in detail for token in ["温湿度", "水", "防鼠", "粉尘", "凝露", "环境"]):
-        return "物理环境条件变化可能降低绝缘水平并影响配电设备长期可靠运行"
-    if section_id == "2.3.1" and any(token in detail for token in ["保护", "定值", "越级", "拒动", "误动", "选择性"]):
-        return "保护配合或定值缺陷可能在故障时放大停电范围"
-    if section_id == "2.3.2" and any(token in detail for token in ["剩余电流", "漏电", "零序", "监测"]):
-        return "剩余电流或漏电监测不足可能使接地故障和漏电隐患难以及时发现"
-    if section_id == "2.3.3" and any(token in detail for token in ["电涌", "SPD", "避雷器", "过电压", "过压"]):
-        return "电涌保护投运或试验记录不足可能削弱过电压防护能力"
-    return "后续运行条件变化后可能进一步放大该项风险"
-
-
-def severity_hint(section_id: str, detail: str) -> str:
-    if section_id == "2.1.1" and any(token in detail for token in [">100", "超过 100", "100%"]):
-        return "治理紧迫性：高"
-    if section_id in {"2.1.2", "2.1.3", "2.1.4"}:
-        return "治理紧迫性：高"
-    if section_id in {"2.2.1.1", "2.2.1.2", "2.2.2.1", "2.2.2.2"}:
-        return "治理紧迫性：高"
-    if section_id in {"2.3.1", "2.3.2", "2.3.3"}:
-        return "治理紧迫性：高"
-    if section_id in {"2.2.1.3", "2.2.2.3"}:
-        return "治理紧迫性：中"
-    return "治理紧迫性：需结合风险等级和现场条件确定"
 
 
 def missing_fields_hint(section_id: str) -> str:
@@ -3066,142 +2458,6 @@ def missing_fields_hint(section_id: str) -> str:
     return hints.get(section_id, "现场记录、检测数据或设备台账")
 
 
-def matched_risk_analysis(section_id: str, problem: str, risk_analysis: str, status_label: str) -> str:
-    if status_label not in {"一般", "NG", "数据冲突"}:
-        return ""
-    problem = clean_text(problem)
-    matched = section_risk_matches(section_id, problem)
-    if matched:
-        return "；".join(matched)
-    # Fall back to filtered knowledge-base risk clauses only when they directly mention
-    # keywords present in the actual finding. This avoids copying unrelated template risks.
-    clauses = split_recommendations(risk_analysis, limit=8)
-    filtered: list[str] = []
-    problem_tokens = meaningful_tokens(problem)
-    for clause in clauses:
-        if any(token in clause for token in problem_tokens):
-            filtered.append(clause)
-    return "；".join(filtered[:3])
-
-
-def section_risk_matches(section_id: str, problem: str) -> list[str]:
-    rules: dict[str, list[tuple[list[str], str]]] = {
-        "2.1.1": [
-            (["负荷率", "80"], "变压器长期高负载运行会加速绝缘老化、缩短使用寿命"),
-            ([">100", "超过 100", "大于100"], "变压器过热、绝缘失效，存在火灾风险"),
-            (["下级容量", "上级容量"], "上下级容量不匹配时存在过载跳闸或设备损坏风险"),
-            (["重要负荷", "冲击负荷", "混接"], "重要负荷与冲击负荷混接会影响重要负荷供电可靠性，可能导致生产中断"),
-        ],
-        "2.1.2": [
-            (["路径单一", "单电源"], "关键负荷供电路径单一时，某一电力元件失效即可能造成生产中断"),
-            (["无备用", "缺乏备用", "备用供电"], "无备用供电方式会降低局部维护检修的可实施性"),
-            (["恢复时间", "人工恢复"], "供电路径沿线设备故障后依赖人工恢复，会拉长应急恢复时间"),
-        ],
-        "2.1.3": [
-            (["无自动切换", "无法自动切换", "未配置"], "无自动切换功能时，供电路径故障后需人工恢复，故障恢复时间长"),
-            (["未验证", "试验"], "切换功能未定期验证，实际需要时可能切换失败"),
-            (["切换时间"], "切换时间不满足负荷要求时，敏感设备存在停机风险"),
-            (["切换逻辑"], "切换逻辑设置不当可能导致非计划停电范围扩大"),
-        ],
-        "2.1.4": [
-            (["环流", "并联"], "两路电源并联可能产生大环流并导致保护跳闸"),
-            (["返送"], "返送电可能导致检修线路带电，造成人身安全风险"),
-            (["连锁失效", "联锁失效", "未配置", "闭锁"], "连锁失效或未配置会增加误操作导致重大事故的风险"),
-        ],
-        "2.1.5": [
-            (["功率因数"], "功率因数偏低会导致力调电费罚款并增加运营成本"),
-            (["无功补偿", "电容柜失效"], "无功补偿不足会降低系统能效并增加变压器满载率"),
-            (["谐波", "THD", "THDu", "电容柜"], "谐波环境下使用普通电容柜可能导致电容过载发热，存在爆炸或火灾风险"),
-            (["容量衰减"], "电容容量衰减会造成补偿效果不足，并可能因频繁投切损坏控制器"),
-        ],
-        "2.2.1.1": [
-            (["THDu", "谐波", "超限", "超标"], "THDu超标会加速电子装置老化，并加剧变压器、电机和电缆发热"),
-            (["谐波", "电容"], "谐波与电容柜共振时，可能引发电容过载、爆炸或火灾风险"),
-            (["保护", "误动"], "高次谐波可能引起保护装置误动作，导致非计划停电"),
-            (["零线", "过流"], "高次谐波可能导致零线过流，增加电气火灾风险"),
-        ],
-        "2.2.1.2": [
-            (["晃电", "暂降", "电压扰动"], "电压暂降或晃电可能导致变频器、PLC、DCS等敏感设备停机"),
-            (["生产中断", "停机"], "频繁电压扰动会造成生产中断，并增加设备异常停机风险"),
-            (["过压", "暂升"], "暂态过电压可能损坏设备绝缘和电子元件"),
-        ],
-        "2.2.1.3": [
-            (["频繁启动", "启动电流"], "频繁启动会造成电压波动和设备热冲击，缩短设备寿命"),
-            (["冲击负荷"], "冲击负荷可能导致母线电压暂降，影响同母线敏感设备正常运行"),
-            (["保护误动"], "启动电流过大可能引起保护误动作或电压暂降"),
-        ],
-        "2.2.2.1": [
-            (["温升", "发热", "过热"], "低压配电设备温升异常会加速绝缘老化并缩短设备寿命"),
-            (["接触电阻", "连接"], "连接点温升异常可能导致接触电阻增大，形成发热恶化循环"),
-            (["火灾", "短路"], "严重发热可能引发短路、火灾或母排熔断等事故"),
-        ],
-        "2.2.2.2": [
-            (["局放", "放电"], "局部放电会逐步劣化绝缘，严重时可能导致绝缘击穿"),
-            (["电弧", "击穿"], "高压设备绝缘击穿可能引发电弧故障，造成人员伤害和设备损坏"),
-            (["积水", "潮湿"], "电缆沟积水或高湿环境会降低绝缘裕度，并放大局放风险"),
-        ],
-        "2.2.2.3": [
-            (["温湿度", "高温"], "温湿度异常会加速绝缘老化，并降低设备载流能力"),
-            (["凝露", "潮湿"], "湿度过高或凝露可能引发沿面放电、闪络和短路风险"),
-            (["粉尘"], "粉尘积聚会降低绝缘水平，并可能诱发闪络或爆燃风险"),
-            (["水浸", "积水", "防水"], "水浸和积水会造成电缆绝缘下降，增加短路和接地故障风险"),
-            (["防鼠", "小动物"], "防鼠措施不足可能导致小动物进入柜体造成短路故障"),
-        ],
-        "2.3.1": [
-            (["越级跳闸"], "越级跳闸会扩大停电范围，影响配电系统供电连续性"),
-            (["拒动", "不动作"], "保护拒动会导致故障不能及时切除，并可能加剧设备损坏"),
-            (["误动"], "保护误动会造成正常运行时非计划停电"),
-            (["保护漏洞", "定值", "选择性", "保护配合"], "保护方案、定值或选择性配合不合理会降低故障切除可靠性"),
-        ],
-        "2.3.2": [
-            (["零序", "未启用"], "零序保护未启用时接地故障无法快速切除，可能扩大事故影响"),
-            (["剩余电流", "漏电"], "剩余电流异常通常提示下游线路或设备存在零地混接、漏电等隐患"),
-            (["漏保", "未投入"], "漏保未投入会削弱人身触电和电气火灾防护"),
-            (["监测"], "剩余电流监测未投入会降低漏电隐患的及时发现能力"),
-        ],
-        "2.3.3": [
-            (["雷击", "避雷器"], "避雷器缺失或失效会削弱雷击过电压防护，可能造成绝缘击穿"),
-            (["操作过电压", "过电压", "过压"], "操作过电压可能损坏敏感设备和电子元件"),
-            (["SPD", "电涌", "未投入"], "电涌保护器未投入时，雷击或操作过电压可能直接作用于下游设备"),
-            (["老化", "失效"], "SPD老化失效会降低过电压泄放能力"),
-        ],
-    }
-    matched: list[str] = []
-    for tokens, text in rules.get(section_id, []):
-        if any(token and token in problem for token in tokens) and text not in matched:
-            matched.append(text)
-    return matched
-
-
-def meaningful_tokens(text: str) -> list[str]:
-    candidates = [
-        "负荷率", "路径单一", "单电源", "备用", "自动切换", "ATS", "未验证", "环流", "返送", "连锁", "闭锁",
-        "功率因数", "无功", "电容柜", "谐波", "THD", "THDu", "晃电", "暂降", "电压扰动", "冲击负荷",
-        "频繁启动", "启动电流", "温升", "发热", "过热", "红外", "局放", "放电", "温湿度", "凝露",
-        "粉尘", "水浸", "积水", "防鼠", "小动物", "保护定值", "越级跳闸", "拒动", "误动", "选择性",
-        "保护配合", "剩余电流", "漏电", "零序", "漏保", "电涌", "SPD", "避雷器", "过电压", "雷击",
-    ]
-    return [token for token in candidates if token in text]
-
-
-def concise_risk_analysis(problem: str, risk_analysis: str, status_label: str) -> str:
-    problem = clean_text(problem)
-    if status_label == "OK":
-        return "当前上传资料未显示该项存在明确异常，建议保留周期性检查和验证记录。"
-    if status_label == "数据缺失":
-        return "资料尚不足以形成确定风险结论，需结合现场记录和检测数据复核。"
-    candidates = split_recommendations(risk_analysis, limit=2)
-    if candidates:
-        risk = "；".join(candidates)
-    elif status_label == "待核实":
-        risk = "资料尚不足以形成确定风险结论，需结合现场记录和检测数据复核。"
-    else:
-        risk = "该问题可能影响配电系统安全性、供电可靠性或运维可控性。"
-    if problem and problem not in risk:
-        return f"结合资料中“{problem}”的表现，{risk}"
-    return risk
-
-
 def split_recommendations(text: Any, limit: int = 4) -> list[str]:
     value = clean_text(text)
     if not value:
@@ -3222,27 +2478,6 @@ def split_recommendations(text: Any, limit: int = 4) -> list[str]:
         if len(cleaned) >= limit:
             break
     return cleaned
-
-
-def format_rule_reference(ku_id: str, ku_title: str) -> str:
-    if ku_id and ku_title:
-        return f"{ku_id}《{ku_title}》"
-    if ku_id:
-        return ku_id
-    if ku_title:
-        return ku_title
-    return "配电安全专家知识库对应检测项"
-
-
-def risk_label(value: Any) -> str:
-    text = str(value or "").lower()
-    if text == "high":
-        return "高风险"
-    if text == "medium":
-        return "中风险"
-    if text == "low":
-        return "低风险"
-    return "待核实"
 
 
 def is_table_line(line: str) -> bool:
@@ -3536,43 +2771,6 @@ def matched_risk_analysis(section_id: str, problem: str, risk_analysis: str, sta
         f"【直接影响】{fallback}\n"
         "【恶化条件】当负荷、环境或运行频次进一步增加时，问题可能从关注项演变为停电、设备损坏或人身安全风险。"
     )
-
-
-def status_block_lines(
-    situation: str,
-    conclusion: str,
-    risk: str,
-    suggestions: list[str],
-) -> list[str]:
-    lines: list[str] = []
-    situation_items = _v2_line_items(situation)
-    if situation_items:
-        lines.extend(["【现状描述】", *situation_items, ""])
-
-    lines.append("【结论】")
-    conclusion_items = [
-        truncate_policy_text(item, "conclusion_policy", "max_words_per_item")
-        for item in (_v2_line_items(conclusion) or ["该检测项本次资料不足，暂按待核实处理。"])
-    ]
-    lines.extend(conclusion_items)
-    lines.append("")
-
-    risk_items = [
-        truncate_policy_text(item, "risk_policy", "max_words")
-        for item in _v2_line_items(risk)
-    ]
-    if risk_items:
-        lines.extend(["【风险分析】", *risk_items, ""])
-
-    grouped = v2_group_suggestions(suggestions, conclusion)
-    lines.append("【建议】")
-    for group_title, items in grouped:
-        if group_title:
-            lines.append(group_title)
-        for item in items:
-            lines.append(f"• {v2_enrich_suggestion(item)}")
-    lines.append("")
-    return lines
 
 
 def v2_group_suggestions(suggestions: list[str], conclusion: str) -> list[tuple[str, list[str]]]:
@@ -3898,32 +3096,6 @@ def v2_special_analysis_lines(model: dict[str, Any]) -> list[str]:
     return lines
 
 
-def v2_action_category(priority: str) -> str:
-    if "高" in priority:
-        return "紧急"
-    if "中" in priority:
-        return "重要"
-    return "一般"
-
-
-def v2_time_requirement(priority: str) -> str:
-    if "高" in priority:
-        return "2周内/3个月内分阶段落实"
-    if "中" in priority:
-        return "1年内纳入计划"
-    return "纳入年度计划"
-
-
-def v2_standard_hint(problem: str) -> str:
-    if "谐波" in problem or "THD" in problem:
-        return "GB/T 14549-1993"
-    if "剩余电流" in problem or "漏电" in problem:
-        return "GB 13955-2017"
-    if "供电" in problem or "负荷" in problem:
-        return "GB 50052-2009"
-    return "相关国家标准/行业规范"
-
-
 def v2_expected_benefit(problem: str) -> str:
     if "谐波" in problem or "电容" in problem:
         return "降低谐波共振、设备过热和非计划停电风险。"
@@ -3997,7 +3169,6 @@ def build_report_text_from_model(model: dict[str, Any], fallback_text: str) -> s
 # they override the earlier compatibility definitions above.
 # ---------------------------------------------------------------------------
 
-_LEGACY_NORMALIZE_REPORT_TEXT = normalize_report_text
 _LEGACY_NORMALIZE_TABLE_CELL_VALUE = normalize_table_cell_value
 
 
@@ -4063,48 +3234,6 @@ def is_positive_assessment_block(*parts: Any) -> bool:
     has_positive = ("OK" in upper) or any(token in text for token in POSITIVE_ASSESSMENT_TOKENS if token != "OK")
     has_negative = ("NG" in upper) or any(token in text for token in NEGATIVE_ASSESSMENT_TOKENS if token != "NG")
     return has_positive and not has_negative
-
-
-def is_advice_label(line: str) -> bool:
-    stripped = clean_inline_marks(line).strip()
-    return bool(re.match(r"^【\s*(建议|整改建议|后续建议)\s*】\s*$", stripped))
-
-
-def is_structural_boundary(line: str) -> bool:
-    stripped = clean_inline_marks(line).strip()
-    if not stripped:
-        return False
-    if re.match(r"^#{1,6}\s+", stripped):
-        return True
-    if re.match(r"^\d+(?:\.\d+){1,5}\.?\s+", stripped):
-        return True
-    return bool(re.match(r"^【\s*(现状描述|结论|数据|趋势|风险分析|判定|问题描述)\s*】", stripped))
-
-
-def strip_positive_advice_sections(report_text: str) -> str:
-    lines = report_text.splitlines()
-    output: list[str] = []
-    context_since_heading: list[str] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if is_advice_label(line) and is_positive_assessment_block(*context_since_heading):
-            index += 1
-            while index < len(lines):
-                next_line = lines[index]
-                if is_structural_boundary(next_line):
-                    break
-                index += 1
-            continue
-        output.append(line)
-        stripped = clean_inline_marks(line).strip()
-        if re.match(r"^#{1,6}\s+|^\d+(?:\.\d+){1,5}\.?\s+", stripped):
-            context_since_heading = [line]
-        else:
-            context_since_heading.append(line)
-            context_since_heading = context_since_heading[-20:]
-        index += 1
-    return "\n".join(output)
 
 
 def normalize_report_text(report_text: str) -> str:

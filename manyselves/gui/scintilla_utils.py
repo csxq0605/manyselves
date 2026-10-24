@@ -9,7 +9,6 @@ Provides consistent styling for all QScintilla editors including:
 import re
 
 from loguru import logger
-
 from PyQt6.Qsci import QsciLexer, QsciScintilla
 from PyQt6.QtGui import QColor, QFont, QFontDatabase
 
@@ -623,36 +622,3 @@ def attach_markdown_post_styling(sci: QsciScintilla) -> None:
     sci.textChanged.connect(lambda: apply_markdown_post_styling(sci))
 
 
-def create_scintilla(
-    lexer: QsciLexer | None = None,
-    object_name: str = "scintillaEditor",
-    line_numbers: bool = True,
-    read_only: bool = False,
-    content_bg: str | None = None,
-) -> QsciScintilla:
-    """Create a QScintilla editor with consistent styling.
-
-    Args:
-        lexer: Optional lexer to apply (e.g., QsciLexerPython)
-        object_name: Object name for CSS styling
-        line_numbers: Whether to show line numbers
-        read_only: Whether the editor should be read-only
-        content_bg: Optional editor content background override
-
-    Returns:
-        Configured QsciScintilla widget
-    """
-    sci = QsciScintilla()
-    apply_scintilla_style(
-        sci,
-        object_name,
-        line_numbers,
-        read_only=read_only,
-        content_bg=content_bg,
-    )
-
-    if lexer:
-        sci.setLexer(lexer)
-        configure_lexer_colors(lexer, paper_color=content_bg)
-
-    return sci

@@ -68,7 +68,6 @@ def test_state_storage_types_are_physically_capability_owned() -> None:
         "AggregateState",
         "RecoveryPlan",
         "RecoveryStateStore",
-        "WorkflowReducer",
     ):
         assert getattr(parallel, type_name).__module__ == PARALLEL_MODULE
     assert storage.ReportingStore.__module__ == STORAGE_MODULE

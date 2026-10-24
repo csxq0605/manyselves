@@ -1,3 +1,3 @@
-"""Manyselves — a local workspace for document-defined agent teams."""
+"""Manyselves — a file-defined multi-agent runtime with durable workflows and reconstructible execution."""
 
 __version__ = "1.2.1"

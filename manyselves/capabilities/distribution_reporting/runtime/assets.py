@@ -10,12 +10,10 @@ from manyselves.capabilities.distribution_reporting.domain.photo_bindings import
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
-    compose_module_markdown,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     EditedReportSubmission,
-    ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     EvidenceItem,
@@ -43,183 +41,6 @@ def expand_approved_module_markers(
         if marker in narratives[module_id]:
             narratives[module_id] = narratives[module_id].replace(marker, source)
     return edited.model_copy(update={"module_narratives": narratives})
-
-
-def _normalized_prose(value: str) -> str:
-    """Normalize only presentation whitespace so approved wording stays testable."""
-
-    return re.sub(r"\s+", "", value)
-
-
-def _normalized_markdown_content(value: str) -> str:
-    """Compare approved wording independently from deterministic heading levels."""
-
-    return _normalized_prose(re.sub(r"^#{1,6}\s+", "", value, flags=re.MULTILINE))
-
-
-def _markdown_headings(value: str) -> list[str]:
-    return [
-        match.group(1).strip()
-        for line in value.splitlines()
-        if (match := re.match(r"^#{1,6}\s+(.+?)\s*$", line))
-    ]
-
-
-def validate_editor_protection(edited: EditedReportSubmission, claims: list[ClaimRecord]) -> None:
-    """Require exact Claim protection and preserved Claim markers."""
-
-    claim_by_id = {claim.id: claim for claim in claims}
-    if len(claim_by_id) != len(claims):
-        raise ValueError("approved claims contain duplicate ids")
-    protected = set(edited.protected_claim_ids)
-    expected = set(claim_by_id)
-    if protected != expected:
-        missing = sorted(expected - protected)
-        extra = sorted(protected - expected)
-        raise ValueError(f"protected claim set mismatch: missing={missing}, extra={extra}")
-
-    for claim in claims:
-        if len(claim.source_ids) != len(set(claim.source_ids)):
-            raise ValueError(f"Claim {claim.id} contains duplicate source ids")
-        invalid_source_ids = sorted(
-            source_id
-            for source_id in claim.source_ids
-            if not source_id.startswith(("E-", "R-", "W-"))
-        )
-        if invalid_source_ids:
-            raise ValueError(
-                f"Claim {claim.id} contains non-canonical source ids: {invalid_source_ids}"
-            )
-        if not claim.footnote_required or not claim.source_ids:
-            continue
-        marker = f"[[CLAIM:{claim.id}]]"
-        narrative = edited.module_narratives[claim.module_id]
-        if narrative.count(marker) != 1:
-            raise ValueError(
-                f"citation marker for {claim.id} must occur exactly once in module "
-                f"{claim.module_id}"
-            )
-        # Structured module submissions already bind a marker to one leaf.
-        # Chief prose is a flattened module view, so repeat that ownership
-        # check whenever fixed submodule headings are still present.  Legacy
-        # module prose without headings remains valid at module scope.
-        marker_line = next(
-            index for index, line in enumerate(narrative.splitlines()) if marker in line
-        )
-        headings = [
-            (index, heading.group(1).strip())
-            for index, line in enumerate(narrative.splitlines())
-            if (heading := re.match(r"^#{1,6}\s+(.+?)\s*$", line))
-        ]
-        fixed_headings = [
-            (index, title)
-            for index, title in headings
-            if re.match(r"^\d+(?:\.\d+)*\b", title)
-        ]
-        if fixed_headings:
-            preceding = [item for item in fixed_headings if item[0] <= marker_line]
-            if preceding:
-                owner_title = preceding[-1][1]
-                owner_id = owner_title.split(maxsplit=1)[0].rstrip(".")
-                if owner_id != claim.submodule_id:
-                    raise ValueError(
-                        f"Claim {claim.id} marker must remain in submodule "
-                        f"{claim.submodule_id}; found under {owner_id}"
-                    )
-
-
-def validate_editor_quality(
-    edited: EditedReportSubmission,
-    modules: dict[str, ModuleSubmission],
-) -> list[str]:
-    """Validate the fixed module structure without judging prose mechanically."""
-
-    missing_modules = sorted(set(REPORT_TAXONOMY) - set(modules))
-    if missing_modules:
-        raise ValueError(f"quality validation is missing approved modules: {missing_modules}")
-    for module_id, definition in REPORT_TAXONOMY.items():
-        narrative = edited.module_narratives[module_id]
-        missing = [
-            submodule_id
-            for submodule_id, submodule in definition.submodules.items()
-            if submodule_id not in narrative or submodule.title not in narrative
-        ]
-        if missing:
-            raise ValueError(
-                f"chief editor omitted fixed submodules from {module_id}: {missing}"
-            )
-    return []
-
-
-def validate_module_markdown_consistency(
-    modules: dict[str, ModuleSubmission],
-    exported_markdown: dict[str, str] | None = None,
-) -> None:
-    """Audit structured submissions and persisted Markdown as one canonical body."""
-
-    missing_modules = sorted(set(REPORT_TAXONOMY) - set(modules))
-    if missing_modules:
-        raise ValueError(f"module Markdown audit is missing modules: {missing_modules}")
-
-    structured_mismatches: list[str] = []
-    export_mismatches: list[str] = []
-    missing_export_sections: dict[str, list[str]] = {}
-    for module_id, definition in REPORT_TAXONOMY.items():
-        module = modules[module_id]
-        canonical = compose_module_markdown(module_id, module.submodule_narratives)
-        if module.markdown.strip() != canonical.strip():
-            structured_mismatches.append(module_id)
-        if exported_markdown is None:
-            continue
-        exported = exported_markdown.get(module_id, "")
-        if exported.strip() != canonical.strip():
-            export_mismatches.append(module_id)
-        missing = [
-            section_id
-            for section_id in definition.sections
-            if re.search(
-                rf"^#{{1,6}}\s+{re.escape(section_id)}(?:\.|\s|$)",
-                exported,
-                flags=re.MULTILINE,
-            )
-            is None
-        ]
-        if missing:
-            missing_export_sections[module_id] = missing
-
-    if structured_mismatches or export_mismatches or missing_export_sections:
-        raise ValueError(
-            "module Markdown integrity validation failed; "
-            f"structured_mismatches={structured_mismatches}; "
-            f"export_mismatches={export_mismatches}; "
-            f"missing_export_sections={missing_export_sections}"
-        )
-
-
-def validate_existing_markdown_modules(source_modules: dict[str, str]) -> None:
-    """Require the fixed module/submodule structure for Markdown aggregation."""
-
-    missing_modules = sorted(set(REPORT_TAXONOMY) - set(source_modules))
-    if missing_modules:
-        raise ValueError(f"existing Markdown set is missing modules: {missing_modules}")
-
-    missing_sections: list[str] = []
-    for module_id, definition in REPORT_TAXONOMY.items():
-        markdown = source_modules[module_id]
-        for submodule_id in definition.sections:
-            match = re.search(
-                rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.)?\s+.+$",
-                markdown,
-                flags=re.MULTILINE,
-            )
-            if match is None:
-                missing_sections.append(submodule_id)
-
-    if missing_sections:
-        raise ValueError(
-            "existing Markdown modules are missing fixed sections; "
-            f"missing_sections={sorted(missing_sections)}"
-        )
 
 
 def validate_final_report_markdown(
@@ -329,27 +150,6 @@ def validate_final_report_markdown(
             f"heading_errors={errors}"
         )
     return {}
-
-
-def validate_aggregate_retention(
-    edited: EditedReportSubmission,
-    source_modules: dict[str, str],
-) -> list[str]:
-    """Validate aggregate module headings without comparing prose bytes."""
-
-    for module_id in REPORT_TAXONOMY:
-        source = source_modules[module_id]
-        narrative = edited.module_narratives[module_id]
-        missing_headings = [
-            heading
-            for heading in _markdown_headings(source)
-            if heading not in narrative
-        ]
-        if missing_headings:
-            raise ValueError(
-                f"aggregate editor omitted headings from {module_id}: {missing_headings}"
-            )
-    return []
 
 
 class ReportAssetAssembler:

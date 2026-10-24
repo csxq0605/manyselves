@@ -13,12 +13,11 @@ import hashlib
 import inspect
 import json
 import os
-import re
 import socket
 import tempfile
 import time
 from contextlib import contextmanager
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Mapping, TextIO
@@ -383,17 +382,6 @@ _PROJECT_WRITE_LEASE: ContextVar[
 ] = ContextVar("reporting_project_write_lease", default=None)
 
 
-def bind_project_write_lease(
-    workspace: Path,
-    lease: ProjectWriteLease,
-) -> Token:
-    return _PROJECT_WRITE_LEASE.set((Path(workspace).resolve(), lease))
-
-
-def reset_project_write_lease(token: Token) -> None:
-    _PROJECT_WRITE_LEASE.reset(token)
-
-
 def validate_bound_project_write_lease(workspace: Path) -> None:
     bound = _PROJECT_WRITE_LEASE.get()
     if bound is None:
@@ -403,22 +391,6 @@ def validate_bound_project_write_lease(workspace: Path) -> None:
     if workspace != bound_workspace:
         raise RuntimeError("project write fence belongs to another workspace")
     ProjectWriteLeaseManager(workspace).validate(lease)
-
-
-def current_bound_project_write_lease(
-    workspace: Path,
-) -> ProjectWriteLease | None:
-    """Return the validated bound lease, if this call is outside a write job."""
-
-    bound = _PROJECT_WRITE_LEASE.get()
-    if bound is None:
-        return None
-    bound_workspace, lease = bound
-    workspace = Path(workspace).resolve()
-    if workspace != bound_workspace:
-        raise RuntimeError("project write fence belongs to another workspace")
-    ProjectWriteLeaseManager(workspace).validate(lease)
-    return lease
 
 
 class TaskCorrelation(_StrictModel):
@@ -952,22 +924,6 @@ class LaneCompletion(_StrictModel):
 ModuleLaneCompletion = LaneCompletion
 
 
-class LaneExceptionCandidate(_StrictModel):
-    kind: Literal["lane_exception_candidate"] = "lane_exception_candidate"
-    lane_id: str
-    run_id: str
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    disposition: Literal[
-        "needs_input",
-        "disputed",
-        "escalate",
-        "failed",
-    ]
-    reason: str = Field(min_length=1)
-    task_attempt_id: str
-    attempt_disposition: str | None = None
-
-
 @dataclass(slots=True)
 class CohortRunResult:
     """Terminal view returned by :class:`AllReadySupervisor`.
@@ -1411,24 +1367,6 @@ class AllReadySupervisor:
         )
 
 
-class CohortBarrier(_StrictModel):
-    kind: Literal["cohort_barrier"] = "cohort_barrier"
-    run_id: str
-    # Module barriers use ``target_modules``; the generic all-ready reducer
-    # uses ``target_tasks``.  Keeping both fields lets old checkpoints parse
-    # unchanged while allowing arbitrary semantic task ids.
-    target_modules: list[str] = Field(default_factory=list)
-    target_tasks: list[str] = Field(default_factory=list)
-    completion_refs: dict[str, str] = Field(default_factory=dict)
-    # Legacy forensic hashes remain readable but are not required for an
-    # active barrier or recovery decision.
-    completion_hashes: dict[str, str] = Field(default_factory=dict)
-    target_revisions: dict[str, int] = Field(default_factory=dict)
-    barrier_sha256: str | None = None
-    scope: Literal["full", "partial"] = "full"
-    status: Literal["committed", "failed", "deferred"] = "committed"
-
-
 class CrossOwnerCompletion(_StrictModel):
     kind: Literal["cross_owner_completion"] = "cross_owner_completion"
     lane_id: str
@@ -1504,20 +1442,6 @@ class CrossOwnerCompletion(_StrictModel):
         if self.verdict_result is None:
             deterministic.pop("verdict_result", None)
         return _sha256_bytes(_canonical_json_bytes(deterministic))
-
-
-class CrossOwnerBarrier(_StrictModel):
-    kind: Literal["cross_owner_barrier"] = "cross_owner_barrier"
-    run_id: str
-    review_round: int = Field(default=0, ge=0)
-    target_modules: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(default_factory=list)
-    completion_refs: dict[str, str] = Field(default_factory=dict)
-    completion_hashes: dict[str, str] = Field(default_factory=dict)
-    # Exact subject revisions are part of the barrier identity.  Legacy
-    # barriers may omit this map and remain parseable, but new barriers always
-    # bind one revision per owner lane.
-    completion_revisions: dict[str, int] = Field(default_factory=dict)
-    barrier_sha256: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2698,370 +2622,3 @@ class RecoveryStateStore:
         return plan
 
 
-class WorkflowReducer:
-    """Single-writer deterministic promotion of successful module lanes."""
-
-    def __init__(self, workspace: Path, run_id: str) -> None:
-        self.workspace = Path(workspace).resolve()
-        self.run_id = _safe_component(run_id, field="run_id")
-
-    @staticmethod
-    def _task_id(value: LaneTaskSpec | str) -> str:
-        task_id = value.task_id if isinstance(value, LaneTaskSpec) else value
-        if not task_id:
-            raise ValueError("terminal promotion requires a task id")
-        return _safe_component(task_id, field="task_id")
-
-    @staticmethod
-    def _revision(value: LaneTaskSpec | Mapping[str, Any] | Any) -> int | None:
-        if isinstance(value, LaneTaskSpec):
-            return value.revision
-        if isinstance(value, Mapping):
-            revision = value.get("revision")
-            return int(revision) if revision is not None else None
-        revision = getattr(value, "revision", None)
-        return int(revision) if revision is not None else None
-
-    @staticmethod
-    def _terminal_payload(value: Any) -> tuple[dict[str, Any], str | None, str | None, int | None]:
-        """Normalize a completion/attempt value for immutable promotion."""
-
-        if isinstance(value, BaseModel):
-            payload = value.model_dump(mode="json")
-        elif isinstance(value, Mapping):
-            payload = dict(value)
-        else:
-            payload = {"value": value}
-        revision = WorkflowReducer._revision(value)
-        ref = payload.get("result_ref") or payload.get("ref")
-        result_hash = (
-            payload.get("result_sha256")
-            or payload.get("result_hash")
-            or payload.get("sha256")
-        )
-        if isinstance(payload.get("subject"), Mapping):
-            subject = payload["subject"]
-            ref = ref or subject.get("ref")
-            result_hash = result_hash or subject.get("sha256")
-        return payload, ref, result_hash, revision
-
-    def promote_terminal(
-        self,
-        spec: LaneTaskSpec | str,
-        terminal: Any,
-        completion: Any | None = None,
-        *,
-        expected_revision: int | None = None,
-    ) -> Any:
-        """Promote one lane-private terminal through a single-writer fence.
-
-        The canonical terminal path is immutable.  A retry with the same
-        semantic identity is idempotent; a late attempt with an older revision
-        or different bytes is rejected and can never overwrite the winner.
-        """
-
-        validate_bound_project_write_lease(self.workspace)
-        task_id = self._task_id(spec)
-        payload_value = completion if completion is not None else terminal
-        payload, result_ref, result_hash, terminal_revision = self._terminal_payload(
-            payload_value
-        )
-        spec_revision = self._revision(spec)
-        if expected_revision is not None:
-            if terminal_revision is not None and terminal_revision != expected_revision:
-                raise ValueError("terminal revision does not match expected revision")
-            if spec_revision is not None and spec_revision != expected_revision:
-                raise ValueError("task spec revision does not match expected revision")
-            terminal_revision = expected_revision
-        elif terminal_revision is None:
-            terminal_revision = spec_revision
-        # A simple business terminal must point at an existing, parseable
-        # result.  Legacy semantic-key completions remain readable for old
-        # checkpoints, but their hashes are not consulted by this active path.
-        legacy_completion = payload.get("semantic_key") is not None
-        status = payload.get("status", "completed")
-        payload_run = payload.get("run_id")
-        payload_lane = payload.get("lane_id", payload.get("task_id"))
-        if payload_run not in (None, self.run_id):
-            raise ValueError("terminal run ownership mismatch")
-        if payload_lane not in (None, task_id):
-            raise ValueError("terminal lane ownership mismatch")
-        if status != "completed":
-            raise ValueError("only completed lane terminals can be promoted")
-        if not legacy_completion:
-            if not result_ref:
-                raise ValueError("completed terminal requires result_ref")
-            result_path = RecoveryStateStore(self.workspace, self.run_id)._result_path(result_ref)
-            if result_path is None or not result_path.is_file():
-                raise ValueError("completed terminal result file is missing")
-            try:
-                result_payload = json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError) as exc:
-                raise ValueError("completed terminal result is not valid JSON") from exc
-            if isinstance(result_payload, Mapping):
-                if result_payload.get("run_id") not in (None, self.run_id):
-                    raise ValueError("completed result run ownership mismatch")
-                if result_payload.get("lane_id", result_payload.get("task_id")) not in (None, task_id):
-                    raise ValueError("completed result lane ownership mismatch")
-                if terminal_revision is not None and result_payload.get("revision") not in (None, terminal_revision):
-                    raise ValueError("completed result revision mismatch")
-        promoted = {
-            "run_id": self.run_id,
-            "task_id": task_id,
-            "lane_id": payload_lane or task_id,
-            "stage": payload.get("stage", "lane"),
-            "revision": terminal_revision,
-            "status": "completed",
-            "result_ref": result_ref,
-            "terminal": payload,
-        }
-        path = self.workspace / "Work" / "runs" / self.run_id / "lanes" / task_id / "terminal.json"
-        with exclusive_file_lock(path.with_suffix(".lock")):
-            if path.is_file():
-                try:
-                    existing = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError, TypeError) as exc:
-                    raise RuntimeError(f"promoted terminal is unreadable: {path}") from exc
-                if existing == promoted:
-                    return terminal
-                old_revision = existing.get("revision")
-                if (
-                    terminal_revision is not None
-                    and old_revision is not None
-                    and terminal_revision < old_revision
-                ):
-                    raise RuntimeError("late terminal attempt has an older revision")
-                raise RuntimeError("promoted terminal already exists with different identity")
-            atomic_write_json(path, promoted)
-        return terminal
-
-    def _barrier_completions(
-        self,
-        targets: list[str],
-        completions: Any | None,
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        refs: dict[str, str] = {}
-        hashes: dict[str, str] = {}
-        if isinstance(completions, Mapping) and (
-            "completion_refs" in completions or "completion_hashes" in completions
-        ):
-            refs.update({str(k): str(v) for k, v in completions.get("completion_refs", {}).items()})
-            hashes.update({str(k): str(v) for k, v in completions.get("completion_hashes", {}).items()})
-        elif completions is not None:
-            if isinstance(completions, Mapping):
-                items = list(completions.items())
-            else:
-                items = list(completions)
-            for key, value in items:
-                task_id = str(key)
-                payload, ref, result_hash, _revision = self._terminal_payload(value)
-                if ref:
-                    refs[task_id] = ref
-                if result_hash:
-                    hashes[task_id] = result_hash
-                if not ref and payload.get("completion_ref"):
-                    refs[task_id] = str(payload["completion_ref"])
-        # A reducer may be called after promotions with no explicit completion
-        # list.  Read each immutable terminal as the source of truth.
-        for task_id in targets:
-            if task_id in refs:
-                continue
-            path = (
-                self.workspace
-                / "Work"
-                / "runs"
-                / self.run_id
-                / "lanes"
-                / task_id
-                / "terminal.json"
-            )
-            if path.is_file():
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                raw_ref = raw.get("result_ref")
-                raw_hash = raw.get("result_sha256")
-                if raw_ref:
-                    refs.setdefault(task_id, str(raw_ref))
-                if raw_hash:
-                    hashes.setdefault(task_id, str(raw_hash))
-        if set(refs) != set(targets):
-            raise ValueError("exact barrier requires one verified completion per target")
-        return refs, hashes
-
-    def commit_exact_barrier(
-        self,
-        specs: Iterable[LaneTaskSpec | str],
-        completions: Any | None = None,
-        *,
-        expected_revision: int | Mapping[str, int] | None = None,
-        scope: Literal["full", "partial"] = "full",
-    ) -> CohortBarrier:
-        """Commit an exact all-ready barrier with one reducer writer."""
-
-        validate_bound_project_write_lease(self.workspace)
-        values = list(specs)
-        targets = sorted({self._task_id(value) for value in values})
-        if len(targets) != len(values):
-            raise ValueError("exact barrier target set contains duplicates")
-        target_revisions: dict[str, int] = {}
-        for value in values:
-            task_id = self._task_id(value)
-            revision = self._revision(value)
-            expected = (
-                expected_revision.get(task_id)
-                if isinstance(expected_revision, Mapping)
-                else expected_revision
-            )
-            if expected is not None:
-                if revision is not None and revision != int(expected):
-                    raise ValueError("task spec revision does not match expected revision")
-                revision = int(expected)
-            if revision is not None:
-                target_revisions[task_id] = revision
-        refs, hashes = self._barrier_completions(targets, completions)
-        module_targets = [task_id for task_id in targets if task_id in {"2.1", "2.2", "2.3", "2.4", "2.5"}]
-        if len(module_targets) != len(targets):
-            module_targets = []
-        payload = {
-            "run_id": self.run_id,
-            "target_modules": module_targets,
-            "target_tasks": targets,
-            "completion_refs": {task_id: refs[task_id] for task_id in targets},
-            "completion_hashes": {task_id: hashes[task_id] for task_id in targets},
-            "target_revisions": target_revisions,
-            "scope": scope,
-            "status": "committed",
-        }
-        barrier = CohortBarrier(
-            **payload,
-            barrier_sha256=_sha256_bytes(_canonical_json_bytes(payload)),
-        )
-        path = self.workspace / "Work" / "runs" / self.run_id / "lanes" / "cohort-barrier.json"
-        with exclusive_file_lock(path.with_suffix(".lock")):
-            if path.is_file():
-                try:
-                    existing = CohortBarrier.model_validate_json(
-                        path.read_text(encoding="utf-8")
-                    )
-                except Exception as exc:
-                    raise RuntimeError(f"cohort barrier is unreadable: {path}") from exc
-                if existing == barrier:
-                    return existing
-                raise RuntimeError("exact cohort barrier already exists with different identity")
-            atomic_write_json(path, barrier.model_dump(mode="json"))
-        return barrier
-
-    def write_module_barrier(
-        self,
-        target_modules: list[str],
-        completions: list[tuple[str, LaneCompletion]],
-        *,
-        partial: bool = False,
-    ) -> CohortBarrier:
-        validate_bound_project_write_lease(self.workspace)
-        ordered_targets = sorted(target_modules, key=lambda value: float(value))
-        if len(ordered_targets) != len(set(ordered_targets)):
-            raise ValueError("module barrier target set contains duplicates")
-        by_module = {completion.module_id: (ref, completion) for ref, completion in completions}
-        if set(by_module) != set(ordered_targets) or len(by_module) != len(completions):
-            raise ValueError("module barrier requires the exact unique target completion set")
-        for module_id, (_ref, completion) in by_module.items():
-            if completion.run_id != self.run_id or completion.module_id != module_id:
-                raise ValueError("lane completion ownership mismatch")
-        refs = {module_id: by_module[module_id][0] for module_id in ordered_targets}
-        hashes = {
-            module_id: by_module[module_id][1].completion_sha256()
-            for module_id in ordered_targets
-        }
-        barrier_payload = {
-            "run_id": self.run_id,
-            "target_modules": ordered_targets,
-            "completion_refs": refs,
-            "completion_hashes": hashes,
-            "scope": "partial" if partial else "full",
-        }
-        barrier = CohortBarrier(
-            **barrier_payload,
-            barrier_sha256=_sha256_bytes(_canonical_json_bytes(barrier_payload)),
-        )
-        path = (
-            self.workspace
-            / "Work"
-            / "runs"
-            / self.run_id
-            / "lanes"
-            / ("partial-module-barrier.json" if partial else "module-barrier.json")
-        )
-        atomic_write_json(path, barrier.model_dump(mode="json"))
-        return barrier
-
-    def write_cross_owner_barrier(
-        self,
-        review_round: int,
-        target_modules: list[str],
-        completions: list[tuple[str, CrossOwnerCompletion]],
-    ) -> CrossOwnerBarrier:
-        validate_bound_project_write_lease(self.workspace)
-        ordered_targets = sorted(target_modules, key=float)
-        by_module = {
-            completion.module_id: (ref, completion)
-            for ref, completion in completions
-        }
-        if (
-            len(ordered_targets) != len(set(ordered_targets))
-            or set(by_module) != set(ordered_targets)
-            or len(by_module) != len(completions)
-        ):
-            raise ValueError(
-                "Cross owner barrier requires the exact unique target completion set"
-            )
-        for module_id, (_ref, completion) in by_module.items():
-            if (
-                completion.run_id != self.run_id
-                or completion.review_round != review_round
-                or completion.module_id != module_id
-            ):
-                raise ValueError("Cross owner completion ownership mismatch")
-        refs = {module_id: by_module[module_id][0] for module_id in ordered_targets}
-        hashes = {
-            module_id: by_module[module_id][1].completion_sha256()
-            for module_id in ordered_targets
-        }
-        revisions: dict[str, int] = {}
-        for module_id in ordered_targets:
-            completion = by_module[module_id][1]
-            revision = completion.subject_revision
-            if revision is None:
-                # v1 completion fixtures did not carry a typed revision.  Their
-                # canonical subject refs still use ``-rN.json``; recover that
-                # value for a strict barrier without changing the old wire
-                # shape of the completion itself.
-                match = re.search(r"-r([0-9]+)\.json$", completion.subject.ref)
-                if match is None:
-                    raise ValueError(
-                        "Cross owner completion subject must bind a revision"
-                    )
-                revision = int(match.group(1))
-            revisions[module_id] = revision
-        payload = {
-            "run_id": self.run_id,
-            "review_round": review_round,
-            "target_modules": ordered_targets,
-            "completion_refs": refs,
-            "completion_hashes": hashes,
-            "completion_revisions": revisions,
-        }
-        barrier = CrossOwnerBarrier(
-            **payload,
-            barrier_sha256=_sha256_bytes(_canonical_json_bytes(payload)),
-        )
-        path = (
-            self.workspace
-            / "Work"
-            / "runs"
-            / self.run_id
-            / "lanes"
-            / f"cross-r{review_round}"
-            / "owner-barrier.json"
-        )
-        atomic_write_json(path, barrier.model_dump(mode="json"))
-        return barrier

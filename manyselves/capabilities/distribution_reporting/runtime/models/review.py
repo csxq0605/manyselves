@@ -6,29 +6,21 @@ from typing import Literal
 
 from pydantic import Field
 
-from ..state.parallel import CrossOwnerCompletion
 from .agentic import (
-    CrossOwnerFindingSubmission,
-    CrossOwnerVerdictSubmission,
     CrossReviewFinding,
-    EditedReportSubmission,
-    FinalReviewFinding,
     ModuleReviewFinding,
     ModuleSubmission,
-    ResolutionVerdict,
     RevisionResponse,
     StrictModel,
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
 from .inputs import (
-    CrossOwnerInput,
     ModuleReviewInput,
     ModuleRevisionDiff,
     ModuleRevisionInput,
     ReviewCompletionRecord,
 )
-from .reporting import UserSupplement
 
 
 class ModuleReviewProgress(StrictModel):
@@ -217,144 +209,6 @@ class ModuleLocalRegressionContext(StrictModel):
     revision_diff: ModuleRevisionDiff
 
 
-class CrossReviewProgress(StrictModel):
-    run_id: str
-    next_action: str
-    modules: dict[str, ModuleSubmission]
-    pending: list[CrossReviewFinding] = Field(default_factory=list)
-    responses_by_module: dict[str, list[RevisionResponse]] = Field(default_factory=dict)
-    local_review_refs: dict[str, str] = Field(default_factory=dict)
-    machine_refs: list[str] = Field(default_factory=list)
-    finding_refs: list[str] = Field(default_factory=list)
-    verdict_refs: list[str] = Field(default_factory=list)
-    resolved_ids: list[str] = Field(default_factory=list)
-    prior_synthesis: list = Field(default_factory=list)
-    phase: str = "initial"
-    review_round: int = 0
-    revised_owner_ids: list[str] = Field(default_factory=list)
-    cross_owner_barrier_ref: str | None = None
-
-
-class FinalReviewProgress(StrictModel):
-    run_id: str
-    next_action: str
-    current: EditedReportSubmission
-    pending: list[FinalReviewFinding] = Field(default_factory=list)
-    responses: list[RevisionResponse] = Field(default_factory=list)
-    finding_refs: list[str] = Field(default_factory=list)
-    verdict_refs: list[str] = Field(default_factory=list)
-    resolved_ids: list[str] = Field(default_factory=list)
-    residual_risks: list[str] = Field(default_factory=list)
-    phase: str = "initial"
-    review_round: int = 0
-    chief_revision_number: int = 0
-
-
-class _CrossOwnerLaneResult(StrictModel):
-    module: ModuleSubmission
-    responses: list[RevisionResponse]
-    local_review_ref: str
-    completion_ref: str
-    completion: CrossOwnerCompletion
-
-
-class _CrossOwnerPipelineResult(StrictModel):
-    """One fully closed owner pipeline, safe to promote at the exact-five barrier."""
-
-    owner_module_id: str
-    initial_input_ref: str
-    initial_result_ref: str
-    initial_result: CrossOwnerFindingSubmission
-    lane: _CrossOwnerLaneResult
-    verdict_ref: str | None = None
-    verdict: CrossOwnerVerdictSubmission | None = None
-    finding_refs: list[str] = Field(default_factory=list)
-    verdict_refs: list[str] = Field(default_factory=list)
-    review_exception_refs: list[str] = Field(default_factory=list)
-    findings: list[CrossReviewFinding] = Field(default_factory=list)
-    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
-
-
-class CrossOwnerInitialReviewPreparation(StrictModel):
-    """Typed boundary before one Cross-owner initial Agent turn.
-
-    A declarative runtime can dispatch ``envelope`` when ``mode`` is
-    ``invoke_agent``.  If the typed finding submission is already present,
-    preparation returns ``continue_existing`` with that persisted result so a
-    reconstructed Action does not repeat the reviewer turn.
-    """
-
-    mode: Literal["invoke_agent", "continue_existing"]
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    reviewer_session_key: str
-    owner_input_ref: str
-    owner_input: CrossOwnerInput
-    user_supplements: list[UserSupplement] = Field(default_factory=list)
-    prior_module_review_completion_ref: str | None = None
-    envelope: TaskEnvelope | None = None
-    existing_result_ref: str | None = None
-    existing_result: CrossOwnerFindingSubmission | None = None
-    # Set when the owner's dossiers are reviewed in several turns that each fit
-    # the request budget; ``owner_input`` is then this batch's scoped input.
-    batch_index: int | None = None
-    batch_dossier_ids: list[str] = Field(default_factory=list)
-
-
-class CrossOwnerInitialReviewAcceptance(StrictModel):
-    """Typed boundary after accepting one Cross-owner initial result."""
-
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    reviewer_session_key: str
-    owner_input_ref: str
-    user_supplements: list[UserSupplement] = Field(default_factory=list)
-    prior_module_review_completion_ref: str | None = None
-    result_ref: str
-    result: CrossOwnerFindingSubmission
-    next_action: Literal["continue_existing"] = "continue_existing"
-
-
-class CrossOwnerRevisionPreparation(StrictModel):
-    """Typed boundary before the original owner Author revises Cross findings."""
-
-    mode: Literal["invoke_agent", "continue_existing"]
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    owner_input_ref: str
-    current: ModuleSubmission
-    reviewed_baseline: ModuleSubmission | None = None
-    findings: list[CrossReviewFinding]
-    finding_refs: list[str]
-    user_supplements: list[UserSupplement] = Field(default_factory=list)
-    prior_completion_ref: str | None = None
-    prepared: ModuleRevisionPreparation | None = None
-    existing_candidate: ModuleSubmission | None = None
-    existing_candidate_ref: str | None = None
-
-
-class CrossOwnerRevisionAcceptance(StrictModel):
-    """Typed accepted Author candidate passed into owner-local regression."""
-
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    owner_input_ref: str
-    current: ModuleSubmission
-    findings: list[CrossReviewFinding]
-    finding_refs: list[str]
-    user_supplements: list[UserSupplement] = Field(default_factory=list)
-    prior_completion_ref: str | None = None
-    revised: ModuleSubmission
-    candidate_ref: str
-
-
 class MainExceptionDecisionPreparation(StrictModel):
     """Serializable boundary before an existing Main exception decision."""
 
@@ -381,91 +235,3 @@ class MainExceptionDecisionAcceptance(StrictModel):
     result: WorkflowDecisionSubmission
 
 
-class CrossOwnerLocalReviewPreparation(StrictModel):
-    """Typed boundary before the original module Auditor local regression."""
-
-    mode: Literal["invoke_agent", "continue_existing", "preflight_revision"]
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    owner_input_ref: str
-    reviewed_baseline: ModuleSubmission
-    cross_responses: list[RevisionResponse]
-    regression_context: ModuleLocalRegressionContext | None = None
-    prepared: ModuleInitialReviewPreparation | None = None
-    existing_review: ModuleInitialReviewAcceptance | None = None
-
-
-class CrossOwnerLocalReviewAcceptance(StrictModel):
-    """Typed accepted local-regression result passed into owner closure."""
-
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    owner_input_ref: str
-    reviewed_baseline: ModuleSubmission
-    cross_responses: list[RevisionResponse]
-    regression_context: ModuleLocalRegressionContext
-    review: ModuleInitialReviewAcceptance | ModuleRecheckAcceptance
-
-
-class CrossOwnerRecheckPreparation(StrictModel):
-    """Typed boundary before the original Cross owner reviewer recheck."""
-
-    mode: Literal["invoke_agent", "continue_existing"]
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    reviewer_session_key: str
-    initial_result_ref: str
-    initial_result: CrossOwnerFindingSubmission
-    lane: _CrossOwnerLaneResult
-    owner_input_ref: str
-    required_findings: list[CrossReviewFinding]
-    envelope: TaskEnvelope | None = None
-    existing_result_ref: str | None = None
-    existing_result: CrossOwnerVerdictSubmission | None = None
-
-
-class CrossOwnerRecheckAcceptance(StrictModel):
-    """Typed accepted Cross owner verdict passed into owner completion."""
-
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    review_round: int
-    reviewer_session_key: str
-    initial_result_ref: str
-    initial_result: CrossOwnerFindingSubmission
-    lane: _CrossOwnerLaneResult
-    owner_input_ref: str
-    required_findings: list[CrossReviewFinding]
-    result_ref: str
-    result: CrossOwnerVerdictSubmission
-
-
-class CrossOwnerRoundProgress(StrictModel):
-    """Typed owner state after one accepted Cross reviewer verdict."""
-
-    run_id: str
-    workflow_id: str
-    owner_module_id: str
-    initial_input_ref: str
-    initial_result_ref: str
-    initial_result: CrossOwnerFindingSubmission
-    review_round: int
-    next_review_round: int
-    next_owner_input_ref: str
-    next_action: Literal["revise", "completed"]
-    pending: list[CrossReviewFinding]
-    resolved_ids: list[str]
-    finding_refs: list[str]
-    verdict_refs: list[str]
-    findings: list[CrossReviewFinding]
-    verdicts: list[ResolutionVerdict]
-    lane: _CrossOwnerLaneResult
-    verdict_ref: str
-    verdict: CrossOwnerVerdictSubmission

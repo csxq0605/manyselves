@@ -20,30 +20,28 @@ from PyQt6.QtGui import (
     QPen,
     QWheelEvent,
 )
-
-from ..scale import scaled, scaled_size
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
-    QPlainTextEdit,
 )
 
-from .markdown_renderer import render_markdown
+from ...utils.editor_context import parse_editor_context
+from ..scale import scaled, scaled_size
 from ..theme import get_theme_colors
+from .markdown_renderer import render_markdown
 from .timeline import TIMELINE_RAIL_WIDTH, TimelineRail
 from .ui_utils import create_isolated_context_menu, install_compact_tooltip, render_svg_icon
-from ...utils.editor_context import parse_editor_context
 
 TIMELINE_EVENT_ROW_HEIGHT = 34
 COLLAPSE_LINE_LIMIT = 5
 TIMELINE_TEXT_LEFT_GUTTER = 4
 USER_BUBBLE_CONTENT_MARGINS = QMargins(10, 10, 10, 10)
-_CODE_BLOCK_PATTERN = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 
 class _DisclosureArrow(QWidget):
     def __init__(self, expanded: bool = False, parent: QWidget | None = None):
@@ -220,47 +218,11 @@ class _ElidedLabel(QLabel):
             super().setText(elided)
 
 
-def _parse_code_blocks(content: str) -> list[tuple[str, str | None]]:
-    """Split content into segments: (text, None) for text, (code, language) for code."""
-    parts: list[tuple[str, str | None]] = []
-    last_end = 0
-    for m in _CODE_BLOCK_PATTERN.finditer(content):
-        if m.start() > last_end:
-            parts.append((content[last_end:m.start()], None))
-        lang = m.group(1) or None
-        code = m.group(2).rstrip()
-        parts.append((code, lang))
-        last_end = m.end()
-    if last_end < len(content):
-        parts.append((content[last_end:], None))
-    if not parts:
-        parts.append((content, None))
-    return parts
-
-
 @lru_cache(maxsize=8)
 def _copy_icon(color: str = "") -> QIcon:
     if not color:
         color = get_theme_colors()["muted"]
     return render_svg_icon("copy", QColor(color), size=16)
-
-
-@lru_cache(maxsize=8)
-def _file_chip_icon(color: str = "") -> QIcon:
-    if not color:
-        color = get_theme_colors()["muted"]
-    return render_svg_icon("file", QColor(color), size=14)
-
-
-def _parse_editor_context_block(content: str) -> tuple[str | None, str | None, str]:
-    parsed = parse_editor_context(content)
-    if not parsed.get("has_context"):
-        return None, None, content
-    return (
-        parsed.get("chip_text"),
-        parsed.get("chip_tooltip"),
-        str(parsed.get("bubble_text") or ""),
-    )
 
 
 def _message_payload_from_content(content: str) -> dict[str, object]:
@@ -410,82 +372,6 @@ def _raw_markdown_for_selected_text(raw_markdown: str, selected_text: str) -> st
     start_raw, end_raw = _expand_inline_markdown_selection(raw_markdown, start_raw, end_raw)
     start_raw, end_raw = _expand_block_marker(raw_markdown, start_raw, end_raw)
     return raw_markdown[start_raw:end_raw]
-
-
-def _opaque_bounds(pixmap) -> QRect:
-    image = pixmap.toImage()
-    width = image.width()
-    height = image.height()
-    min_x = width
-    min_y = height
-    max_x = -1
-    max_y = -1
-    for y in range(height):
-        for x in range(width):
-            if QColor(image.pixelColor(x, y)).alpha() > 0:
-                min_x = min(min_x, x)
-                min_y = min(min_y, y)
-                max_x = max(max_x, x)
-                max_y = max(max_y, y)
-    if max_x < min_x or max_y < min_y:
-        return QRect()
-    return QRect(min_x, min_y, (max_x - min_x) + 1, (max_y - min_y) + 1)
-
-
-class _CodeBlockWidget(QWidget):
-    """VS Code-style code block with right-side hover-visible copy icon."""
-
-    def __init__(self, code: str, language: str | None, parent=None):
-        super().__init__(parent)
-        self._code = code
-        self._language = language
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        self.setObjectName("codeBlockCard")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Header bar with language label (left) and copy icon (right)
-        header = QWidget(self)
-        header.setObjectName("codeBlockHeader")
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(12, 4, 4, 4)
-        hl.setSpacing(8)
-
-        lang_label = QLabel(self._language or "code")
-        lang_label.setObjectName("codeBlockLang")
-        hl.addWidget(lang_label)
-        hl.addStretch()
-
-        w, h = scaled_size(30, 24)
-        self._copy_btn = QPushButton()
-        self._copy_btn.setObjectName("codeBlockCopyBtn")
-        self._copy_btn.setIcon(_copy_icon())
-        self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._copy_btn.setFixedSize(w, h)
-        install_compact_tooltip(self._copy_btn, "Copy")
-        self._copy_btn.clicked.connect(self._copy)
-        hl.addWidget(self._copy_btn)
-
-        layout.addWidget(header)
-
-        # Code content
-        code_label = QLabel(self._code)
-        code_label.setObjectName("codeBlockContent")
-        code_label.setWordWrap(True)
-        code_label.setTextFormat(Qt.TextFormat.PlainText)
-        code_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        code_label.setContentsMargins(12, 0, 12, 10)
-        layout.addWidget(code_label)
-
-    def _copy(self) -> None:
-        clipboard = QApplication.clipboard()
-        if clipboard:
-            clipboard.setText(self._code, QClipboard.Mode.Clipboard)
 
 
 class _NestedScrollPlainTextEdit(QPlainTextEdit):

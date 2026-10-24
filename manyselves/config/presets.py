@@ -61,12 +61,6 @@ def _extract_ts_string(ts: str, key: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _extract_ts_number(ts: str, key: str) -> int | None:
-    """Extract a numeric value for key."""
-    m = re.search(rf'{key}\s*:\s*(\d+)', ts)
-    return int(m.group(1)) if m else None
-
-
 def _extract_ts_env(ts: str, key: str) -> str | None:
     """Extract an env var value from settingsConfig.env block."""
     m = re.search(rf'{key}\s*:\s*"([^"]*)"', ts)

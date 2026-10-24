@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+
+from manyselves.config.schema import AppConfig
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.schemas.control import LeaseAcquireRequest, LeaseResponse, LeaseTokenRequest
@@ -17,12 +20,16 @@ class FakeRuntimeHost:
 
     def __init__(self) -> None:
         self.is_ready = False
+        self.workspace: Path | None = None
+        self.bus = MessageBus()
+        self.config_manager = SimpleNamespace(config=AppConfig())
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: {"main": "idle"},
             get_agent_session_id=lambda agent_id: None,
         )
 
     async def start(self, workspace: Path) -> None:
+        self.workspace = workspace
         self.is_ready = True
 
     async def stop(self) -> None:

@@ -57,10 +57,8 @@ from tests.capabilities.distribution_reporting.test_ledger_report import (
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 
-EXPERT_TEXT = Path(
-    "docs/research/session-records/2026-10-10_to_2026-10-15/audit_manyselves/"
-    "配电安全专家咨询报告(专家优化版).docx.txt"
-)
+# The table of contents of the expert report (heading, then page number).
+EXPERT_TEXT = Path(__file__).resolve().parents[2] / "fixtures/expert_report_toc.txt"
 _TOC = re.compile(r"^(\d+(?:\.\d+)*)\.\s+(.+?)\d+$")
 
 

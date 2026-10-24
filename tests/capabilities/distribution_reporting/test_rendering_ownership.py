@@ -66,7 +66,7 @@ def test_rendering_symbols_are_physically_capability_owned() -> None:
     expected_symbols = {
         "contracts": ("RenderRequest", "RenderResult"),
         "handoff": ("HandoffDocxCore", "PackagedV2DocxCore"),
-        "packaged": ("PackagedDocxCore", "verify_rendered_markdown"),
+        "packaged": ("PackagedDocxCore",),
         "pds": ("ApprovedReport", "PdsDocxRenderer"),
         "source_index": ("SourceIndexDocxRenderer",),
         "v2": ("render_report_docx",),

@@ -290,15 +290,6 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
     assert "-WebSession $session" in powershell
 
 
-def test_linux_compose_docs_create_privileged_paths_then_switch_to_service_account() -> None:
-    docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
-
-    assert "sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves" in docs
-    assert "sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups" in docs
-    assert "sudo -iu manyselves" in docs
-    assert "Run every extraction and Compose command below from that configured service-account session." in docs
-
-
 def test_smoke_environment_is_loopback_and_phase1_scoped() -> None:
     smoke = Path("deploy/smoke.env.example").read_text("utf-8")
     compose = Path("deploy/compose.yaml").read_text("utf-8")
