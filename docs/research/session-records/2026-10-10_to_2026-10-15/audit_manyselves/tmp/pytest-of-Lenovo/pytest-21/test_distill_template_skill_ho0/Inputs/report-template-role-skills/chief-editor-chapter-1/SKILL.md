@@ -1,0 +1,56 @@
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。
+---
+name: report-template-chief-editor-chapter-1
+description: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。
+---
+
+# chief-editor-chapter-1 模板方法
+
+先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。

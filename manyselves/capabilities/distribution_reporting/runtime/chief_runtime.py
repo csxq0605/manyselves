@@ -75,6 +75,13 @@ from manyselves.runtime.agent_execution import (
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
 
+from .assessment_context import (
+    assessment_source_context,
+    module_rule_source_refs,
+    source_observation_groups,
+)
+from .task_context import bind_task_context
+
 SessionFactory = Callable[[str], AgentSessionLoop]
 CompletedResultLoader = Callable[
     [], AgentResult | None | Awaitable[AgentResult | None]
@@ -133,6 +140,8 @@ def _source_projection(
 
     cross_ref = state.get("cross_review_completion_ref")
     source_refs = [str(cross_ref)] if cross_ref else []
+    if state.get("cross_decision_pack_ref"):
+        source_refs.append(str(state["cross_decision_pack_ref"]))
     raw_modules = state.get("module_submissions", {})
     modules = {
         str(module_id): _model(module, ModuleSubmission)
@@ -151,7 +160,7 @@ def _source_projection(
                 },
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:2400]
+            )
             for module_id, module in sorted(
                 modules.items(), key=lambda item: float(item[0])
             )
@@ -170,7 +179,7 @@ def _source_projection(
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:6000],
+            ),
             "module_boundaries": ",".join(
                 f"{module_id}:{','.join(sorted(module.submodule_narratives))}"
                 for module_id, module in sorted(
@@ -187,16 +196,23 @@ def _source_projection(
                 plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
                 ensure_ascii=False,
                 sort_keys=True,
-            )[:12_000],
+            ),
         }
         knowledge_ref = state.get("special_topic_knowledge_ref")
         if knowledge_ref:
             source_refs.append(str(knowledge_ref))
 
+    source_context["module_assessments"] = assessment_source_context(modules)
+    source_context["source_observation_groups"] = json.dumps(
+        source_observation_groups(store.workspace, state["run_id"]), ensure_ascii=False,
+    )
     evidence_ref = state.get("preparation_refs", {}).get("evidence")
     if evidence_ref:
         source_refs.append(str(evidence_ref))
     source_refs.extend(materialize_chief_module_sources(store, state))
+    source_refs.extend(ref for module in modules.values() for ref in module_rule_source_refs(
+        module if isinstance(module, ModuleSubmission) else ModuleSubmission.model_validate(module)
+    ))
     source_refs = list(dict.fromkeys(ref for ref in source_refs if ref))
     if not source_context and not source_refs:
         source_context = {"scope": f"chapter-{chapter_id}"}
@@ -394,8 +410,15 @@ class ChiefChapterAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        def render_prompt() -> str:
+            return self._prompt(agent, task, context.contract, context.envelope)
+
+        projection = bind_task_context(
+            session.loop, self.workspace, context.envelope,
+            output_contract=task.output_contract, render_prompt=render_prompt,
+        )
         request = AgentTurnRequest(
-            content=self._prompt(agent, task, context.contract, context.envelope),
+            content=projection.initial_message() if projection is not None else render_prompt(),
             message_id=f"{task_id}:{run_id}:chapter-{context.chapter_id}:initial",
             workflow_id=workflow_id,
             run_id=run_id,
@@ -432,6 +455,7 @@ class ChiefChapterAgentInvoker:
                 context.contract,
                 context.envelope,
                 event_kind,
+                include_context=projection is None,
             ),
             result_decoder=self._decode_result,
             recovery=self.recovery_driver,
@@ -483,6 +507,8 @@ class ChiefChapterAgentInvoker:
         contract: ChiefChapterLaneInput,
         envelope: TaskEnvelope,
         event_kind: Any,
+        *,
+        include_context: bool = True,
     ) -> str:
         event_name = getattr(event_kind, "value", str(event_kind))
         if event_name == "max_tokens":
@@ -506,11 +532,11 @@ class ChiefChapterAgentInvoker:
                 instruction,
                 f"你仍是 {agent.id}，当前任务是 {task.id}。",
                 "立即调用 submit_result，提交符合 output contract 的 chief_chapter_lane_submission。",
-                json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
-                f"Output contract: {task.output_contract}",
-                *( [f"Inline context:\n{envelope.inline_context}"]
-                   if envelope.inline_context else [] ),
+                *( [json.dumps(contract.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                    f"Allowed tools: {json.dumps(task.tools, ensure_ascii=False)}",
+                    f"Output contract: {task.output_contract}",
+                    *([f"Inline context:\n{envelope.inline_context}"] if envelope.inline_context else [])]
+                   if include_context else ["当前任务输入与最新稿件由 typed_task_state 提供。"] ),
                 f"</{event_name}>",
             )
         )
@@ -794,6 +820,10 @@ class ChiefChapterRuntime:
             special_topic_plan=plan,
             special_topic_analysis=special_topic_body,
             protected_claim_ids=sorted(claim.id for claim in claims),
+            observation_links=[
+                link for chapter_id in active_chapters
+                for link in outcomes[chapter_id].submission.observation_links
+            ],
             tables=[],
             photo_ids=runtime_photo_ids(
                 [

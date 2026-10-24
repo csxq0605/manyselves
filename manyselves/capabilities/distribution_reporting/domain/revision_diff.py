@@ -27,6 +27,10 @@ def build_revision_diff(previous: ModuleSubmission, revised: ModuleSubmission) -
         "from_revision": previous.revision,
         "to_revision": revised.revision,
         "changed_submodule_narratives": changed_narratives,
+        "changed_assessment_submodules": sorted(
+            key for key in previous.assessments.keys() | revised.assessments.keys()
+            if previous.assessments.get(key) != revised.assessments.get(key)
+        ),
         "changed_claim_ids": changed_claims,
         "source_ids_added": sorted(set(revised.source_ids) - set(previous.source_ids)),
         "source_ids_removed": sorted(set(previous.source_ids) - set(revised.source_ids)),

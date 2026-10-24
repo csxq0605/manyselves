@@ -174,7 +174,7 @@ def _record_initial_progress(
             scope=list(prepared.scope),
             reviewer_session_key=prepared.reviewer_session_key,
             last_reviewed_subject_ref=None,
-            review_protocol_version=2,
+            review_protocol_version=prepared.review_protocol_version,
         ).model_dump(mode="json"),
     )
 
@@ -202,7 +202,7 @@ def _record_recheck_progress(
             scope=list(prepared.scope),
             reviewer_session_key=prepared.reviewer_session_key,
             last_reviewed_subject_ref=prepared.last_reviewed_subject_ref,
-            review_protocol_version=2,
+            review_protocol_version=prepared.review_protocol_version,
         ).model_dump(mode="json"),
     )
 

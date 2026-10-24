@@ -10,6 +10,9 @@ constraints:
 - Persist complete Skill parts with write_result_part; use Tool Slice continuation when the fourteen parts do not fit in one response.
 - Submit exactly the required fourteen part ids and no Cross Skill.
 - Keep project facts, customer identity, domain knowledge, thresholds, findings, conclusions, recommendations, and evidence identifiers out of Skills.
+- Label each transferable method with type (method/example), applicability, advisory versus contract-required status, and an inspection paragraph/table locator. Do not promote example prose into universal requirements or invent missing conditions.
+- Use the parsed document heading structure as template structure evidence; only the current writing task contract determines required report sections and optional Chapter 4 activation.
+- Auditor Skills must independently assess evidence, applicable rules and task requirements; author Skill compliance is not proof of correctness and style preferences alone are not blocking defects.
 tools:
 - inspect_document
 - write_result_part

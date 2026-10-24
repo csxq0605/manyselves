@@ -1,0 +1,1 @@
+{"id":"E-0028","subject":"16号楼配电房/进线D1601","fact":"实测剩余电流=0.1A；占运行电流=0.08%","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"低配评估详情","cell":"C3;J3:L3","page":null,"row":3,"column":"J","image_id":null},"value":0.1,"unit":"A","observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.4","submodule_id":"2.4.3.1","photo_refs":[]}

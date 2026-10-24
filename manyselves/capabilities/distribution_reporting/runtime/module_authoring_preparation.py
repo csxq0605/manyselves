@@ -39,10 +39,17 @@ from manyselves.capabilities.distribution_reporting.runtime.models.module_lane i
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     ReportRequest,
 )
+from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
+    prepare_module_fact_context,
+)
 from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
     KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_context import (
+    render_template_skill,
+    resolve_template_inputs,
+)
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_paths import (
     TEMPLATE_SKILL_BOUNDARY,
     TEMPLATE_SKILL_ROOT,
@@ -111,10 +118,11 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
     }
     boundary_ref = TEMPLATE_SKILL_BOUNDARY
     required = [*refs.values(), boundary_ref]
+    resolved = resolve_template_inputs(workspace, state, required)
     missing = [
         path.as_posix()
         for path in required
-        if not (workspace / path).is_file()
+        if not resolved[path].is_file()
     ]
     if missing:
         raise ModuleAuthoringPreparationError(
@@ -124,7 +132,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
         )
     try:
         boundary = TemplateSkillBoundaryManifest.model_validate_json(
-            (workspace / boundary_ref).read_text(encoding="utf-8")
+            resolved[boundary_ref].read_text(encoding="utf-8")
         )
     except (OSError, ValueError, AttributeError) as exc:
         raise ModuleAuthoringPreparationError(
@@ -132,7 +140,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
             "请修正该文件或单独运行 operation=distill_template_skill 重新生成"
         ) from exc
     template_skill_text = {
-        key: (workspace / path).read_text(encoding="utf-8")
+        key: resolved[path].read_text(encoding="utf-8")
         for key, path in refs.items()
     }
     poisoned = [
@@ -157,13 +165,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
 def _template_skill_context(state: Mapping[str, Any], skill_id: str) -> str:
     texts = state.get("template_skill_text", {})
     content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if not content:
-        return ""
-    return (
-        f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
-        f"{content}\n"
-        "</template_role_skill>"
-    )
+    return render_template_skill(skill_id, content)
 
 
 def _domain_knowledge_context(text: str, provenance_ref: str) -> str:
@@ -255,6 +257,10 @@ def build_module_dispatch(
         }
     )
     state["knowledge_snapshot_refs"] = knowledge_snapshot_refs
+    module_facts = {
+        module_id: prepare_module_fact_context(Path(workspace), state["run_id"], module_id)
+        for module_id in selected_modules
+    }
     preparation_refs = state["preparation_refs"]
     tasks = [
         TaskEnvelope(
@@ -266,6 +272,7 @@ def build_module_dispatch(
                 preparation_refs["coverage"],
                 preparation_refs["evidence"],
                 preparation_refs["manifest"],
+                module_facts[module_id].ref,
                 *(
                     [state["preparation_completion_ref"]]
                     if state.get("preparation_completion_ref")
@@ -281,6 +288,7 @@ def build_module_dispatch(
             ],
             constraints=[
                 f"仅分析目标模块 {module_id}",
+                "项目事实清单按既有分类完整枚举；优先使用已内联事实，不必逐条搜索。引用型清单必须读取完整后才能作全范围判断；分类之外的关联事实可补查。",
                 "叶子任务内联当前叶子的项目/全局 Knowledge 增量与核心写作方法；整模块 Knowledge 和完整写作 Skill 以共享引用提供，仅在增量不足时按需读取",
                 "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
                 "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
@@ -303,7 +311,7 @@ def build_module_dispatch(
             ],
             allowed_outputs=["module_submission"],
             target_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
-            inline_context=module_author_inline_context(
+            inline_context=module_facts[module_id].inline_context + "\n\n" + module_author_inline_context(
                 state,
                 module_id,
                 workspace=workspace,
@@ -581,6 +589,7 @@ def prepare_module_authoring(
             resume_allowed_tools = [
                 "search_project_evidence",
                 "open_project_source",
+                "open_artifact",
                 "list_result_parts",
                 "write_result_part",
                 "submit_result",
@@ -645,16 +654,18 @@ def prepare_module_authoring(
                     dict.fromkeys([*base_constraints, *resume_part_constraints])
                 ),
                 "revision": revision,
-                "input_refs": [
+                "input_refs": list(dict.fromkeys([
+                    *planned.input_refs,
                     module_input_ref,
                     module_input.coverage_ref,
                     module_input.evidence_ref,
                     module_input.manifest_ref,
-                ],
+                ])),
                 "input_contract_kind": "module_authoring_input",
                 "input_contract_ref": module_input_ref,
                 "inline_context": planned.inline_context or "",
                 "artifact_delivery_modes": {
+                    **{ref: "reference" for ref in planned.input_refs},
                     module_input_ref: "inline",
                     module_input.coverage_ref: "reference",
                     module_input.evidence_ref: "reference",

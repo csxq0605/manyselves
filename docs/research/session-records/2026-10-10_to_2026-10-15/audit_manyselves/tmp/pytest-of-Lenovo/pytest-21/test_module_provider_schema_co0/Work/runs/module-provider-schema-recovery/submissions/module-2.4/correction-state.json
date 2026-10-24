@@ -1,0 +1,21 @@
+{
+  "kind": "submission_correction_state",
+  "run_id": "module-provider-schema-recovery",
+  "task_id": "module-2.4",
+  "revision": 0,
+  "status": "resolved",
+  "accepted": true,
+  "submission_kind": "module_submission",
+  "raw_payload": {
+    "kind": "module_submission",
+    "module_id": "2.4",
+    "unresolved_questions": [],
+    "revision": 0
+  },
+  "transport_normalization": null,
+  "correction_mode": "none",
+  "validation_errors": [],
+  "affected_part_ids": [],
+  "validation_failures": 1,
+  "fingerprint_occurrences": 0
+}

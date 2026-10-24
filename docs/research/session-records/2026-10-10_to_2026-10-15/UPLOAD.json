@@ -1,0 +1,11 @@
+{
+  "format": "plaintext-files",
+  "included_files": 2571,
+  "excluded_files": 261,
+  "directory_aliases": 146,
+  "root_records": 99,
+  "verified_manifest_hashes": true,
+  "source_code_commit": "8605c2c",
+  "customer_derived_records_included": true,
+  "encryption": false
+}

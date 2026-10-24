@@ -17,6 +17,7 @@ from .models.impact import (
     RevisionImpactItem,
 )
 from .models.reporting import REPORT_MODULE_IDS
+from .source_ledger import SourceLedger
 from .storage import ReportingStore
 
 _E_REF = re.compile(r"\bE-\d{4,}\b")
@@ -39,6 +40,14 @@ def _evidence_ids_in_narratives(modules: dict[str, Any]) -> dict[str, set[str]]:
             found.setdefault(subsection_id, set()).update(
                 source for source in claim.get("source_ids") or [] if isinstance(source, str)
             )
+        for subsection_id, part in (raw.get("assessments") or {}).items():
+            for record in part.get("records") or []:
+                found.setdefault(subsection_id, set()).update(record.get("evidence_ids") or [])
+                for rule in record.get("rules") or []:
+                    found[subsection_id].update(
+                        source for source in (rule.get("source_id"), rule.get("status_source_id"))
+                        if source
+                    )
     return found
 
 
@@ -237,6 +246,32 @@ def build_revision_impact_analysis(value: Any, *, store: ReportingStore) -> Revi
                 evidence_ids=[old_id],
                 change_kinds=["evidence_superseded"],
             )
+
+    # Rule dependencies are explicit author bindings, independent of whole-part
+    # E-* citation bookkeeping. A Knowledge change must not silently reuse a
+    # judgment whose selected rule/status source changed or disappeared.
+    changed_reference_paths = {
+        row.locator.replace("\\", "/").removeprefix("./")
+        for row in change_rows if row.kind in {"file_modified", "file_removed"}
+        and row.locator.replace("\\", "/").removeprefix("./").startswith("Knowledge/")
+    }
+    if changed_reference_paths:
+        for source in SourceLedger(store.workspace, run_id).records:
+            locator_path = source.locator.replace("\\", "/").split("；", 1)[0].split("#", 1)[0]
+            if not source.id.startswith("R-") or locator_path not in changed_reference_paths:
+                continue
+            for subsection_id, cited in baseline_bindings.items():
+                if source.id in cited:
+                    add_impact(
+                        subsection_id,
+                        reason=f"该小节使用的规则/状态来源 {source.id}（{source.locator}）已修改或删除",
+                        instruction_text=(
+                            f"复核 {subsection_id} 对 {source.id} 的规则选择、版本状态和适用条件；"
+                            "按当前完整原文重新判断并更新正文/行动，无法核实时保留不确定性。"
+                        ),
+                        confidence="high", evidence_ids=[source.id],
+                        change_kinds=["reference_changed"],
+                    )
 
     # 3) User seed requested_changes always remain first-class impacts.
     seed = request.get("requested_changes") or {}

@@ -1,0 +1,169 @@
+{
+  "kind": "cross_owner_input",
+  "report_instruction": "仅审查虚构实验的已有跨模块矛盾；未评估项目不作为新增缺陷。",
+  "input_changes": null,
+  "phase": "initial",
+  "run_id": "synthetic-cross",
+  "review_round": 0,
+  "owner_module_id": "2.2",
+  "review_focus": [
+    "核对谐波、电压扰动和冲击负荷的风险判断是否连接 2.1 供电方式、2.3 保护行为、2.4 元件能力及 2.5 监测处置。",
+    "核对发热、局放和物理环境异常是否与设备状态、安装缺陷、维护覆盖和停运条件形成可执行接口。",
+    "核对工况异常从出现、监测、告警到隔离和恢复的传播链是否存在跨模块盲点。"
+  ],
+  "owner_subject_ref": "Work/runs/synthetic-cross/modules/2.2-r0.json",
+  "owner_subject_revision": 0,
+  "owner_subject": {
+    "module_id": "2.2",
+    "revision": 0,
+    "submodule_narratives": {
+      "2.2.1.1": "唯一共享对象 T：2026-01-01 工况 B 的读数为 16.58 mA，结论正常。完全虚构的实验规则，无真实设施含义：工况 A 读数 >10 mA 为异常，<=10 正常；工况 B 读数 >20 mA 为异常，<=20 正常。比较必须保持对象、单位、时点、工况一致。",
+      "2.2.1.2": "本虚构实验无此项跨模块接口。",
+      "2.2.1.3": "本虚构实验无此项跨模块接口。",
+      "2.2.2.1": "本虚构实验无此项跨模块接口。",
+      "2.2.2.2": "本虚构实验无此项跨模块接口。",
+      "2.2.2.3": "本虚构实验无此项跨模块接口。"
+    },
+    "evidence_ids_by_submodule": {
+      "2.2.1.1": [],
+      "2.2.1.2": [],
+      "2.2.1.3": [],
+      "2.2.2.1": [],
+      "2.2.2.2": [],
+      "2.2.2.3": []
+    },
+    "unresolved_questions": []
+  },
+  "owner_scope_submodule_ids": [
+    "2.2.1.1",
+    "2.2.1.2",
+    "2.2.1.3",
+    "2.2.2.1",
+    "2.2.2.2",
+    "2.2.2.3"
+  ],
+  "related_module_refs": {
+    "2.1": "Work/runs/synthetic-cross/modules/2.1-r0.json",
+    "2.3": "Work/runs/synthetic-cross/modules/2.3-r0.json",
+    "2.4": "Work/runs/synthetic-cross/modules/2.4-r0.json",
+    "2.5": "Work/runs/synthetic-cross/modules/2.5-r0.json"
+  },
+  "related_module_revisions": {
+    "2.1": 0,
+    "2.3": 0,
+    "2.4": 0,
+    "2.5": 0
+  },
+  "related_module_views": {
+    "2.1": {
+      "module_id": "2.1",
+      "revision": 0,
+      "subject_ref": "Work/runs/synthetic-cross/modules/2.1-r0.json",
+      "submodule_ids": [
+        "2.1.1",
+        "2.1.2",
+        "2.1.3",
+        "2.1.4",
+        "2.1.5"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.1.1": [],
+        "2.1.2": [],
+        "2.1.3": [],
+        "2.1.4": [],
+        "2.1.5": []
+      },
+      "unresolved_questions": []
+    },
+    "2.3": {
+      "module_id": "2.3",
+      "revision": 0,
+      "subject_ref": "Work/runs/synthetic-cross/modules/2.3-r0.json",
+      "submodule_ids": [
+        "2.3.1",
+        "2.3.2",
+        "2.3.3"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.3.1": [],
+        "2.3.2": [],
+        "2.3.3": []
+      },
+      "unresolved_questions": []
+    },
+    "2.4": {
+      "module_id": "2.4",
+      "revision": 0,
+      "subject_ref": "Work/runs/synthetic-cross/modules/2.4-r0.json",
+      "submodule_ids": [
+        "2.4.1.1",
+        "2.4.1.2",
+        "2.4.1.3",
+        "2.4.1.4",
+        "2.4.2.1",
+        "2.4.2.2",
+        "2.4.2.3",
+        "2.4.2.4",
+        "2.4.2.5",
+        "2.4.2.6",
+        "2.4.3.1",
+        "2.4.3.2",
+        "2.4.3.3",
+        "2.4.4"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.4.1.1": [],
+        "2.4.1.2": [],
+        "2.4.1.3": [],
+        "2.4.1.4": [],
+        "2.4.2.1": [],
+        "2.4.2.2": [],
+        "2.4.2.3": [],
+        "2.4.2.4": [],
+        "2.4.2.5": [],
+        "2.4.2.6": [],
+        "2.4.3.1": [],
+        "2.4.3.2": [],
+        "2.4.3.3": [],
+        "2.4.4": []
+      },
+      "unresolved_questions": []
+    },
+    "2.5": {
+      "module_id": "2.5",
+      "revision": 0,
+      "subject_ref": "Work/runs/synthetic-cross/modules/2.5-r0.json",
+      "submodule_ids": [
+        "2.5.1",
+        "2.5.2",
+        "2.5.3.1",
+        "2.5.3.2",
+        "2.5.3.3",
+        "2.5.4",
+        "2.5.5",
+        "2.5.6",
+        "2.5.7"
+      ],
+      "claims": [],
+      "evidence_ids_by_submodule": {
+        "2.5.1": [],
+        "2.5.2": [],
+        "2.5.3.1": [],
+        "2.5.3.2": [],
+        "2.5.3.3": [],
+        "2.5.4": [],
+        "2.5.5": [],
+        "2.5.6": [],
+        "2.5.7": []
+      },
+      "unresolved_questions": []
+    }
+  },
+  "required_findings": [],
+  "revision_responses": [],
+  "prior_synthesis_inputs": [],
+  "local_regression_review_ref": null
+}

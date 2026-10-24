@@ -1,0 +1,1 @@
+{"id":"E-0087","subject":"16号楼配电房/17号楼","fact":"谐波=2.3%","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"总配评估详情表","cell":"P4:Q4","page":null,"row":4,"column":"P","image_id":null},"value":2.3,"unit":"%","observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.1.1","photo_refs":[]}

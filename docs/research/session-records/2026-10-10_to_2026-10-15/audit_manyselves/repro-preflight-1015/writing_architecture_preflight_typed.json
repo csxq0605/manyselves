@@ -1,0 +1,804 @@
+{
+  "synthetic_only": true,
+  "production_workflow": false,
+  "max_calls": 20,
+  "oracle": {
+    "E-0001": "abnormal",
+    "E-0002": "normal",
+    "E-0003": "normal",
+    "E-0004": "unknown",
+    "E-0005": "abnormal",
+    "E-0006": "unknown",
+    "E-0007": "normal",
+    "E-0008": "unknown"
+  },
+  "cases": [
+    {
+      "repeat": 0,
+      "size": "short",
+      "arm": "write_review",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 3053
+        },
+        {
+          "stage": "review_and_correct",
+          "request_chars": 3092
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 2.1800000013172394e-05
+    },
+    {
+      "repeat": 0,
+      "size": "short",
+      "arm": "direct",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 3053
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 7.099999947968172e-06
+    },
+    {
+      "repeat": 0,
+      "size": "short",
+      "arm": "judgment_first",
+      "requests": [
+        {
+          "stage": "select_rules",
+          "request_chars": 3087
+        },
+        {
+          "stage": "write_from_ledger",
+          "request_chars": 3727
+        }
+      ],
+      "ledger": [
+        {
+          "judgment_id": "J-E-0001",
+          "id": "E-0001",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0001"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0001",
+            "object": "柜甲",
+            "condition": "A",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0002",
+          "id": "E-0002",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0002"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0002",
+            "object": "柜甲",
+            "condition": "B",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0003",
+          "id": "E-0003",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0003"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0003",
+            "object": "柜乙",
+            "condition": "steady",
+            "value": "2.3",
+            "unit": "%",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0004",
+          "id": "E-0004",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0004"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0004",
+            "object": "柜丙",
+            "condition": "thermal",
+            "value": "55",
+            "unit": "C",
+            "ambient": null,
+            "quantity": "measured_temperature"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0005",
+          "id": "E-0005",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0005"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0005",
+            "object": "柜丁",
+            "condition": "residual",
+            "value": "0.0113",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0006",
+          "id": "E-0006",
+          "status": "unknown",
+          "evidence_ids": [],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": null,
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0007",
+          "id": "E-0007",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0007"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0007",
+            "object": "柜己",
+            "condition": "current_rule",
+            "value": "5",
+            "unit": "mA",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0008",
+          "id": "E-0008",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0008"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0008",
+            "object": "柜庚",
+            "condition": null,
+            "value": "16",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 5.3200000024844485e-05
+    },
+    {
+      "repeat": 0,
+      "size": "long",
+      "arm": "judgment_first",
+      "requests": [
+        {
+          "stage": "select_rules",
+          "request_chars": 9087
+        },
+        {
+          "stage": "write_from_ledger",
+          "request_chars": 3727
+        }
+      ],
+      "ledger": [
+        {
+          "judgment_id": "J-E-0001",
+          "id": "E-0001",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0001"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0001",
+            "object": "柜甲",
+            "condition": "A",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0002",
+          "id": "E-0002",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0002"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0002",
+            "object": "柜甲",
+            "condition": "B",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0003",
+          "id": "E-0003",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0003"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0003",
+            "object": "柜乙",
+            "condition": "steady",
+            "value": "2.3",
+            "unit": "%",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0004",
+          "id": "E-0004",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0004"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0004",
+            "object": "柜丙",
+            "condition": "thermal",
+            "value": "55",
+            "unit": "C",
+            "ambient": null,
+            "quantity": "measured_temperature"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0005",
+          "id": "E-0005",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0005"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0005",
+            "object": "柜丁",
+            "condition": "residual",
+            "value": "0.0113",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0006",
+          "id": "E-0006",
+          "status": "unknown",
+          "evidence_ids": [],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": null,
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0007",
+          "id": "E-0007",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0007"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0007",
+            "object": "柜己",
+            "condition": "current_rule",
+            "value": "5",
+            "unit": "mA",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0008",
+          "id": "E-0008",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0008"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0008",
+            "object": "柜庚",
+            "condition": null,
+            "value": "16",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 4.379999995762773e-05
+    },
+    {
+      "repeat": 0,
+      "size": "long",
+      "arm": "write_review",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 9053
+        },
+        {
+          "stage": "review_and_correct",
+          "request_chars": 9092
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 1.4699999951517384e-05
+    },
+    {
+      "repeat": 0,
+      "size": "long",
+      "arm": "direct",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 9053
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 7.4999999242209014e-06
+    },
+    {
+      "repeat": 1,
+      "size": "short",
+      "arm": "judgment_first",
+      "requests": [
+        {
+          "stage": "select_rules",
+          "request_chars": 3087
+        },
+        {
+          "stage": "write_from_ledger",
+          "request_chars": 3727
+        }
+      ],
+      "ledger": [
+        {
+          "judgment_id": "J-E-0001",
+          "id": "E-0001",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0001"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0001",
+            "object": "柜甲",
+            "condition": "A",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0002",
+          "id": "E-0002",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0002"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0002",
+            "object": "柜甲",
+            "condition": "B",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0003",
+          "id": "E-0003",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0003"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0003",
+            "object": "柜乙",
+            "condition": "steady",
+            "value": "2.3",
+            "unit": "%",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0004",
+          "id": "E-0004",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0004"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0004",
+            "object": "柜丙",
+            "condition": "thermal",
+            "value": "55",
+            "unit": "C",
+            "ambient": null,
+            "quantity": "measured_temperature"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0005",
+          "id": "E-0005",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0005"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0005",
+            "object": "柜丁",
+            "condition": "residual",
+            "value": "0.0113",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0006",
+          "id": "E-0006",
+          "status": "unknown",
+          "evidence_ids": [],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": null,
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0007",
+          "id": "E-0007",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0007"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0007",
+            "object": "柜己",
+            "condition": "current_rule",
+            "value": "5",
+            "unit": "mA",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0008",
+          "id": "E-0008",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0008"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0008",
+            "object": "柜庚",
+            "condition": null,
+            "value": "16",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 4.3000000005122274e-05
+    },
+    {
+      "repeat": 1,
+      "size": "short",
+      "arm": "write_review",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 3053
+        },
+        {
+          "stage": "review_and_correct",
+          "request_chars": 3092
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 1.2500000025283953e-05
+    },
+    {
+      "repeat": 1,
+      "size": "short",
+      "arm": "direct",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 3053
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 6.299999995462713e-06
+    },
+    {
+      "repeat": 1,
+      "size": "long",
+      "arm": "judgment_first",
+      "requests": [
+        {
+          "stage": "select_rules",
+          "request_chars": 9087
+        },
+        {
+          "stage": "write_from_ledger",
+          "request_chars": 3727
+        }
+      ],
+      "ledger": [
+        {
+          "judgment_id": "J-E-0001",
+          "id": "E-0001",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0001"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0001",
+            "object": "柜甲",
+            "condition": "A",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0002",
+          "id": "E-0002",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0002"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0002",
+            "object": "柜甲",
+            "condition": "B",
+            "value": "11.3",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0003",
+          "id": "E-0003",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0003"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0003",
+            "object": "柜乙",
+            "condition": "steady",
+            "value": "2.3",
+            "unit": "%",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0004",
+          "id": "E-0004",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0004"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0004",
+            "object": "柜丙",
+            "condition": "thermal",
+            "value": "55",
+            "unit": "C",
+            "ambient": null,
+            "quantity": "measured_temperature"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0005",
+          "id": "E-0005",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0005"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0005",
+            "object": "柜丁",
+            "condition": "residual",
+            "value": "0.0113",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0006",
+          "id": "E-0006",
+          "status": "unknown",
+          "evidence_ids": [],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": null,
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0007",
+          "id": "E-0007",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0007"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0007",
+            "object": "柜己",
+            "condition": "current_rule",
+            "value": "5",
+            "unit": "mA",
+            "quantity": "measurement"
+          },
+          "rule": null
+        },
+        {
+          "judgment_id": "J-E-0008",
+          "id": "E-0008",
+          "status": "unknown",
+          "evidence_ids": [
+            "E-0008"
+          ],
+          "rule_ids": [],
+          "comparison": "资料、规则或适用条件不完整",
+          "observation": {
+            "id": "E-0008",
+            "object": "柜庚",
+            "condition": null,
+            "value": "16",
+            "unit": "A",
+            "quantity": "measurement"
+          },
+          "rule": null
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 3.9499999957115506e-05
+    },
+    {
+      "repeat": 1,
+      "size": "long",
+      "arm": "direct",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 9053
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 6.799999937356915e-06
+    },
+    {
+      "repeat": 1,
+      "size": "long",
+      "arm": "write_review",
+      "requests": [
+        {
+          "stage": "write",
+          "request_chars": 9053
+        },
+        {
+          "stage": "review_and_correct",
+          "request_chars": 9092
+        }
+      ],
+      "result": {},
+      "errors": [],
+      "wall_seconds": 1.5000000075815478e-05
+    }
+  ],
+  "attempts": 20,
+  "explicit_quantity": true,
+  "complete": true
+}

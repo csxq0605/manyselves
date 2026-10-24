@@ -1,0 +1,12 @@
+{
+  "run_id": "distill-template-skill-60000000000040008000000000000002",
+  "template_ref": "Work/runs/distill-template-skill-60000000000040008000000000000002/templates/template-for-skill.docx",
+  "frozen_source_ref": "Work/runs/distill-template-skill-60000000000040008000000000000002/frozen-project/Templates/report_template.docx",
+  "source": "project",
+  "inspection_ref": "Work/runs/distill-template-skill-60000000000040008000000000000002/context/template-inspection.json",
+  "producer": "template-distiller",
+  "task_id": "template-skill-distillation",
+  "skill_root": "Inputs/report-template-role-skills",
+  "boundary_policy_version": 1,
+  "boundary_ref": "Inputs/report-template-role-skills/boundary.json"
+}

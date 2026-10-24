@@ -1,0 +1,443 @@
+{
+  "run_id": "distill-template-skill-60000000000040008000000000000001",
+  "workflow_id": "distill-template-skill",
+  "status": "completed",
+  "variables": {
+    "run-id": "distill-template-skill-60000000000040008000000000000001",
+    "template-distillation-initializer": {},
+    "internal-template-distillation-input": {
+      "kind": "template_distillation_input",
+      "run_id": "distill-template-skill-60000000000040008000000000000001",
+      "template_ref": "Templates/report_template.docx",
+      "inspect_max_chars": 100000,
+      "required_part_ids": [
+        "author-2.1",
+        "author-2.2",
+        "author-2.3",
+        "author-2.4",
+        "author-2.5",
+        "auditor-2.1",
+        "auditor-2.2",
+        "auditor-2.3",
+        "auditor-2.4",
+        "auditor-2.5",
+        "chief-editor-chapter-1",
+        "chief-editor-chapter-3",
+        "chief-editor-chapter-4",
+        "final-auditor"
+      ],
+      "boundary_policy_version": 1,
+      "allowed_transfer_categories": [
+        "analysis_method",
+        "quality_check",
+        "synthesis_method",
+        "visual_method"
+      ],
+      "required_exclusion_categories": [
+        "customer_identity",
+        "domain_knowledge",
+        "domain_standard_or_threshold",
+        "evidence_or_claim_identifier",
+        "project_conclusion_or_recommendation",
+        "project_fact_or_number",
+        "project_finding_or_risk"
+      ]
+    },
+    "prepared-template-distillation-input": {
+      "kind": "template_distillation_input",
+      "run_id": "distill-template-skill-60000000000040008000000000000001",
+      "template_ref": "Work/runs/distill-template-skill-60000000000040008000000000000001/templates/template-for-skill.docx",
+      "inspect_max_chars": 100000,
+      "required_part_ids": [
+        "author-2.1",
+        "author-2.2",
+        "author-2.3",
+        "author-2.4",
+        "author-2.5",
+        "auditor-2.1",
+        "auditor-2.2",
+        "auditor-2.3",
+        "auditor-2.4",
+        "auditor-2.5",
+        "chief-editor-chapter-1",
+        "chief-editor-chapter-3",
+        "chief-editor-chapter-4",
+        "final-auditor"
+      ],
+      "boundary_policy_version": 1,
+      "allowed_transfer_categories": [
+        "analysis_method",
+        "quality_check",
+        "synthesis_method",
+        "visual_method"
+      ],
+      "required_exclusion_categories": [
+        "customer_identity",
+        "domain_knowledge",
+        "domain_standard_or_threshold",
+        "evidence_or_claim_identifier",
+        "project_conclusion_or_recommendation",
+        "project_fact_or_number",
+        "project_finding_or_risk"
+      ]
+    },
+    "template-distillation-conversation": {
+      "conversation_id": "run:distill-template-skill-60000000000040008000000000000001:template-distiller:template-distillation",
+      "key": {
+        "agent_id": "template-distiller",
+        "value": "template-distillation",
+        "mode": "run"
+      },
+      "run_id": "distill-template-skill-60000000000040008000000000000001",
+      "external_session_id": "template-distiller-session"
+    },
+    "template-distillation-result": {
+      "kind": "template_skill_submission",
+      "name": "report-template-role-skills",
+      "skills": {
+        "author-2.1": "---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "author-2.2": "---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "author-2.3": "---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "author-2.4": "---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "author-2.5": "---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "auditor-2.1": "---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "auditor-2.2": "---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "auditor-2.3": "---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "auditor-2.4": "---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "auditor-2.5": "---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "chief-editor-chapter-1": "---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "chief-editor-chapter-3": "---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "chief-editor-chapter-4": "---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+        "final-auditor": "---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n"
+      },
+      "boundary_manifest": {
+        "policy_version": 1,
+        "transferred_categories": [
+          "analysis_method",
+          "quality_check",
+          "synthesis_method",
+          "visual_method"
+        ],
+        "excluded_categories": [
+          "customer_identity",
+          "domain_knowledge",
+          "domain_standard_or_threshold",
+          "evidence_or_claim_identifier",
+          "project_conclusion_or_recommendation",
+          "project_fact_or_number",
+          "project_finding_or_risk"
+        ],
+        "boundary_statement": "只迁移可复用的分析、综合、图证和质量检查方法；项目事实、专业知识、标准阈值、客户身份、风险结论、建议以及证据编号必须来自当前运行时输入；Skill 不得自行补充任何项目判断，也不替代模块、Knowledge 或 Evidence 来源。"
+      }
+    },
+    "materialized-template-skill": {
+      "kind": "template_skill_materialization",
+      "skill_refs": [
+        "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.2/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.3/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.4/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.5/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.2/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.3/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.4/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.5/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md",
+        "Inputs/report-template-role-skills/final-auditor/SKILL.md"
+      ],
+      "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
+      "source_ref": "Inputs/report-template-role-skills/source.json"
+    },
+    "template-distillation-input": {
+      "template_ref": "Templates/report_template.docx",
+      "inspect_max_chars": 100000
+    }
+  },
+  "conversations": {
+    "template-distillation-conversation": {
+      "conversation_id": "run:distill-template-skill-60000000000040008000000000000001:template-distiller:template-distillation",
+      "key": {
+        "agent_id": "template-distiller",
+        "value": "template-distillation",
+        "mode": "run"
+      },
+      "run_id": "distill-template-skill-60000000000040008000000000000001",
+      "external_session_id": "template-distiller-session"
+    }
+  },
+  "actions": {
+    "project-public-template-distillation-input": {
+      "status": "completed",
+      "output": {
+        "status": "ok",
+        "result": {
+          "kind": "template_distillation_input",
+          "run_id": "distill-template-skill-60000000000040008000000000000001",
+          "template_ref": "Templates/report_template.docx",
+          "inspect_max_chars": 100000,
+          "required_part_ids": [
+            "author-2.1",
+            "author-2.2",
+            "author-2.3",
+            "author-2.4",
+            "author-2.5",
+            "auditor-2.1",
+            "auditor-2.2",
+            "auditor-2.3",
+            "auditor-2.4",
+            "auditor-2.5",
+            "chief-editor-chapter-1",
+            "chief-editor-chapter-3",
+            "chief-editor-chapter-4",
+            "final-auditor"
+          ],
+          "boundary_policy_version": 1,
+          "allowed_transfer_categories": [
+            "analysis_method",
+            "quality_check",
+            "synthesis_method",
+            "visual_method"
+          ],
+          "required_exclusion_categories": [
+            "customer_identity",
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "evidence_or_claim_identifier",
+            "project_conclusion_or_recommendation",
+            "project_fact_or_number",
+            "project_finding_or_risk"
+          ]
+        },
+        "error": null,
+        "artifact_refs": [],
+        "reused": false
+      },
+      "error": null
+    },
+    "prepare-template-distillation": {
+      "status": "completed",
+      "output": {
+        "status": "ok",
+        "result": {
+          "kind": "template_distillation_input",
+          "run_id": "distill-template-skill-60000000000040008000000000000001",
+          "template_ref": "Work/runs/distill-template-skill-60000000000040008000000000000001/templates/template-for-skill.docx",
+          "inspect_max_chars": 100000,
+          "required_part_ids": [
+            "author-2.1",
+            "author-2.2",
+            "author-2.3",
+            "author-2.4",
+            "author-2.5",
+            "auditor-2.1",
+            "auditor-2.2",
+            "auditor-2.3",
+            "auditor-2.4",
+            "auditor-2.5",
+            "chief-editor-chapter-1",
+            "chief-editor-chapter-3",
+            "chief-editor-chapter-4",
+            "final-auditor"
+          ],
+          "boundary_policy_version": 1,
+          "allowed_transfer_categories": [
+            "analysis_method",
+            "quality_check",
+            "synthesis_method",
+            "visual_method"
+          ],
+          "required_exclusion_categories": [
+            "customer_identity",
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "evidence_or_claim_identifier",
+            "project_conclusion_or_recommendation",
+            "project_fact_or_number",
+            "project_finding_or_risk"
+          ]
+        },
+        "error": null,
+        "artifact_refs": [],
+        "reused": false
+      },
+      "error": null
+    },
+    "create-template-distillation-conversation": {
+      "status": "completed",
+      "output": {
+        "conversation_id": "run:distill-template-skill-60000000000040008000000000000001:template-distiller:template-distillation",
+        "key": {
+          "agent_id": "template-distiller",
+          "value": "template-distillation",
+          "mode": "run"
+        },
+        "run_id": "distill-template-skill-60000000000040008000000000000001",
+        "external_session_id": null
+      },
+      "error": null
+    },
+    "invoke-template-distiller": {
+      "status": "completed",
+      "output": {
+        "status": "ok",
+        "result": {
+          "kind": "template_skill_submission",
+          "name": "report-template-role-skills",
+          "skills": {
+            "author-2.1": "---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "author-2.2": "---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "author-2.3": "---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "author-2.4": "---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "author-2.5": "---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-author-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# author-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "auditor-2.1": "---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "auditor-2.2": "---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.2\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.2 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "auditor-2.3": "---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "auditor-2.4": "---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "auditor-2.5": "---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-auditor-2.5\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# auditor-2.5 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "chief-editor-chapter-1": "---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-1\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-1 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "chief-editor-chapter-3": "---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-3\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-3 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "chief-editor-chapter-4": "---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-chief-editor-chapter-4\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# chief-editor-chapter-4 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n",
+            "final-auditor": "---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n---\nname: report-template-final-auditor\ndescription: 将模板中的证据限定、分析推进、综合表达、图证叙事与质量检查方法转化为可复用的角色职责指导。\n---\n\n# final-auditor 模板方法\n\n先界定证据边界，再组织观察、判断、原因、影响和行动；使用去事实化结构样例检查表达是否可复用，并在提交前复核职责范围。\n"
+          },
+          "boundary_manifest": {
+            "policy_version": 1,
+            "transferred_categories": [
+              "analysis_method",
+              "quality_check",
+              "synthesis_method",
+              "visual_method"
+            ],
+            "excluded_categories": [
+              "customer_identity",
+              "domain_knowledge",
+              "domain_standard_or_threshold",
+              "evidence_or_claim_identifier",
+              "project_conclusion_or_recommendation",
+              "project_fact_or_number",
+              "project_finding_or_risk"
+            ],
+            "boundary_statement": "只迁移可复用的分析、综合、图证和质量检查方法；项目事实、专业知识、标准阈值、客户身份、风险结论、建议以及证据编号必须来自当前运行时输入；Skill 不得自行补充任何项目判断，也不替代模块、Knowledge 或 Evidence 来源。"
+          }
+        },
+        "session_id": "template-distiller-session",
+        "error": null
+      },
+      "error": null
+    },
+    "materialize-template-skill": {
+      "status": "completed",
+      "output": {
+        "status": "ok",
+        "result": {
+          "kind": "template_skill_materialization",
+          "skill_refs": [
+            "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+            "Inputs/report-template-role-skills/author-2.2/SKILL.md",
+            "Inputs/report-template-role-skills/author-2.3/SKILL.md",
+            "Inputs/report-template-role-skills/author-2.4/SKILL.md",
+            "Inputs/report-template-role-skills/author-2.5/SKILL.md",
+            "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+            "Inputs/report-template-role-skills/auditor-2.2/SKILL.md",
+            "Inputs/report-template-role-skills/auditor-2.3/SKILL.md",
+            "Inputs/report-template-role-skills/auditor-2.4/SKILL.md",
+            "Inputs/report-template-role-skills/auditor-2.5/SKILL.md",
+            "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+            "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md",
+            "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md",
+            "Inputs/report-template-role-skills/final-auditor/SKILL.md"
+          ],
+          "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
+          "source_ref": "Inputs/report-template-role-skills/source.json"
+        },
+        "error": null,
+        "artifact_refs": [],
+        "reused": false
+      },
+      "error": null
+    },
+    "publish-template-skill-materialization": {
+      "status": "completed",
+      "output": {
+        "kind": "template_skill_materialization",
+        "skill_refs": [
+          "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.2/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.3/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.4/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.5/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.2/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.3/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.4/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.5/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md",
+          "Inputs/report-template-role-skills/final-auditor/SKILL.md"
+        ],
+        "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
+        "source_ref": "Inputs/report-template-role-skills/source.json"
+      },
+      "error": null
+    },
+    "finish-template-skill": {
+      "status": "completed",
+      "output": {
+        "kind": "template_skill_materialization",
+        "skill_refs": [
+          "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.2/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.3/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.4/SKILL.md",
+          "Inputs/report-template-role-skills/author-2.5/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.2/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.3/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.4/SKILL.md",
+          "Inputs/report-template-role-skills/auditor-2.5/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md",
+          "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md",
+          "Inputs/report-template-role-skills/final-auditor/SKILL.md"
+        ],
+        "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
+        "source_ref": "Inputs/report-template-role-skills/source.json"
+      },
+      "error": null
+    }
+  },
+  "outputs": {
+    "result": {
+      "kind": "template_skill_materialization",
+      "skill_refs": [
+        "Inputs/report-template-role-skills/author-2.1/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.2/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.3/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.4/SKILL.md",
+        "Inputs/report-template-role-skills/author-2.5/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.1/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.2/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.3/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.4/SKILL.md",
+        "Inputs/report-template-role-skills/auditor-2.5/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-1/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-3/SKILL.md",
+        "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md",
+        "Inputs/report-template-role-skills/final-auditor/SKILL.md"
+      ],
+      "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
+      "source_ref": "Inputs/report-template-role-skills/source.json"
+    }
+  },
+  "waiting_input": null,
+  "next_action_index": 7,
+  "next_action_id": null,
+  "control_steps": 0,
+  "control_frames": {},
+  "parallel_results": {},
+  "parallel_states": {},
+  "subworkflow_states": {}
+}

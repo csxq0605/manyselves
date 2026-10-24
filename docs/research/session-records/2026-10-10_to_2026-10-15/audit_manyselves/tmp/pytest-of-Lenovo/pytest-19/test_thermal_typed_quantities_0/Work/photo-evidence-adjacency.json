@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "photo_to_evidence": {},
+  "evidence_to_photo": {
+    "E-0001": [],
+    "E-0002": [],
+    "E-0003": [],
+    "E-0004": [],
+    "E-0005": [],
+    "E-0006": []
+  },
+  "primary_evidence": {}
+}

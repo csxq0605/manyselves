@@ -1,0 +1,45 @@
+{
+  "kind": "cross_owner_completion",
+  "lane_id": "cross-r1-module-2.1",
+  "run_id": "cross-owner-workflow-host",
+  "stage": "cross",
+  "review_round": 1,
+  "module_id": "2.1",
+  "attempt": 1,
+  "revision": 0,
+  "status": "completed",
+  "result_ref": null,
+  "error": null,
+  "semantic_key": "1ae931030a2958499a283f4f2008fe034cc1010a8f096d8b542623e61bdc41bd",
+  "subject_revision": 1,
+  "owner_input": {
+    "ref": "Work/runs/cross-owner-workflow-host/reviews/cross-owner-input-r0-2.1.json",
+    "sha256": "a15be7f83fefbc2fa0b84b852c2f992d9f598b0bb8add7fc89a83ae595328473",
+    "size": 4473,
+    "media_type": "application/json",
+    "trusted_handle_ref": null,
+    "project_lease_epoch": null
+  },
+  "initial_result": null,
+  "verdict_result": null,
+  "subject": {
+    "ref": "Work/runs/cross-owner-workflow-host/modules/2.1-r1.json",
+    "sha256": "6e796341974fc04050ddbd8b8cf1645db54c2119532a7370975106124bfca605",
+    "size": 679,
+    "media_type": "application/json",
+    "trusted_handle_ref": null,
+    "project_lease_epoch": null
+  },
+  "local_review_completion": {
+    "ref": "Work/runs/cross-owner-workflow-host/reviews/module/cross-r1/2.1/completion-r1.json",
+    "sha256": "398e1015e42c9dd1d7ce216202b4f494ee5cfc26bba10cb6abad613845a057dc",
+    "size": 497,
+    "media_type": "application/json",
+    "trusted_handle_ref": null,
+    "project_lease_epoch": null
+  },
+  "author_task_attempt_id": "cross-owner-attempt-4452595832d348499ae889114b2fff27",
+  "reviewer_session_id": "cross-owner-2.1",
+  "lease_epoch": 1,
+  "schema_version": "1"
+}

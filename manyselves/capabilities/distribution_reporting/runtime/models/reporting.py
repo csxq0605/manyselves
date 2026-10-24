@@ -606,6 +606,22 @@ class PhotoAsset(ReportingModel):
     )
 
 
+class EvidenceMeasurement(ReportingModel):
+    """A named observed or calculated quantity within one source observation.
+
+    source_cell is relative to the owning EvidenceItem's workbook/sheet.
+    derived_from names quantities in the same observation, never other rows.
+    Missing measurements remain explicit; no compliance judgment is implied.
+    """
+
+    quantity: str = Field(min_length=1)
+    value: float | None
+    unit: str
+    source_cell: str | None = None
+    derived_from: list[str] = Field(default_factory=list)
+    missing_reason: str | None = None
+
+
 class EvidenceItem(ReportingModel):
     id: str = Field(min_length=1)
     subject: str = Field(min_length=1)
@@ -613,6 +629,7 @@ class EvidenceItem(ReportingModel):
     source: SourceLocation
     value: str | float | int | None = None
     unit: str | None = None
+    measurements: list[EvidenceMeasurement] = Field(default_factory=list)
     observed_at: str | None = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     needs_confirmation: bool = False

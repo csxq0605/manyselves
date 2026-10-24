@@ -119,7 +119,7 @@ def _build_recheck_envelope(
             f"由 Cross owner {owner_module_id} 原会话复审本轮 owner 修订，"
             "逐项给出原 finding verdict；related 模块仍只读。"
         ),
-        input_refs=[owner_input_ref],
+        input_refs=[owner_input_ref, *frozen_owner_input.related_module_refs.values()],
         constraints=[
             f"唯一 Cross owner 写作范围是模块 {owner_module_id}",
             "related_module_views 是紧凑只读关系视图，不得修改或创建其他模块 finding",
@@ -130,10 +130,13 @@ def _build_recheck_envelope(
             "coverage 仅证明当前 owner 检查过六个维度，不代表 approved",
         ],
         allowed_outputs=["cross_owner_verdict_submission"],
-        allowed_tools=["submit_result"],
+        allowed_tools=["search_text", "open_artifact", "submit_result"],
         revision=review_round,
         prior_result_ref=initial_result_ref,
-        artifact_delivery_modes={owner_input_ref: "inline"},
+        artifact_delivery_modes={
+            owner_input_ref: "inline",
+            **{ref: "reference" for ref in frozen_owner_input.related_module_refs.values()},
+        },
         target_submodule_ids=list(frozen_owner_input.owner_scope_submodule_ids),
         input_contract_kind="cross_owner_input",
         input_contract_ref=owner_input_ref,

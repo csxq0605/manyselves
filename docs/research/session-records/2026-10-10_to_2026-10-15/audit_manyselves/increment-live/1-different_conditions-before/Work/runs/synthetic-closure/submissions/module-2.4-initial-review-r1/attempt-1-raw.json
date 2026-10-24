@@ -1,0 +1,38 @@
+{
+  "agent_id": "evidence-auditor",
+  "task_id": "module-2.4-initial-review-r1",
+  "revision": 1,
+  "raw_payload": {
+    "kind": "module_review_verdict_submission",
+    "coverage": {
+      "submodule_ids": [
+        "2.4.1.1"
+      ]
+    },
+    "verdicts": [
+      {
+        "finding_id": "M-2.4-initial-r0-001",
+        "verdict": "resolved",
+        "reason": "当前正文对工况 A 写为“读数 16.58 mA，结论异常”，数值保持 16.58 mA 未变，结论已由正常修正为异常，与虚构规则 10 mA 阈值及 E-0001 原始记录一致。修订确实改写了正文（changed_statement_refs 包含 statement-7a733b6bab84），并非仅修改响应。"
+      }
+    ],
+    "new_findings": [
+      {
+        "id": "M-2.4-r1-002",
+        "target_submodule_id": "2.4.1.1",
+        "category": "evidence_boundary",
+        "impact": "advisory",
+        "observation": "正文同时包含工况 B：“同一对象同一时点的工况 B 读数 16.58 mA，结论正常”。但提供的 knowledge_context 为空，knowledge_ref 为 null，且引用的 module-2.4-knowledge.md 未在材料中给出，因此无法依据任何可见规则验证工况 B 的“正常”结论。作者响应称“所有数值与规则均已检查”，但材料中没有 B 的适用规则可供核对。",
+        "evidence_refs": [
+          "E-0002",
+          "Work/runs/synthetic-closure/context/module-2.4-knowledge.md"
+        ],
+        "required_change": "补充工况 B 所适用的虚构规则及其依据来源（或明确说明 B 结论的判断依据），并在正文中标明 B 结论的依据；若无规则依据，应将 B 的结论标记为未确定而非“正常”。",
+        "reviewer_checks": [
+          "核对工况 B 的结论是否有对应的规则或来源支撑。",
+          "确认工况 A 与工况 B 作为独立工况分别判断，不被合并为同一次观测冲突。"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+{"id":"E-0052","subject":"文体中心配电房/2D1","fact":"实测剩余电流=0.8A；占运行电流=5.33%","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"低配评估详情","cell":"C10;J10:L10","page":null,"row":10,"column":"J","image_id":null},"value":0.8,"unit":"A","observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.4","submodule_id":"2.4.3.1","photo_refs":[]}

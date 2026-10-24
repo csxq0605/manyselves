@@ -1,0 +1,75 @@
+{
+  "residual_current": {
+    "normalized_records": 14,
+    "unique_facts": 14,
+    "packet_chars": 918,
+    "packet_utf8_bytes": 1502,
+    "evidence_ids": [
+      "E-0028",
+      "E-0031",
+      "E-0034",
+      "E-0037",
+      "E-0042",
+      "E-0045",
+      "E-0048",
+      "E-0052",
+      "E-0055",
+      "E-0058",
+      "E-0062",
+      "E-0065",
+      "E-0068",
+      "E-0071"
+    ]
+  },
+  "thermal": {
+    "normalized_records": 26,
+    "unique_facts": 13,
+    "packet_chars": 1336,
+    "packet_utf8_bytes": 2416,
+    "evidence_ids": [
+      "E-0208",
+      "E-0209",
+      "E-0210",
+      "E-0211",
+      "E-0212",
+      "E-0213",
+      "E-0214",
+      "E-0215",
+      "E-0216",
+      "E-0217",
+      "E-0218",
+      "E-0219",
+      "E-0220",
+      "E-0221",
+      "E-0222",
+      "E-0223",
+      "E-0224",
+      "E-0225",
+      "E-0226",
+      "E-0227",
+      "E-0228",
+      "E-0229",
+      "E-0230",
+      "E-0231",
+      "E-0232",
+      "E-0233"
+    ]
+  },
+  "spd": {
+    "normalized_records": 9,
+    "unique_facts": 9,
+    "packet_chars": 433,
+    "packet_utf8_bytes": 735,
+    "evidence_ids": [
+      "E-0079",
+      "E-0088",
+      "E-0097",
+      "E-0106",
+      "E-0115",
+      "E-0124",
+      "E-0133",
+      "E-0142",
+      "E-0150"
+    ]
+  }
+}

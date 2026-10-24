@@ -1,0 +1,1 @@
+{"id":"E-0198","subject":"老配电房（高压）","fact":"通道及杂物=OK","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"配电房合规性","cell":"P9:Q9","page":null,"row":9,"column":"P","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.2.3","photo_refs":[]}

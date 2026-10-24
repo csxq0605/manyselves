@@ -1,0 +1,10 @@
+id: cross-joint-runtime-main-exception
+version: 1.0.0
+description: Resolve only the escalated joint Cross findings.
+agent: main-agent
+objective: Resolve only the escalated joint Cross findings.
+input_contract: declarative_cross_joint_runtime_context
+output_contract: declarative_main_exception_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

@@ -242,6 +242,10 @@ class ResearchNote(StrictModel):
 
 class ClaimRecord(StrictModel):
     id: str = Field(pattern=r"^C-")
+    origin: Literal["unspecified", "runtime_part_binding"] = Field(
+        default="unspecified",
+        description="runtime_part_binding denotes whole-part citation bookkeeping, not a separately authored semantic judgment.",
+    )
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     submodule_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
@@ -309,6 +313,40 @@ class RevisionResponse(StrictModel):
         return self
 
 
+class AssessmentRuleBasis(StrictModel):
+    """An author's rule selection, not a runtime certification of that rule."""
+
+    source_id: str = Field(description="Registered R-*, W-* or E-* source containing the rule.")
+    locator: str = Field(min_length=1, description="Version and precise clause/section within the source.")
+    verification: Literal["verified", "unverified", "superseded", "not_applicable"] = Field(
+        description="Author-declared status; verified requires a status source and checked_at."
+    )
+    status_source_id: str | None = Field(default=None, description="Registered source supporting the version/status check, when available.")
+    checked_at: str | None = Field(default=None, description="Actual status-check date, not the report generation date.")
+    applicability: str = Field(min_length=1, description="Object, quantity/unit, operating conditions and limits; explicitly identify missing conditions.")
+
+
+class ObservationAssessment(StrictModel):
+    """Compact reasoning handoff authored alongside one section's prose."""
+
+    evidence_ids: list[str] = Field(min_length=1, description="Exact E-* observations considered together; group only when scope, reasoning and disposition are the same.")
+    scope: str = Field(min_length=1, description="Object/part, observation time and conditions; never merge objects merely because their names match.")
+    disposition: Literal["concern", "no_concern", "undetermined", "not_applicable"] = Field(description="Author judgment within this scope; source OK/NG alone is not a verified judgment.")
+    basis: str = Field(min_length=1, description="Concise reasoning including quantity/unit and comparison when used; distinguish missing observation, missing condition, unverified rule and inapplicability.")
+    rules: list[AssessmentRuleBasis] = Field(default_factory=list, description="Rules actually considered, with their applicability/status; [] means no rule was selected, not that none exists.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating this judgment in the submitted prose; empty means it is not expressed there.")
+    action_anchor: str = Field(default="", description="Short exact substring locating the action or verification step in the same prose; empty means no action is expressed there.")
+    no_action_reason: str = Field(default="", description="Reason no action is needed or why action must be deferred; not a substitute for a missing necessary action.")
+
+
+class PartAssessment(StrictModel):
+    """Persisted scope and author records; absence is never inferred as success."""
+
+    expected_evidence_ids: list[str] | None = Field(default=None, description="Runtime-enumerated observations in the frozen section scope; null means the snapshot was unavailable.")
+    records: list[ObservationAssessment] | None = Field(default=None, description="Explicit author assessments; null means not supplied (including older saved drafts).")
+    rule_source_refs: dict[str, str] = Field(default_factory=dict, description="Runtime-owned complete source-content refs for the selected rules and their status evidence; never model-authored excerpts.")
+
+
 class ModuleSubmission(StrictModel):
     kind: Literal["module_submission"] = "module_submission"
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
@@ -318,10 +356,13 @@ class ModuleSubmission(StrictModel):
     unresolved_questions: list[str]
     revision: int = Field(ge=0)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    assessments: dict[str, PartAssessment] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def uses_exact_fixed_submodules(self) -> "ModuleSubmission":
         expected = set(REPORT_TAXONOMY[self.module_id].submodules)
+        if set(self.assessments) - expected:
+            raise ValueError("module assessments must belong to its fixed submodules")
         actual = set(self.submodule_narratives)
         if actual != expected:
             missing = sorted(expected - actual)
@@ -400,6 +441,7 @@ class ModuleRevisionSubmission(StrictModel):
             "Unassigned submodules must be omitted, not repeated."
         ),
     )
+    assessments: dict[str, PartAssessment] = Field(default_factory=dict)
     claims_upsert: list[ClaimRecord] = Field(
         default_factory=list,
         description=(
@@ -430,6 +472,8 @@ class ModuleRevisionSubmission(StrictModel):
 
     @model_validator(mode="after")
     def patch_is_internally_consistent(self) -> "ModuleRevisionSubmission":
+        if set(self.assessments) - set(self.submodule_narratives):
+            raise ValueError("assessment replacements must accompany changed section prose")
         if self.revision != self.base_revision + 1:
             raise ValueError("module revision must equal base_revision plus one")
         for submodule_id, narrative in self.submodule_narratives.items():
@@ -693,9 +737,10 @@ class ModuleReviewFinding(StrictModel):
     )
     impact: Literal["blocking", "advisory"] = Field(
         description=(
-            "blocking means the module cannot be approved without a reviewer verdict; "
-            "advisory still requires an explicit author response and reviewer disposition "
-            "but does not assert immediate technical unsafety."
+            "blocking requires correction and recheck for factual, risk, source-support or "
+            "required task/interface defects. advisory is optional improvement only: retained "
+            "without automatic author revision or a resolved verdict in module review v3. "
+            "On recheck, every required_finding still requires an explicit verdict."
         )
     )
     observation: str = Field(
@@ -786,8 +831,9 @@ class CrossReviewFinding(StrictModel):
     ] = Field(description="Cross-review dimension that produced the finding.")
     impact: Literal["blocking", "advisory"] = Field(
         description=(
-            "blocking prevents cross-review completion; advisory still requires an explicit "
-            "author response and cross-reviewer disposition."
+            "blocking requires correction and recheck for factual, risk, source-support or "
+            "necessary interface defects. advisory is optional improvement only: retained "
+            "for downstream visibility, not automatically revised or marked resolved."
         )
     )
     observation: str = Field(
@@ -958,39 +1004,19 @@ class CrossSynthesisInput(StrictModel):
             "the workflow does not require a fixed category portfolio."
         ),
     )
-    root_causes: list[str] = Field(
-        min_length=1,
-        description="Evidence-bounded common causes or preconditions shared by the modules.",
-    )
-    propagation_steps: list[str] = Field(
-        min_length=2,
-        description="Ordered mechanism or dependency steps, not a list of module conclusions.",
-    )
     causal_chain: str = Field(
         min_length=30,
         description=(
-            "Evidence-bounded causal or dependency chain that the chief editor must account for."
+            "One concise supported relationship, including the common preconditions and ordered links. Do not repeat the same mechanism in separate cause/propagation lists or write report prose."
         ),
     )
     decision_implication: str = Field(
         min_length=20,
-        description="Why the relationship changes management priority, sequencing, or residual risk.",
-    )
-    action_dependencies: list[str] = Field(
-        min_length=1,
-        description="Ordered or conditional implementation dependencies across modules.",
-    )
-    joint_actions: list[str] = Field(
-        min_length=1,
-        description="Cross-owner actions that must be implemented as one coordinated package.",
+        description="Concise decision consequence, including any necessary action dependency or coordinated response already supported by the modules. Chief writes the final explanation.",
     )
     verification_method: str = Field(
         min_length=20,
-        description="Joint acceptance or monitoring method for the relationship.",
-    )
-    acceptance_criteria: list[str] = Field(
-        min_length=1,
-        description="Observable joint acceptance criteria for the complete relationship.",
+        description="Joint verification method and observable acceptance conditions in one concise statement; retain required conditions without inventing thresholds.",
     )
     module_statement_refs: list[str] = Field(
         min_length=2,
@@ -1014,6 +1040,36 @@ class CrossSynthesisInput(StrictModel):
             "least one registered current-run E-* project-evidence id."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def consolidate_persisted_relation_details(cls, value):
+        """Keep expanded, already-saved relation details readable on same-run resume.
+
+        New Agent schemas contain only the compact fields. Existing artifacts
+        are not rewritten; their extra detail is retained in the matching text
+        when loaded, rather than silently discarded or regenerated by a model.
+        """
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        for previous, destination in (
+            ("root_causes", "causal_chain"),
+            ("propagation_steps", "causal_chain"),
+            ("action_dependencies", "decision_implication"),
+            ("joint_actions", "decision_implication"),
+            ("acceptance_criteria", "verification_method"),
+        ):
+            if previous not in value:
+                continue
+            details = value.pop(previous)
+            if not isinstance(details, list) or not all(isinstance(item, str) for item in details):
+                raise ValueError(f"{previous} must contain text details")
+            if not isinstance(value.get(destination), str):
+                raise ValueError(f"{destination} is required for saved relation details")
+            if details:
+                value[destination] += "\n" + previous + ":\n" + "\n".join(details)
+        return value
 
     @model_validator(mode="after")
     def traceable_modules_and_claims(self) -> "CrossSynthesisInput":
@@ -1048,6 +1104,10 @@ class CrossDecisionPack(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    deferred_advisories: list[CrossReviewFinding] = Field(
+        default_factory=list,
+        description="Optional unimplemented suggestions, not accepted facts, risks or required corrections.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1382,6 +1442,15 @@ def _chapter_lane_target_ids(
     return set(section_ids)
 
 
+class ReportObservationLink(StrictModel):
+    """Chief-owned placement of existing observations, not a new judgment."""
+
+    evidence_ids: list[str] = Field(min_length=1, description="E-* observations represented by this passage; one passage may retain several separately identified objects.")
+    section_id: str = Field(min_length=1, description="Exact final section ID containing the passage.")
+    narrative_anchor: str = Field(default="", description="Short exact substring locating the observation/judgment in this final section; empty means not expressed.")
+    action_anchor: str = Field(default="", description="Short exact substring locating the action, verification step or explicit justified deferral in this final section; empty means not expressed.")
+
+
 class ChiefChapterLaneSubmission(StrictModel):
     """Initial Chief result for one chapter; reducer assembles the report."""
 
@@ -1391,6 +1460,7 @@ class ChiefChapterLaneSubmission(StrictModel):
     section_ids: list[str] = Field(min_length=1)
     part_refs: dict[str, str] = Field(min_length=1)
     revision: int = Field(default=0, ge=0)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Compact links from module observations to this chapter's prose/actions; do not repeat judgments or full paragraphs.")
 
     @model_validator(mode="before")
     @classmethod
@@ -1415,6 +1485,8 @@ class ChiefChapterLaneSubmission(StrictModel):
 
     @model_validator(mode="after")
     def section_maps_match(self) -> "ChiefChapterLaneSubmission":
+        if any(link.section_id not in self.section_ids for link in self.observation_links):
+            raise ValueError("observation links must stay inside the submitted sections")
         if len(self.section_ids) != len(set(self.section_ids)):
             raise ValueError("Chief lane section_ids must be unique")
         expected_parts = (
@@ -1442,6 +1514,7 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
     base_subject_ref: str = Field(min_length=1)
     chapter_id: Literal["1", "3", "4"]
     revision: int = Field(ge=1)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Replacement observation links only for changed section_ids; runtime retains links for unchanged sections.")
     section_ids: list[str] = Field(
         min_length=1,
         description=(
@@ -1456,6 +1529,8 @@ class ChiefChapterLaneRevisionSubmission(StrictModel):
 
     @model_validator(mode="after")
     def patch_stays_in_one_chapter(self) -> "ChiefChapterLaneRevisionSubmission":
+        if any(link.section_id not in self.section_ids for link in self.observation_links):
+            raise ValueError("observation links must stay inside the changed sections")
         scope = _chapter_lane_target_ids(self.chapter_id, self.section_ids)
         expected_parts = (
             {"special_topic_analysis"}
@@ -1630,6 +1705,7 @@ class EditedReportSubmission(StrictModel):
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -1769,6 +1845,7 @@ class EditedReportSubmissionInput(StrictModel):
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    observation_links: list[ReportObservationLink] = Field(default_factory=list, description="Explicit observation-to-final-prose/action links; these locate content and do not certify semantic coverage.")
 
 
 class SkillEvolutionSubmission(StrictModel):

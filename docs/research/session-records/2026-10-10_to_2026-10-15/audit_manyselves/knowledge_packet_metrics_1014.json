@@ -1,0 +1,44 @@
+{
+  "short_whole_source": {
+    "before": {
+      "packet_chars": 2140,
+      "source_ids": 1,
+      "full_sources_inline": 0,
+      "explicit_unexpanded": false
+    },
+    "after": {
+      "packet_chars": 2337,
+      "source_ids": 1,
+      "full_sources_inline": 1,
+      "explicit_unexpanded": false
+    }
+  },
+  "same_excerpt_distinct_sources": {
+    "before": {
+      "packet_chars": 2164,
+      "source_ids": 1,
+      "full_sources_inline": 0,
+      "explicit_unexpanded": false
+    },
+    "after": {
+      "packet_chars": 3684,
+      "source_ids": 2,
+      "full_sources_inline": 2,
+      "explicit_unexpanded": false
+    }
+  },
+  "large_source": {
+    "before": {
+      "packet_chars": 2140,
+      "source_ids": 1,
+      "full_sources_inline": 0,
+      "explicit_unexpanded": false
+    },
+    "after": {
+      "packet_chars": 1138,
+      "source_ids": 1,
+      "full_sources_inline": 0,
+      "explicit_unexpanded": true
+    }
+  }
+}

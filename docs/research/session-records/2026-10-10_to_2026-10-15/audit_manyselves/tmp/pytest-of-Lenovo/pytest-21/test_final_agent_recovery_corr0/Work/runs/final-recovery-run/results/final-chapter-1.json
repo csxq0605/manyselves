@@ -1,0 +1,21 @@
+{
+  "task_id": "final-chapter-1-r0",
+  "run_id": "final-recovery-run",
+  "agent_id": "chief-editor-auditor",
+  "session_id": "final-chapter-1",
+  "status": "completed",
+  "payload": {
+    "kind": "final_chapter_lane_finding_submission",
+    "run_id": "final-recovery-run",
+    "chapter_id": "1",
+    "checked_section_ids": [
+      "1.1",
+      "1.2",
+      "1.3"
+    ],
+    "findings": [],
+    "residual_risks": []
+  },
+  "raw_output": "",
+  "reason": null
+}

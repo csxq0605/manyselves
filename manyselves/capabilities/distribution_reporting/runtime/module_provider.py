@@ -105,7 +105,7 @@ from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool, ToolRegistry
 from manyselves.runtime.tools.result_memory import RunToolResultIndex
 
-from .artifact_access import compile_agent_access, scoped_gateway
+from .artifact_access import ConfigurationError, compile_agent_access, scoped_gateway
 from .contracts.submissions import submission_schema
 from .module_provider_tools import (
     CalculateTool,
@@ -314,14 +314,12 @@ def build_module_provider_tools(
         photo_map = getattr(artifact_access, "photo_map", None)
         photo_refs = photo_map() if callable(photo_map) else {}
         large_artifact_reader = envelope.agent_id in {
-            "cross-module-reviewer",
             "chief-editor",
             "chief-editor-auditor",
         }
         audit_artifact_reader = envelope.agent_id == "evidence-auditor"
         default_limit = 160_000 if large_artifact_reader else 8_000 if audit_artifact_reader else 4_000
         minimum_limit = 160_000 if envelope.agent_id in {
-            "cross-module-reviewer",
             "chief-editor",
         } else 1
         maximum_limit = 160_000 if large_artifact_reader else 8_000
@@ -371,6 +369,19 @@ def build_module_provider_tools(
     registry = ToolRegistry()
     for name in tool_names:
         registry.register(available[name])
+    if "write_result_part" in tool_names:
+        schema = registry._schema_cache["write_result_part"]
+        if evidence_binding_required:
+            from .models.agentic import ObservationAssessment
+
+            assessment_schema = ObservationAssessment.model_json_schema()
+            schema.setdefault("$defs", {}).update(assessment_schema.pop("$defs", {}))
+            schema["properties"]["assessments"] = {
+                "type": "array", "items": assessment_schema,
+                "description": "Compact judgments for the observations in this section. Include exact prose/action anchors; group only same-scope, same-reasoning observations. Omitted observations remain visible to reviewers.",
+            }
+        else:
+            schema["properties"].pop("assessments", None)
     # Truncation envelopes advertise this Runtime-owned continuation reader.
     # It only opens opaque tool-result refs under the existing scoped gateway;
     # it does not add a Capability tool or grant another public artifact path.
@@ -742,13 +753,26 @@ class ModuleProviderRuntime:
             session_id=session_id,
         )
         access_envelope = envelope.model_copy(
-            update={"allowed_tools": list(task_tools)}
+            update={"allowed_tools": []}
         )
         access = compile_agent_access(
             agent,
             access_envelope,
             gateway=gateway,
         )
+        unknown_tools = sorted(set(task_tools) - set(access.tool_names))
+        if unknown_tools:
+            raise ConfigurationError(
+                f"{agent.id} task requested undeclared tools {unknown_tools}"
+            )
+        # Preserve the Task's business-tool scope while retaining the generic
+        # readers compiled for explicitly attached reference capabilities.
+        # Filtering to task_tools first discarded those readers even when a
+        # rule source was declared readable, leaving the Auditor an unopened ID.
+        access = replace(access, tool_names=tuple(
+            name for name in access.tool_names
+            if name in task_tools or name in {"open_artifact", "search_text", "open_tool_result"}
+        ))
         result_index = RunToolResultIndex(self.workspace, envelope.run_id)
         return replace(
             base,

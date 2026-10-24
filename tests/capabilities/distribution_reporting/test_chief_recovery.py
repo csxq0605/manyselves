@@ -139,6 +139,11 @@ async def test_chief_agent_recovery_reuses_one_session(
             self.received: list[UserMessage] = []
             self._callback = None
 
+        context_rebuilder = None
+
+        def set_context_rebuilder(self, rebuilder) -> None:
+            self.context_rebuilder = rebuilder
+
         def restore_conversation(
             self,
             messages,
@@ -267,7 +272,11 @@ async def test_chief_agent_recovery_reuses_one_session(
         "task_initial",
         continuation_kind,
     ]
+    assert loops[0].context_rebuilder is not None
+    assert loops[0].received[0].content.startswith(loops[0].context_rebuilder.boundary)
     assert loops[0].received[0].session_id == loops[0].received[1].session_id
+    assert "typed_task_state" in loops[0].received[1].content
+    assert len(loops[0].received[1].content) < len(loops[0].received[0].content)
     assert loops[0].received[1].internal is True
     assert prompt_fragment in loops[0].received[1].content
     assert outcome.session_id == conversation.external_session_id

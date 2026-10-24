@@ -1,0 +1,1 @@
+{"id":"E-0259","subject":"评估总表 2.4.3.3","fact":"既有评估结论=OK","source":{"file_id":"file-013a9efb52231caa","path":"Inputs/S4-6评估总表.xlsx","sheet":"评估信息汇总表","cell":"F39:G39","page":null,"row":39,"column":"F","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":0.65,"needs_confirmation":true,"module_id":"2.4","submodule_id":"2.4.3.3","photo_refs":[]}

@@ -1,0 +1,26 @@
+{
+  "kind": "task_terminal",
+  "correlation": {
+    "workflow_id": "distribution-aggregate-existing",
+    "run_id": "aggregate-provider-run",
+    "task_id": "aggregate-existing",
+    "task_attempt_id": "attempt-63adc70c1263461091b35f4dd9e3db7a",
+    "agent_id": "aggregate-editor",
+    "identity_key": "aggregate-editor",
+    "session_id": "aggregate-existing",
+    "task_envelope_sha256": "4426ac7883f9fbb385a7f07b3c37bdb276be89f76c2eec8367d27470c2c94386",
+    "execution_profile_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "input_contract_ref": "Work/runs/aggregate-provider-run/context/aggregate-editor-input.json",
+    "input_contract_sha256": "53d18d5ba069c8f2bb1f31b2a1918a03f2fcfbcee805bce2404c9705c6bbb19a",
+    "subject_ref": null,
+    "subject_sha256": null,
+    "lease_owner_id": "Csxq-Laptop:25088:a50b015518444e188160c792063b340e:attempt-63adc70c1263461091b35f4dd9e3db7a",
+    "lease_epoch": 1
+  },
+  "status": "completed",
+  "result_ref": "Work/runs/aggregate-provider-run/results/attempts/aggregate-existing/attempt-63adc70c1263461091b35f4dd9e3db7a.json",
+  "result_sha256": "2be46df6dd692abc46a7addb0fdbeca8ed51ee394a43cca0102263619781a0af",
+  "payload_sha256": "c99e224bdbcb0bd550c828212716f2563210a501eab085c1fbae47534e75ca1f",
+  "promoted_to_canonical": true,
+  "persisted_at_ns": 1792024853130499700
+}

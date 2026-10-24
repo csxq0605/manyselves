@@ -63,8 +63,8 @@ async def advance_cross_owner_round(
 ) -> CrossOwnerRoundProgress:
     """Advance one accepted Cross-owner verdict into typed round progress.
 
-    The transition is mechanically equivalent to the legacy
-    ``advance_cross_owner_round`` algorithm.  ``main_exception_resolver`` is
+    Only corrective findings enter another revision round; optional Cross
+    advisories remain in the immutable finding history. ``main_exception_resolver`` is
     used only when an escalation has no already accepted Main decision.  When
     new findings are emitted, ``write_immutable`` must be supplied by the
     Capability persistence composition so the existing immutable artifact is
@@ -134,11 +134,12 @@ async def advance_cross_owner_round(
     )
 
     for finding in verdict.new_findings:
-        if finding.id in pending or finding.id in resolved_ids:
+        if finding.id in {f.id for f in all_findings}:
             raise CrossRoundError(
                 f"new Cross owner finding reuses an existing id: {finding.id}"
             )
-        next_pending[finding.id] = finding
+        if finding.impact == "blocking":
+            next_pending[finding.id] = finding
         all_findings.append(finding)
 
     if verdict.new_findings:

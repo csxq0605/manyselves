@@ -1,0 +1,11 @@
+{
+  "agent_id": "module-2.4-specialist",
+  "task_id": "module-2.4",
+  "revision": 0,
+  "raw_payload": {
+    "kind": "module_submission",
+    "module_id": "2.4",
+    "unresolved_questions": [],
+    "revision": 0
+  }
+}

@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
+)
+from manyselves.capabilities.distribution_reporting.runtime.chief_runtime import (
+    ChiefChapterRuntime,
 )
 from manyselves.capabilities.distribution_reporting.runtime.cross_completion import (
     build_cross_owner_lane_completion,
@@ -13,8 +18,12 @@ from manyselves.capabilities.distribution_reporting.runtime.cross_completion imp
 from manyselves.capabilities.distribution_reporting.runtime.cross_owner_runtime import (
     CrossOwnerRuntime,
 )
+from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
+    _source_projection as final_source_projection,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     CROSS_REVIEW_DIMENSIONS,
+    CrossDecisionPack,
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
     CrossReviewCoverageEntry,
@@ -31,6 +40,9 @@ from manyselves.capabilities.distribution_reporting.runtime.models.inputs import
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.review import (
     _CrossOwnerPipelineResult,
+)
+from manyselves.capabilities.distribution_reporting.runtime.review_artifacts import (
+    load_current_review_completion,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 
@@ -90,8 +102,10 @@ def _state(run_id: str) -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("with_advice", [False, True])
 def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
     tmp_path: Path,
+    with_advice: bool,
 ) -> None:
     run_id = "cross-reduction-resolved"
     store = ReportingStore(tmp_path)
@@ -157,6 +171,10 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
         findings=[finding],
         synthesis_inputs=[],
     )
+    if with_advice:
+        initial.findings.append(finding.model_copy(update={
+            "id": "X-advice-mixed", "impact": "advisory",
+        }))
     verdict = CrossOwnerVerdictSubmission(
         owner_module_id="2.1",
         coverage=_coverage("2.1"),
@@ -185,7 +203,7 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
         verdict=verdict,
         finding_refs=[initial_ref],
         verdict_refs=[verdict_ref],
-        findings=[finding],
+        findings=list(initial.findings),
         verdicts=list(verdict.verdicts),
     ).model_dump(mode="json")
     exception_ref = f"Work/runs/{run_id}/exceptions/cross-reviewer.json"
@@ -206,6 +224,12 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
             findings=[],
             synthesis_inputs=[],
         )
+        if with_advice and module_id == "2.2":
+            no_findings.findings.append(finding.model_copy(update={
+                "id": "X-advice-only", "impact": "advisory",
+                "owner_module_id": "2.2", "target_submodule_ids": ["2.2.1.1"],
+                "related_module_ids": ["2.1"],
+            }))
         outcomes[module_id] = DeclarativeCrossOwnerPipelineOutcome(
             owner_module_id=module_id,
             status="completed",
@@ -217,7 +241,10 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
             },
         )
 
-    reduced = runtime.reduce({"state": _state(run_id), "outcomes": outcomes})
+    state = _state(run_id)
+    for module_id, module in state["module_submissions"].items():
+        store.write_json(f"Work/runs/{run_id}/modules/{module_id}-r0.json", module.model_dump(mode="json"))
+    reduced = runtime.reduce({"state": state, "outcomes": outcomes})
 
     assert reduced["module_submissions"]["2.1"] == revised
     assert reduced["specialist_submissions"]["2.1"] == revised
@@ -235,3 +262,29 @@ def test_cross_reduction_accepts_findings_closed_by_owner_recheck(
         f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json"
     ]
     assert completion.resolved_finding_ids == [finding.id]
+    advice_ids = ["X-advice-mixed", "X-advice-only"] if with_advice else []
+    assert completion.deferred_advisory_ids == advice_ids
+    pack = CrossDecisionPack.model_validate_json(
+        (tmp_path / reduced["cross_decision_pack_ref"]).read_text(encoding="utf-8")
+    )
+    assert sorted(f.id for f in pack.deferred_advisories) == advice_ids
+    chief = ChiefChapterRuntime(tmp_path, state=reduced).prepare_lane(
+        {"state": reduced, "chapter_id": "3"}
+    )
+    assert reduced["cross_decision_pack_ref"] in chief.contract.source_refs
+    assert reduced["cross_decision_pack_ref"] in chief.envelope.input_refs
+    _, final_refs = final_source_projection(reduced, "3", None, store=store)
+    assert reduced["cross_decision_pack_ref"] in final_refs
+    kwargs = dict(
+        workspace=tmp_path, run_id=run_id,
+        completion_ref=reduced["cross_review_completion_ref"], lifecycle="cross",
+        reviewer_agent_id="cross-module-reviewer", reviewer_session_key="cross-owner-wave",
+    )
+    loaded, _ = load_current_review_completion(**kwargs)
+    assert loaded == completion
+    if with_advice:
+        completion.deferred_advisory_ids.append(finding.id)
+        completion.resolved_finding_ids = []
+        store.write_json(reduced["cross_review_completion_ref"], completion.model_dump(mode="json"))
+        with pytest.raises(ValueError, match="optional Cross advice"):
+            load_current_review_completion(**kwargs)

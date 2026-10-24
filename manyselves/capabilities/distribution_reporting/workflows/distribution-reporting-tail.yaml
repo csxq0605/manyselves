@@ -2,7 +2,7 @@ id: distribution-reporting-tail
 version: 1.0.0
 description: File-defined Cross, Chief, Final, Render and Delivery sequence
 tasks:
-- cross-owner-review
+- cross-joint-runtime-review
 - chief-chapter-edit
 - final-chapter-review
 recovery:
@@ -14,7 +14,7 @@ state:
 actions:
 - id: run-cross
   kind: subworkflow
-  workflow: distribution-cross-owner-cohort
+  workflow: distribution-cross-joint-review
   input_variables:
     reporting-state: reporting-state
   child_output_name: result
