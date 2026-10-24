@@ -1,0 +1,14 @@
+id: review-finding
+version: 1.0.0
+description: One reviewer finding about one keyed record, asking for a targeted fix
+adapter: json_schema
+schema:
+  type: object
+  required: [problem, severity, suggestion]
+  additionalProperties: false
+  properties:
+    problem: {type: string, minLength: 1}
+    severity:
+      type: string
+      enum: [blocking, minor]
+    suggestion: {type: string}

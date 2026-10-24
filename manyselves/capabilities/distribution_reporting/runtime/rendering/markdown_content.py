@@ -23,6 +23,7 @@ _NUMBERED_LIST_PREFIX = re.compile(r"^\d+\s*[.．、）)]\s+")
 _HEADING_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)(?:[.．])?\s+")
 _CLAIM_TOKEN = re.compile(r"\[\[CLAIM:C-[^\]\s]+\]\]")
 _CITATION_TOKEN = re.compile(r"\[\[CITE:\d+\]\]")
+_FOOTNOTE_REFERENCE = re.compile(r"\[\^\d+\]")
 _PHOTO_TOKEN = re.compile(r"\[\[PHOTO:[^\]]+\]\]")
 
 
@@ -59,10 +60,10 @@ def normalize_heading_title(value: str) -> str:
 
 
 def is_report_title(value: str) -> bool:
-    clean = normalize_heading_title(value)
+    clean = normalize_heading_title(value).removesuffix("（草稿）")
     if clean in {"配电安全专家咨询报告", "配电安全评估报告", "配电系统安全评估报告"}:
         return True
-    return bool(re.match(r"^#\s+.+报告\s*$", value.strip()))
+    return bool(re.match(r"^#\s+.+报告(?:（草稿）)?\s*$", value.strip()))
 
 
 def is_table_line(value: str) -> bool:
@@ -148,6 +149,7 @@ def semantic_content_text(value: str) -> str:
     text = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", text)
     text = _CLAIM_TOKEN.sub("", text)
     text = _CITATION_TOKEN.sub("", text)
+    text = _FOOTNOTE_REFERENCE.sub("", text)
     text = _PHOTO_TOKEN.sub("", text)
     text = re.sub(r"【([^】]+)】[:：]?", r"\1：", text)
     text = re.sub(r"\s*([：:])\s*", r"\1", text)

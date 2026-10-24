@@ -32,8 +32,8 @@ from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactor
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.tools.registry import ToolRegistry
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+from manyselves.runtime.typed_recovery import build_tool_recovery_callback, execute_typed_recovery
 
-from .agent_recovery_turn import build_tool_recovery_callback, execute_reporting_recovery
 from .agent_result_payload import load_agent_result_payload
 from .collaboration_tools import ReportBlockedTool, SubmitResultTool
 from .completed_result_recovery import ProviderTaskAttempt
@@ -163,7 +163,7 @@ class PhotoReaderProviderRuntime:
                 return TypedAgentTurn.map_outcome(
                     outcome, session_id=session.session_id, decode_result=self._decode,
                 )
-            recovered = await execute_reporting_recovery(
+            recovered = await execute_typed_recovery(
                 self.execution, session, request,
                 recovery_policy=recovery_policy, terminals=(terminal,),
                 prompt_builder=lambda event: self._recovery_prompt(event),
@@ -220,7 +220,9 @@ class PhotoReaderProviderRuntime:
             "report_blocked": ReportBlockedTool(*arguments, task_correlation=attempt.correlation),
         }
         registry = ToolRegistry()
-        for name in task.tools:
+        # Debt: module-report still reads photos through this provider; the
+        # task now declares no extra tools, so submission is always offered.
+        for name in _tool_names(task):
             if name not in available:
                 raise ValueError(f"unsupported photo reader tool: {name}")
             registry.register(available[name])
@@ -238,7 +240,7 @@ class PhotoReaderProviderRuntime:
             input_refs=[item.photo_path],
             constraints=list(task.constraints),
             allowed_outputs=[SUBMISSION_KIND],
-            allowed_tools=list(task.tools),
+            allowed_tools=_tool_names(task),
             inline_context=json.dumps(item.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
         )
 
@@ -299,3 +301,8 @@ def build_photo_reader_provider(
 
 
 __all__ = ["PhotoReaderProviderRuntime", "build_photo_reader_provider"]
+
+
+def _tool_names(task: TaskDefinition) -> list[str]:
+    return list(dict.fromkeys(["submit_result", *task.tools]))
+

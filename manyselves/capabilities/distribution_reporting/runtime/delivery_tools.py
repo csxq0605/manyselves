@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -150,13 +151,37 @@ class DeliveryTools:
         )
         return state
 
-    def _prepare_context(self, state: dict[str, Any]) -> DeliveryContext:
-        edited, final_audit_snapshot_ref = validated_final_audit_subject(
-            workspace=self.workspace,
-            store=self.store,
-            state=state,
+    def prepare_composed(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Render a report composed from the judgment ledger.
+
+        ``state["edited_report"]`` and ``state["module_submissions"]`` were
+        assembled by the ledger composition; there is no separate final
+        review subject to validate.
+        """
+
+        _restore_delivery_state(state)
+        edited = EditedReportSubmission.model_validate(state["edited_report"])
+        context = self._prepare_context(state, edited=edited)
+        state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
+            mode="json",
+            exclude={"state"},
         )
-        write_handoff_contracts(self.store, state)
+        return state
+
+    def _prepare_context(
+        self,
+        state: dict[str, Any],
+        *,
+        edited: EditedReportSubmission | None = None,
+    ) -> DeliveryContext:
+        final_audit_snapshot_ref = None
+        if edited is None:
+            edited, final_audit_snapshot_ref = validated_final_audit_subject(
+                workspace=self.workspace,
+                store=self.store,
+                state=state,
+            )
+            write_handoff_contracts(self.store, state)
         state["edited_report"] = edited
         claims = [
             claim
@@ -454,6 +479,7 @@ class DeliveryTools:
             f"Work/runs/{state['run_id']}/delivery-completion.json"
         )
         state["delivery_status"] = "delivered"
+        state["render_verification"] = self._render_verification(context)
         self.store.write_json(
             completion_ref.as_posix(),
             {
@@ -465,6 +491,9 @@ class DeliveryTools:
                 ).as_posix(),
                 "final_audit_snapshot_ref": context.final_audit_snapshot_ref,
                 "final_review_completion_ref": final_review_ref,
+                # Not a gate: the report is delivered either way, but a person
+                # must be able to see that the DOCX text was not verified.
+                "render_verification": state["render_verification"],
                 "output_artifacts": [
                     artifact.model_dump(mode="json")
                     for artifact in state["output_artifacts"]
@@ -473,6 +502,18 @@ class DeliveryTools:
         )
         state["delivery_completion_ref"] = completion_ref.as_posix()
         return context
+
+    def _render_verification(self, context: DeliveryContext) -> dict[str, Any]:
+        path = self.workspace / context.render_result_ref
+        if path.is_file():
+            result = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            result = {"validation_warnings": ["render result record is missing"]}
+        return {
+            "protected_prose_verified": bool(result.get("protected_prose_verified")),
+            "validation_warnings": list(result.get("validation_warnings") or []),
+            "render_result_ref": Path(context.render_result_ref).as_posix(),
+        }
 
     @staticmethod
     def _delivery_output_artifacts(

@@ -161,6 +161,7 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         submodule_id=submodule_id,
                         confidence=0.65,
                         needs_confirmation=True,
+                        summary_entry=True,
                     )
                 )
         else:
@@ -243,6 +244,7 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         photo_refs=dispimg_refs(sheet.cell(row, 6).value),
                         confidence=0.6,
                         needs_confirmation=True,
+                        summary_entry=True,
                     )
                 )
         gaps.extend(unbound_photo_gaps(workbook, evidence))

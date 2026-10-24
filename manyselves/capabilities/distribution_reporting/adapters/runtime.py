@@ -41,6 +41,9 @@ from manyselves.capabilities.distribution_reporting.runtime.final_provider impor
 from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
     RunInputSnapshotStore,
 )
+from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
+    build_ledger_report_binding,
+)
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     build_module_provider_composition,
 )
@@ -61,6 +64,9 @@ from manyselves.capabilities.distribution_reporting.runtime.template_distillatio
 )
 from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
     TemplateDistillationProviderRuntime,
+)
+from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
+    build_template_skill_binding,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
@@ -231,8 +237,21 @@ class DistributionReportingRuntimeBinding:
             **final.agent_invokers,
             **final_chief.agent_invokers,
         }
+        ledger_report = build_ledger_report_binding(
+            self.workspace,
+            services,
+            input_snapshot=snapshot_store.load,
+            snapshot_content=partial(snapshot_content, self.workspace, content_store),
+            execution=self._execution,
+        )
+        template_skills = build_template_skill_binding(
+            self.workspace, services, execution=self._execution
+        )
+        self._providers = (*self._providers, ledger_report, template_skills)
         self._runtimes: dict[str, DetachedRuntime] = {
-            "full-report": public,
+            "full-report": ledger_report,
+            "extract-template-skills": template_skills,
+            "triage-writing-lessons": template_skills,
             "module-report": public,
             "revise-report": public,
             "aggregate-existing": PublicAggregateExistingWorkflowRuntime(
@@ -252,7 +271,9 @@ class DistributionReportingRuntimeBinding:
             ),
         }
         self._start_stores = {
-            "full-report": public_state_store,
+            "full-report": ledger_report.state_store,
+            "extract-template-skills": template_skills.state_store,
+            "triage-writing-lessons": template_skills.state_store,
             "module-report": public_state_store,
             "revise-report": public_state_store,
             "aggregate-existing": aggregate_state_store,

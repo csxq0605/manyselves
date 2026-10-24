@@ -1,0 +1,10 @@
+id: compose-report
+version: 1.0.0
+description: Assemble the report from the ledger and the sections, render and deliver it
+implementation: capability:distribution-reporting:compose-report
+input_contract: ledger_compose_input
+output_contract: distribution_reporting_output
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

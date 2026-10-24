@@ -1,0 +1,16 @@
+id: triage-lessons
+version: 1.0.0
+description: Route each review finding of a finished run and draft general lessons for writing problems
+agent: method-curator
+objective: 下面是一次报告运行里审查人和编辑提出的意见。逐条决定去向，只把写法问题整理成通用教训。
+input_contract: lesson_triage_packet
+output_contract: lesson_triage
+constraints:
+- 每条意见都要出现在某一项的 finding_ids 里；去向相同、原因相同的几条可以合成一项。
+- 去向按 routes 的说明选。能由程序核对的（数量、对象和数值配对、编号、表格格式）选 program_check；输入怎么读、任务必须做什么选 task_contract；只有写法问题才选 lesson。
+- 教训写成“错误类型＋通用做法”：error_type 说错在哪一类，rule 说以后怎么写。不写本次的对象、编号、数值、数量和阈值，换一个项目也要成立。
+- 教训是写作建议，不用“必须、一律、务必、立即”这类词。
+- roles 填受这条教训影响的写作角色编号；trigger 按 triggers 的说明选，拿不准就用 always。
+- 已采用的教训里已经有的，不再重复提交。
+tools: []
+recovery: typed-turn-recovery

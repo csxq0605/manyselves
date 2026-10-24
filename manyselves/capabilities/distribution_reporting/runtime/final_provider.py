@@ -13,9 +13,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    build_tool_recovery_callback,
-)
 from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
     ProviderTaskAttempt,
     load_completed_agent_result,
@@ -54,6 +51,9 @@ from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.tools.result_memory import RunToolResultIndex
+from manyselves.runtime.typed_recovery import (
+    build_tool_recovery_callback,
+)
 
 from .artifact_access import compile_agent_access, scoped_gateway
 from .state.parallel import TaskCorrelation

@@ -1,7 +1,8 @@
 """Effect execution, state persistence, and event logging around the Kernel."""
 
 import asyncio
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.kernel.contracts import build_contract_catalog
+from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import ToolDefinition
 from manyselves.kernel.executors import ActionResult, ExecutorRegistry, RuntimeContext
 from manyselves.kernel.ports import WorkflowStateStore
@@ -19,13 +21,16 @@ from manyselves.kernel.workflow import (
     ActionSucceeded,
     CompleteNestedExecution,
     JoinAction,
+    MapAction,
     ParallelAction,
+    RecordError,
     ResolvedPlan,
     StartWorkflow,
     StatelessWorkflowKernel,
     SubworkflowAction,
     WorkflowState,
     WorkflowStatus,
+    map_items,
     restore_plan_definition_registry,
 )
 
@@ -193,6 +198,10 @@ class WorkflowRuntimeHost:
                             action.id: exc.state.model_dump(mode="json")
                         }
                     )
+                elif isinstance(exc, _MapWorkflowExecutionError):
+                    failure_result = ActionResult(
+                        map_state_updates={action.id: exc.states}
+                    )
                 failed = self._kernel.transition(
                     plan,
                     state,
@@ -237,6 +246,14 @@ class WorkflowRuntimeHost:
             return ActionResult(
                 output=joined,
                 variable_updates={action.output_variable: joined},
+            )
+        if isinstance(action, MapAction):
+            return await self._execute_map(
+                action,
+                state,
+                context,
+                plan_bundle=plan_bundle,
+                checkpoint=checkpoint,
             )
         if isinstance(action, SubworkflowAction):
             return await self._execute_subworkflow(
@@ -393,8 +410,140 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output=sorted(action.branches),
             next_action_id=action.join,
+            conversation_updates=_new_conversations(
+                state,
+                [(f"{action.id}[{branch_id}]", branch) for branch_id, branch in completed_branches],
+            ),
             parallel_result_updates={action.id: completed_results},
             parallel_state_updates={action.id: branch_states},
+        )
+
+    async def _execute_map(
+        self,
+        action: MapAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+        *,
+        plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
+    ) -> ActionResult:
+        """Run one child workflow per selected item and collect results by key.
+
+        Each item's child state is checkpointed under ``map_states`` so a
+        Same-run resume reuses completed items and continues unfinished ones.
+        The in-progress states are dropped once the Map completes.
+        """
+
+        child_plan = _require_child_plan(action.workflow, plan_bundle, context)
+        try:
+            items = map_items(
+                state.variables[action.items_variable],
+                key_field=action.key_field,
+                where=action.where,
+                owner=action.id,
+            )
+        except RecordError as exc:
+            raise RuntimeError(str(exc)) from exc
+        saved_states = deepcopy(state.map_states.get(action.id, {}))
+        item_states: dict[str, dict[str, Any]] = deepcopy(saved_states)
+        semaphore = asyncio.Semaphore(action.max_concurrency or max(len(items), 1))
+
+        def checkpoint_item(key: str, current: WorkflowState) -> None:
+            item_states[key] = current.model_dump(mode="json")
+            parent_state = state.model_copy(deep=True)
+            parent_state.map_states[action.id] = deepcopy(item_states)
+            checkpoint(parent_state)
+
+        async def execute_item(key: str, item: Any) -> WorkflowState:
+            saved = saved_states.get(key)
+            if saved is not None and saved.get("status") == WorkflowStatus.COMPLETED:
+                return WorkflowState.model_validate(saved)
+            async with semaphore:
+                if saved is not None:
+                    child_state = WorkflowState.model_validate(saved)
+                else:
+                    child_state = WorkflowState.for_plan(state.run_id, child_plan)
+                    child_state.conversations = deepcopy(state.conversations)
+                    child_state.variables.update(
+                        {
+                            child_variable: deepcopy(state.variables[parent_variable])
+                            for child_variable, parent_variable in (
+                                action.input_variables.items()
+                            )
+                        }
+                    )
+                    child_state.variables[action.item_input_variable] = item
+                    if action.key_input_variable is not None:
+                        child_state.variables[action.key_input_variable] = key
+                try:
+                    completed = await self._execute_nested(
+                        child_plan,
+                        child_state,
+                        context,
+                        plan_bundle=plan_bundle,
+                        checkpoint=lambda current: checkpoint_item(key, current),
+                    )
+                except _NestedWorkflowExecutionError as exc:
+                    checkpoint_item(key, exc.state)
+                    raise
+                if completed.status is WorkflowStatus.WAITING:
+                    raise RuntimeError(
+                        f"map {action.id} item {key} waits for input; "
+                        "map item workflows cannot request input"
+                    )
+                if action.child_output_name not in completed.outputs:
+                    raise RuntimeError(
+                        f"map {action.id} item {key}: workflow {action.workflow} "
+                        f"has no output {action.child_output_name}"
+                    )
+                snapshot = _completed_nested_state_snapshot(completed)
+                item_states[key] = snapshot
+                return WorkflowState.model_validate(snapshot)
+
+        outcomes = await asyncio.gather(
+            *(execute_item(key, item) for key, item in items),
+            return_exceptions=True,
+        )
+        results: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        completed_items: list[tuple[str, WorkflowState]] = []
+        for (key, _item), outcome in zip(items, outcomes, strict=True):
+            if isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, Exception):
+                    raise outcome
+                errors[key] = str(outcome)
+                self._emit(
+                    "map.item.failed",
+                    state,
+                    action_id=action.id,
+                    error=str(outcome),
+                    data={"key": key},
+                )
+                continue
+            results[key] = deepcopy(outcome.outputs[action.child_output_name])
+            completed_items.append((f"{action.id}[{key}]", outcome))
+            self._emit(
+                "map.item.completed",
+                state,
+                action_id=action.id,
+                data={"key": key},
+            )
+        if errors and action.errors_variable is None:
+            first_key = next(iter(errors))
+            raise _MapWorkflowExecutionError(
+                f"map {action.id} item {first_key} failed: {errors[first_key]}",
+                states=item_states,
+            )
+        variable_updates: dict[str, Any] = {action.output_variable: results}
+        if action.errors_variable is not None:
+            variable_updates[action.errors_variable] = errors
+        return ActionResult(
+            output={"completed": list(results), "failed": list(errors)},
+            variable_updates=variable_updates,
+            conversation_updates=_new_conversations(state, completed_items),
+            map_state_updates={action.id: {}},
         )
 
     async def _execute_subworkflow(
@@ -421,6 +570,7 @@ class WorkflowRuntimeHost:
         )
         if child_state is None or child_state.status is WorkflowStatus.COMPLETED:
             child_state = WorkflowState.for_plan(state.run_id, child_plan)
+            child_state.conversations = deepcopy(state.conversations)
             if action.input_variable is not None:
                 child_state.variables[action.child_input_variable] = state.variables[
                     action.input_variable
@@ -471,6 +621,7 @@ class WorkflowRuntimeHost:
         return ActionResult(
             output=child_output,
             variable_updates={action.output_variable: child_output},
+            conversation_updates=_new_conversations(state, [(action.id, completed)]),
             subworkflow_state_updates={
                 action.id: _completed_nested_state_snapshot(completed)
             },
@@ -545,6 +696,10 @@ class WorkflowRuntimeHost:
                             action.id: exc.state.model_dump(mode="json")
                         }
                     )
+                elif isinstance(exc, _MapWorkflowExecutionError):
+                    failure_result = ActionResult(
+                        map_state_updates={action.id: exc.states}
+                    )
                 failed = self._kernel.transition(
                     plan,
                     state,
@@ -609,6 +764,32 @@ class WorkflowRuntimeHost:
             )
 
 
+def _new_conversations(
+    parent: WorkflowState,
+    children: Iterable[tuple[str, WorkflowState]],
+) -> dict[str, Any]:
+    """Conversations children opened, keyed ``{prefix}.{variable}`` for the parent.
+
+    Keeping them in the parent state lets a later action resolve a child's
+    conversation by key after a restart.
+    """
+
+    def identity(value: Any) -> str:
+        if isinstance(value, ConversationRecord):
+            return value.conversation_id
+        if isinstance(value, dict) and isinstance(value.get("conversation_id"), str):
+            return value["conversation_id"]
+        return json.dumps(value, sort_keys=True, default=str)
+
+    known = {identity(value) for value in parent.conversations.values()}
+    found: dict[str, Any] = {}
+    for prefix, child in children:
+        for variable, value in child.conversations.items():
+            if identity(value) not in known:
+                found[f"{prefix}.{variable}"] = deepcopy(value)
+    return found
+
+
 def _completed_nested_state_snapshot(
     state: WorkflowState,
     *,
@@ -646,6 +827,28 @@ class _NestedWorkflowExecutionError(RuntimeError):
     def __init__(self, message: str, state: WorkflowState) -> None:
         super().__init__(message)
         self.state = state
+
+
+class _MapWorkflowExecutionError(RuntimeError):
+    """Carry every item state of a failed Map back to the parent action."""
+
+    def __init__(self, message: str, *, states: dict[str, dict]) -> None:
+        super().__init__(message)
+        self.states = states
+
+
+def _require_child_plan(
+    workflow_id: str,
+    plan_bundle: dict[str, ResolvedPlan],
+    context: RuntimeContext,
+) -> ResolvedPlan:
+    try:
+        return plan_bundle[workflow_id]
+    except KeyError:
+        try:
+            return context.subworkflows[workflow_id]
+        except KeyError as exc:
+            raise RuntimeError(f"missing compiled subworkflow: {workflow_id}") from exc
 
 
 class _ParallelWorkflowExecutionError(RuntimeError):

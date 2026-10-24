@@ -1,0 +1,7 @@
+id: ledger_edit_items
+version: 1.0.0
+description: Edit items, one per owner
+adapter: json_schema
+schema:
+  type: object
+  required: [edit_items]

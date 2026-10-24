@@ -28,6 +28,9 @@ from .research.project_evidence import ProjectEvidenceIndex
 
 EXCERPT_CHARS = 240
 ATTENTION = {"concern", "undetermined"}
+# Reasons that need the modules to agree; the others mark judgments that
+# complement each other on one object.
+CONFLICT_REASONS = {"same_fact_differs", "same_quantity_differs", "photo_conflicts_record"}
 UNIDENTIFIED_PREFIXES = ("未注明",)
 
 
@@ -70,6 +73,33 @@ def _differing_quantities(found: _Dossier) -> list[dict]:
     return differing
 
 
+def _conflicting_facts(found: _Dossier) -> list[dict]:
+    """One fact judged by two or more modules with different dispositions.
+
+    Only this is a conflict.  Different modules judging different facts of
+    one object differently is normal: each looks at its own checkpoint, and
+    those judgments complement each other.
+    """
+
+    conflicting = []
+    for evidence_id in sorted(found.facts):
+        by_module: dict[str, set[str]] = {}
+        cited = []
+        for judgment in found.judgments:
+            if evidence_id in judgment["evidence_ids"]:
+                by_module.setdefault(judgment["module_id"], set()).add(judgment["disposition"])
+                cited.append(judgment)
+        if len(by_module) >= 2 and len({frozenset(v) for v in by_module.values()}) > 1:
+            conflicting.append({
+                "evidence_id": evidence_id,
+                "judgments": [
+                    {key: judgment[key] for key in ("module_id", "row_id", "disposition") if key in judgment}
+                    for judgment in cited
+                ],
+            })
+    return conflicting
+
+
 def _excerpt(narrative: str, anchor: str) -> str:
     if not anchor:
         return ""
@@ -85,7 +115,34 @@ def _excerpt(narrative: str, anchor: str) -> str:
 def build_joint_dossiers(
     workspace: Path, run_id: str, modules: Mapping[str, ModuleSubmission],
 ) -> list[dict]:
+    """Dossiers from module submissions; see ``build_dossiers``."""
+
+    judgments = []
+    for module_id, module in modules.items():
+        for part_id, part in module.assessments.items():
+            narrative = module.submodule_narratives.get(part_id, "")
+            for record in part.records or []:
+                judgment = {
+                    "module_id": module_id,
+                    "submodule_id": part_id,
+                    "evidence_ids": list(record.evidence_ids),
+                    "disposition": record.disposition,
+                    "excerpt": _excerpt(narrative, record.narrative_anchor),
+                }
+                if record.action_anchor:
+                    judgment["action_excerpt"] = _excerpt(narrative, record.action_anchor)
+                judgments.append(judgment)
+    return build_dossiers(workspace, run_id, judgments)
+
+
+def build_dossiers(
+    workspace: Path, run_id: str, judgments: list[dict],
+) -> list[dict]:
     """Objects used by two or more modules whose judgments need a joint look.
+
+    ``judgments`` are per-judgment records with ``module_id``,
+    ``submodule_id``, ``evidence_ids`` and ``disposition``; other keys (an
+    excerpt, a row id) are carried into the dossier as they are.
 
     Kept when the judgments from different modules differ, when two or more
     modules raise a concern or leave the object undetermined (their actions and
@@ -143,29 +200,21 @@ def build_joint_dossiers(
     for item in items.values():
         if item.module_id:
             dossier_for(item.id)
-    for module_id, module in modules.items():
-        for part_id, part in module.assessments.items():
-            narrative = module.submodule_narratives.get(part_id, "")
-            for record in part.records or []:
-                touched = {
-                    id(found): found
-                    for evidence_id in record.evidence_ids
-                    if (found := dossier_for(evidence_id)) is not None
-                }
-                for found in touched.values():
-                    judgment = {
-                        "module_id": module_id,
-                        "submodule_id": part_id,
-                        "evidence_ids": [
-                            evidence_id for evidence_id in record.evidence_ids
-                            if evidence_id in found.facts
-                        ],
-                        "disposition": record.disposition,
-                        "excerpt": _excerpt(narrative, record.narrative_anchor),
-                    }
-                    if record.action_anchor:
-                        judgment["action_excerpt"] = _excerpt(narrative, record.action_anchor)
-                    found.judgments.append(judgment)
+    for record in judgments:
+        touched = {
+            id(found): found
+            for evidence_id in record["evidence_ids"]
+            if (found := dossier_for(evidence_id)) is not None
+        }
+        for found in touched.values():
+            judgment = {
+                **record,
+                "evidence_ids": [
+                    evidence_id for evidence_id in record["evidence_ids"]
+                    if evidence_id in found.facts
+                ],
+            }
+            found.judgments.append(judgment)
 
     selected: list[dict] = []
     for _key, found in sorted(dossiers.items()):
@@ -179,6 +228,9 @@ def build_joint_dossiers(
             reasons.append("modules_disagree")
         if sum(1 for values in by_module.values() if values & ATTENTION) >= 2:
             reasons.append("several_modules_raise_attention")
+        conflicting = _conflicting_facts(found)
+        if conflicting:
+            reasons.append("same_fact_differs")
         differing = _differing_quantities(found)
         if differing:
             reasons.append("same_quantity_differs")
@@ -210,6 +262,9 @@ def build_joint_dossiers(
             "facts": sorted(found.facts.values(), key=lambda fact: fact["evidence_id"]),
             "judgments": found.judgments,
         }
+        dossier["kind"] = "conflict" if set(reasons) & CONFLICT_REASONS else "complement"
+        if conflicting:
+            dossier["conflicting_facts"] = conflicting
         if len(found.subjects) > 1:
             dossier["subject_spellings"] = sorted(found.subjects)
         if differing:
@@ -228,4 +283,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["build_joint_dossiers", "dossiers_by_module", "object_key"]
+__all__ = ["CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]

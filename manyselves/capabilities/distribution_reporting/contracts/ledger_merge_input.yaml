@@ -1,0 +1,7 @@
+id: ledger_merge_input
+version: 1.0.0
+description: One review item and the reviewer's findings
+adapter: json_schema
+schema:
+  type: object
+  required: [item, review]

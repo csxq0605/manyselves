@@ -1,0 +1,30 @@
+id: rework-item
+version: 1.0.0
+description: Revise one item's finding in the conversation that first judged it
+tasks:
+- revise-finding
+recovery:
+- typed-turn-recovery
+output_contract: finding
+state:
+  item: null
+  item_key: null
+actions:
+- id: resume-check
+  kind: resolve_conversation
+  agent: document-reviewer
+  conversation_key: check
+  key_variable: item_key
+  mode: run
+  output_variable: check_conversation
+- id: revise
+  kind: invoke_agent
+  agent: document-reviewer
+  task: revise-finding
+  conversation_variable: check_conversation
+  input_variable: item
+  output_variable: finding
+- id: finish
+  kind: end_workflow
+  output_variable: finding
+  output_name: result

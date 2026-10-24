@@ -1,0 +1,10 @@
+id: summarize-findings
+version: 1.0.0
+description: Count verdicts and list every checklist item in order
+implementation: capability:checklist-review:summarize-findings
+input_contract: summary-input
+output_contract: review-report
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

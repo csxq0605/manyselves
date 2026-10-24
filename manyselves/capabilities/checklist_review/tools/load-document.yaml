@@ -1,0 +1,10 @@
+id: load-document
+version: 1.0.0
+description: Read the requested project document as text
+implementation: capability:checklist-review:load-document
+input_contract: review-request
+output_contract: document
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

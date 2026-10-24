@@ -1,0 +1,12 @@
+id: chief-chapter-4
+version: 1.1.0
+description: Write the special-topic chapter the inputs asked for
+agent: report-consultant
+objective: 继续作为总编，按 plan 里的小节和要求写第四章专题分析。
+input_contract: ledger_special_topic_input
+output_contract: ledger_special_topic_analysis
+constraints:
+- 每个小节用 plan 给定的 “### 4.n 标题” 作标题，顺序不变，不另加同级小节。
+- 只依据台账和事实；资料不足的部分如实写明。
+tools: []
+recovery: typed-turn-recovery

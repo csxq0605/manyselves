@@ -1,8 +1,8 @@
-"""Capability-owned recovery adapter for typed Reporting Agent turns.
+"""Typed-result recovery on one Agent session.
 
-The generic runtime owns the recovery loop.  This adapter only translates the
-existing AgentLoop response markers into the neutral recovery vocabulary and
-lets the Capability provide the next-turn prompt and result decoder.
+``AgentExecutionService`` owns the recovery loop.  This module translates the
+AgentLoop response markers into the neutral recovery vocabulary; callers supply
+only the next-turn prompt and the result decoder.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from manyselves.interfaces.types import AgentResponse, AgentResultMessage
 from manyselves.kernel.definitions import RecoveryPolicyDefinition
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
-from manyselves.runtime.agent_execution import (
+
+from .agent_execution import (
     AgentExecutionService,
     AgentExecutionSession,
     AgentRecoveryCompleted,
@@ -28,8 +29,8 @@ from manyselves.runtime.agent_execution import (
     AgentTurnOutcome,
     AgentTurnRequest,
 )
-from manyselves.runtime.agent_recovery import AgentRecoveryDriver
-from manyselves.runtime.loops.agent_loop import (
+from .agent_recovery import AgentRecoveryDriver
+from .loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
     AGENT_TURN_CONTINUATION_REQUIRED,
 )
@@ -54,7 +55,7 @@ def build_tool_recovery_callback(
     return callback
 
 
-async def execute_reporting_recovery(
+async def execute_typed_recovery(
     execution: AgentExecutionService,
     session: AgentExecutionSession,
     initial: AgentTurnRequest,
@@ -66,11 +67,11 @@ async def execute_reporting_recovery(
     recovery: AgentRecoveryDriver | None = None,
     progress_observer: ProgressObserver | None = None,
 ) -> Any:
-    """Run declared Reporting recovery on the existing Agent session.
+    """Run declared recovery on the existing Agent session.
 
     ``AgentExecutionService`` remains the owner of dispatch, correlation, and
-    loop progression.  The Capability owns only the marker interpretation,
-    prompt text, and typed payload decoding supplied through this function.
+    loop progression.  Callers own only the prompt text and the typed payload
+    decoding supplied through this function.
     """
 
     async def interpret(
@@ -201,4 +202,8 @@ async def execute_reporting_recovery(
     )
 
 
-__all__ = ["build_tool_recovery_callback", "execute_reporting_recovery"]
+__all__ = [
+    "ProgressObserver",
+    "build_tool_recovery_callback",
+    "execute_typed_recovery",
+]

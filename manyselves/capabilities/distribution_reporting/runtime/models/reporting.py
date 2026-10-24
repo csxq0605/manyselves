@@ -589,6 +589,8 @@ class PhotoAsset(ReportingModel):
         default=None,
         description="Original workbook DISPIMG/OOXML image key retained for provenance.",
     )
+    source_sheet: str | None = Field(default=None, description="Sheet holding the image.")
+    source_cell: str | None = Field(default=None, description="Cell holding the image.")
     primary_evidence_id: str | None = Field(
         default=None,
         description=(
@@ -628,6 +630,17 @@ class EvidenceItem(ReportingModel):
     module_id: str | None = None
     submodule_id: str | None = None
     photo_refs: list[str] = Field(default_factory=list)
+    summary_entry: bool = Field(
+        default=False,
+        description="A row of a summary sheet: the subject names the entry, not an observed object",
+    )
+    program_note: str | None = Field(
+        default=None,
+        description=(
+            "程序整理这条记录时加的说明（例如缺数时不能计算什么、还要核对什么）；"
+            "不是原记录的内容，不能写成记录里注明的话"
+        ),
+    )
 
     @model_validator(mode="after")
     def submodule_matches_module(self) -> "EvidenceItem":

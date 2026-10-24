@@ -64,6 +64,10 @@ class FilePreparationResult(ReportingModel):
     provisional_evidence: list[EvidenceItem] = Field(default_factory=list)
     raw_photo_assets: dict[str, PhotoAsset] = Field(default_factory=dict)
     mapping_gaps: list[dict] = Field(default_factory=list)
+    column_headers: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Sheet -> column letter -> header text above the mapped records.",
+    )
     error: str | None = None
 
     @field_serializer("source_path", when_used="json")

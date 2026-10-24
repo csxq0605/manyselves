@@ -1,0 +1,10 @@
+id: build-judgment-ledger
+version: 1.0.0
+description: Check judgment rows against the evidence and build joint dossiers
+implementation: capability:distribution-reporting:build-judgment-ledger
+input_contract: ledger_build_input
+output_contract: ledger_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

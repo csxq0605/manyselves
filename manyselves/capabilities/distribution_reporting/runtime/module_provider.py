@@ -21,9 +21,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    build_tool_recovery_callback,
-)
 from manyselves.capabilities.distribution_reporting.runtime.collaboration_tools import (
     ListResultPartsTool,
     QueryPeerTool,
@@ -105,6 +102,9 @@ from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.tools.document_tool import InspectDocumentTool
 from manyselves.runtime.tools.registry import Tool, ToolRegistry
 from manyselves.runtime.tools.result_memory import RunToolResultIndex
+from manyselves.runtime.typed_recovery import (
+    build_tool_recovery_callback,
+)
 
 from .artifact_access import ConfigurationError, compile_agent_access, scoped_gateway
 from .contracts.submissions import submission_schema

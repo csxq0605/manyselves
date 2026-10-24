@@ -1,0 +1,5 @@
+id: ledger_chief_chapter_3
+version: 1.0.0
+description: Chapter 3 - overview and merged action rows
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:ChiefChapter3

@@ -1942,7 +1942,9 @@ async def test_generic_workflow_routes_project_the_file_defined_reporting_run(
     cost = await client.get(f"/api/v1/runs/{run_id}/cost")
 
     assert capabilities.status_code == 200
-    assert capabilities.json()["capabilities"][0]["id"] == "distribution-reporting"
+    assert "distribution-reporting" in {
+        item["id"] for item in capabilities.json()["capabilities"]
+    }
     assert workflows.status_code == 200
     assert any(
         item["id"] == "full-report" and item["runnable"]
@@ -1968,7 +1970,7 @@ async def test_generic_runs_are_scoped_to_the_main_conversation_that_started_the
         headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
         json={
             "workflowId": "parameter-adjustment",
-            "input": {"value": 4},
+            "input": {"value": 12},
         },
     )
     second = await client.post(
@@ -2011,7 +2013,9 @@ async def test_generic_workflow_routes_execute_the_second_production_capability(
         headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000012"},
         json={
             "workflowId": "parameter-adjustment",
-            "input": {"value": 4},
+            # Already valid, so the run finishes without a model call; the
+            # Agent path is covered by the Capability tests.
+            "input": {"value": 12},
         },
     )
     run_id = started.json()["runId"]
@@ -2020,6 +2024,7 @@ async def test_generic_workflow_routes_execute_the_second_production_capability(
     cost = await client.get(f"/api/v1/runs/{run_id}/cost")
 
     assert [item["id"] for item in capabilities.json()["capabilities"]] == [
+        "checklist-review",
         "distribution-reporting",
         "parameter-adjustment",
     ]
@@ -2036,7 +2041,7 @@ async def test_generic_workflow_routes_execute_the_second_production_capability(
             {
                 "id": "result",
                 "kind": "value",
-                "value": 10,
+                "value": 12,
                 "path": None,
                 "exists": None,
                 "size": None,
@@ -2063,7 +2068,7 @@ async def test_generic_workflow_run_is_visible_only_in_its_active_project(
         headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
         json={
             "workflowId": "parameter-adjustment",
-            "input": {"value": 4},
+            "input": {"value": 12},
         },
     )
     run_id = started.json()["runId"]

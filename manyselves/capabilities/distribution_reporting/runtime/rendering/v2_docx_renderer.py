@@ -664,19 +664,20 @@ def write_report_into_paragraphs(
 
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        if not line or line in {"---", "***", "___"}:
-            continue
-        if is_report_title(line):
-            continue
         if is_table_line(line):
             table_buffer.append(line)
             continue
-
+        # A table ends at its first non-table line, a blank line included, so
+        # two tables apart in the Markdown stay two tables in Word.
         if table_buffer:
             if last_written_paragraph is not None:
                 format_table_title_paragraph(last_written_paragraph)
             write_markdown_table(document, next_paragraph(), table_buffer, model)
             table_buffer.clear()
+        if not line or line in {"---", "***", "___"}:
+            continue
+        if is_report_title(line):
+            continue
 
         written = write_line_or_expanded(next_paragraph, line)
         if written:
@@ -1459,9 +1460,8 @@ def write_markdown_table(
         rows.append(cells)
     if not rows:
         return
-    max_rows = policy_int("table_policy", "max_rows_per_table", 30)
-    if max_rows > 0 and len(rows) > max_rows + 1:
-        rows = rows[: max_rows + 1]
+    # Every row of the Markdown is written: the Word file and the Markdown
+    # deliver the same text.
 
     anchor_paragraph.clear()
     anchor_paragraph.style = "Normal"
@@ -2499,14 +2499,14 @@ def add_report_content(document: Document, report_text: str, model: dict[str, An
     table_buffer: list[str] = []
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        if not line or is_report_title(line):
-            continue
         if is_table_line(line):
             table_buffer.append(line)
             continue
         if table_buffer:
             write_markdown_table(document, document.add_paragraph(), table_buffer, model)
             table_buffer.clear()
+        if not line or is_report_title(line):
+            continue
         paragraph = document.add_paragraph()
         write_line_to_paragraph(paragraph, line)
     if table_buffer:
@@ -3271,10 +3271,10 @@ def clean_numbered_item_text(value: Any) -> str:
 
 
 def is_report_title(line: str) -> bool:
-    clean = normalize_heading_title(clean_markdown_heading(line))
+    clean = normalize_heading_title(clean_markdown_heading(line)).removesuffix("（草稿）")
     if clean in {"配电安全专家咨询报告", "配电安全评估报告", "配电系统安全评估报告"}:
         return True
-    return bool(re.match(r"^#\s+.+报告\s*$", str(line).strip()))
+    return bool(re.match(r"^#\s+.+报告(?:（草稿）)?\s*$", str(line).strip()))
 
 
 def clean_markdown_heading(line: str) -> str:
@@ -4118,10 +4118,15 @@ def normalize_report_text(report_text: str) -> str:
     provenance and whole positive-advice blocks at render time.  That made the
     DOCX disagree with the Chief Editor artifact and correctly tripped the
     protected-prose check.  Evidence cleanup belongs before approval, never in
-    the deterministic renderer.
+    the deterministic renderer.  The legacy normalizer also cut the text at
+    the first "报告编制说明"/"如有疑问"/"资料缺失…声明" line, which silently
+    rendered a shorter DOCX than the delivered Markdown; only model reasoning
+    blocks are removed here.
     """
 
-    return _LEGACY_NORMALIZE_REPORT_TEXT(report_text)
+    return re.sub(
+        r"<think>.*?</think>", "", report_text or "", flags=re.DOTALL | re.IGNORECASE
+    ).strip()
 
 
 def normalize_table_cell_value(value: Any, header: Any = "", is_header: bool = False) -> str:

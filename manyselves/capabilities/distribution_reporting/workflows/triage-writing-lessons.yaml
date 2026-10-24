@@ -1,0 +1,85 @@
+id: triage-writing-lessons
+version: 1.0.0
+description: Route a finished run's review findings and draft general writing lessons, checked by program
+tasks:
+- triage-lessons
+- revise-lessons
+recovery:
+- typed-turn-recovery
+input_contract: lesson_triage_input
+input_variable: request
+output_contract: lesson_triage_result
+state:
+  run-id: ''
+  request: {}
+  revision: null
+actions:
+- id: prepare
+  kind: invoke_tool
+  tool: prepare-lesson-triage
+  input_variables:
+    run_id: run-id
+    request: request
+  output_variable: context
+- id: packet
+  kind: set_variable
+  variable: packet
+  value_variable: context
+  field: packet
+- id: open-triage
+  kind: create_conversation
+  agent: method-curator
+  conversation_key: lesson-triage
+  mode: run
+  output_variable: triage_conversation
+- id: triage
+  kind: invoke_agent
+  agent: method-curator
+  task: triage-lessons
+  conversation_variable: triage_conversation
+  input_variable: packet
+  output_variable: triage
+- id: check
+  kind: invoke_tool
+  tool: check-lesson-triage
+  input_variables:
+    context: context
+    triage: triage
+  output_variable: checked
+- id: passed
+  kind: set_variable
+  variable: passed
+  value_variable: checked
+  field: passed
+- id: route
+  kind: if
+  condition:
+    variable: passed
+    operator: eq
+    value: true
+  then: close
+  otherwise: revision-input
+- id: revision-input
+  kind: set_variable
+  variable: revision_input
+  value_variable: checked
+  field: revision_input
+- id: revise
+  kind: invoke_agent
+  agent: method-curator
+  task: revise-lessons
+  conversation_variable: triage_conversation
+  input_variable: revision_input
+  output_variable: revision
+- id: close
+  kind: invoke_tool
+  tool: close-lesson-triage
+  input_variables:
+    context: context
+    checked: checked
+    revision: revision
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

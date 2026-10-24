@@ -1,0 +1,136 @@
+id: ledger-chief
+version: 1.0.0
+description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger
+tasks:
+- chief-chapter-3
+- revise-chief-actions
+- chief-chapter-1
+- revise-chief-overview
+- chief-chapter-4
+recovery:
+- typed-turn-recovery
+output_contract: ledger_chief_outputs
+state:
+  review_base: null
+  final: null
+  context: null
+  chief_key: chief
+  chapter4: null
+actions:
+- id: open-chief
+  kind: fork_conversation
+  source_variable: review_base
+  conversation_key: author
+  key_variable: chief_key
+  mode: run
+  output_variable: chief_conversation
+- id: chief-input
+  kind: set_variable
+  variable: chief_input
+  value_variable: final
+  field: chief_input
+- id: chapter-3
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-3
+  conversation_variable: chief_conversation
+  input_variable: chief_input
+  output_variable: chapter3
+- id: check-3
+  kind: invoke_tool
+  tool: check-chief-tables
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+  output_variable: check3
+- id: blocking-3
+  kind: set_variable
+  variable: blocking3
+  value_variable: check3
+  field: blocking
+- id: route-3
+  kind: if
+  condition:
+    variable: blocking3
+    operator: eq
+    value: true
+  then: revise-3
+  otherwise: chapter-1
+- id: revise-3
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-actions
+  conversation_variable: chief_conversation
+  input_variable: check3
+  output_variable: chapter3
+- id: chapter-1
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-1
+  conversation_variable: chief_conversation
+  input_variable: chief_input
+  output_variable: chapter1
+- id: check-1
+  kind: invoke_tool
+  tool: check-chief-tables
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter1: chapter1
+  output_variable: check1
+- id: blocking-1
+  kind: set_variable
+  variable: blocking1
+  value_variable: check1
+  field: blocking
+- id: route-1
+  kind: if
+  condition:
+    variable: blocking1
+    operator: eq
+    value: true
+  then: revise-1
+  otherwise: topic-flag
+- id: revise-1
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-overview
+  conversation_variable: chief_conversation
+  input_variable: check1
+  output_variable: chapter1
+- id: topic-flag
+  kind: set_variable
+  variable: has_topic
+  value_variable: context
+  field: has_special_topic
+- id: route-4
+  kind: if
+  condition:
+    variable: has_topic
+    operator: eq
+    value: true
+  then: topic-input
+  otherwise: collect
+- id: topic-input
+  kind: set_variable
+  variable: topic_input
+  value_variable: context
+  field: special_topic_input
+- id: chapter-4
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-4
+  conversation_variable: chief_conversation
+  input_variable: topic_input
+  output_variable: chapter4
+- id: collect
+  kind: set_variable
+  variable: outputs
+  value_variables:
+    chapter1: chapter1
+    chapter3: chapter3
+    chapter4: chapter4
+- id: finish
+  kind: end_workflow
+  output_variable: outputs
+  output_name: result

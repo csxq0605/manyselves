@@ -1,0 +1,74 @@
+id: template-role-extraction
+version: 1.0.0
+description: One role's writing methods from its template sections, checked by program and corrected once
+tasks:
+- extract-template-role
+- revise-template-role
+recovery:
+- typed-turn-recovery
+output_contract: template_role_result
+state:
+  item: null
+  item_key: null
+  template_ref: null
+  revision: null
+actions:
+- id: open-role
+  kind: create_conversation
+  agent: method-curator
+  conversation_key: template-role
+  key_variable: item_key
+  mode: run
+  output_variable: role_conversation
+- id: extract
+  kind: invoke_agent
+  agent: method-curator
+  task: extract-template-role
+  conversation_variable: role_conversation
+  input_variable: item
+  output_variable: submission
+- id: accept
+  kind: invoke_tool
+  tool: accept-template-entries
+  input_variables:
+    item: item
+    submission: submission
+    template_ref: template_ref
+  output_variable: accepted
+- id: passed
+  kind: set_variable
+  variable: passed
+  value_variable: accepted
+  field: passed
+- id: route
+  kind: if
+  condition:
+    variable: passed
+    operator: eq
+    value: true
+  then: close
+  otherwise: revision-input
+- id: revision-input
+  kind: set_variable
+  variable: revision_input
+  value_variable: accepted
+  field: revision_input
+- id: revise
+  kind: invoke_agent
+  agent: method-curator
+  task: revise-template-role
+  conversation_variable: role_conversation
+  input_variable: revision_input
+  output_variable: revision
+- id: close
+  kind: invoke_tool
+  tool: close-template-role
+  input_variables:
+    accepted: accepted
+    revision: revision
+    template_ref: template_ref
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

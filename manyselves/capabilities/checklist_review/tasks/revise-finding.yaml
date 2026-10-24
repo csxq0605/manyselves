@@ -1,0 +1,14 @@
+id: revise-finding
+version: 1.0.0
+description: Revise this item's own finding in its original conversation after review
+agent: document-reviewer
+objective: 审查人对你刚才对这一条目的结论提出了意见。核对原文后重新提交这一条目的结论。
+input_contract: review-finding
+output_contract: finding
+constraints:
+- 意见成立就改；不成立就保持原结论，并在 note 里写明为什么不改。
+- item_id 必须与你前面提交的一致；verdict、evidence 的要求与前面相同。
+- 需要核对原文时可以调用 search-document 按关键词查找。
+tools:
+- search-document
+recovery: typed-turn-recovery

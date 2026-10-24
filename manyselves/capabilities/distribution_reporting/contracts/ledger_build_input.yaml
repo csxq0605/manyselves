@@ -1,0 +1,7 @@
+id: ledger_build_input
+version: 1.0.0
+description: Ledger context and every module's judgment set
+adapter: json_schema
+schema:
+  type: object
+  required: [context, judgments]

@@ -1,0 +1,7 @@
+id: ledger_merged_findings
+version: 1.0.0
+description: Combined findings of one owner
+adapter: json_schema
+schema:
+  type: object
+  required: [findings, blocking, revision_input]

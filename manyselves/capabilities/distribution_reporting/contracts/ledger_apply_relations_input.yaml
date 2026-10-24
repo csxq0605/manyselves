@@ -1,0 +1,7 @@
+id: ledger_apply_relations_input
+version: 1.0.0
+description: Ledger context, the built ledger and every author's relations
+adapter: json_schema
+schema:
+  type: object
+  required: [context, ledger, relations]

@@ -35,7 +35,9 @@ def test_source_formula_result_is_not_replaced_by_hardcoded_voltage(tmp_path, ti
     for item in items:
         assert item.value == pytest.approx(11.9511505722) and item.unit == "%"
         assert "原表负荷率=11.95%" in item.fact
-        assert formula in item.fact and "测量侧别" in item.fact
+        assert formula in item.fact
+        # The program's caution is kept apart from what the record says.
+        assert "测量侧别" not in item.fact and "测量侧别" in (item.program_note or "")
         assert item.needs_confirmation
         assert "计算负荷率=6.93%" not in item.fact
 
@@ -63,7 +65,10 @@ def test_unmarked_or_literal_percent_format_does_not_silently_scale_number(tmp_p
     items = _load_items(context, "总配评估详情表")
     assert all(item.value == 100 and item.unit == "A" for item in items)
     assert all(
-        "原表负荷率数值=0.5" in item.fact and "比例口径待核实" in item.fact for item in items
+        "原表负荷率数值=0.5" in item.fact
+        and "比例口径待核实" not in item.fact
+        and item.program_note == "比例口径待核实"
+        for item in items
     )
     assert any(g.get("code") == "ambiguous_load_rate_scale" for g in context.mapping_gaps)
 

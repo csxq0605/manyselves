@@ -18,10 +18,6 @@ from typing import Any, Literal, cast
 from manyselves.capabilities.distribution_reporting.domain.photo_bindings import (
     runtime_photo_ids,
 )
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    ProgressObserver,
-    execute_reporting_recovery,
-)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -74,6 +70,10 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+from manyselves.runtime.typed_recovery import (
+    ProgressObserver,
+    execute_typed_recovery,
+)
 
 from .assessment_context import (
     assessment_source_context,
@@ -446,7 +446,7 @@ class ChiefChapterAgentInvoker:
                 decode_result=self._decode_result,
             )
 
-        recovered = await execute_reporting_recovery(
+        recovered = await execute_typed_recovery(
             self.execution,
             session,
             request,

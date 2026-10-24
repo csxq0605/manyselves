@@ -1,0 +1,22 @@
+id: ledger_relation_input
+version: 1.0.0
+description: Other modules' flagged rows and the knowledge base's relation method, for one author
+adapter: json_schema
+schema:
+  type: object
+  required: [module_id, flagged_elsewhere, relation_method, relation_names]
+  properties:
+    module_id:
+      type: string
+    related:
+      type: object
+    flagged_elsewhere:
+      type: array
+      items:
+        type: string
+    relation_method:
+      type: string
+    relation_names:
+      type: array
+      items:
+        type: string

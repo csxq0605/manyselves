@@ -19,6 +19,21 @@ class RuntimeErrorPolicy:
     delay_seconds: float
 
 
+class MalformedModelOutputError(RuntimeError):
+    """The model's streamed output could not be parsed (for example tool
+    arguments that are not valid JSON).
+
+    The request itself was fine; a new sample usually is too, so this is
+    retried a bounded number of times.  ``raw_output`` keeps what had been
+    received, for diagnosis.  Content that parses but fails a contract is a
+    different failure and is answered by the tool's own correction instead.
+    """
+
+    def __init__(self, message: str, *, raw_output: str = "") -> None:
+        super().__init__(message)
+        self.raw_output = raw_output
+
+
 def _status_code(exc: BaseException) -> int | None:
     value = getattr(exc, "status_code", None)
     if isinstance(value, int):
@@ -116,6 +131,14 @@ def classify_runtime_error(exc: BaseException, retry_number: int = 1) -> Runtime
 
     if code in {400, 404, 405, 413, 415, 422}:
         return RuntimeErrorPolicy("invalid_request", f"请求不可用（{code}）", False, 0.0)
+
+    if isinstance(exc, MalformedModelOutputError):
+        return RuntimeErrorPolicy(
+            "malformed_output",
+            "模型输出格式损坏",
+            True,
+            1.0 if retry_number == 1 else 3.0,
+        )
 
     if isinstance(exc, (ValueError, TypeError)):
         return RuntimeErrorPolicy("validation", "数据或参数校验失败", False, 0.0)

@@ -72,16 +72,16 @@ from tests.capabilities.distribution_reporting.test_public_entrypoint_workflows 
 RUN_ID = "facts"
 SUBMISSION = {
     "kind": "photo_reading_submission",
-    "visible": "柜内进线端子，热像显示最高约35℃",
-    "record_match": "matches",
-    "reason": "图中读数与记录一致",
+    "visible": "柜内进线端子的热像图",
+    "transcription": [{"label": "最高温度", "text": "35.1℃", "legible": True}],
+    "photo_date": "2025-06-12 10:31",
     "needs_review": False,
 }
 
 
 def _item(evidence_id: str, submodule_id: str, photo_refs: list[str], row: int = 3) -> EvidenceItem:
     return EvidenceItem(
-        id=evidence_id, subject="A房/柜A", fact="进线端子温度=35℃",
+        id=evidence_id, subject="A房/柜A", fact="进线端子温度=35℃", value=35, unit="℃",
         module_id=submodule_id.split(".")[0] + "." + submodule_id.split(".")[1],
         submodule_id=submodule_id, photo_refs=photo_refs,
         source=SourceLocation(file_id="s4-4", path=Path("Inputs/S4-4.xlsx"),
@@ -189,14 +189,15 @@ async def test_workflow_without_photos_skips_the_model(tmp_path: Path) -> None:
     assert summary["photo_count"] == 0 and summary["read_count"] == 0
 
 
-def test_root_workflows_read_photos_before_the_module_cohort() -> None:
+def test_root_workflows_read_photos_before_any_module_writes() -> None:
     _capability, registry = load_distribution_reporting_capability()
-    for workflow_id in ("full-report", "module-report"):
+    for workflow_id, writer in (
+        ("full-report", "report-ledger"),
+        ("module-report", "distribution-module-cohort"),
+    ):
         workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
         children = [a["workflow"] for a in workflow.actions if a["kind"] == "subworkflow"]
-        assert children.index("distribution-photo-reading") < children.index(
-            "distribution-module-cohort"
-        )
+        assert children.index("distribution-photo-reading") < children.index(writer)
         specialized = _registry_with_existing_workflow_specializers()
         plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
             specialized.require(DefinitionKind.WORKFLOW, workflow_id), specialized,
@@ -304,12 +305,20 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     modules = {"2.2": _module("2.2.2.1", "E-0001")}
     assert build_joint_dossiers(tmp_path, RUN_ID, modules) == []
 
-    conflict = {**SUBMISSION, "record_match": "conflicts", "reason": "图中读数约60℃", "needs_review": True}
+    # The reader only copies; the program finds the copied 60.2 is not the record's 35.
+    conflict = {
+        **SUBMISSION,
+        "transcription": [
+            {"label": "最高温度", "text": "60.2℃", "legible": True},
+            {"label": "柜号", "text": "D1701", "legible": False},
+        ],
+    }
     await _run_workflow(tmp_path, context, _Invoker(conflict))
 
     packet = prepare_module_fact_context(tmp_path, RUN_ID, "2.2").inline_context
     assert '"photo_reading":"P-0001：柜内进线端子' in packet
-    assert "与记录不符（图中读数约60℃）；需人工复核" in packet
+    assert "抄写：最高温度=60.2℃，柜号=D1701（看不清）；照片日期：2025-06-12 10:31" in packet
+    assert "以表格记录为准，照片读数待核（记录值 35℃；照片可见 60.2℃）；需人工复核" in packet
     assert "逐张读图结果" in packet
 
     [dossier] = build_joint_dossiers(tmp_path, RUN_ID, modules)
@@ -318,3 +327,33 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     assert "2.4" in dossier["module_ids"]
     fact = next(fact for fact in dossier["facts"] if fact["evidence_id"] == "E-0001")
     assert fact["photo_conflicts"] is True and fact["photo_readings"][0].startswith("P-0001：")
+
+
+def test_program_compares_only_legible_numbers_and_never_names_or_dates() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
+        PhotoReadingRecord,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
+        compare_with_records,
+    )
+
+    record = [PhotoReadingRecord(evidence_id="E-1", subject="14#柜", fact="11.3A",
+                                 values=[{"value": 11.3, "unit": "A"}])]
+
+    def items(*pairs):
+        return [{"label": "x", "text": text, "legible": legible} for text, legible in pairs]
+
+    assert compare_with_records(record, items(("11.27A", True)))[0] == "matches"
+    assert compare_with_records(record, items(("OL", True)))[0] == "cannot_tell"
+    assert compare_with_records(record, items(("2.9", False)))[0] == "cannot_tell"
+    assert compare_with_records(record, items(("2025-06-12", True), ("D1601", True)))[0] == (
+        "cannot_tell"
+    )
+    assert compare_with_records(record, items(("2.9A", True)))[0] == "conflicts"
+    assert compare_with_records(record, items(("11.3", True)))[0] == "matches"
+    # A watermark temperature and a code beside the screen are not readings.
+    assert compare_with_records(
+        record, items(("23℃", True), ("防伪码 8234 2", True), ("-19.9", False))
+    )[0] == "cannot_tell"
+    no_value = [PhotoReadingRecord(evidence_id="E-2", subject="17号楼", fact="NG")]
+    assert compare_with_records(no_value, items(("16号楼", True)))[0] == "cannot_tell"

@@ -68,6 +68,8 @@ class KnowledgeContextBuilder:
         "保密规则",
     )
     MAX_DOCUMENTS_PER_SUBMODULE = 3
+    # Knowledge files that describe how findings of different units relate.
+    RELATION_METHOD_TERMS = ("跨ku关联",)
 
     def __init__(
         self,
@@ -167,6 +169,16 @@ class KnowledgeContextBuilder:
         """
         identity = f"{document.title}\n{document.relative_path}".casefold()
         return any(term.casefold() in identity for term in cls.REPORTING_RULE_TERMS)
+
+    def relation_method(self) -> str:
+        """The knowledge base's own method for relating findings across units."""
+
+        texts = []
+        for document in self._load_documents():
+            identity = f"{document.title}\n{document.relative_path}".casefold()
+            if any(term in identity for term in self.RELATION_METHOD_TERMS):
+                texts.append(document.text.strip())
+        return "\n\n".join(texts)
 
     def _fallback_ranked(
         self, documents: list[ReferenceDocument], terms: tuple[str, ...], limit: int,

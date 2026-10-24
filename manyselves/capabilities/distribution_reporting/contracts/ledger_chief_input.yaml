@@ -1,0 +1,7 @@
+id: ledger_chief_input
+version: 1.0.0
+description: Ledger changes since the ledger was read, and the action rows to merge
+adapter: json_schema
+schema:
+  type: object
+  required: [changed_rows, removed_row_ids, action_row_ids, module_titles]

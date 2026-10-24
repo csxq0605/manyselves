@@ -22,13 +22,40 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `2026-10-20 第 6 次真跑后按专家版改造：写法与审查职责（B）、版式（D）、提示词缓存与工具错误（C3/C4）`
+- Current slice: `2026-10-20 架构方案二：通用内核原语 + 判断台账报告流程（本地分支 work-arch）`
 - Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）：实测只有 effort=low 有效，用户选「先不做」，各角色保持默认，并删除了角色定义里没人读取的 `limits` 块（max_turns/max_tokens/effort 等）。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+- Next automatic action: work-arch 分支本地提交（a9a0635、6191e55、f9fab19、8411956、d3b894e），未推送。full-report 已改走通用绑定上的 `report-ledger` 流程（只用 photo-reader、report-consultant 两个 Agent），离线端到端测试通过，未真跑。待用户决定：module-report 单模块怎么做、何时删除旧桥接（模块队列/Cross/Final/Chief provider）、推送和 Mac 真跑。已知残留：webapi lifespan/tenant_runtime 直接引用报告 main_tool；agent_loop 的 result-part 文案带 evidence_ids（随旧桥接一起清）。
+
+### 2026-10-20 架构方案二（本地分支 work-arch）
+
+- 内核：map、fork_conversation、keyed records；`set_variable.value_variables`。运行时：通用 Agent 调用器（context_fields、image）、子流程/并行/map 的会话回传、只绑定计划用到的 Tool、`start_input` 投影。
+- 分离证明：中立能力包 checklist-review 与 parameter_adjustment 在同一内核上跑通（单测）。
+- 报告：`domain/judgment_ledger.py`、`domain/calculations.py`、`runtime/ledger_tools.py`、`runtime/ledger_report.py`，流程 `report-ledger` 及其子流程。证据：`tests/capabilities/distribution_reporting/test_ledger_report.py`（脚本化模型，生成 DOCX）。
+- 设计与进度：项目文件 `handoff/report-architecture-redesign-20261020.md`、`handoff/reporting-option2-implementation.md`。
+
+### 2026-10-20 方案二质量修复（work-arch，本地提交 59e78bd…30eebce）
+
+- 合并：同一目标的程序意见与审阅意见并存，任一阻断即返修。通用层：`TaskImageInput.list_field` 一次发送多张图。
+- 输入：准备阶段读取每张表记录上方的表头和每张图所在单元格（`mappers/common.source_layout`），事实清单按来源表列出表头。
+- 读图：只抄写可见内容；程序比对数值，不一致时以记录为准、标“照片读数待核”；审查附读图有疑问的原图。
+- 统计：`domain/calculations.statistics` 按检查项给出 OK/NG 数量与对象、数值排序和倍数（K- 编号）；关注/不能判定行一行一个对象；成稿核对数量与对象—数值配对。
+- 证据状态：判断行必填 `evidence_status`，带进问题表、行动表和重点风险；总编通读对照所引行。
+- Skill：仓库审订版按方案二角色重排；共享前缀加专家版各节篇幅参考（`runtime/template_lengths.py`，参考不是上限）。需用 prepare_reporting_references 生成新项目才进入运行。
+- 未真跑。交接：项目文件 `handoff/option2-quality-fixes-20261020.md`。
+
+### 2026-10-20 交付文件缺陷修复（work-arch，本地提交）
+
+- 引用：`[[CITE:n]]` 改为真实 Word 脚注（`word/footnotes.xml`，正文 `w:footnoteReference`），脚注文字为该条引用的来源（编号＋标题＋位置）；交付 MD 同步写成 `[^n]` 与末尾定义，编号按出现顺序。代码 `rendering/report_footnotes.py`、`PdsDocxRenderer._materialize_citations`。
+- 封面：模板文本框里的 `XXXXX有限公司`/`XXXXXX地区` 用收资表证据中的“客户名称=…/项目地点=…”填写，没有就写“待补”（`runtime/report_front_matter.py`、`PdsDocxRenderer._fill_cover`）。现有映射器还不抽取这两项，所以实际会是“待补”。
+- 草稿：`missing_evidence_policy=draft` 且登记了数据缺口时，标题加“（草稿）”，MD 标题下与 DOCX 正文、页眉都有同一句草稿说明。
+- MD/DOCX 同文：V2 渲染器的 `normalize_report_text` 不再在“报告编制说明/如有疑问/资料缺失…声明”处截断正文；两份文件都来自 `PdsDocxRenderer.delivery_markdown`。
+- 图片：照片以字节流插入，媒体部件按实际格式命名（原来无扩展名的文件产生 `imageN.`）。
+- 渲染校验：`render_verification`（protected_prose_verified、validation_warnings）写入 delivery-completion.json 和 compose-report 的返回值；不新增门禁。
+- 测试：`test_ledger_report.py` 端到端断言以上各项；`test_report_delivery_fidelity.py`。
 
 ### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
 

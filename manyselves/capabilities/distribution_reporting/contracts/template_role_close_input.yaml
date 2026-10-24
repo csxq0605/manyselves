@@ -1,0 +1,7 @@
+id: template_role_close_input
+version: 1.0.0
+description: The first acceptance and the optional revision of one role
+adapter: json_schema
+schema:
+  type: object
+  required: [accepted, template_ref]

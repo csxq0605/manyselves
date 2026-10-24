@@ -1,0 +1,13 @@
+id: revise-lessons
+version: 1.0.0
+description: Correct the triage items the program refused, in the conversation that wrote them
+agent: method-curator
+objective: 程序核对了你的分流结果，下面是没通过的项和原因，以及还没有分流的意见。修改后重新提交完整的分流结果。
+input_contract: lesson_triage_revision
+output_contract: lesson_triage
+constraints:
+- 重新提交全部 items，包括已经通过的项。
+- 教训里出现本次对象、数值或强制词的，改成通用说法；改不好的改成别的去向并写明原因。
+- 还没分流的意见补上。
+tools: []
+recovery: typed-turn-recovery

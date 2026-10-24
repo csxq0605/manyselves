@@ -292,27 +292,41 @@ def _aligned(items) -> set[str]:
     return {key for key, found in sheets.items() if len(found) >= 2}
 
 
+def mapped_variants(source: Path, tmp_path: Path):
+    """Yield each declared variant mapped by the production preparation worker.
+
+    Each item is ``(name, info, items, gaps, dossiers, photos, raw_refs,
+    photo_cells, error)``; a variant that crashes yields empty results and
+    the error, which is itself a finding.
+    """
+
+    for name, mutate in VARIANTS.items():
+        target = tmp_path / name / "S4-4.xlsx"
+        target.parent.mkdir()
+        shutil.copyfile(source, target)
+        workbook = load_workbook(target)
+        info = mutate(workbook)
+        workbook.save(target)
+        workbook.close()
+        _carry_cell_images(source, target, with_media=not info.get("drop_media"))
+        photo_cells = _workbook_photos(target)
+        try:
+            items, gaps, dossiers, photos, raw_refs = _map(target, tmp_path / name, name)
+            error = None
+        except Exception as exc:  # A variant that crashes is itself a finding.
+            items, gaps, dossiers, photos, raw_refs = [], [], [], [], {}
+            error = f"{type(exc).__name__}: {exc}"
+        yield name, info, items, gaps, dossiers, photos, raw_refs, photo_cells, error
+
+
 def run(source: Path) -> dict:
     report: dict = {"variants": {}, "checks": {}}
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         results = {}
-        for name, mutate in VARIANTS.items():
-            target = tmp_path / name / "S4-4.xlsx"
-            target.parent.mkdir()
-            shutil.copyfile(source, target)
-            workbook = load_workbook(target)
-            info = mutate(workbook)
-            workbook.save(target)
-            workbook.close()
-            _carry_cell_images(source, target, with_media=not info.get("drop_media"))
-            photo_cells = _workbook_photos(target)
-            try:
-                items, gaps, dossiers, photos, raw_refs = _map(target, tmp_path / name, name)
-                error = None
-            except Exception as exc:  # A variant that crashes is itself a finding.
-                items, gaps, dossiers, photos, raw_refs = [], [], [], [], {}
-                error = f"{type(exc).__name__}: {exc}"
+        for (
+            name, info, items, gaps, dossiers, photos, raw_refs, photo_cells, error
+        ) in mapped_variants(source, tmp_path):
             results[name] = (info, items, gaps, dossiers, photos, raw_refs, photo_cells)
             report["variants"][name] = {
                 **{key: len(value) if isinstance(value, list) else value for key, value in info.items()},

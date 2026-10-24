@@ -27,7 +27,7 @@ def _is_placeholder(value: Any) -> bool:
     return _text(value) in {"", "/", "\\", "--"}
 
 
-PHOTO_ONLY = "未填写（原表仅有图片，需复核）"
+PHOTO_ONLY = "未填写（原表仅有图片）"
 
 
 def _status_value(value: Any, *photo_values: Any) -> Any:
@@ -55,8 +55,14 @@ def _numeric_value(sheet: Any, value_sheet: Any, row: int, column: int) -> Any:
     return cached_value if isinstance(cached_value, (int, float)) else value
 
 
-def _source_load_rate(sheet: Any, value_sheet: Any, row: int, gaps: list[MappingGap]) -> tuple[str, float | None]:
-    """Read E as reported, without substituting an assumed voltage or phase basis."""
+def _source_load_rate(
+    sheet: Any, value_sheet: Any, row: int, gaps: list[MappingGap]
+) -> tuple[str, str, float | None]:
+    """Read E as reported, without substituting an assumed voltage or phase basis.
+
+    Returns the recorded fact, the program's note on how far it can be used
+    (kept out of the fact text), and the load rate in percent when known.
+    """
     source = sheet.cell(row, 5)
     cached = value_sheet.cell(row, 5) if source.data_type == "f" else source
     value = None if cached.data_type == "e" else cached.value
@@ -68,7 +74,11 @@ def _source_load_rate(sheet: Any, value_sheet: Any, row: int, gaps: list[Mapping
                 message="原表缺少负荷率结果；额定电压、测量侧别和计算口径须核实后才能计算",
                 sheet=sheet.title, cell=source.coordinate,
             ))
-        return "；原表负荷率结果不可用，需核实额定电压、测量侧别和计算口径后计算", None
+        return (
+            "；原表负荷率结果不可用",
+            "需核实额定电压、测量侧别和计算口径后计算负荷率",
+            None,
+        )
 
     percent = None
     # Quoted/escaped percent signs are literal display text, not Excel's scale operator.
@@ -86,14 +96,18 @@ def _source_load_rate(sheet: Any, value_sheet: Any, row: int, gaps: list[Mapping
         fact = f"；原表负荷率={percent:.2f}%"
         if source.data_type == "f":
             fact += f"；原表公式={source.value}"
-        return fact + "；需核对额定电压、测量侧别及计算口径，不单凭此值判断过载", float(percent)
+        return (
+            fact,
+            "需核对额定电压、测量侧别及计算口径，不单凭此值判断过载",
+            float(percent),
+        )
 
     gaps.append(MappingGap(
         code="ambiguous_load_rate_scale",
         message=f"原表负荷率未能确定百分比口径（单元格格式={source.number_format}），不自动换算",
         sheet=sheet.title, cell=source.coordinate,
     ))
-    return f"；原表负荷率数值={_text(value)}；比例口径待核实", None
+    return f"；原表负荷率数值={_text(value)}", "比例口径待核实", None
 
 
 def _map_low_voltage(
@@ -126,7 +140,9 @@ def _map_low_voltage(
                     quantity="transformer_capacity", value=float(capacity), unit="kVA",
                     source_cell=f"D{row}",
                 ))
-                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                reported_fact, note, load_rate = _source_load_rate(
+                    sheet, value_sheet, row, gaps
+                )
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
@@ -137,7 +153,8 @@ def _map_low_voltage(
                 needs_confirmation = True
             else:
                 current_only_rows.append(row)
-                fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
+                fact += "；额定容量未提供"
+                note = "未提供额定容量，不能据此计算负荷率或判断过载"
                 routes = (("2.1", "2.1.1"), ("2.4", "2.4.4"))
                 needs_confirmation = True
             for module_id, submodule_id in routes:
@@ -156,6 +173,7 @@ def _map_low_voltage(
                         value=value,
                         unit=unit,
                         measurements=measurements,
+                        program_note=note,
                         needs_confirmation=needs_confirmation,
                     )
                 )
@@ -342,7 +360,9 @@ def _map_total_distribution(
                     quantity="transformer_capacity", value=float(capacity), unit="kVA",
                     source_cell=f"D{row}",
                 ))
-                reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
+                reported_fact, note, load_rate = _source_load_rate(
+                    sheet, value_sheet, row, gaps
+                )
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
@@ -350,7 +370,8 @@ def _map_total_distribution(
                         quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
                     ))
             else:
-                fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
+                fact += "；额定容量未提供"
+                note = "未提供额定容量，不能据此计算负荷率或判断过载"
             for module_id, submodule_id in (
                 ("2.4", "2.4.1.1"),
                 ("2.1", "2.1.1"),
@@ -370,15 +391,14 @@ def _map_total_distribution(
                         value=value,
                         unit=unit,
                         measurements=measurements,
+                        program_note=note,
                         needs_confirmation=True,
                     )
                 )
         elif isinstance(capacity, (int, float)) and capacity:
             capacity_only_rows.append(row)
-            fact = (
-                f"变压器容量={capacity:g}kVA；"
-                "未提供运行电流，不能计算负荷率或判断过载"
-            )
+            fact = f"变压器容量={capacity:g}kVA；运行电流未提供"
+            note = "未提供运行电流，不能计算负荷率或判断过载"
             for module_id, submodule_id in (
                 ("2.1", "2.1.1"),
                 ("2.4", "2.4.1.1"),
@@ -397,6 +417,7 @@ def _map_total_distribution(
                         submodule_id=submodule_id,
                         value=float(capacity),
                         unit="kVA",
+                        program_note=note,
                         needs_confirmation=True,
                     )
                 )

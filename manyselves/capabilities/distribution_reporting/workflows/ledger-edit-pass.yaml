@@ -1,0 +1,117 @@
+id: ledger-edit-pass
+version: 1.1.0
+description: One editorial pass over an owner's sections; the owner revises only the named ones, and the program checks the revision once
+tasks:
+- edit-sections
+- revise-sections
+recovery:
+- typed-turn-recovery
+output_contract: ledger_owner_result
+state:
+  item: null
+  item_key: null
+  review_base: null
+  revision: null
+  recheck: null
+  recheck_revision: null
+actions:
+- id: open-edit
+  kind: fork_conversation
+  source_variable: review_base
+  conversation_key: edit
+  key_variable: item_key
+  mode: run
+  output_variable: edit_conversation
+- id: edit
+  kind: invoke_agent
+  agent: report-consultant
+  task: edit-sections
+  conversation_variable: edit_conversation
+  input_variable: item
+  output_variable: review
+- id: merge
+  kind: invoke_tool
+  tool: merge-review-findings
+  input_variables:
+    item: item
+    review: review
+  output_variable: merged
+- id: blocking
+  kind: set_variable
+  variable: blocking
+  value_variable: merged
+  field: blocking
+- id: route
+  kind: if
+  condition:
+    variable: blocking
+    operator: eq
+    value: true
+  then: resume-owner
+  otherwise: close
+- id: resume-owner
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: author
+  key_variable: item_key
+  mode: run
+  output_variable: owner_conversation
+- id: revision-input
+  kind: set_variable
+  variable: revision_input
+  value_variable: merged
+  field: revision_input
+- id: revise
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-sections
+  conversation_variable: owner_conversation
+  input_variable: revision_input
+  output_variable: revision
+- id: recheck
+  kind: invoke_tool
+  tool: recheck-edit
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+  output_variable: recheck
+- id: recheck-blocking
+  kind: set_variable
+  variable: recheck_blocking
+  value_variable: recheck
+  field: blocking
+- id: recheck-route
+  kind: if
+  condition:
+    variable: recheck_blocking
+    operator: eq
+    value: true
+  then: recheck-input
+  otherwise: close
+- id: recheck-input
+  kind: set_variable
+  variable: recheck_revision_input
+  value_variable: recheck
+  field: revision_input
+- id: revise-again
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-sections
+  conversation_variable: owner_conversation
+  input_variable: recheck_revision_input
+  output_variable: recheck_revision
+- id: close
+  kind: invoke_tool
+  tool: close-edit
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+    recheck: recheck
+    recheck_revision: recheck_revision
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

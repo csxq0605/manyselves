@@ -45,13 +45,39 @@ class PydanticContractAdapter:
         try:
             return self._adapter.validate_python(value)
         except PydanticValidationError as exc:
-            raise ContractValidationError(str(exc)) from exc
+            raise ContractValidationError(_compact_errors(exc, value)) from exc
 
     def json_schema(self) -> dict[str, Any]:
         return deepcopy(self._adapter.json_schema())
 
     def is_assignable_to(self, other: ContractAdapter) -> bool:
         return self.json_schema() == other.json_schema()
+
+
+def _item_label(value: Any, loc: tuple[Any, ...]) -> str:
+    """The location, naming each list item by its own ``id`` when it has one."""
+
+    parts: list[str] = []
+    current = value
+    for key in loc:
+        if isinstance(key, int) and isinstance(current, list) and 0 <= key < len(current):
+            current = current[key]
+            item_id = current.get("id") if isinstance(current, dict) else None
+            parts.append(f"[{key}]" + (f"（{item_id}）" if isinstance(item_id, str) else ""))
+            continue
+        current = current.get(key) if isinstance(current, dict) else None
+        parts.append(("." if parts else "") + str(key))
+    return "".join(parts) or "(根)"
+
+
+def _compact_errors(exc: PydanticValidationError, value: Any) -> str:
+    """One line per error with its location, without echoing the submitted values."""
+
+    lines = [
+        f"{_item_label(value, tuple(error['loc']))}: {error['msg']}"
+        for error in exc.errors(include_url=False, include_input=False)
+    ]
+    return f"{len(lines)} 处不符合：\n" + "\n".join(lines)
 
 
 class JsonSchemaContractAdapter:

@@ -1,0 +1,22 @@
+id: review-findings
+version: 1.0.0
+description: A reviewer's findings keyed by the record they are about; an empty object means nothing to fix
+adapter: json_schema
+schema:
+  type: object
+  required: [findings]
+  additionalProperties: false
+  properties:
+    findings:
+      type: object
+      description: Record key to one finding about that record
+      additionalProperties:
+        type: object
+        required: [problem, severity, suggestion]
+        additionalProperties: false
+        properties:
+          problem: {type: string, minLength: 1}
+          severity:
+            type: string
+            enum: [blocking, minor]
+          suggestion: {type: string}

@@ -1,0 +1,10 @@
+id: check-lesson-triage
+version: 1.0.0
+description: Check every route and lesson draft of a triage by program
+implementation: capability:distribution-reporting:check-lesson-triage
+input_contract: lesson_triage_check_input
+output_contract: lesson_triage_check
+side_effect: pure_read
+parallel_safe: false
+reuse_result: false
+model_visible: false

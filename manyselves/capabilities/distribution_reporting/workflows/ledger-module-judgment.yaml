@@ -1,0 +1,31 @@
+id: ledger-module-judgment
+version: 1.0.0
+description: One module's author judges its objects in a conversation forked from the shared context
+tasks:
+- judge-module
+recovery:
+- typed-turn-recovery
+output_contract: ledger_judgment_set
+state:
+  item: null
+  item_key: null
+  shared_conversation: null
+actions:
+- id: open-author
+  kind: fork_conversation
+  source_variable: shared_conversation
+  conversation_key: author
+  key_variable: item_key
+  mode: run
+  output_variable: author_conversation
+- id: judge
+  kind: invoke_agent
+  agent: report-consultant
+  task: judge-module
+  conversation_variable: author_conversation
+  input_variable: item
+  output_variable: judgment
+- id: finish
+  kind: end_workflow
+  output_variable: judgment
+  output_name: result

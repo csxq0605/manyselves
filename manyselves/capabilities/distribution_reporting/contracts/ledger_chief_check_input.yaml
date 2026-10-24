@@ -1,0 +1,7 @@
+id: ledger_chief_check_input
+version: 1.0.0
+description: Ledger and the chief's chapter outputs
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, chapter3]

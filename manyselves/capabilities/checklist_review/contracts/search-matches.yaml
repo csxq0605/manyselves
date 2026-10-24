@@ -1,0 +1,16 @@
+id: search-matches
+version: 1.0.0
+description: Lines of a document that contain the query
+adapter: json_schema
+schema:
+  type: object
+  required: [matches]
+  properties:
+    matches:
+      type: array
+      items:
+        type: object
+        required: [line, text]
+        properties:
+          line: {type: integer}
+          text: {type: string}

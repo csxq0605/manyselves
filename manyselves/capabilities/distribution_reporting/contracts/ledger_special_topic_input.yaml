@@ -1,0 +1,7 @@
+id: ledger_special_topic_input
+version: 1.0.0
+description: The chapter 4 plan from the inputs
+adapter: json_schema
+schema:
+  type: object
+  required: [plan]

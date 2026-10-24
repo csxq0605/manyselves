@@ -1,0 +1,5 @@
+id: ledger_special_topic_analysis
+version: 1.0.0
+description: Chapter 4 special-topic analysis
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:SpecialTopicAnalysis

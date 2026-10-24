@@ -1,0 +1,7 @@
+id: lesson_triage_result
+version: 1.0.0
+description: Where the lesson candidates and the routed findings were written
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, source_run_id, candidates_ref, triage_ref]

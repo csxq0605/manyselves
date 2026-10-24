@@ -8,10 +8,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from manyselves.capabilities.distribution_reporting.runtime.agent_recovery_turn import (
-    ProgressObserver,
-    execute_reporting_recovery,
-)
 from manyselves.capabilities.distribution_reporting.runtime.agent_result_payload import (
     load_agent_result_payload,
 )
@@ -41,6 +37,10 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.typed_agent_turn import TypedAgentTurn
+from manyselves.runtime.typed_recovery import (
+    ProgressObserver,
+    execute_typed_recovery,
+)
 
 from .task_context import bind_task_context
 
@@ -236,7 +236,7 @@ class FinalChiefAgentBridge:
                 session_id=session.session_id,
                 decode_result=decode_result,
             )
-        recovered = await execute_reporting_recovery(
+        recovered = await execute_typed_recovery(
             self.execution,
             session,
             request,

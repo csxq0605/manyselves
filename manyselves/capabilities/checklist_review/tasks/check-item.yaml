@@ -1,0 +1,15 @@
+id: check-item
+version: 1.0.0
+description: Judge one checklist item against the document already read
+agent: document-reviewer
+objective: 依据前面读过的文件，判断这一条清单条目是否满足，给出原文依据。
+input_contract: checklist-item
+output_contract: finding
+constraints:
+- verdict 只能是 met（文件明确满足）、not_met（文件明确不满足）或 insufficient（文件没写或写得不清楚）。
+- evidence 填文件原文摘录；insufficient 时可以为空，并在 note 里说明缺什么。
+- item_id 必须等于输入条目的 id。
+- 需要核对原文时可以调用 search-document 按关键词查找。
+tools:
+- search-document
+recovery: typed-turn-recovery

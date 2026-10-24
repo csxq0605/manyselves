@@ -1,0 +1,10 @@
+id: merge-review-findings
+version: 1.0.0
+description: Combine program and reviewer findings for one owner
+implementation: capability:distribution-reporting:merge-review-findings
+input_contract: ledger_merge_input
+output_contract: ledger_merged_findings
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

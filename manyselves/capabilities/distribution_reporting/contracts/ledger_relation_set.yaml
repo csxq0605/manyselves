@@ -1,0 +1,5 @@
+id: ledger_relation_set
+version: 1.0.0
+description: One author's cross-module relations by its own row id
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:RelationSet

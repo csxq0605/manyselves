@@ -1,0 +1,14 @@
+id: finding-table
+version: 1.0.0
+description: Every current finding keyed by checklist item id
+adapter: json_schema
+schema:
+  type: object
+  additionalProperties:
+    type: object
+    required: [item_id, verdict, evidence, note]
+    properties:
+      item_id: {type: string}
+      verdict: {type: string}
+      evidence: {type: array, items: {type: string}}
+      note: {type: string}

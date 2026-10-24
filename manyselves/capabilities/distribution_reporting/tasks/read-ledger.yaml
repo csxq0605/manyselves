@@ -1,0 +1,13 @@
+id: read-ledger
+version: 1.0.0
+description: Read the complete judgment ledger once before review and summary start from it
+agent: report-consultant
+objective: 上面是五个模块提交的完整判断台账。读一遍，之后的审查、总编和编辑都从这里开始。
+input_contract: ledger_snapshot
+output_contract: ledger_project_reading
+context_fields:
+- ledger_text
+constraints:
+- summary 用三到五句话写台账的总体情况（关注项、不能判定项大致集中在哪里），不做审查结论。
+tools: []
+recovery: typed-turn-recovery

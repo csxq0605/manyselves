@@ -1,0 +1,10 @@
+id: close-template-role
+version: 1.0.0
+description: Settle one role's entries from its first answer or its revision
+implementation: capability:distribution-reporting:close-template-role
+input_contract: template_role_close_input
+output_contract: template_role_result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

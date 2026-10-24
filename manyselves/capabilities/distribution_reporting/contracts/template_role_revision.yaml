@@ -1,0 +1,7 @@
+id: template_role_revision
+version: 1.0.0
+description: Refused entries with reasons and the sections still uncovered
+adapter: json_schema
+schema:
+  type: object
+  required: [rejected, uncovered_sections]

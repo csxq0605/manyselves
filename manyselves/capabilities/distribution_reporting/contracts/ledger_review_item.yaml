@@ -1,0 +1,28 @@
+id: ledger_review_item
+version: 2.0.0
+description: One module's rows with what each cites, its relations, program checks, dossiers and doubtful photos
+adapter: json_schema
+schema:
+  type: object
+  required: [module_id, program_findings, dossiers, rows, facts, rules, method]
+  properties:
+    rows:
+      type: array
+    related_rows:
+      type: array
+    calculations:
+      type: array
+    program_checks:
+      type: array
+    facts:
+      type: string
+    rules:
+      type: string
+    method:
+      type: string
+    photos:
+      type: array
+      description: Original images whose reading is in doubt, sent with the message in this order.
+      items:
+        type: object
+        required: [photo_id, path, media_type, row_ids]

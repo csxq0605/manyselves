@@ -1,0 +1,7 @@
+id: ledger_owner_result
+version: 1.0.0
+description: One owner's findings and its revision or revised sections
+adapter: json_schema
+schema:
+  type: object
+  required: [owner, findings]

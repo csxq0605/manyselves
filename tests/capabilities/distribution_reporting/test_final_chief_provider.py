@@ -238,7 +238,7 @@ async def test_final_chief_provider_shares_declared_tool_and_agent_recovery(
     monkeypatch.setattr(final_chief_provider, "build_module_provider_tools", capture_tools)
     monkeypatch.setattr(
         final_chief_agent_bridge,
-        "execute_reporting_recovery",
+        "execute_typed_recovery",
         capture_recovery,
         raising=False,
     )

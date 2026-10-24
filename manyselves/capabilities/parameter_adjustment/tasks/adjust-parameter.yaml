@@ -2,8 +2,10 @@ id: adjust-parameter
 version: 1.0.0
 description: Raise a parameter below the declared minimum
 agent: parameter-adjuster
-objective: Return an object whose value is 10.
+objective: 按规则把 value 调整为不小于 10 的最小合法整数，提交调整后的参数对象。
 input_contract: parameter-input
 output_contract: parameter-input
-constraints: []
+constraints:
+- 只改 value 字段，不新增字段。
 tools: []
+recovery: typed-turn-recovery

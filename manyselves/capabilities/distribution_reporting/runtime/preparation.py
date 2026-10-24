@@ -18,6 +18,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.wps_images import extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
+from .mappers.common import source_layout
 
 _MAPPERS = {
     "s2-1": map_s2_1,
@@ -71,6 +72,17 @@ def prepare_manifest_file(
                 ),
                 required_image_ids=referenced_photo_ids,
             )
+        column_headers, image_cells = source_layout(
+            input_path, mapped.evidence_items, set(raw_photo_assets)
+        )
+        raw_photo_assets = {
+            key: asset.model_copy(
+                update={"source_sheet": image_cells[key][0], "source_cell": image_cells[key][1]}
+            )
+            if key in image_cells
+            else asset
+            for key, asset in raw_photo_assets.items()
+        }
         mapping_gaps = list(mapped.gaps)
         evidence = []
         for item in mapped.evidence_items:
@@ -101,6 +113,7 @@ def prepare_manifest_file(
             provisional_evidence=evidence,
             raw_photo_assets=raw_photo_assets,
             mapping_gaps=[gap.model_dump(mode="json") for gap in mapping_gaps],
+            column_headers=column_headers,
         )
     except Exception as exc:
         return preparation_models.FilePreparationResult(

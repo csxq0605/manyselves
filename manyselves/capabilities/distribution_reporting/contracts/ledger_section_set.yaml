@@ -1,0 +1,5 @@
+id: ledger_section_set
+version: 1.0.0
+description: Revised sections keyed by section id
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:SectionSet

@@ -30,19 +30,25 @@ from manyselves.kernel.workflow import (
     CreateConversationAction,
     EndWorkflowAction,
     FailWorkflowAction,
+    ForkConversationAction,
     InvokeAgentAction,
     InvokeToolAction,
     MergeVariableAction,
     PublishResultAction,
+    RecordError,
     RequestInputAction,
     ResetConversationAction,
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
+    SelectRecordsAction,
     SetVariableAction,
+    UpsertRecordsAction,
     ValidateContractAction,
     WorkflowState,
     WorkflowStatus,
+    select_records,
+    upsert_records,
 )
 
 
@@ -92,6 +98,9 @@ class ActionResult:
         default_factory=dict
     )
     subworkflow_state_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    map_state_updates: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
     next_action_id: str | None = None
     waiting_input: dict[str, Any] | None = None
     clear_waiting_input: bool = False
@@ -140,9 +149,19 @@ class SetVariableExecutor:
         context: RuntimeContext,
     ) -> ActionResult:
         resolved = cast(SetVariableAction, action)
+        value = resolved.value
+        if resolved.value_variable is not None:
+            value = deepcopy(state.variables[resolved.value_variable])
+            if resolved.field is not None:
+                value = _required_field(value, resolved.field, resolved.id)
+        elif resolved.value_variables:
+            value = {
+                key: deepcopy(state.variables[variable])
+                for key, variable in resolved.value_variables.items()
+            }
         return ActionResult(
-            output=resolved.value,
-            variable_updates={resolved.variable: resolved.value},
+            output=value,
+            variable_updates={resolved.variable: value},
         )
 
 
@@ -287,7 +306,7 @@ class CreateConversationExecutor:
         record = context.conversations.create_or_resolve(
             ConversationKey(
                 agent_id=resolved.agent,
-                value=resolved.conversation_key,
+                value=_conversation_key_value(resolved, state),
                 mode=resolved.mode,
             ),
             run_id=state.run_id,
@@ -322,14 +341,15 @@ class ResolveConversationExecutor:
         record = context.conversations.resolve(
             ConversationKey(
                 agent_id=resolved.agent,
-                value=resolved.conversation_key,
+                value=_conversation_key_value(resolved, state),
                 mode=resolved.mode,
             ),
             run_id=state.run_id,
         )
         if record is None:
             raise RuntimeExecutionError(
-                f"conversation is not registered: {resolved.agent}:{resolved.conversation_key}"
+                "conversation is not registered: "
+                f"{resolved.agent}:{_conversation_key_value(resolved, state)}"
             )
         return ActionResult(
             output=record,
@@ -361,7 +381,7 @@ class ResetConversationExecutor:
         record = context.conversations.reset(
             ConversationKey(
                 agent_id=resolved.agent,
-                value=resolved.conversation_key,
+                value=_conversation_key_value(resolved, state),
                 mode=resolved.mode,
             ),
             run_id=state.run_id,
@@ -379,6 +399,103 @@ class ResetConversationExecutor:
                     },
                 ),
             ),
+        )
+
+
+class ForkConversationExecutor:
+    kind = ActionKind.FORK_CONVERSATION
+
+    async def execute(
+        self,
+        action: ResolvedAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        resolved = cast(ForkConversationAction, action)
+        _restore_conversations(state, context.conversations)
+        source = _conversation_record(state.variables[resolved.source_variable])
+        record = context.conversations.fork(
+            ConversationKey(
+                agent_id=source.key.agent_id,
+                value=_conversation_key_value(resolved, state),
+                mode=resolved.mode,
+            ),
+            source=source,
+            run_id=state.run_id,
+        )
+        return ActionResult(
+            output=record,
+            variable_updates={resolved.output_variable: record},
+            conversation_updates={resolved.output_variable: record},
+            events=(
+                ActionEvent(
+                    kind="conversation.forked",
+                    data={
+                        "agent_id": source.key.agent_id,
+                        "conversation_id": record.conversation_id,
+                        "forked_from": source.conversation_id,
+                    },
+                ),
+            ),
+        )
+
+
+class UpsertRecordsExecutor:
+    kind = ActionKind.UPSERT_RECORDS
+
+    async def execute(
+        self,
+        action: ResolvedAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        resolved = cast(UpsertRecordsAction, action)
+        records = state.variables[resolved.records_variable]
+        if resolved.record_contract is not None:
+            try:
+                contract = context.contracts[resolved.record_contract]
+            except KeyError as exc:
+                raise RuntimeExecutionError(
+                    f"missing record contract adapter: {resolved.record_contract}"
+                ) from exc
+            records = _validate_each(records, contract)
+        try:
+            table = upsert_records(
+                state.variables[resolved.table_variable],
+                records,
+                key_field=resolved.key_field,
+                merge=resolved.merge,
+                owner=resolved.id,
+            )
+        except RecordError as exc:
+            raise RuntimeExecutionError(str(exc)) from exc
+        target = resolved.output_variable or resolved.table_variable
+        return ActionResult(output=table, variable_updates={target: table})
+
+
+class SelectRecordsExecutor:
+    kind = ActionKind.SELECT_RECORDS
+
+    async def execute(
+        self,
+        action: ResolvedAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        del context
+        resolved = cast(SelectRecordsAction, action)
+        try:
+            selected = select_records(
+                state.variables[resolved.table_variable],
+                where=resolved.where,
+                output=resolved.output,
+                owner=resolved.id,
+            )
+        except RecordError as exc:
+            raise RuntimeExecutionError(str(exc)) from exc
+        return ActionResult(
+            output=selected,
+            variable_updates={resolved.output_variable: selected},
         )
 
 
@@ -618,6 +735,52 @@ class EndWorkflowExecutor:
         )
 
 
+def _required_field(value: Any, field: str, owner: str) -> Any:
+    current = value
+    for part in field.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            raise RuntimeExecutionError(f"action {owner} reads missing field: {field}")
+        current = current[part]
+    return current
+
+
+def _conversation_key_value(
+    action: CreateConversationAction
+    | ResolveConversationAction
+    | ResetConversationAction
+    | ForkConversationAction,
+    state: WorkflowState,
+) -> str:
+    """Return the declared key, suffixed by a key variable for per-item identity."""
+
+    if action.key_variable is None:
+        return action.conversation_key
+    suffix = state.variables[action.key_variable]
+    if suffix is None or suffix == "":
+        raise RuntimeExecutionError(
+            f"action {action.id} conversation key variable is empty: "
+            f"{action.key_variable}"
+        )
+    return f"{action.conversation_key}:{suffix}"
+
+
+def _conversation_record(value: Any) -> ConversationRecord:
+    if isinstance(value, ConversationRecord):
+        return value
+    return ConversationRecord.model_validate(value)
+
+
+def _validate_each(records: Any, contract: ContractAdapter) -> Any:
+    try:
+        if isinstance(records, Mapping):
+            return {key: contract.validate(value) for key, value in records.items()}
+        if isinstance(records, (list, tuple)):
+            return [contract.validate(value) for value in records]
+    except ContractValidationError as exc:
+        raise RuntimeExecutionError(str(exc)) from exc
+    raise RuntimeExecutionError("records must be a list or an object")
+
+
 def _restore_conversations(
     state: WorkflowState,
     registry: ConversationRegistry,
@@ -640,6 +803,9 @@ def build_builtin_executor_registry() -> ExecutorRegistry:
     registry.register(CreateConversationExecutor())
     registry.register(ResolveConversationExecutor())
     registry.register(ResetConversationExecutor())
+    registry.register(ForkConversationExecutor())
+    registry.register(UpsertRecordsExecutor())
+    registry.register(SelectRecordsExecutor())
     registry.register(InvokeAgentExecutor())
     registry.register(ValidateContractExecutor())
     registry.register(RequestInputExecutor())

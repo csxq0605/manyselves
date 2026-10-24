@@ -1,0 +1,10 @@
+id: prepare-template-extraction
+version: 1.0.0
+description: Freeze the report template, outline it and build one packet per declared role
+implementation: capability:distribution-reporting:prepare-template-extraction
+input_contract: template_extraction_start
+output_contract: template_extraction_context
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1631,25 +1631,42 @@ CROSS_REVIEW_DIMENSIONS = (
 )
 
 
+class PhotoTranscribedItem(StrictModel):
+    """One thing copied from a photo exactly as it is shown."""
+
+    label: str = Field(
+        min_length=1,
+        max_length=40,
+        description="What was copied, e.g. screen reading, nameplate, form column or row.",
+    )
+    text: str = Field(max_length=200, description="The characters as shown, unchanged.")
+    legible: bool = Field(description="False when the characters cannot be read with certainty.")
+
+
 class PhotoReadingSubmission(StrictModel):
-    """What one project photo visibly shows, checked against its bound record."""
+    """What one project photo visibly shows, copied without judging it."""
 
     kind: Literal["photo_reading_submission"] = "photo_reading_submission"
     visible: str = Field(
         min_length=1,
         max_length=300,
-        description="Only what is visible in the photo: object, labels, readings, condition.",
+        description="Only what is visible in the photo: object, part, condition.",
     )
-    record_match: Literal["matches", "conflicts", "cannot_tell"] = Field(
-        description="Whether the photo agrees with the bound table record(s).",
+    transcription: list[PhotoTranscribedItem] = Field(
+        default_factory=list,
+        max_length=40,
+        description=(
+            "Screen characters, nameplates and form entries copied as shown; "
+            "blank form entries are copied as empty text."
+        ),
     )
-    reason: str = Field(
-        min_length=1,
-        max_length=200,
-        description="One line naming what in the photo supports record_match.",
+    photo_date: str | None = Field(
+        default=None,
+        max_length=40,
+        description="Date or time printed on the photo (watermark or screen), as written.",
     )
     needs_review: bool = Field(
-        description="True when a person should look at the photo (unclear, conflicting, unsafe-looking).",
+        description="True when a person should look at the photo (unclear, unsafe-looking).",
     )
 
 

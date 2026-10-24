@@ -1,0 +1,14 @@
+id: checklist-review
+version: 1.0.0
+description: Review one project document against a checklist and keep one finding per item
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+outputs: ./outputs
+libraries:
+- ../../definitions/standard
+entrypoints:
+- checklist-review
+runtime: manyselves.capabilities.checklist_review.adapters.runtime:build_runtime_binding

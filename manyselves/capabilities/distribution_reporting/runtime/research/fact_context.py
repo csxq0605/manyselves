@@ -33,8 +33,13 @@ def render_fact_packet(
     items: list[EvidenceItem], module_id: str, *, submodule_ids: set[str] | None = None,
     shared: Mapping[str, str] | None = None,
     photo_readings: Mapping[str, str] | None = None,
+    column_headers: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
 ) -> str:
-    """Share source headers; preserve every record, qualifier and coordinate."""
+    """Share source headers; preserve every record, qualifier and coordinate.
+
+    ``column_headers`` maps (source path, sheet) to the header text of each
+    column, so a value is read with its column's own definition and photo rule.
+    """
     groups: dict[tuple[str, str, str | None], list[EvidenceItem]] = {}
     for item in items:
         source = item.source
@@ -74,6 +79,11 @@ def render_fact_packet(
             "附加字段 photo_reading=逐张读图结果：照片里看得到什么、是否与该照片绑定的记录相符。"
             "它只描述图中可见内容，不是合规结论；与记录不符或需人工复核的照片在正文中说明并保留待确认。"
         )
+    if any(item.program_note for item in items):
+        lines.append(
+            "附加字段 程序说明=程序整理记录时加的说明（例如缺数时不能计算什么、还要核对什么），"
+            "不是原记录的内容；正文不能写成“记录注明……”，只把它当作资料限制如实说明。"
+        )
     if any(item.measurements for item in items):
         lines.append(
             "measurements 按 quantity 区分物理量：measured_temperature=测点温度，ambient_temperature=环境温度，"
@@ -85,6 +95,11 @@ def render_fact_packet(
         lines.append("\n来源：" + json.dumps(
             {"file_id": file_id, "path": path, "sheet": sheet}, ensure_ascii=False,
         ))
+        if sheet and (columns := (column_headers or {}).get((path, sheet))):
+            lines.append(
+                "表头（列：原表填写说明，按列读取单元格的含义、单位和附图条件）："
+                + json.dumps(dict(columns), ensure_ascii=False, separators=(",", ":"))
+            )
         for item in records:
             coordinates = item.source.model_dump(mode="json", exclude_none=True)
             for key in ("file_id", "path", "sheet"):
@@ -93,6 +108,8 @@ def render_fact_packet(
                 "value", "unit", "observed_at", "confidence", "needs_confirmation", "photo_refs",
                 "measurements",
             })
+            if item.program_note:
+                extra["程序说明"] = item.program_note
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id
             if (label := shared.get(item.id)) is not None:

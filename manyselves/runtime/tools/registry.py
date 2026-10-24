@@ -77,7 +77,7 @@ class ToolRegistry:
         }
 
     def _generate_input_schema(self, tool: Tool) -> dict:
-        """Generate JSON Schema for tool input from __call__ signature.
+        """Return the tool's declared ``input_schema`` or derive one from ``__call__``.
 
         Args:
             tool: Tool instance.
@@ -85,6 +85,9 @@ class ToolRegistry:
         Returns:
             JSON Schema dictionary.
         """
+        declared = getattr(tool, "input_schema", None)
+        if isinstance(declared, dict):
+            return dict(declared)
         try:
             # Get the __call__ method signature
             sig = inspect.signature(tool.__call__)

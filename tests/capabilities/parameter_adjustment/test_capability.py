@@ -6,8 +6,9 @@ import pytest
 
 from manyselves.capabilities.parameter_adjustment import CAPABILITY_FILE
 from manyselves.capabilities.parameter_adjustment.adapters.runtime import (
-    ParameterAdjustmentRuntimeBinding,
+    build_runtime_binding,
 )
+from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     ContractDefinition,
@@ -22,6 +23,9 @@ from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_r
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.generic_binding import GenericCapabilityRuntimeBinding
+from manyselves.runtime.loops.bus import MessageBus
+from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import ToolAdapterError
 from manyselves.runtime.workflow_host import (
@@ -32,6 +36,33 @@ from manyselves.runtime.workflow_host import (
 FIXTURE = CAPABILITY_FILE
 
 
+def _binding(tmp_path: Path, prompts: list[str] | None = None):
+    """Build the production binding with a scripted model in place of a Provider."""
+
+    from tests.runtime.scripted_loop import ScriptedLoop
+
+    bus = MessageBus()
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=object(),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+
+    def answer(message):
+        if prompts is not None:
+            prompts.append(message.content)
+        return ("submit", [{"value": 10}])
+
+    binding = build_runtime_binding(
+        workspace=tmp_path,
+        services=services,
+        loop_builder=lambda **kwargs: ScriptedLoop(bus, answer, kwargs),
+    )
+    return binding, bus
+
+
 class _ParameterAdjuster:
     def __init__(self) -> None:
         self.calls = 0
@@ -39,6 +70,12 @@ class _ParameterAdjuster:
     async def invoke(self, *_args: Any, **_kwargs: Any) -> AgentInvocationOutcome:
         self.calls += 1
         return AgentInvocationOutcome(result={"value": 10})
+
+    async def invoke_with_recovery(
+        self, *args: Any, recovery_policy: Any, **kwargs: Any
+    ) -> AgentInvocationOutcome:
+        del recovery_policy
+        return await self.invoke(*args, **kwargs)
 
 
 def test_second_capability_is_neutral_and_loads_its_complete_definition_graph() -> None:
@@ -131,20 +168,29 @@ def test_parameter_input_binding_is_fully_declared_in_the_resolved_plan() -> Non
 
 
 @pytest.mark.asyncio
-async def test_production_binding_projects_generic_run_value_and_cost(
+async def test_production_binding_runs_the_agent_through_the_generic_invoker(
     tmp_path: Path,
 ) -> None:
-    binding = ParameterAdjustmentRuntimeBinding(tmp_path)
+    import asyncio
 
-    accepted = await binding.start(
-        UUID("40000000-0000-4000-8000-000000000001"),
-        "parameter-adjustment",
-        {"value": 4},
-    )
+    prompts: list[str] = []
+    binding, bus = _binding(tmp_path, prompts)
+    bus_task = asyncio.create_task(bus.process_queue())
+    try:
+        accepted = await binding.start(
+            UUID("40000000-0000-4000-8000-000000000001"),
+            "parameter-adjustment",
+            {"value": 4},
+        )
+    finally:
+        await binding.close()
+        bus.shutdown()
+        await bus_task
     run = binding.get_run(accepted["run_id"])
     outputs = binding.get_outputs(accepted["run_id"])
     cost = binding.get_cost(accepted["run_id"])
 
+    assert isinstance(binding, GenericCapabilityRuntimeBinding)
     assert accepted == {
         "run_id": "parameter-adjustment-40000000000040008000000000000001",
         "task_id": None,
@@ -155,8 +201,9 @@ async def test_production_binding_projects_generic_run_value_and_cost(
         "run_id": accepted["run_id"],
         "outputs": [{"id": "result", "kind": "value", "value": 10}],
     }
+    assert len(prompts) == 1 and '"value": 4' in prompts[0]
+    assert "按规则把 value 调整" in prompts[0]
     assert cost["usage"]["totals"]["provider_attempts"] == 0
-    assert cost["usage"]["totals"]["total_tokens"] == 0
 
 
 @pytest.mark.asyncio
@@ -205,9 +252,7 @@ async def test_provide_input_restores_definitions_and_tools_from_the_saved_plan(
     )
     registry.register(interaction)
     registry.register(workflow)
-    binding = ParameterAdjustmentRuntimeBinding(tmp_path)
-    contracts = binding._contracts(registry)
-    tools = binding._tools(registry, contracts)
+    binding, _bus = _binding(tmp_path)
     plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
         workflow,
         registry,
@@ -218,13 +263,10 @@ async def test_provide_input_restores_definitions_and_tools_from_the_saved_plan(
         plan,
         WorkflowState.for_plan(run_id, plan),
         registry,
-        contracts,
-        tools,
     )
     monkeypatch.setattr(
-        "manyselves.capabilities.parameter_adjustment.adapters.runtime."
-        "load_parameter_adjustment_capability",
-        lambda: (_ for _ in ()).throw(AssertionError("read current definitions")),
+        "manyselves.runtime.generic_binding.load_capability",
+        lambda _path: (_ for _ in ()).throw(AssertionError("read current definitions")),
     )
 
     resumed = await binding.provide_input(
@@ -233,6 +275,7 @@ async def test_provide_input_restores_definitions_and_tools_from_the_saved_plan(
         input_id="ask-parameter",
         values={"value": 7},
     )
+    await binding.close()
 
     assert waiting.status is WorkflowStatus.WAITING
     assert resumed == {"run_id": run_id, "task_id": None}
@@ -254,7 +297,7 @@ def test_generic_waiting_run_is_inactive_so_the_ui_can_request_input(
         )
     )
 
-    projected = ParameterAdjustmentRuntimeBinding(tmp_path).get_run(run_id)
+    projected = _binding(tmp_path)[0].get_run(run_id)
 
     assert projected["run"]["active"] is False
     assert projected["waiting_input"] == [
@@ -269,7 +312,7 @@ def test_binding_does_not_claim_another_workflow_runtime_state(tmp_path: Path) -
     )
 
     with pytest.raises(CapabilityRunNotFoundError):
-        ParameterAdjustmentRuntimeBinding(tmp_path).get_run(run_id)
+        _binding(tmp_path)[0].get_run(run_id)
 
 
 @pytest.mark.asyncio
@@ -290,16 +333,15 @@ async def test_production_binding_rejects_an_unresolved_declared_tool_before_run
             )
         registry.register(definition)
     monkeypatch.setattr(
-        "manyselves.capabilities.parameter_adjustment.adapters.runtime."
-        "load_parameter_adjustment_capability",
-        lambda: (capability, registry),
+        "manyselves.runtime.generic_binding.load_capability",
+        lambda _path: (capability, registry),
     )
 
     with pytest.raises(
         ToolAdapterError,
         match="parameter-adjustment:missing-implementation",
     ):
-        await ParameterAdjustmentRuntimeBinding(tmp_path).start(
+        await _binding(tmp_path)[0].start(
             UUID("40000000-0000-4000-8000-000000000099"),
             "parameter-adjustment",
             {"value": 4},

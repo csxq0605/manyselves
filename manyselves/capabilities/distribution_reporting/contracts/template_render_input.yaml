@@ -1,0 +1,7 @@
+id: template_render_input
+version: 1.0.0
+description: The extraction context and every role's result
+adapter: json_schema
+schema:
+  type: object
+  required: [context, extractions]

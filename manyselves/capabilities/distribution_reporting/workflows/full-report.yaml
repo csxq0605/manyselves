@@ -20,9 +20,7 @@ state:
   photo-reading-summary: {}
   context-with-readiness: {}
   reporting-state: {}
-  module-results: {}
-  reporting-state-with-modules: {}
-  reporting-state-with-tail: {}
+  delivered: {}
 actions:
 - id: initialize-full-report
   kind: invoke_tool
@@ -86,34 +84,20 @@ actions:
   tool: build-reporting-state
   input_variable: context-with-readiness
   output_variable: reporting-state
-- id: run-module-cohort
+- id: run-report-ledger
   kind: subworkflow
-  workflow: distribution-module-cohort
+  workflow: report-ledger
   input_variable: reporting-state
-  child_input_variable: module-inputs
+  child_input_variable: state
   child_output_name: result
-  output_variable: module-results
-- id: attach-module-results
-  kind: invoke_tool
-  tool: attach-module-results
-  input_variables:
-    reporting_state: reporting-state
-    module_results: module-results
-  output_variable: reporting-state-with-modules
-- id: run-reporting-tail
-  kind: subworkflow
-  workflow: distribution-reporting-tail
-  input_variable: reporting-state-with-modules
-  child_input_variable: reporting-state
-  child_output_name: result
-  output_variable: reporting-state-with-tail
+  output_variable: delivered
 - id: publish-full-report
   kind: publish_result
   output: distribution-reporting-result
-  input_variable: reporting-state-with-tail
+  input_variable: delivered
   output_name: result
 - id: finish-full-report
   kind: end_workflow
-  output_variable: reporting-state-with-tail
+  output_variable: delivered
   output_name: result
   output_contract: distribution_reporting_output

@@ -1,0 +1,39 @@
+id: review-report
+version: 1.0.0
+description: Checklist review result with one row per checklist item
+adapter: json_schema
+schema:
+  type: object
+  required: [counts, open_items, items]
+  properties:
+    counts:
+      type: object
+      required: [met, not_met, insufficient, failed]
+      properties:
+        met: {type: integer}
+        not_met: {type: integer}
+        insufficient: {type: integer}
+        failed: {type: integer}
+    open_items:
+      type: array
+      items: {type: string}
+    items:
+      type: array
+      items:
+        type: object
+        required: [item_id, question, verdict]
+        properties:
+          item_id: {type: string}
+          question: {type: string}
+          verdict: {type: string}
+          evidence: {type: array, items: {type: string}}
+          note: {type: string}
+          review:
+            type: object
+            description: The reviewer's finding on this item, and whether it was reworked
+            properties:
+              problem: {type: string}
+              severity: {type: string}
+              suggestion: {type: string}
+              reworked: {type: boolean}
+              rework_error: {type: string}

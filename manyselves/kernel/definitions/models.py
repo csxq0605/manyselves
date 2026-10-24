@@ -39,9 +39,10 @@ class CapabilityDefinition(DefinitionBase):
     tasks: str
     contracts: str
     tools: str
-    recovery: str
+    recovery: str | None = None
     interactions: str | None = None
     outputs: str | None = None
+    libraries: list[str] = Field(default_factory=list)
     entrypoints: list[str] = Field(default_factory=list)
     runtime: str | None = Field(default=None, min_length=1)
 
@@ -101,6 +102,21 @@ class ContractDefinition(DefinitionBase):
         return self
 
 
+class TaskImageInput(BaseModel):
+    """Input fields naming workspace images sent with the task message.
+
+    Without ``list_field`` the input itself names one image.  With it, the
+    input field ``list_field`` holds a list of objects, each naming one image
+    with the same two fields; an empty list sends no image.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path_field: str = Field(min_length=1)
+    media_type_field: str = Field(min_length=1)
+    list_field: str | None = Field(default=None, min_length=1)
+
+
 class TaskDefinition(DefinitionBase):
     """Reusable requirements for one agent invocation."""
 
@@ -113,6 +129,14 @@ class TaskDefinition(DefinitionBase):
     tools: list[str] = Field(default_factory=list)
     recovery: str | None = None
     completion: dict[str, Any] = Field(default_factory=dict)
+    context_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Top-level input fields sent as plain text blocks ahead of the task, "
+            "in this order, instead of inside the JSON input"
+        ),
+    )
+    image: TaskImageInput | None = None
 
 
 class RecoveryRule(BaseModel):

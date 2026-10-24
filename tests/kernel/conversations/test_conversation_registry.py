@@ -98,3 +98,22 @@ def test_persistent_conversation_survives_a_fresh_registry(tmp_path) -> None:
     assert restored is not None
     assert restored.conversation_id == first.conversation_id
     assert restored.run_id is None
+
+
+def test_fork_records_lineage_and_resolves_the_same_fork_again() -> None:
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+
+    registry = ConversationRegistry()
+    source = registry.create_or_resolve(
+        ConversationKey(agent_id="agent-a", value="shared", mode="run"),
+        run_id="run-1",
+    )
+    key = ConversationKey(agent_id="agent-a", value="shared:item-1", mode="run")
+
+    fork = registry.fork(key, source=source, run_id="run-1")
+    again = registry.fork(key, source=source, run_id="run-1")
+
+    assert fork.forked_from == source.conversation_id
+    assert fork.conversation_id != source.conversation_id
+    assert again.conversation_id == fork.conversation_id
+    assert registry.resolve(key, run_id="run-1").forked_from == source.conversation_id
