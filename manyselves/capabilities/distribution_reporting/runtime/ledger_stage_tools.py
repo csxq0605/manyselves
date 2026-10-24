@@ -41,6 +41,7 @@ from .context_packs import (
     writing_groups,
 )
 from .cross_module import relation_names, same_observation_rows
+from .gap_entries import chief_gap_entries, gap_ids, gap_labels
 from .observation_ledger import shared_labels
 from .photo_reading import load_photo_readings, photo_reading_labels
 from .research.fact_context import render_fact_packet
@@ -484,17 +485,25 @@ class LedgerStageTools:
         *,
         chains: Sequence[Mapping[str, Any]],
         same_observation: Sequence[Mapping[str, Any]],
+        gaps: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
-        """What the story-line planner reads: the map, every flagged row briefly, what joins them."""
+        """What the story-line planner reads: the map, every flagged row briefly, what joins them.
+
+        ``gaps`` are the settled ledger's gap entries: the map, the rows and
+        everything built on them (the chief, its checkers, the joint review)
+        say each gap once, as its entry does.
+        """
 
         sites = self._sites(run_id)
+        gap_of = gap_ids(gaps)
         return {
             "run_id": run_id,
-            "map": project_map(sites, ledger, with_relations=True),
+            "map": project_map(sites, ledger, with_relations=True, gaps=gap_labels(gaps)),
             "rows": [
-                brief_row(row) for rows in ledger.values() for row in rows
+                brief_row(row, gap_id=gap_of.get(row.id)) for rows in ledger.values() for row in rows
                 if row.disposition in ATTENTION
             ],
+            "gap_entries": chief_gap_entries(gaps),
             "object_chains": list(chains),
             "same_observation": list(same_observation),
         }

@@ -264,6 +264,39 @@ def section_gap_entries(
     return found
 
 
+def chief_gap_entries(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """What chapters 1 and 3 read of the gaps: each once, with its rows and objects."""
+
+    return [
+        {
+            "gap_id": entry["gap_id"],
+            "wording": entry["wording"],
+            "objects": objects_text(entry["objects"]),
+            "section": entry["section"],
+            "row_ids": list(entry["row_ids"]),
+            "fill": list(entry["fill"]),
+            "requested_input": entry["requested_input"],
+        }
+        for entry in entries
+    ]
+
+
+def gap_ids(entries: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """Row id -> the gap entry it is in."""
+
+    return {row_id: entry["gap_id"] for entry in entries for row_id in entry["row_ids"]}
+
+
+def gap_labels(entries: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """Row id -> its gap entry as one line (``〔G03〕原表…未填写``)."""
+
+    return {
+        row_id: f"〔{entry['gap_id']}〕{entry['wording']}"
+        for entry in entries
+        for row_id in entry["row_ids"]
+    }
+
+
 def gap_sections(entries: Sequence[Mapping[str, Any]]) -> dict[str, str]:
     """Row id -> the section that writes its gap."""
 
@@ -280,8 +313,11 @@ __all__ = [
     "READING",
     "STATE",
     "STATUS_OF_KIND",
+    "chief_gap_entries",
     "fill_of",
     "gap_entries",
+    "gap_ids",
+    "gap_labels",
     "gap_kind",
     "gap_sections",
     "objects_text",

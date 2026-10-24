@@ -108,7 +108,16 @@ from .cross_module import (
     unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
-from .gap_entries import gap_entries, gap_sections, objects_text, section_gap_entries, settle_gap_kinds
+from .gap_entries import (
+    chief_gap_entries,
+    gap_entries,
+    gap_ids,
+    gap_labels,
+    gap_sections,
+    objects_text,
+    section_gap_entries,
+    settle_gap_kinds,
+)
 from .grounds import grounded
 from .joint_dossiers import build_dossiers
 from .ledger_stage_tools import LedgerStageTools
@@ -1795,7 +1804,7 @@ class LedgerTools(LedgerStageTools):
             if any(row.disposition in {"concern", "undetermined"} for row in rows)
         ]
         story_input = self.story_input(
-            run_id, ledger, chains=chains, same_observation=same_observation
+            run_id, ledger, chains=chains, same_observation=same_observation, gaps=gaps
         )
         self.store.write_text(f"Work/runs/{run_id}/ledger/project-map-final.md", story_input["map"])
         return {
@@ -1821,6 +1830,8 @@ class LedgerTools(LedgerStageTools):
                 # Every flagged row, briefly; the rows judged without a
                 # problem are counted per module.
                 "rows": story_input["rows"],
+                # Every gap once; an undetermined row in ``rows`` names its entry.
+                "gap_entries": story_input["gap_entries"],
                 "module_counts": {
                     module_id: {
                         disposition: sum(1 for row in rows if row.disposition == disposition)
@@ -2148,6 +2159,12 @@ class LedgerTools(LedgerStageTools):
         self.store.write_json(f"Work/runs/{run_id}/ledger/gap-entries.json", entries)
         return entries
 
+    def _gap_entries(self, run_id: str) -> list[dict[str, Any]]:
+        """The settled ledger's gap entries (none before the ledger is settled)."""
+
+        path = self.workspace / f"Work/runs/{run_id}/ledger/gap-entries.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+
     # -- chief and checks --------------------------------------------------
 
     def check_chief(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -2232,6 +2249,7 @@ class LedgerTools(LedgerStageTools):
             fact_texts=self._reference(run_id).get("fact_texts") or {},
             run_id=run_id,
             prefix=f"F{chapter}-" if chapter else "F-",
+            gap_labels=gap_labels(self._gap_entries(run_id)),
         )
         name = f"chief-fact-packets-{chapter}" if chapter else "chief-fact-packets"
         self.store.write_json(f"Work/runs/{run_id}/ledger/{name}.json", packets)
@@ -2604,6 +2622,7 @@ class LedgerTools(LedgerStageTools):
             run_id=run_id,
             max_units=1,
             prefix="U-",
+            gap_labels=gap_labels(self._gap_entries(run_id)),
         )
         chief_input = final.get("chief_input") or {}
         project = {k: chief_input[k] for k in ("map", "story_lines") if chief_input.get(k)}
@@ -2758,17 +2777,21 @@ class LedgerTools(LedgerStageTools):
         fact_texts = self._reference(run_id).get("fact_texts") or {}
         chief_texts = self._chief_texts(chief, final)
         reference = self._reference(run_id)
+        entries = self._gap_entries(run_id)
+        gap_of = gap_ids(entries)
         return {
             "run_id": run_id,
             "owner": CHIEF_OWNER,
             "sections": chief_texts,
-            # Chapters 1 and 3 are read against every flagged row, briefly.
+            # Chapters 1 and 3 are read against every flagged row, briefly,
+            # and the gaps as merged entries.
             "rows": [
-                brief_row(row)
+                brief_row(row, gap_id=gap_of.get(row.id))
                 for rows in self._final_rows(run_id).values()
                 for row in rows
                 if row.disposition in {"concern", "undetermined"}
             ],
+            "gap_entries": chief_gap_entries(entries),
             "method": reference.get("chief_skill") or "（没有专家版方法）",
             "program_findings": self._chief_text_findings(
                 report_check_findings(

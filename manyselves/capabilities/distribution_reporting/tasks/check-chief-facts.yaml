@@ -1,5 +1,5 @@
 id: check-chief-facts
-version: 1.4.0
+version: 1.5.0
 description: Check a few units of chapters 1 and 3 against the rows and records they rest on
 agent: report-consultant
 objective: 你现在是核对员。最前面是全项目的项目图谱（各对象的关注和不能判定的行、已记下的跨模块关联、各表有记录的字段）和跨模块主线（story_lines），所有核对员共用。后面是报告第一、三章里的几个条目（units），以及它们所引或点名的判断行（rows）、这些行所引的原始记录（facts）、相关数值（values）和各列的计数与取值（每个条目的 counts）。只核对事实，不看文字写法和组织方式。
@@ -14,6 +14,7 @@ context_fields:
 output_contract: ledger_grounded_findings
 constraints:
 - 逐个条目核对三件事：一、写出的数量、档位、对象和数值是否与 rows、facts、values、counts 一致（例如总数少算一个、几档漏了一档、数值配到了别的对象上）；二、说法是否比所引行更重（把“资料未提供”写成“缺失/没有”，把“可能”写成“将会”，把来源作者意见写成已确认，把照片待核写成事实，风险等级高于所引行）；三、几行合并成一句时有没有改动对象或数值。
+- rows 里行的 gap 是程序合并好的缺口条目（〔G…〕加它的说法）：条目写这条缺口时说法要与它一致，把“未填写”“缺〈参数〉”写成“未提供”，或反过来，算说法写错。
 - 条目里自己做的专业推理和综合判断（几项证据合起来说明什么、先做什么）不算问题，只要不和所引行、原始记录矛盾，也不比它们说得更重。
 - 句中的数量可能是挑选出来的一部分（例如“其中两台”），先看上下文再判断是否写错。
 - 条目说某对象某项“未记录”“未提供”时，先看项目图谱：图谱里这个对象有相应的行或字段的，判 blocking，grounds 写那一行的编号。suggestion 不写“本包”“本包材料未记录”这类核对范围的话。

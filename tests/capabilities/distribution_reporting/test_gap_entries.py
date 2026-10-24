@@ -107,3 +107,26 @@ def test_a_different_way_to_close_the_gap_is_a_different_entry() -> None:
         _row("J-2.5-2", ["E-1"], "应急预案", section="2.5.1", fill=["问委托方"]),
     ]}
     assert len(gap_entries(ledger, SITES)) == 2
+
+
+def test_chapters_one_and_three_read_each_gap_once_as_its_entry() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.context_packs import brief_row, project_map
+    from manyselves.capabilities.distribution_reporting.runtime.gap_entries import (
+        chief_gap_entries,
+        gap_ids,
+        gap_labels,
+    )
+
+    ledger = {"2.4": [
+        _row("J-2.4-1", ["E-2"], "该测点的检测部位"),
+        _row("J-2.4-2", ["E-3"], "检测部位", obj="B房/2#柜"),
+    ]}
+    entries = gap_entries(ledger, SITES)
+    (entry,) = chief_gap_entries(entries)
+    assert entry["row_ids"] == ["J-2.4-1", "J-2.4-2"] and entry["objects"] == "A房/1#柜、B房/2#柜"
+    row = ledger["2.4"][1]
+    # The row names its entry instead of repeating the gap in its own words.
+    assert brief_row(row, gap_id=gap_ids(entries)[row.id])["gap"] == {"gap_id": "G01"}
+    assert brief_row(row)["gap"]["missing"] == "检测部位"
+    page = project_map(SITES, ledger, gaps=gap_labels(entries))
+    assert "〔G01〕原表红外的检测部位未填写" in page and "：检测部位" not in page

@@ -76,18 +76,24 @@ def _cut(text: Any, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def finding_of(row: JudgmentRow) -> str:
-    """What a flagged row found, in the row's own words."""
+def finding_of(row: JudgmentRow, gap: str | None = None) -> str:
+    """What a flagged row found, in the row's own words; an undetermined row's merged gap when given."""
 
     if row.disposition == "concern":
         return row.finding or row.hazard
     if row.disposition == "undetermined" and row.gap is not None:
-        return row.gap.missing
+        return gap or row.gap.missing
     return ""
 
 
-def brief_row(row: JudgmentRow, *, basis_chars: int = 120) -> dict[str, Any]:
-    """What the chief reads of a flagged row: what was found, why it matters, what to do."""
+def brief_row(
+    row: JudgmentRow, *, basis_chars: int = 120, gap_id: str | None = None
+) -> dict[str, Any]:
+    """What the chief reads of a flagged row: what was found, why it matters, what to do.
+
+    A row whose gap is in a merged gap entry names the entry; the entry says
+    the gap once for all its rows.
+    """
 
     return compact(
         {
@@ -101,7 +107,10 @@ def brief_row(row: JudgmentRow, *, basis_chars: int = 120) -> dict[str, Any]:
             "finding": row.finding,
             "hazard": row.hazard,
             "action": row.action.model_dump(mode="json") if row.action else None,
-            "gap": row.gap.model_dump(mode="json") if row.gap else None,
+            "gap": (
+                {"gap_id": gap_id} if gap_id and row.gap
+                else row.gap.model_dump(mode="json") if row.gap else None
+            ),
             # The chief argues from relations that hold; a pending one stays
             # with its section in chapter 2.
             "relations": [
@@ -114,9 +123,9 @@ def brief_row(row: JudgmentRow, *, basis_chars: int = 120) -> dict[str, Any]:
     )
 
 
-def row_line(row: JudgmentRow, *, finding_chars: int = 60) -> str:
+def row_line(row: JudgmentRow, *, finding_chars: int = 60, gap: str | None = None) -> str:
     level = f"，{row.risk_level}" if row.risk_level else ""
-    found = finding_of(row)
+    found = finding_of(row, gap)
     return (
         f"{row.id} {row.submodule_id}｜{row.object}｜{row.checkpoint}"
         f"（{_DISPOSITION.get(row.disposition, row.disposition)}{level}）"
@@ -258,8 +267,13 @@ def project_map(
     ledger: Mapping[str, Sequence[JudgmentRow]] | None = None,
     *,
     with_relations: bool = False,
+    gaps: Mapping[str, str] | None = None,
 ) -> str:
-    """One page: sites, objects, records per module; flagged rows and relations once known."""
+    """One page: sites, objects, records per module; flagged rows and relations once known.
+
+    ``gaps`` (row id -> its merged gap entry's label) is the settled ledger's:
+    an undetermined row shows the entry it is in.
+    """
 
     lines = [
         "# 项目图谱",
@@ -291,7 +305,7 @@ def project_map(
                 if quiet.get(subject):
                     line += f"｜另有 {quiet[subject]} 行判为无问题或不适用"
                 lines.append(line)
-                lines.extend(f"  - {row_line(row)}" for row in flagged)
+                lines.extend(f"  - {row_line(row, gap=(gaps or {}).get(row.id))}" for row in flagged)
             else:
                 lines.append(line)
     if fields := sites.fields():
@@ -306,7 +320,7 @@ def project_map(
         )
     if unplaced:
         lines.append("\n## 只引汇总表或项目级资料的关注和不能判定行")
-        lines.extend(f"- {row_line(row)}" for row in unplaced)
+        lines.extend(f"- {row_line(row, gap=(gaps or {}).get(row.id))}" for row in unplaced)
     if ledger is not None and with_relations:
         relations = [
             (row, relation)

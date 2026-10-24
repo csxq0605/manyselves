@@ -243,12 +243,13 @@ def _cut(text: Any, limit: int = MAX_TEXT) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _row_view(row: JudgmentRow) -> dict[str, Any]:
+def _row_view(row: JudgmentRow, gap: str | None = None) -> dict[str, Any]:
     """What a fact check needs of a row: its object, conclusion and strength.
 
     The values themselves come with the row's records.  The basis is not
     checked, but without it a checker cannot tell which value a row rests on
-    and may "correct" a unit from the wrong record.
+    and may "correct" a unit from the wrong record.  A gap shows its merged
+    entry (``gap``) when there is one: chapters 1 and 3 say it as the entry does.
     """
 
     view = {
@@ -269,7 +270,7 @@ def _row_view(row: JudgmentRow) -> dict[str, Any]:
     if row.action is not None:
         view["action"] = _cut(f"{row.action.measure}（{row.action.timeframe}）", SHORT_TEXT)
     if row.gap is not None:
-        view["gap"] = _cut(row.gap.missing, SHORT_TEXT)
+        view["gap"] = _cut(gap or row.gap.missing, SHORT_TEXT)
     return view
 
 
@@ -286,6 +287,7 @@ def chief_fact_packets(
     max_units: int = MAX_UNITS,
     max_chars: int = MAX_CHARS,
     prefix: str = "F-",
+    gap_labels: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The fact-check packets: units with their rows, records, values and counts.
 
@@ -294,6 +296,7 @@ def chief_fact_packets(
     """
 
     rows = {row.id: row for module_rows in ledger.values() for row in module_rows}
+    labels = gap_labels or {}
     module_of = {row.id: m for m, module_rows in ledger.items() for row in module_rows}
     # A named object brings its rows with a problem or a gap; a unit's own
     # row_ids bring every row they cite.
@@ -392,7 +395,7 @@ def chief_fact_packets(
         trial = {
             **current,
             "units": [*current["units"], item["unit"]],
-            "rows": {**current["rows"], **{r: _row_view(rows[r]) for r in item["rows"]}},
+            "rows": {**current["rows"], **{r: _row_view(rows[r], labels.get(r)) for r in item["rows"]}},
             "facts": {**current["facts"], **{e: str(fact_texts.get(e, "")) for e in item["evidence"]}},
             "values": {**current["values"], **item["values"]},
             "counts": {**current["counts"], **item["counts"]},
@@ -403,7 +406,7 @@ def chief_fact_packets(
             trial = {
                 **current,
                 "units": [item["unit"]],
-                "rows": {r: _row_view(rows[r]) for r in item["rows"]},
+                "rows": {r: _row_view(rows[r], labels.get(r)) for r in item["rows"]},
                 "facts": {e: str(fact_texts.get(e, "")) for e in item["evidence"]},
                 "values": dict(item["values"]),
                 "counts": dict(item["counts"]),
