@@ -1,31 +1,14 @@
 id: ledger-rows-finish
-version: 1.0.0
-description: The authors fix the rows the fact check marked, then each writer revises once on the editor's findings and the sections resting on the fixed rows; a subworkflow of its own so it runs beside the chief's fix
+version: 2.0.0
+description: Each writer revises once on the editor's findings and the sections resting on the rows the authors fixed; a subworkflow of its own so it runs beside the chief's fix
 tasks: []
 recovery:
 - typed-turn-recovery
 output_contract: ledger_rows_finished
 state:
-  final: null
   edits: null
-  row_fix_items: null
+  row_fixed: null
 actions:
-- id: fix-rows
-  kind: map
-  items_variable: row_fix_items
-  key_field: group_id
-  workflow: ledger-row-fix
-  key_input_variable: item_key
-  output_variable: row_fixes
-  max_concurrency: 5
-- id: apply-row-fixes
-  kind: invoke_tool
-  tool: apply-row-fixes
-  input_variables:
-    ledger: final
-    fixes: row_fixes
-    edits: edits
-  output_variable: row_fixed
 - id: section-revise-items
   kind: set_variable
   variable: section_revise_items
@@ -52,7 +35,6 @@ actions:
   value_variables:
     fixed: row_fixed
     merged: merged_edits
-    row_fixes: row_fixes
 - id: finish
   kind: end_workflow
   output_variable: rows_result

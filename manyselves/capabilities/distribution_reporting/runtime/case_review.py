@@ -16,9 +16,11 @@ The case is read from the records alone, never from the words:
   column or readings); a row resting only on summary or document-list
   entries belongs to the cases of those;
 - a case is a shape at least two rows rest on.  A field case shows every
-  record of that column, cited or not, so the exceptions are in view; a
-  summary case shows the entries its rows cite (other entries are other
-  subjects).
+  record of that column, cited or not, so the exceptions are in view, and
+  its rows in every module; a summary case shows the entries its rows cite
+  (other entries are other subjects), and to a module only its own rows:
+  entries of a summary sheet are about different things, so another
+  module's rows on the same sheet are not the same case.
 """
 
 from __future__ import annotations
@@ -42,6 +44,12 @@ def record_shape(item: Any) -> Shape:
 
 def _field(item: Any) -> bool:
     return not item.summary_entry and bool(item.checkpoint_field or item.measurements)
+
+
+def field_shape(shape: Shape, sites: Sites) -> bool:
+    """A column of a site checklist (not a summary sheet's or document list's entries)."""
+
+    return any(record_shape(item) == shape and _field(item) for item in sites.items.values())
 
 
 def case_label(shape: Shape) -> str:
@@ -73,7 +81,7 @@ def cases(
     return {shape: rows for shape, rows in found.items() if len(rows) >= 2}
 
 
-def _records(shape: Shape, rows: Sequence[JudgmentRow], sites: Sites) -> list[Any]:
+def case_records(shape: Shape, rows: Sequence[JudgmentRow], sites: Sites) -> list[Any]:
     cited = [
         sites.items[e]
         for e in dict.fromkeys(e for row in rows for e in row.evidence_ids)
@@ -96,7 +104,7 @@ def case_batches(
     found = sorted(cases(ledger, sites).items(), key=lambda kv: kv[0])
     entries = []
     for shape, rows in found:
-        records = _records(shape, rows, sites)
+        records = case_records(shape, rows, sites)
         cost = sum(len(json.dumps(compact_row(r), ensure_ascii=False)) for r in rows) + len(render(records))
         entries.append((shape, rows, records, cost))
     groups: list[list[tuple[Shape, list[JudgmentRow], list[Any], int]]] = []
@@ -128,4 +136,4 @@ def case_batches(
     return batches
 
 
-__all__ = ["case_batches", "case_label", "cases", "record_shape", "row_cases"]
+__all__ = ["case_batches", "case_label", "case_records", "cases", "field_shape", "record_shape", "row_cases"]

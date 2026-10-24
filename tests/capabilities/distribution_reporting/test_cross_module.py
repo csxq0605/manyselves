@@ -79,7 +79,7 @@ def test_facts_judged_differently_stay_open_only_on_a_reviewers_blocking_finding
     # A relation-lens finding is not about the dossier.
     relation_only = {"J-2.4-1": {"relation": {"severity": "blocking"}}}
     assert unresolved_conflicts([differently], relation_only) == []
-    flagged = {"J-2.4-1": {"object": {"severity": "blocking"}}}
+    flagged = {"J-2.4-1": {"module": {"severity": "blocking"}}}
     assert unresolved_conflicts([differently], flagged) == [differently]
 
 

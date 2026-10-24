@@ -1,8 +1,8 @@
 id: review-judgments
-version: 3.4.0
-description: Review one module's judgment rows against exactly what each row cites
+version: 4.0.0
+description: Review one module's judgment rows against what each cites, and against the other rows on the same case
 agent: report-consultant
-objective: 你现在是下面这个模块的审查人，只审本模块。下面先是这些判断行所引的事实（facts）、知识单元（rules）和本模块的专家版判断方法（method）；输入里是判断行、所引计算、程序挑出要看的行和读图有疑问的照片。逐行核对判断是否由它所引的资料推出。同一栏记录在各房间、各模块的判断边界由同类情况审查负责，跨模块关联由关联审查负责，这里不看。
+objective: 你现在是下面这个模块的审查人。下面先是这些判断行所引的事实和它们所在同类情况的全部记录（facts）、知识单元（rules）和本模块的专家版判断方法（method）；输入里是判断行、同类情况（cases）、同类情况里别的模块的行（case_rows）、所引计算、程序挑出要看的行和读图有疑问的照片。两件事：一、逐行核对判断是否由它所引的资料推出；二、同一张表同一栏的记录是同一类情况（同一项检查、同样的记法），cases 列出每类情况的全部行（row_ids，含别的房间、别的模块）和全部记录（record_ids），把一类情况的行放在一起看判断边界是否一致。跨模块关联由关联审查负责，这里不看。
 static_first: true
 input_contract: ledger_review_item
 output_contract: review-findings
@@ -16,6 +16,9 @@ image:
   media_type_field: media_type
 constraints:
 - 逐行看：basis 是否由所引事实、计算和知识单元推出；hazard 的前提（本项目哪项事实满足了哪项条件）在 hazard_sources 所列的出处里是否真有，前提没有出处的是否写成了待核实；从有出处的前提推出的后果是专业推理，推理合理、不比前提说得更重就不算问题，不要求后果本身有原文、也不要求加“待核实”；gap 是否说清缺什么、影响什么；finding 是否与 basis 和所引事实一致、没有说得比它们更重。不审文字写法，这一步还没有正文。
+- 同类情况：记录状态相同（同为 NG、同为空白、同为“不具备”、读数落在同一区间）的行，处置、风险等级、措施和说法应当相同；不同又没有从记录写出理由的，对说错的行判 blocking，problem 写清同类里哪几行怎么判、这一行哪里不同。说错的是 case_rows 里别的模块的行，也照样写，键用那一行的编号。同类里几行有同样的问题，每一行都写一条意见（problem 可以相同），作者只改被点名的行。
+- 同类情况：一栏只记 NG/OK 的，只能说这项检查不符合，不能推出记录里没有的具体情形；资料记为不具备或未提供的，只能说资料未提供、不能判定，不能写成“未开展”“不存在”“无人负责”；只有原评估结论的，只能写成原评估的意见；一栏的记录里有例外而行写成“全部”“均”的，写出例外的记录编号。这些都判 blocking。
+- hazard_conditions、关联理由（relations 的 reason、condition）里写成待核实的前提，finding、hazard、action 里不能当成已有的事实或据此给出措施；当成事实的判 blocking。
 - rules 里所引知识单元的限值/阈值、结论标准、依据状态和判断条件是判断的参考：把知识库标为候选、未核实的数值当成合规限值，或越过了结论标准里的限定语的，判 blocking；作者说明本项目条件下知识单元不适用或只部分适用、且理由能从事实看出来的，不算问题。
 - 行里写了 placement_reason 的，是作者把事实放在默认以外的小节：看理由和所引知识单元是否支持这样放；不支持的判 blocking。
 - program_checks 是程序按结构挑出来、需要你判断的行（与负责小节结论不同、原表 OK/NG 与判断方向相反、缺资料却判为没有问题），逐条看；理由不成立的判 blocking，成立的不用提。
@@ -23,7 +26,7 @@ constraints:
 - 以下情况也判为 blocking：把未取得的资料或没有记录当作降级理由；数值的含义与表头说明不符。
 - action 的措施要做得到：检测或操作的方法要与所引知识单元的检测方法一致，写了停电、拆装、逐条测量等条件的，看这些条件对这项检测是否必要；方法用错或做不到的判 blocking。
 - 字段角色读错的判 blocking：把来源记录的行动建议当作评估结论的依据，或把一个字段的值读成另一个字段的含义。
-- findings 的键是被点名的本模块判断行编号（J-...）。severity：blocking=结论、风险等级、措施、后果或缺口说明错了，必须改；minor=可以更好但结论不变。
+- findings 的键是被点名的判断行编号（J-...），本模块的行，或 case_rows 里别的模块的行。severity：blocking=结论、风险等级、措施、后果或缺口说明错了，必须改；minor=可以更好但结论不变。
 - method 是建议，不是硬规定。program_findings 是程序已经查出的问题，不用重复写。
 - 没有问题时提交空的 findings。
 tools: []

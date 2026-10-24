@@ -1,6 +1,6 @@
 id: report-ledger
-version: 5.4.0
-description: Judge into a ledger, each author relating its rows right after; review the modules, the shared objects and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
+version: 5.5.0
+description: Judge into a ledger, each author relating its rows right after; review each module's rows with the cases they rest on and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
 tasks: []
 recovery:
 - typed-turn-recovery
@@ -81,9 +81,10 @@ actions:
     ledger: built
     own: own_relations
   output_variable: ledger
-# Three reviews at once: each module's rows with what they cite; the objects
-# several modules judged; and the cross-module review, which checks the
-# relations and proposes the ones the authors missed.  Every batch map sends
+# Two reviews at once: each module's rows with what they cite and the cases
+# they rest on (every row on the same column of the same table, in any room
+# or module); and the cross-module review, which checks the relations and
+# proposes the ones the authors missed.  Every batch map sends
 # its first request alone, so the others reuse the opening it sent.
 - id: plan-review
   kind: invoke_tool
@@ -97,11 +98,6 @@ actions:
   variable: review_items
   value_variable: review_plan
   field: review_items
-- id: object-items
-  kind: set_variable
-  variable: object_items
-  value_variable: review_plan
-  field: object_items
 - id: cross-items
   kind: set_variable
   variable: cross_items
@@ -111,10 +107,9 @@ actions:
   kind: parallel
   branches:
     modules: review-modules
-    objects: review-objects
     cross: review-cross
   join: join-review
-  max_concurrency: 3
+  max_concurrency: 2
 - id: review-modules
   kind: map
   items_variable: review_items
@@ -125,18 +120,6 @@ actions:
   max_concurrency: 5
   lead_seconds: 30
 - id: modules-done
-  kind: goto
-  target: join-review
-- id: review-objects
-  kind: map
-  items_variable: object_items
-  key_field: batch_id
-  workflow: ledger-object-review
-  key_input_variable: item_key
-  output_variable: object_reviews
-  max_concurrency: 6
-  lead_seconds: 30
-- id: objects-done
   kind: goto
   target: join-review
 - id: review-cross
@@ -156,7 +139,6 @@ actions:
   parallel: review-lenses
   inputs:
     modules: module_reviews
-    objects: object_reviews
     cross: cross_reviews
   output_variable: lens_reviews
 - id: module-reviews-value
@@ -164,11 +146,6 @@ actions:
   variable: module_reviews
   value_variable: lens_reviews
   field: modules
-- id: object-reviews-value
-  kind: set_variable
-  variable: object_reviews
-  value_variable: lens_reviews
-  field: objects
 - id: cross-reviews-value
   kind: set_variable
   variable: cross_reviews
@@ -183,7 +160,6 @@ actions:
     plan: review_plan
     ledger: ledger
     module_reviews: module_reviews
-    object_reviews: object_reviews
     cross_reviews: cross_reviews
   output_variable: gathered
 - id: settle-items
@@ -323,11 +299,35 @@ actions:
   variable: row_fix_items
   value_variable: chief_checked
   field: row_fix_items
-# The chief fixes chapters 1 and 3 once while the authors fix the rows that
-# carry the same errors; then each writer revises once, on the editor's
-# findings and the sections resting on the fixed rows.  Both branches are
+# The authors first fix the rows that carry the errors the review found in
+# chapter 2 or chapters 1 and 3, each with its rows on the same case; the
+# program carries each fixed row to every section and unit resting on it.
+# Then the chief fixes chapters 1 and 3 once while each writer revises once,
+# on the editor's findings and the fixed rows.  Both branches are
 # subworkflows: a branch that calls a writing tool directly would make the
 # compiler run the branches one after the other.
+- id: fix-rows
+  kind: map
+  items_variable: row_fix_items
+  key_field: group_id
+  workflow: ledger-row-fix
+  key_input_variable: item_key
+  output_variable: row_fixes
+  max_concurrency: 5
+- id: apply-row-fixes
+  kind: invoke_tool
+  tool: apply-row-fixes
+  input_variables:
+    ledger: final
+    fixes: row_fixes
+    edits: edits
+    checked: chief_checked
+  output_variable: row_fixed
+- id: carried-chief
+  kind: set_variable
+  variable: chief_checked
+  value_variable: row_fixed
+  field: chief
 - id: finish-draft
   kind: parallel
   branches:
@@ -350,9 +350,8 @@ actions:
   kind: subworkflow
   workflow: ledger-rows-finish
   input_variables:
-    final: final
     edits: edits
-    row_fix_items: row_fix_items
+    row_fixed: row_fixed
   output_variable: rows_result
 - id: rows-done
   kind: goto

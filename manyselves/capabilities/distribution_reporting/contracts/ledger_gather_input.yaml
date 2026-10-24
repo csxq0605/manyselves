@@ -1,7 +1,7 @@
 id: ledger_gather_input
-version: 2.0.0
-description: The review plan, the ledger and the module, object and cross-module reviews
+version: 3.0.0
+description: The review plan, the ledger and the module and cross-module reviews
 adapter: json_schema
 schema:
   type: object
-  required: [plan, ledger, module_reviews, object_reviews, cross_reviews]
+  required: [plan, ledger, module_reviews, cross_reviews]

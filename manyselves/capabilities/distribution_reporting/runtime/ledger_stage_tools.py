@@ -5,10 +5,11 @@
 - ``plan_relate`` checks the cross-module linker's proposals and puts each
   one in front of the authors of both rows, next to the other modules'
   flagged rows and the rows on the same objects they already see;
-- ``plan_review`` builds the three review lenses after the photos are read
-  again: one packet per module (as before), batches of objects several
-  modules judged, and batches of relations;
-- ``gather_reviews`` merges the three lenses' findings by row and gives
+- ``plan_review`` builds the two review lenses after the photos are read
+  again: one packet per module, with the cases its rows rest on (every row
+  on the same column of the same table, in any room or module), and
+  batches of relations;
+- ``gather_reviews`` merges the two lenses' findings by row and gives
   each module one review to settle;
 - ``apply_story`` checks the story lines and plans the writing in groups of
   sections, each with the facts its rows cite and the lines through it.
@@ -27,7 +28,6 @@ from typing import Any
 from manyselves.kernel.workflow import gather_by_key
 
 from ..domain.judgment_ledger import CrossReview, JudgmentRow, StoryLine, StoryPlan
-from .case_review import case_batches
 from .context_packs import (
     ATTENTION,
     PROJECT_LEVEL,
@@ -50,9 +50,6 @@ from .review_packets import ReviewPackets
 
 # Character budgets for one conversation's material (about two characters a
 # token); the tasks' attention budgets are the hard limit.
-# A reviewer's output grows with what it is given: this keeps one object
-# review batch to a few minutes of writing.
-OBJECT_BATCH_CHARS = 60_000
 # The cross-module review's shared prefix (rows, records, map), about 220k
 # tokens at most; beyond it the review is split by site.
 CROSS_PREFIX_CHARS = 440_000
@@ -61,7 +58,7 @@ CROSS_PREFIX_CHARS = 440_000
 RELATE_FACT_CHARS = 90_000
 WRITING_GROUP_CHARS = 60_000
 
-LENSES = {"module": "模块切面", "object": "对象切面", "relation": "关联切面"}
+LENSES = {"module": "模块切面", "relation": "关联切面"}
 _SEVERITY = {"blocking": 2, "minor": 1}
 
 
@@ -287,10 +284,10 @@ class LedgerStageTools:
     def plan_review(self, value: dict[str, Any]) -> dict[str, Any]:
         """The module and relation lenses, built from the related ledger and the final readings.
 
-        The module lens reads one module's rows with what they cite, and
-        nothing of the other modules: what lies between modules is the
-        same-case lens's (every row on one column of one table, together) and
-        the relation lens's.
+        The module lens reads one module's rows with what they cite and the
+        cases they rest on: every row, in any room or module, on the same
+        column of the same table, with that column's records.  Relations
+        between modules are the relation lens's.
         """
 
         context = value["context"]
@@ -300,8 +297,8 @@ class LedgerStageTools:
         reference = self._reference(run_id)
         readings = load_photo_readings(self.workspace, run_id)
         elsewhere = self._data_elsewhere(run_id, ledger)
-        packets = ReviewPackets(self, run_id, ledger, reference, elsewhere)
         sites = self._sites(run_id)
+        packets = ReviewPackets(self, run_id, ledger, reference, elsewhere, sites)
         render = self._renderer(run_id)
         review_items = [
             {
@@ -324,14 +321,10 @@ class LedgerStageTools:
             {"run_id": run_id, "map": relation_map, "relation_method": method, **batch}
             for batch in cross_batches(ledger, sites, render, prefix_chars=CROSS_PREFIX_CHARS)
         ]
-        # The same-case lens reads every row on one column of one table
-        # together, across rooms and modules, with that column's records.
-        object_items = [
-            {"run_id": run_id, **batch}
-            for batch in case_batches(ledger, sites, render, budget_chars=OBJECT_BATCH_CHARS)
-        ]
         lenses = {
-            "cases": [{"batch_id": b["batch_id"], "cases": b["cases"]} for b in object_items]
+            "cases": {
+                item["module_id"]: item["cases"] for item in review_items if item.get("cases")
+            }
         }
         lenses["cross"] = [
             {"batch_id": b["batch_id"], "relations": b["relations"], "focus_rows": b["focus_rows"]}
@@ -340,12 +333,11 @@ class LedgerStageTools:
         self.store.write_json(f"Work/runs/{run_id}/ledger/review-lenses.json", lenses)
         return {
             "review_items": review_items,
-            "object_items": object_items,
             "cross_items": cross_items,
         }
 
     def gather_reviews(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The three lenses' findings merged by row, one review per judging group to settle.
+        """The two lenses' findings merged by row, one review per judging group to settle.
 
         The cross-module review's findings are the relation lens; its proposals
         that stand go with the findings to both rows' groups.
@@ -372,7 +364,6 @@ class LedgerStageTools:
         by_row = gather_by_key(
             {
                 "module": findings(value.get("module_reviews")),
-                "object": findings(value.get("object_reviews")),
                 "relation": findings(value.get("cross_reviews")),
             }
         )

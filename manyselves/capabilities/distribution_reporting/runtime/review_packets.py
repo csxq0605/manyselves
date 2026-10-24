@@ -1,11 +1,14 @@
 """Review packets: each judgment row with exactly what it cites.
 
-A reviewer checks whether a row follows from its facts and rules.  Instead of
-the whole project context and the whole ledger, the program puts next to the
-module's rows the facts, calculations, knowledge units and photo readings
-they cite, the other modules' rows they are related to (with those rows'
-facts), the module author's judging method and the program's own checks.
-Everything is chosen by the row's fields, never by the content of a run.
+A reviewer checks whether a row follows from its facts and rules, and whether
+rows on the same case draw the same boundary.  Instead of the whole project
+context and the whole ledger, the program puts next to the module's rows the
+facts, calculations, knowledge units and photo readings they cite, the module
+author's judging method and the program's own checks, and the cases its rows
+rest on (``case_review``): every other row on the same column of the same
+table, in any room or module, and every record of that column, so the
+exceptions are in view.  Everything is chosen by the rows' fields and the
+records' structure, never by the content of a run.
 """
 
 from __future__ import annotations
@@ -16,7 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
+from .context_packs import compact_row
 
+from .case_review import case_label, case_records, cases, field_shape
 from .observation_ledger import shared_labels
 from .photo_reading import photo_reading_labels
 from .research.fact_context import render_fact_packet
@@ -81,6 +86,7 @@ class ReviewPackets:
         ledger: Mapping[str, Sequence[JudgmentRow]],
         reference: Mapping[str, Any],
         elsewhere: Mapping[str, Sequence[str]],
+        sites: Any = None,
     ) -> None:
         self.workspace = Path(tools.workspace)
         self.run_id = run_id
@@ -99,13 +105,32 @@ class ReviewPackets:
         }
         self.units = tools._unit_bodies(run_id)
         self.conditions = tools._judgment_conditions(run_id)
+        self.sites = sites
+        self.cases = cases(ledger, sites) if sites is not None else {}
 
     def packet(self, module_id: str) -> dict[str, Any]:
-        # Only the module's own rows and what they cite: what lies between modules
-        # is the object and relation lenses'.
+        # The module's own rows and what they cite, and the cases they rest on;
+        # relations between modules are the relation lens's.
         rows = list(self.ledger.get(module_id, []))
-        shown = rows
-        evidence_ids = list(dict.fromkeys(e for row in shown for e in row.evidence_ids))
+        own = {row.id for row in rows}
+        mine = []
+        for shape, case_rows in self.cases.items():
+            if not any(row.id in own for row in case_rows):
+                continue
+            if not field_shape(shape, self.sites):
+                case_rows = [row for row in case_rows if row.id in own]
+            if len(case_rows) >= 2:
+                mine.append((shape, case_rows))
+        others = list({
+            row.id: row for _shape, case_rows in mine for row in case_rows if row.id not in own
+        }.values())
+        case_items = [
+            item for shape, case_rows in mine for item in case_records(shape, case_rows, self.sites)
+        ]
+        evidence_ids = list(dict.fromkeys([
+            *(e for row in rows for e in row.evidence_ids),
+            *(item.id for item in case_items),
+        ]))
         items = [self.items[e] for e in evidence_ids if e in self.items]
         facts_text = render_fact_packet(
             items,
@@ -116,11 +141,11 @@ class ReviewPackets:
         )
         lines = self.reference.get("calculation_lines") or {}
         calculations = [
-            lines[c] for c in dict.fromkeys(c for row in shown for c in row.calculation_ids) if c in lines
+            lines[c] for c in dict.fromkeys(c for row in rows for c in row.calculation_ids) if c in lines
         ]
         rules = "\n\n".join(
             f"### {unit} {self.units[unit][0]}\n{self.units[unit][1].strip()}"
-            for unit in _cited_units(shown)
+            for unit in _cited_units(rows)
             if unit in self.units
         )
         if rules and self.conditions:
@@ -129,6 +154,17 @@ class ReviewPackets:
         facts = {item.id: item.fact for item in items}
         return {
             "rows": [row.model_dump(mode="json", exclude_none=True) for row in rows],
+            **({
+                "cases": [
+                    {
+                        "case": case_label(shape),
+                        "row_ids": [row.id for row in case_rows],
+                        "record_ids": [item.id for item in case_records(shape, case_rows, self.sites)],
+                    }
+                    for shape, case_rows in mine
+                ],
+            } if mine else {}),
+            **({"case_rows": [compact_row(row) for row in others]} if others else {}),
             "calculations": calculations,
             "program_checks": program_checks(rows, facts=facts, owner_rows=owner_rows),
             "facts": facts_text,

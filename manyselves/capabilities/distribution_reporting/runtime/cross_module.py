@@ -458,7 +458,7 @@ def unlisted_relations(
 
 
 # Lenses that read the dossiers of facts judged differently.
-DOSSIER_LENSES = ("module", "object")
+DOSSIER_LENSES = ("module",)
 
 
 def unresolved_conflicts(

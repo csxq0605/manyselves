@@ -1,6 +1,6 @@
 id: ledger-chief-finish
 version: 2.0.0
-description: Chapters 1 and 3 are fixed in one turn of a conversation of its own, on the fact check and the program's findings with only the parts they point at; the chief then writes chapter 4; it runs while the authors fix rows and the writers revise
+description: Chapters 1 and 3 are fixed in one turn of a conversation of its own, on the fact check and the program's findings with only the parts they point at; the chief then writes chapter 4; it runs after the authors fixed rows, while the writers revise
 tasks:
 - revise-chief-facts
 - chief-chapter-4

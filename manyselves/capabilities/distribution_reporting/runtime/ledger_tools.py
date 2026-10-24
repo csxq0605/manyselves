@@ -108,6 +108,7 @@ from .cross_module import (
     unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
+from .case_review import cases, field_shape
 from .relation_routes import gap_affects, routed_relations, same_room_issues, still_routed
 from .row_photos import filled_photos, photos_not_shown
 from .gap_entries import (
@@ -2397,7 +2398,15 @@ class LedgerTools(LedgerStageTools):
             blocking = _blocking(findings)
             checked["check"]["blocking"] = blocking
             checked["blocking"] = blocking
-        checked["row_fix_items"] = self._row_fix_items(final, checked.pop("row_fixes", None) or {})
+        row_fixes = dict(checked.pop("row_fixes", None) or {})
+        for row_id, found in (value.get("section_row_fixes") or {}).items():
+            fix = {
+                "problem": "；".join(f["problem"] for f in found),
+                "severity": "blocking",
+                "suggestion": "；".join(f["suggestion"] for f in found if f["suggestion"]),
+            }
+            row_fixes[row_id] = _combined(row_fixes.get(row_id), fix)
+        checked["row_fix_items"] = self._row_fix_items(final, row_fixes)
         return checked
 
     def _row_fix_items(
@@ -2426,15 +2435,40 @@ class LedgerTools(LedgerStageTools):
                 "fact_check": True,
             })
             item["findings"][row_id] = dict(finding)
+            # The rows of the same module on the same column of the same
+            # table: what is wrong in one may be wrong in them too.
+            siblings = [
+                other.id for other in self._same_case(run_id, ledger, row_id)
+                if module_of.get(other.id) == module_id
+            ]
+            if siblings:
+                item.setdefault("same_case", {})[row_id] = siblings
         return list(items.values())
 
+    def _same_case(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]], row_id: str
+    ) -> list[JudgmentRow]:
+        """The other rows on the field cases (one checklist column) a row rests on."""
+
+        sites = self._sites(run_id)
+        found: dict[str, JudgmentRow] = {}
+        for shape, rows in cases(ledger, sites).items():
+            if not field_shape(shape, sites) or all(row.id != row_id for row in rows):
+                continue
+            found.update({row.id: row for row in rows if row.id != row_id})
+        return list(found.values())
+
     def apply_row_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
-        """The fact check's row fixes on the final ledger, and each writer's one revision.
+        """The row fixes on the final ledger, carried to every place that shows the rows.
 
         A changed row's own section, and every section whose rows relate to it,
         goes back to its writer with the row before and after, together with
         the editor's blocking findings on that writer's sections: each writer
-        revises once.
+        revises once.  Every chapter 1 and 3 unit resting on a changed row
+        joins the chief's one fix with the row before and after (``checked``
+        is the chief's fact check, ``unit_rows`` which rows each unit rests
+        on), so the chief fixes after the rows and in the same round as the
+        writers.
         """
 
         final = dict(value["ledger"])
@@ -2526,7 +2560,45 @@ class LedgerTools(LedgerStageTools):
                     "minor": dict((edit.get("revision_input") or {}).get("minor") or {}),
                 },
             })
-        return {"ledger": final, "changed_rows": list(changed), "section_revise_items": items}
+        chief = dict(_plain(value.get("checked")) or {})
+        if chief and changed:
+            check = dict(chief.get("fact_check") or {})
+            findings = dict(check.get("findings") or {})
+            for unit_id, row_ids in (chief.get("unit_rows") or {}).items():
+                notes = [
+                    f"判断行 {row_id}（{changed[row_id].object}｜{changed[row_id].checkpoint}）改了。"
+                    f"原来的发现：{before[row_id].finding}；现在：{changed[row_id].finding}。"
+                    for row_id in row_ids if row_id in changed
+                ]
+                if not notes:
+                    continue
+                # Kept beside the check's own finding on the unit, if any;
+                # grounds as the check gives them, each row with its text.
+                earlier = dict(findings.get(unit_id) or {})
+                suggestion = "本条沿用了原来说法的，改成与现在的判断行一致；没有沿用的不改。"
+                findings[unit_id] = {
+                    **earlier,
+                    "problem": "；".join(filter(None, [earlier.get("problem"), "".join(notes)])),
+                    "severity": "blocking",
+                    "suggestion": "；".join(filter(None, [earlier.get("suggestion"), suggestion])),
+                    "grounds": {
+                        **dict(earlier.get("grounds") or {}),
+                        **{
+                            row_id: str(changed[row_id].finding or "")[:200]
+                            for row_id in row_ids if row_id in changed
+                        },
+                    },
+                }
+            check["findings"] = findings
+            check["blocking"] = _blocking(findings)
+            chief["fact_check"] = check
+            chief["fact_blocking"] = check["blocking"]
+        return {
+            "ledger": final,
+            "changed_rows": list(changed),
+            "section_revise_items": items,
+            "chief": chief,
+        }
 
     def chief_fix_input(self, value: dict[str, Any]) -> dict[str, Any]:
         """What the chief's one fix needs, for a conversation of its own.
@@ -2688,36 +2760,38 @@ class LedgerTools(LedgerStageTools):
     def plan_joint_review(self, value: dict[str, Any]) -> dict[str, Any]:
         """One review per writer: its sections and the chief's units on its rows.
 
-        Each item opens with the writer's own pack and the project map, so it
-        reuses the writer's cached prefix; it holds the edit item (sections,
-        rows, program findings) and the chapter 1 and 3 units whose rows sit
-        in the writer's sections, with their rows, records, values and counts.
-        Units on no writer's rows go to items opening with the map and story
-        lines.  An item holding ``JOINT_MAX_UNITS`` (a section counting as
-        ``SECTION_UNITS``) or that would pass ``JOINT_MAX_CHARS`` passes its
-        further units to a next item with the same opening, reviewed side by
-        side; nothing is cut.
+        The review checks that the prose says what the ledger says, so each
+        item holds the ledger's side only: the writer's sections with their
+        rows, the rows related to them, and the records those rows cite (the
+        same records the writer was given, other modules' included), then the
+        chapter 1 and 3 units whose rows sit in the writer's sections, with
+        their rows, records, values and counts.  Nothing in an item is the
+        same as in another, so the task's own instructions are the shared
+        prefix.  Units on no writer's rows go to items of their own.  An item
+        holding ``JOINT_MAX_UNITS`` (a section counting as ``SECTION_UNITS``)
+        or that would pass ``JOINT_MAX_CHARS`` passes its further units to a
+        next item; nothing is cut.
         """
 
         final = value["ledger"]
         run_id = final["run_id"]
         edit_items = self.check_report({"ledger": final, "written": value["written"]})["edit_items"]
         ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
-        row_section = {row.id: row.submodule_id for rows in ledger.values() for row in rows}
+        index = {row.id: row for rows in ledger.values() for row in rows}
+        row_section = {row.id: row.submodule_id for row in index.values()}
+        fact_texts = self._reference(run_id).get("fact_texts") or {}
         unit_packets = chief_fact_packets(
             chapter1=_plain(value.get("chapter1")),
             chapter3=_plain(value.get("chapter3")),
             ledger=ledger,
             groups=final.get("action_groups") or [],
             slots=self._slots(run_id),
-            fact_texts=self._reference(run_id).get("fact_texts") or {},
+            fact_texts=fact_texts,
             run_id=run_id,
             max_units=1,
             prefix="U-",
             gap_labels=gap_labels(self._gap_entries(run_id)),
         )
-        chief_input = final.get("chief_input") or {}
-        project = {k: chief_input[k] for k in ("map", "story_lines") if chief_input.get(k)}
         owner_of = {sid: item["owner"] for item in edit_items for sid in item["sections"]}
         first_owner: dict[str, str] = {}
         for item in edit_items:
@@ -2736,39 +2810,49 @@ class LedgerTools(LedgerStageTools):
         def size(item: Mapping[str, Any]) -> int:
             return len(json.dumps(item, ensure_ascii=False))
 
+        def cited_facts(item: Mapping[str, Any]) -> dict[str, str]:
+            # What the writer was given as its sections' facts: the records of
+            # its rows and of the rows they relate to.
+            row_ids = [row["id"] for row in item.get("rows") or []] + [
+                entry["row_id"] for entry in item.get("cited_rows") or []
+            ]
+            return {
+                e: str(fact_texts.get(e, ""))
+                for row_id in row_ids if row_id in index
+                for e in index[row_id].evidence_ids
+            }
+
         def opening(owner: str | None) -> dict[str, Any]:
             if owner is None:
-                return {"run_id": run_id, **project}
+                return {"run_id": run_id}
             base = by_owner[owner][0]
-            lead = {k: base[k] for k in ("pack", "method") if k in base}
             return {
                 "run_id": run_id, "owner": owner,
                 **({"module_id": base["module_id"]} if base.get("module_id") else {}),
-                **lead, **({"map": project["map"]} if project.get("map") else {}),
             }
 
         by_owner: dict[str | None, list[dict[str, Any]]] = {}
         for item in edit_items:
+            rest = {
+                k: v for k, v in item.items()
+                if k not in {"run_id", "owner", "module_id", "pack", "method"}
+            }
+            facts = cited_facts(item)
             by_owner[item["owner"]] = [{
                 "review_id": item["owner"],
-                **{k: item[k] for k in ("run_id", "owner", "module_id", "pack", "method") if k in item},
-                **({"map": project["map"]} if project.get("map") else {}),
-                **{k: v for k, v in item.items() if k not in {"run_id", "owner", "module_id", "pack", "method"}},
+                **{k: item[k] for k in ("run_id", "owner", "module_id") if k in item},
+                **rest,
+                **({"facts": facts} if facts else {}),
             }]
 
         def add_unit(item: dict[str, Any], packet: Mapping[str, Any]) -> dict[str, Any]:
-            lead = str(item.get("pack") or "")
             rows = {row["id"]: row for row in item.get("unit_rows") or []}
             rows.update({row["id"]: row for row in packet["rows"]})
             return {
                 **item,
                 "units": [*(item.get("units") or []), *packet["units"]],
                 "unit_rows": list(rows.values()),
-                # A record already in the writer's pack is not sent twice.
-                "facts": {
-                    **(item.get("facts") or {}),
-                    **{e: t for e, t in packet["facts"].items() if e not in lead},
-                },
+                "facts": {**(item.get("facts") or {}), **packet["facts"]},
                 "values": {**(item.get("values") or {}), **packet["values"]},
                 "counts": {**(item.get("counts") or {}), **packet["counts"]},
             }
@@ -2810,6 +2894,7 @@ class LedgerTools(LedgerStageTools):
         packets: list[dict[str, Any]] = []
         fact_results: dict[str, Any] = {}
         section_findings: dict[str, dict[str, Any]] = {}
+        section_row_fixes: dict[str, list[dict[str, str]]] = {}
         bases: dict[str, dict[str, Any]] = {}
         for item in items:
             result = results.get(item["review_id"])
@@ -2830,7 +2915,21 @@ class LedgerTools(LedgerStageTools):
                 continue
             if "sections" in item:
                 bases[owner] = {k: v for k, v in item.items() if k not in _JOINT_KEYS}
-            # rows_also belongs to the fact check of a unit only.
+            # A section's error that its rows carry themselves goes to those
+            # rows' authors too, as a unit's does (the rows the writer was
+            # given: its own and the ones they relate to).
+            held = {row["id"] for row in item.get("rows") or []} | {
+                entry["row_id"] for entry in item.get("cited_rows") or []
+            }
+            for k, f in found.items():
+                if k in unit_ids or not isinstance(f, Mapping) or f.get("severity") != "blocking":
+                    continue
+                for row_id in dict.fromkeys(f.get("rows_also") or ()):
+                    if row_id in held:
+                        section_row_fixes.setdefault(row_id, []).append({
+                            "problem": f"第二章 {k} 写的说法，判断行自己也这样写：{f.get('problem', '')}",
+                            "suggestion": str(f.get("suggestion", "")),
+                        })
             section_findings.setdefault(owner, {}).update({
                 k: {key: v for key, v in f.items() if key != "rows_also"}
                 for k, f in found.items() if k not in unit_ids and isinstance(f, Mapping)
@@ -2848,7 +2947,13 @@ class LedgerTools(LedgerStageTools):
             "chapter1": value.get("chapter1"),
             "chapter3": value.get("chapter3"),
             "check1": value.get("check1"),
+            "section_row_fixes": section_row_fixes,
         })
+        # Which rows each unit rests on, so a fixed row reaches its units.
+        unit_rows = {
+            unit["unit_id"]: list(unit.get("row_ids") or ())
+            for packet in packets for unit in packet["units"]
+        }
         return {
             "writing": edits,
             "chief": {
@@ -2857,6 +2962,7 @@ class LedgerTools(LedgerStageTools):
                 "fact_check": checked["check"],
                 "fact_blocking": checked["blocking"],
                 "row_fix_items": checked["row_fix_items"],
+                "unit_rows": unit_rows,
             },
         }
 

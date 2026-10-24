@@ -7,7 +7,6 @@ tools: []
 accepts:
 - ledger_module_brief
 - ledger_cross_batch
-- ledger_object_batch
 - ledger_chief_followup
 - ledger_review_item
 - ledger_revision_input

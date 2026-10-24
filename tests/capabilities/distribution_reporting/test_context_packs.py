@@ -151,12 +151,12 @@ def test_lens_findings_on_one_row_are_merged_and_labelled() -> None:
     gathered = gather_by_key(
         {
             "module": {"J-2.4-1": {"problem": "依据不足", "severity": "minor", "suggestion": "补"}},
-            "object": {"J-2.4-1": {"problem": "铭牌不符", "severity": "blocking", "suggestion": "改"}},
+            "relation": {"J-2.4-1": {"problem": "铭牌不符", "severity": "blocking", "suggestion": "改"}},
         }
     )
     merged = merged_finding(gathered["J-2.4-1"])
     assert merged["severity"] == "blocking"
-    assert merged["problem"] == "（模块切面）依据不足；（对象切面）铭牌不符"
+    assert merged["problem"] == "（模块切面）依据不足；（关联切面）铭牌不符"
 
 
 def test_pending_relations_are_marked_for_the_light_check_and_join_no_story_line() -> None:

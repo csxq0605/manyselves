@@ -1,6 +1,6 @@
 id: ledger_review_item
-version: 3.0.0
-description: One module's own rows with what each cites, program checks and doubtful photos
+version: 3.1.0
+description: One module's own rows with what each cites, the cases they rest on with every row and record of each, program checks and doubtful photos
 adapter: json_schema
 schema:
   type: object
@@ -8,6 +8,12 @@ schema:
   properties:
     rows:
       type: array
+    cases:
+      type: array
+      description: Each case (one column of one table) the module's rows rest on, with all its rows and records.
+    case_rows:
+      type: array
+      description: Other modules' rows on those cases.
     calculations:
       type: array
     program_checks:
