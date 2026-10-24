@@ -1,0 +1,30 @@
+id: ledger-chief-fact-check
+version: 1.0.0
+description: One packet of chapters 1 and 3 checked for facts in a fresh conversation
+tasks:
+- check-chief-facts
+recovery:
+- typed-turn-recovery
+output_contract: ledger_grounded_findings
+state:
+  item: null
+  item_key: null
+actions:
+- id: open-check
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: chief-fact-check
+  key_variable: item_key
+  mode: run
+  output_variable: check_conversation
+- id: check
+  kind: invoke_agent
+  agent: report-consultant
+  task: check-chief-facts
+  conversation_variable: check_conversation
+  input_variable: item
+  output_variable: findings
+- id: finish
+  kind: end_workflow
+  output_variable: findings
+  output_name: result

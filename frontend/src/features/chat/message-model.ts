@@ -4,6 +4,8 @@ export interface ChatMessage {
   readonly id: string;
   readonly messageId: string | null;
   readonly role: string;
+  /** Who sent a user turn: "user" for a person, "system" for a notice sent to the Agent. */
+  readonly source: string | null;
   readonly timestamp: string | null;
 }
 
@@ -22,7 +24,13 @@ export function normalizeMessages(records: readonly Record<string, unknown>[]): 
       id: `${messageId ?? checkpointId ?? "record"}-${index}`,
       messageId,
       role: role === "agent" ? "assistant" : role,
+      source: stringValue(record.source),
       timestamp: stringValue(record.ts) ?? stringValue(record.timestamp),
     };
   });
+}
+
+/** A notice the system sent to the Agent as a user turn: the Agent reads it, people do not. */
+export function isSystemNotice(message: ChatMessage): boolean {
+  return message.role === "user" && message.source === "system";
 }

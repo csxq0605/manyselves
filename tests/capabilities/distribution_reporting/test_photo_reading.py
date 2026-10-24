@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,9 +30,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     ReportRequest,
     SourceLocation,
 )
-from manyselves.capabilities.distribution_reporting.runtime.photo_reader_provider import (
-    PhotoReaderProviderRuntime,
-)
 from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
     build_photo_reading_tool_implementations,
     load_photo_readings,
@@ -41,8 +37,6 @@ from manyselves.capabilities.distribution_reporting.runtime.photo_reading import
 from manyselves.capabilities.distribution_reporting.runtime.research.fact_context import (
     prepare_module_fact_context,
 )
-from manyselves.config.schema import AgentDefaults
-from manyselves.interfaces.types import UserMessage
 from manyselves.kernel.contracts import build_contract_catalog
 from manyselves.kernel.conversations import (
     ConversationKey,
@@ -58,16 +52,10 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
-from manyselves.runtime.agent_execution import AgentExecutionService
-from manyselves.runtime.loops.bus import MessageBus
-from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import InMemoryWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink, WorkflowRuntimeHost
-from tests.capabilities.distribution_reporting.test_project_fact_packet import _write_facts
-from tests.capabilities.distribution_reporting.test_public_entrypoint_workflows import (
-    _registry_with_existing_workflow_specializers,
-)
+from tests.capabilities.distribution_reporting.support import write_facts as _write_facts
 
 RUN_ID = "facts"
 SUBMISSION = {
@@ -191,16 +179,12 @@ async def test_workflow_without_photos_skips_the_model(tmp_path: Path) -> None:
 
 def test_root_workflows_read_photos_before_any_module_writes() -> None:
     _capability, registry = load_distribution_reporting_capability()
-    for workflow_id, writer in (
-        ("full-report", "report-ledger"),
-        ("module-report", "distribution-module-cohort"),
-    ):
+    for workflow_id, writer in (("full-report", "report-ledger"),):
         workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
         children = [a["workflow"] for a in workflow.actions if a["kind"] == "subworkflow"]
         assert children.index("distribution-photo-reading") < children.index(writer)
-        specialized = _registry_with_existing_workflow_specializers()
         plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
-            specialized.require(DefinitionKind.WORKFLOW, workflow_id), specialized,
+            registry.require(DefinitionKind.WORKFLOW, workflow_id), registry,
         )
         assert "distribution-photo-reading" in plan.workflow_ids
 
@@ -220,73 +204,6 @@ def _conversation(conversation_id: str) -> ConversationRecord:
                             mode=ConversationMode.RUN),
         run_id=RUN_ID,
     )
-
-
-@pytest.mark.asyncio
-async def test_provider_sends_the_image_and_reuses_a_completed_reading(tmp_path: Path) -> None:
-    bus = MessageBus()
-    bus_task = asyncio.create_task(bus.process_queue())
-    received: list[UserMessage] = []
-    restored: list[tuple] = []
-
-    class Loop:
-        def __init__(self, kwargs: dict) -> None:
-            self.kwargs = kwargs
-            self.tools = kwargs["tools"]
-            self._callback = None
-
-        def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
-            del task_boundaries, handoff_summary
-            restored.append(tuple(messages))
-
-        async def start(self) -> None:
-            async def respond(message: UserMessage) -> None:
-                if message.agent_type != self.kwargs["agent_type"]:
-                    return
-                received.append(message)
-                await self.tools.get("submit_result")(**SUBMISSION)
-
-            self._callback = respond
-            bus.subscribe(UserMessage, respond)
-
-        async def stop(self) -> None:
-            if self._callback is not None:
-                bus.unsubscribe(UserMessage, self._callback)
-
-        async def wait_until_turn_complete(self) -> None:
-            return None
-
-    services = RuntimeServicesView(
-        workspace=tmp_path, bus=bus, active_provider=object(),
-        agent_defaults=AgentDefaults(), global_knowledge_root=None,
-    )
-    runtime = PhotoReaderProviderRuntime(
-        services, execution=AgentExecutionService(bus, timeout=1),
-        loop_builder=lambda **kwargs: Loop(kwargs),
-    )
-    agent, task = _agent_and_task()
-    context = _context(tmp_path, 2)
-    plan = build_photo_reading_tool_implementations(tmp_path)["prepare-photo-reading"](context)
-    first, second = plan["lanes"]["1"][0], plan["lanes"]["2"][0]
-    try:
-        outcome = await runtime.invoke(agent, task, first, _conversation("c-1"), task_id="read-photo-1")
-        reused = await runtime.invoke(agent, task, first, _conversation("c-2"), task_id="read-photo-1")
-        other = await runtime.invoke(agent, task, second, _conversation("c-3"), task_id="read-photo-1")
-    finally:
-        await runtime.close()
-        bus.shutdown()
-        await bus_task
-
-    assert outcome.status == "ok" and outcome.result == SUBMISSION
-    assert reused.status == "ok" and reused.result == SUBMISSION
-    assert [message.images for message in received] == [
-        [{"path": str((tmp_path / "Work/assets/P-0001.png").resolve()), "media_type": "image/png"}],
-        [{"path": str((tmp_path / "Work/assets/P-0002.png").resolve()), "media_type": "image/png"}],
-    ]
-    assert "E-0001" in received[0].content and "进线端子温度=35℃" in received[0].content
-    assert other.status == "ok"
-    # The lane session is reused, but the next photo starts with an empty history.
-    assert () in restored
 
 
 def _module(part_id: str, evidence_id: str) -> SimpleNamespace:
@@ -312,13 +229,18 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
             {"label": "最高温度", "text": "60.2℃", "legible": True},
             {"label": "柜号", "text": "D1701", "legible": False},
         ],
+        "readings": [{"quantity": "记录值", "value": 60.2, "unit": "℃", "legible": True}],
     }
     await _run_workflow(tmp_path, context, _Invoker(conflict))
 
     packet = prepare_module_fact_context(tmp_path, RUN_ID, "2.2").inline_context
     assert '"photo_reading":"P-0001：柜内进线端子' in packet
-    assert "抄写：最高温度=60.2℃，柜号=D1701（看不清）；照片日期：2025-06-12 10:31" in packet
-    assert "以表格记录为准，照片读数待核（记录值 35℃；照片可见 60.2℃）；需人工复核" in packet
+    # The table record stands: a reading that differs shows no numbers to cite.
+    assert (
+        "P-0001：柜内进线端子的热像图；照片日期：2025-06-12 10:31；"
+        "程序比对：照片读数与表格记录不符，照片读数不用，以表格记录为准" in packet
+    )
+    assert "60.2" not in packet
     assert "逐张读图结果" in packet
 
     [dossier] = build_joint_dossiers(tmp_path, RUN_ID, modules)
@@ -329,31 +251,69 @@ async def test_readings_reach_fact_packets_and_conflicts_keep_a_dossier(tmp_path
     assert fact["photo_conflicts"] is True and fact["photo_readings"][0].startswith("P-0001：")
 
 
-def test_program_compares_only_legible_numbers_and_never_names_or_dates() -> None:
+def test_program_compares_structured_readings_by_quantity_and_names_another_record() -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
+        compare_readings,
+    )
+
+    bound = {"residual_current": [11.3]}
+    others = {"residual_current": [[2.9, "E-7"]]}
+
+    def read(value, legible=True, quantity="residual_current"):
+        return [{"quantity": quantity, "value": value, "unit": "A", "legible": legible}]
+
+    assert compare_readings(read(11.27), bound)[0] == "matches"
+    assert compare_readings(read(None, False), bound)[0] == "cannot_tell"
+    # A quantity the bound records do not declare is not compared.
+    assert compare_readings(read(23, quantity="ambient_temperature"), bound)[0] == "cannot_tell"
+    match, reason = compare_readings(read(2.9), bound, others)
+    assert match == "conflicts" and "E-7" in reason
+
+
+def test_review_gets_only_photos_whose_readings_are_in_doubt() -> None:
+    from manyselves.capabilities.distribution_reporting.domain.judgment_ledger import JudgmentRow
+    from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import photos_to_check
+    from manyselves.capabilities.distribution_reporting.runtime.photo_reading import PhotoReading
+
+    row = JudgmentRow.model_validate(
+        {"id": "J-1", "submodule_id": "2.2.1", "object": "1#", "checkpoint": "消防",
+         "disposition": "concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"],
+         "photo_ids": ["P-1", "P-2", "P-3"], "basis": "b", "risk_level": "中", "hazard": "h",
+         "hazard_conditions": ["c"], "action": {"measure": "m", "priority": "一般", "timeframe": "一月"}}
+    )
+    reference = {"photos": {p: {"path": f"{p}.jpg", "media_type": "image/jpeg"} for p in ("P-1", "P-2", "P-3")}}
+
+    def reading(photo_id, **extra):
+        return PhotoReading(photo_id=photo_id, visible="v", record_match="cannot_tell",
+                            reason="r", needs_review=True, **extra)
+
+    readings = {
+        "P-1": reading("P-1"),  # the reader asked for a look: the re-read answers that
+        "P-2": reading("P-2", reread_agrees=False, reread_reason="两次读图不一致"),
+        "P-3": reading("P-3").model_copy(update={"record_match": "conflicts"}),
+    }
+    assert [p["photo_id"] for p in photos_to_check([row], reference, readings)] == ["P-2", "P-3"]
+
+
+
+
+def test_labels_follow_the_table_and_leave_out_what_the_photo_cannot_show() -> None:
     from manyselves.capabilities.distribution_reporting.runtime.models.photo_reading import (
-        PhotoReadingRecord,
+        PhotoReading,
     )
     from manyselves.capabilities.distribution_reporting.runtime.photo_reading import (
-        compare_with_records,
+        UNSTABLE,
+        reading_label,
     )
 
-    record = [PhotoReadingRecord(evidence_id="E-1", subject="14#柜", fact="11.3A",
-                                 values=[{"value": 11.3, "unit": "A"}])]
-
-    def items(*pairs):
-        return [{"label": "x", "text": text, "legible": legible} for text, legible in pairs]
-
-    assert compare_with_records(record, items(("11.27A", True)))[0] == "matches"
-    assert compare_with_records(record, items(("OL", True)))[0] == "cannot_tell"
-    assert compare_with_records(record, items(("2.9", False)))[0] == "cannot_tell"
-    assert compare_with_records(record, items(("2025-06-12", True), ("D1601", True)))[0] == (
-        "cannot_tell"
-    )
-    assert compare_with_records(record, items(("2.9A", True)))[0] == "conflicts"
-    assert compare_with_records(record, items(("11.3", True)))[0] == "matches"
-    # A watermark temperature and a code beside the screen are not readings.
-    assert compare_with_records(
-        record, items(("23℃", True), ("防伪码 8234 2", True), ("-19.9", False))
-    )[0] == "cannot_tell"
-    no_value = [PhotoReadingRecord(evidence_id="E-2", subject="17号楼", fact="NG")]
-    assert compare_with_records(no_value, items(("16号楼", True)))[0] == "cannot_tell"
+    card = [
+        {"label": "3月", "text": "已检", "legible": True},
+        {"label": "5月", "text": "", "legible": True, "after_photo_date": True},
+    ]
+    base = PhotoReading(photo_id="P-1", visible="巡检卡", transcription=card, photo_date="2026-04-02",
+                        readings=[{"quantity": "current", "value": 1.97, "legible": True}],
+                        record_match="matches", reason="可见", needs_review=False)
+    label = reading_label(base)
+    assert "3月=已检" in label and "5月" not in label and "拍摄日期之后的1格未计入" in label
+    unstable = reading_label(base.model_copy(update={"reread_agrees": False}))
+    assert unstable.endswith(UNSTABLE) and "1.97" not in unstable and "已检" not in unstable

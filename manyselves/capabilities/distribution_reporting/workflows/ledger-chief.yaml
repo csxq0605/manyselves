@@ -1,26 +1,28 @@
 id: ledger-chief
-version: 1.0.0
-description: The chief merges actions and writes chapters 3, 1 and 4 from the ledger
+version: 5.3.0
+description: The chief merges actions and writes chapters 3 and 1 from the ledger; chapters 1 and 3 are fact-checked in small packets while the program checks their tables and text, chapter 3 while the chief writes chapter 1. The one fix and chapter 4 follow in ledger-chief-finish, while the authors fix the rows that carry the same errors
 tasks:
 - chief-chapter-3
 - revise-chief-actions
 - chief-chapter-1
-- revise-chief-overview
-- chief-chapter-4
 recovery:
 - typed-turn-recovery
-output_contract: ledger_chief_outputs
+output_contract: ledger_chief_checked
 state:
-  review_base: null
   final: null
   context: null
   chief_key: chief
-  chapter4: null
+  # The chapter each batch of fact-check packets is planned for.
+  fact_chapter_3: '3'
+  fact_chapter_1: '1'
+  # Chapter 1 reads the chief input already in the conversation.
+  chief_followup:
+    note: 依据同上：上文的总编资料、输入和你提交的第三章
 actions:
 - id: open-chief
-  kind: fork_conversation
-  source_variable: review_base
-  conversation_key: author
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: writer
   key_variable: chief_key
   mode: run
   output_variable: chief_conversation
@@ -55,7 +57,7 @@ actions:
     operator: eq
     value: true
   then: revise-3
-  otherwise: chapter-1
+  otherwise: chapter-1-and-facts-3
 - id: revise-3
   kind: invoke_agent
   agent: report-consultant
@@ -63,12 +65,22 @@ actions:
   conversation_variable: chief_conversation
   input_variable: check3
   output_variable: chapter3
+# Chapter 3 is fact-checked while the chief writes chapter 1; chapter 1's
+# packets are checked in the same branch as soon as it is written, without
+# waiting for chapter 3's.  Neither batch reads the other.
+- id: chapter-1-and-facts-3
+  kind: parallel
+  branches:
+    chapter1: chapter-1
+    facts3: plan-facts-3
+  join: join-chapter-1
+  max_concurrency: 2
 - id: chapter-1
   kind: invoke_agent
   agent: report-consultant
   task: chief-chapter-1
   conversation_variable: chief_conversation
-  input_variable: chief_input
+  input_variable: chief_followup
   output_variable: chapter1
 - id: check-1
   kind: invoke_tool
@@ -78,58 +90,148 @@ actions:
     chapter3: chapter3
     chapter1: chapter1
   output_variable: check1
-- id: blocking-1
+# Chapter 1 is fact-checked as written; the program's findings on its
+# tables join the fact check's, for the one fix.
+- id: plan-facts
+  kind: invoke_tool
+  tool: plan-chief-facts
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter1: chapter1
+    chapter: fact_chapter_1
+  output_variable: fact_plan
+- id: fact-items
   kind: set_variable
-  variable: blocking1
-  value_variable: check1
+  variable: fact_items
+  value_variable: fact_plan
+  field: fact_items
+- id: fact-check
+  kind: map
+  items_variable: fact_items
+  key_field: packet_id
+  workflow: ledger-chief-fact-check
+  key_input_variable: item_key
+  output_variable: fact_results
+  errors_variable: fact_errors
+  max_concurrency: 32
+  lead_seconds: 30
+- id: chapter-one
+  kind: set_variable
+  variable: chapter_one
+  value_variables:
+    chapter1: chapter1
+    check1: check1
+    packets: fact_items
+    results: fact_results
+- id: chapter-1-done
+  kind: goto
+  target: join-chapter-1
+- id: plan-facts-3
+  kind: invoke_tool
+  tool: plan-chief-facts
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter: fact_chapter_3
+  output_variable: fact_plan_3
+- id: fact-items-3
+  kind: set_variable
+  variable: fact_items_3
+  value_variable: fact_plan_3
+  field: fact_items
+- id: fact-check-3
+  kind: map
+  items_variable: fact_items_3
+  key_field: packet_id
+  workflow: ledger-chief-fact-check
+  key_input_variable: item_key
+  output_variable: fact_results_3
+  errors_variable: fact_errors_3
+  max_concurrency: 32
+  lead_seconds: 30
+- id: chapter-3-facts
+  kind: set_variable
+  variable: chapter3_facts
+  value_variables:
+    packets: fact_items_3
+    results: fact_results_3
+- id: facts-3-done
+  kind: goto
+  target: join-chapter-1
+- id: join-chapter-1
+  kind: join
+  parallel: chapter-1-and-facts-3
+  inputs:
+    chapter1: chapter_one
+    facts3: chapter3_facts
+  output_variable: chapter_one_and_facts
+- id: chapter-one-value
+  kind: set_variable
+  variable: chapter_one
+  value_variable: chapter_one_and_facts
+  field: chapter1
+- id: chapter-1-value
+  kind: set_variable
+  variable: chapter1
+  value_variable: chapter_one
+  field: chapter1
+- id: check-1-value
+  kind: set_variable
+  variable: check1
+  value_variable: chapter_one
+  field: check1
+- id: chapter-3-facts-value
+  kind: set_variable
+  variable: chapter3_facts
+  value_variable: chapter_one_and_facts
+  field: facts3
+- id: fact-items-1-value
+  kind: set_variable
+  variable: fact_items
+  value_variable: chapter_one
+  field: packets
+- id: fact-results-1-value
+  kind: set_variable
+  variable: fact_results
+  value_variable: chapter_one
+  field: results
+- id: apply-facts
+  kind: invoke_tool
+  tool: apply-chief-facts
+  input_variables:
+    packets: fact_items
+    results: fact_results
+    chapter3_facts: chapter3_facts
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+    check1: check1
+  output_variable: fact_checks
+- id: fact-check-value
+  kind: set_variable
+  variable: fact_check
+  value_variable: fact_checks
+  field: check
+- id: fact-blocking
+  kind: set_variable
+  variable: fact_blocking
+  value_variable: fact_checks
   field: blocking
-- id: route-1
-  kind: if
-  condition:
-    variable: blocking1
-    operator: eq
-    value: true
-  then: revise-1
-  otherwise: topic-flag
-- id: revise-1
-  kind: invoke_agent
-  agent: report-consultant
-  task: revise-chief-overview
-  conversation_variable: chief_conversation
-  input_variable: check1
-  output_variable: chapter1
-- id: topic-flag
+- id: row-fix-items
   kind: set_variable
-  variable: has_topic
-  value_variable: context
-  field: has_special_topic
-- id: route-4
-  kind: if
-  condition:
-    variable: has_topic
-    operator: eq
-    value: true
-  then: topic-input
-  otherwise: collect
-- id: topic-input
-  kind: set_variable
-  variable: topic_input
-  value_variable: context
-  field: special_topic_input
-- id: chapter-4
-  kind: invoke_agent
-  agent: report-consultant
-  task: chief-chapter-4
-  conversation_variable: chief_conversation
-  input_variable: topic_input
-  output_variable: chapter4
+  variable: row_fix_items
+  value_variable: fact_checks
+  field: row_fix_items
 - id: collect
   kind: set_variable
   variable: outputs
   value_variables:
     chapter1: chapter1
     chapter3: chapter3
-    chapter4: chapter4
+    fact_check: fact_check
+    fact_blocking: fact_blocking
+    row_fix_items: row_fix_items
 - id: finish
   kind: end_workflow
   output_variable: outputs

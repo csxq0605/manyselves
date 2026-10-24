@@ -17,6 +17,18 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SourceLocation,
 )
 
+# What a mapper writes for a cell the table left empty: the record keeps the
+# column, its value says the cell was blank.  ``blank_value`` is how every
+# reader tells a blank cell from a value.
+BLANK_CELL = "未填写"
+
+
+def blank_value(value: Any) -> bool:
+    """A record field the source table left empty (``BLANK_CELL``, with or without a note)."""
+
+    return not str(value or "").strip() or str(value).strip().startswith(BLANK_CELL)
+
+
 _DISPIMG_PATTERN = re.compile(r'DISPIMG\("([^"]+)"', re.IGNORECASE)
 
 
@@ -54,6 +66,48 @@ def unbound_photo_gaps(workbook: Workbook, evidence: list[EvidenceItem]) -> list
 
 HEADER_ROWS = 3
 
+# A trailing unit in a header label, e.g. "剩余电流(A)" -> "剩余电流".
+_TRAILING_UNIT = re.compile(r"\s*[（(][^（）()]*[）)]\s*$")
+
+
+def field_name(label: Any) -> str:
+    """A table header label as a field name: without a trailing unit."""
+
+    return _TRAILING_UNIT.sub("", str(label or "").strip()).strip()
+
+
+_DECLARED_UNIT = re.compile(r"[（(]([^（）()]+)[）)]\s*$")
+
+
+def header_unit(sheet: Any, row: int, column: int, fallback: str) -> str:
+    """The unit a column's own header declares, e.g. "剩余电流(A)" -> "A".
+
+    A header that declares none keeps the mapper's unit for that column.
+    """
+
+    match = _DECLARED_UNIT.search(str(sheet.cell(row, column).value or "").strip())
+    return match.group(1).strip() if match else fallback
+
+
+def header_label(sheet: Any, row: int, column: int, fallback: str) -> str:
+    """The checkpoint name the table's own label row gives a column."""
+
+    return field_name(sheet.cell(row, column).value) or fallback
+
+
+def _first_record_row(counts: dict[int, int]) -> int:
+    """The row the sheet's records start on.
+
+    A record a mapper reads from the header area itself (a graphic embedded
+    in a header cell) stands alone on its row while the records below share
+    theirs; it does not move the header above the records.
+    """
+
+    rows = sorted(counts)
+    if counts[rows[0]] == 1 and (later := [row for row in rows[1:] if counts[row] > 1]):
+        return later[0]
+    return rows[0]
+
 
 def source_layout(
     path: Path, evidence: list[EvidenceItem], image_ids: set[str]
@@ -65,11 +119,13 @@ def source_layout(
     span. The image location is the cell holding its DISPIMG formula.
     """
 
-    first_row: dict[str, int] = {}
+    per_row: dict[str, dict[int, int]] = {}
     for item in evidence:
         sheet, row = item.source.sheet, item.source.row
         if sheet and row:
-            first_row[sheet] = min(first_row.get(sheet, row), row)
+            counts = per_row.setdefault(sheet, {})
+            counts[row] = counts.get(row, 0) + 1
+    first_row = {sheet: _first_record_row(counts) for sheet, counts in per_row.items()}
     headers: dict[str, dict[str, str]] = {}
     cells: dict[str, tuple[str, str]] = {}
     workbook = load_workbook(path, read_only=False, data_only=False)
@@ -167,6 +223,7 @@ def make_evidence(
     column: str,
     subject: str,
     fact: str,
+    place: str | None = None,
     module_id: str | None = None,
     submodule_id: str | None = None,
     photo_refs: list[str] | None = None,
@@ -177,10 +234,12 @@ def make_evidence(
     needs_confirmation: bool = False,
     summary_entry: bool = False,
     program_note: str | None = None,
+    checkpoint_field: str | None = None,
 ) -> EvidenceItem:
     return EvidenceItem(
         id=evidence_id(file_id, sheet, cell, submodule_id, fact),
         subject=subject,
+        place=place,
         fact=fact,
         source=SourceLocation(
             file_id=file_id,
@@ -200,4 +259,5 @@ def make_evidence(
         photo_refs=photo_refs or [],
         summary_entry=summary_entry,
         program_note=program_note,
+        checkpoint_field=checkpoint_field,
     )

@@ -40,6 +40,11 @@ const HistoryRoutePage = lazy(async () => {
   return { default: module.HistoryRoutePage };
 });
 
+const HistorySessionRoutePage = lazy(async () => {
+  const module = await import("../features/history/HistoryPage");
+  return { default: module.HistorySessionRoutePage };
+});
+
 const SettingsPage = lazy(async () => {
   const module = await import("../features/settings/SettingsPage");
   return { default: module.SettingsPage };
@@ -170,6 +175,11 @@ export function AppRoutes({ accountUsername, gateway, onLogout, platform, settin
     <Route path="/projects/:projectId/history" element={(
       <Suspense fallback={<Placeholder title="正在加载历史会话…" />}>
         <HistoryRoutePage gateway={gateway} />
+      </Suspense>
+    )} />
+    <Route path="/projects/:projectId/history/:sessionId" element={(
+      <Suspense fallback={<Placeholder title="正在加载会话…" />}>
+        <HistorySessionRoutePage gateway={gateway} />
       </Suspense>
     )} />
     <Route path="/projects/:projectId/workflows" element={<RemovedWorkflowRoute />} />

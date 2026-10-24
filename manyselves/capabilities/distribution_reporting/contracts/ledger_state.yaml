@@ -1,7 +1,7 @@
 id: ledger_state
-version: 1.0.0
-description: The judgment ledger, its text snapshot and the per-module review items
+version: 2.0.0
+description: The judgment ledger with its program findings and dossiers
 adapter: json_schema
 schema:
   type: object
-  required: [run_id, ledger, snapshot, review_items]
+  required: [run_id, ledger]

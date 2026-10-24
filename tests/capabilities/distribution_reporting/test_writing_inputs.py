@@ -40,7 +40,8 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
         "basis": "b", "rule_refs": refs or [],
     }
     if disposition == "concern":
-        value |= {"risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
+        value |= {"finding": "负荷率偏高", "risk_level": "中", "hazard": "h", "hazard_sources": ["E-1"],
+                  "hazard_conditions": ["负荷持续偏高"],
                   "action": {"measure": "核查", "priority": "一般", "timeframe": "一月"}}
     if disposition == "undetermined":
         value |= {"gap": {"missing": "m", "impact": "i", "requested_input": "补资料"}}
@@ -50,15 +51,17 @@ def _row(row_id: str, disposition: str, refs: list[str] | None = None) -> Judgme
 def test_cited_knowledge_units_reach_the_writer_as_standard_names() -> None:
     units = knowledge_units([KNOWLEDGE])
     # The knowledge base's own status line travels with its standards.
+    # The unit's limits travel too, as the boundary the judgment kept to.
     assert units["KU-2.1-01"] == {
         "title": "负荷率评估", "standards": "GB 50052-2009《供配电系统设计规范》",
-        "status": "相关标准仅为候选检索入口。",
+        "status": "相关标准仅为候选检索入口。", "limits": "未核实原标准条款。",
     }
     assert units["KU-2.1-02"]["standards"] == "GB/T 12747"  # list and bold form; "无" ignored
     rows = [_row("J-2.1-1", "concern", ["KU-2.1-01", "KU-9.9-99"]), _row("J-2.1-2", "no_concern", ["KU-2.1-01"])]
     (entry,) = section_standards(rows, units)
     assert entry == {"rule": "负荷率评估", "standards": "GB 50052-2009《供配电系统设计规范》",
-                     "status": "相关标准仅为候选检索入口。", "for_rows": ["J-2.1-1", "J-2.1-2"]}
+                     "status": "相关标准仅为候选检索入口。", "limits": "未核实原标准条款。",
+                     "for_rows": ["J-2.1-1", "J-2.1-2"]}
     coverage = standards_coverage({"2.1": rows}, units)
     assert coverage["units_with_standards"] == 1 and coverage["unresolved"] == ["KU-9.9-99"]
 
@@ -85,7 +88,7 @@ def test_internal_workflow_words_in_prose_are_found_by_the_program() -> None:
     assert process_terms("设备台账完整，故障件已返修，详见 2.4.3.1。") == []
     findings = report_check_findings(
         sections={"2.1.1": "两个模块结论不同，已提交联合审查。"},
-        rows_by_submodule={}, known_values=[],
+        rows_by_submodule={}, slots={},
     )
     assert "联合审查" in findings["2.1.1"]["problem"]
     assert findings["2.1.1"]["severity"] == "blocking"
@@ -104,10 +107,10 @@ def test_row_text_is_checked_for_workflow_words_and_missing_knowledge_units() ->
         ledger_findings,
     )
 
-    leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "该冲突提交联合审查"})
+    leaky = _row("J-2.1-1", "concern", ["KU-2.1-01"]).model_copy(update={"finding": "该冲突提交联合审查"})
     bare = _row("J-2.1-2", "undetermined")
     fine = _row("J-2.1-3", "no_concern")
-    only_id = _row("J-2.1-4", "concern", ["KU-2.1-01"]).model_copy(update={"basis": "按 R-001 判断"})
+    only_id = _row("J-2.1-4", "concern", ["KU-2.1-01"]).model_copy(update={"hazard": "按 R-001 判断"})
     findings = ledger_findings(
         JudgmentSet(module_id="2.1", rows=[leaky, bare, fine, only_id]),
         submodule_ids=["2.1.1"], module_evidence_ids=["E-1"], known_evidence_ids=["E-1"],

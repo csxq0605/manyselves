@@ -9,7 +9,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     MappingResult,
 )
 
-from .common import cached_formula_workbook, make_evidence
+from .common import BLANK_CELL, cached_formula_workbook, make_evidence
+
+# The checklist's column saying whether a listed document was handed over
+# (OK/NG): an NG row is a document the client did not provide.
+AVAILABILITY = "具备情况"
 
 _DOCUMENT_EXACT_ROUTES = {
     "中低压电气系统图": "2.5.2",
@@ -39,30 +43,13 @@ _DOCUMENT_EXACT_ROUTES = {
     "应急预案及演练记录": "2.5.1",
 }
 
-_DOCUMENT_ROUTES = (
-    (("SOP", "EOP", "操作规程", "应急预案"), "2.5.1"),
-    (("保护定值", "定值计算"), "2.3.1"),
-    (("自动切换", "ATS"), "2.1.3"),
-    (("无功补偿", "电容柜"), "2.1.5"),
-    (("组织架构", "人员配备"), "2.5.3.1"),
-    (("维护计划", "维护记录", "维护工作"), "2.5.3.2"),
-    (("维保覆盖", "维保记录"), "2.5.3.3"),
-    (("单线图", "系统图", "图纸"), "2.5.2"),
-    (("智能化", "站控", "监控系统"), "2.5.4"),
-    (("LOTO", "安全用具", "操作工具"), "2.5.5"),
-    (("退市", "生命周期"), "2.5.7"),
-    (("备件",), "2.5.6"),
-)
-
-
 def _route_document(document_name: str) -> str | None:
-    if exact := _DOCUMENT_EXACT_ROUTES.get(document_name):
-        return exact
-    folded = document_name.upper()
-    for keywords, submodule_id in _DOCUMENT_ROUTES:
-        if any(keyword.upper() in folded for keyword in keywords):
-            return submodule_id
-    return None
+    """The fixed checklist row's subsection; a renamed row stays unassigned.
+
+    An unassigned row is recorded as a gap and the module authors place it.
+    """
+
+    return _DOCUMENT_EXACT_ROUTES.get(document_name)
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -91,10 +78,10 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
             document_name = _text(sheet.cell(row, 2).value)
             if not document_name:
                 continue
-            availability = _text(sheet.cell(row, 7).value, "未填写")
-            effectiveness = _text(sheet.cell(row, 8).value, "未填写")
+            availability = _text(sheet.cell(row, 7).value, BLANK_CELL)
+            effectiveness = _text(sheet.cell(row, 8).value, BLANK_CELL)
             note = _text(sheet.cell(row, 9).value)
-            fact = f"具备情况={availability}；有效性={effectiveness}"
+            fact = f"{AVAILABILITY}={availability}；有效性={effectiveness}"
             if note:
                 fact += f"；备注={note}"
             submodule_id = _route_document(document_name)
@@ -103,7 +90,7 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
                 gaps.append(
                     MappingGap(
                         code="unrouted_document",
-                        message=f"收资项未匹配报告子模块：{document_name}",
+                        message=f"收资项不在固定收资清单中，由模块作者归属：{document_name}",
                         sheet=sheet.title,
                         cell=f"B{row}",
                     )

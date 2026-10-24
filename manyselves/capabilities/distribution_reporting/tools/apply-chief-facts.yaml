@@ -1,0 +1,10 @@
+id: apply-chief-facts
+version: 1.0.0
+description: Split the fact checkers' findings by chapter for the chief's one revision
+implementation: capability:distribution-reporting:apply-chief-facts
+input_contract: ledger_chief_fact_results
+output_contract: ledger_chief_fact_checks
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,5 +1,6 @@
 """Map S4-6 assessment summaries while preserving their derived status."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +15,8 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
 
 from .common import cached_formula_workbook, dispimg_refs, make_evidence, unbound_photo_gaps
 
-_PATH_ALIASES = (
-    ("配电系统负荷分配与过载风险", "2.1.1"),
-    ("额定/分断能力", "2.4.1.1"),
-    ("电压事件（过压）的防范", "2.3.3"),
-    ("设备分合/储能/工作位置显示", "2.4.1.4"),
-    ("带病运行问题", "2.4.4"),
-)
+# The summary sheet's category path joins taxonomy titles with "＞".
+_PATH_SEPARATOR = re.compile(r"\s*[＞>]\s*")
 
 
 def _text(value: Any) -> str:
@@ -33,7 +29,7 @@ def _is_placeholder(value: Any) -> bool:
 
 def _known_submodule(value: Any) -> str | None:
     candidate = _text(value)
-    if not candidate.startswith(("2.1.", "2.2.", "2.3.", "2.4.", "2.5.")):
+    if not candidate.startswith("2."):
         return None
     try:
         resolve_submodule(candidate)
@@ -42,59 +38,60 @@ def _known_submodule(value: Any) -> str | None:
     return candidate
 
 
-def _submodule_from_path(value: Any) -> str | None:
+def _route_path(value: Any) -> tuple[str | None, str | None, str | None]:
+    """(module, subsection, gap) for a category path, matching titles exactly.
+
+    The path walks the section tree from the module title down.  A path that
+    stops at a heading with subsections stays with that module, and its
+    author chooses the subsection.  A path whose segments leave the tree goes
+    to the subsection its last segment names, when exactly one has that
+    title, and the mismatch is recorded.
+    """
+
     path_text = _text(value)
-    if not path_text:
-        return None
-    for title, submodule_id in _PATH_ALIASES:
-        if title in path_text:
-            return submodule_id
-    definitions = sorted(
-        (
-            definition
-            for module in REPORT_TAXONOMY.values()
-            for definition in module.submodules.values()
-        ),
-        key=lambda definition: len(definition.title),
-        reverse=True,
+    segments = [segment for segment in _PATH_SEPARATOR.split(path_text) if segment]
+    if not segments:
+        return None, None, None
+    # The path may start at the module or at a heading inside it.
+    starts = [
+        (module, module.id) for module in REPORT_TAXONOMY.values() if module.title == segments[0]
+    ] or [
+        (module, section_id)
+        for module in REPORT_TAXONOMY.values()
+        for section_id, section in module.sections.items()
+        if section.title == segments[0]
+    ]
+    if len(starts) != 1:
+        return None, None, None
+    module, node = starts[0]
+    for segment in segments[1:]:
+        child = next(
+            (
+                section_id
+                for section_id, section in module.sections.items()
+                if section_id.rsplit(".", 1)[0] == node and section.title == segment
+            ),
+            None,
+        )
+        if child is None:
+            break
+        node = child
+    else:
+        return module.id, node if node in module.submodules else None, None
+    hits = [
+        (other.id, section_id)
+        for other in REPORT_TAXONOMY.values()
+        for section_id, section in other.submodules.items()
+        if section.title == segments[-1]
+    ]
+    if len(hits) == 1:
+        module_id, section_id = hits[0]
+        return module_id, section_id, (
+            f"原表分类路径“{path_text}”与报告小节树的层级不一致；按最后一段归入 {section_id}"
+        )
+    return module.id, None, (
+        f"原表分类路径“{path_text}”有一段对不上报告小节树；归入 {module.id}，由模块作者选定小节"
     )
-    for definition in definitions:
-        if definition.title in path_text:
-            return definition.id
-    return None
-
-
-def _submodule_from_conclusion(path_value: Any, observation: str) -> str | None:
-    path_text = _text(path_value)
-    if "配置与选型问题" in path_text and any(
-        keyword in observation
-        for keyword in ("开关", "断路器", "熔断器", "额定", "容量")
-    ):
-        return "2.4.1.1"
-    if "带病运行问题" in path_text:
-        if "无法实现分合闸" in observation or "无法分合" in observation:
-            return "2.4.1.4"
-        if any(
-            keyword in observation
-            for keyword in ("剩余电流", "接地线的电流过高", "漏电流")
-        ):
-            return "2.4.3.1"
-        if any(keyword in observation for keyword in ("异响", "震动")):
-            return "2.2.2.3"
-        if any(
-            keyword in observation
-            for keyword in ("零线腐蚀", "固定在零排", "接线端螺帽")
-        ):
-            return "2.4.2.3"
-        return "2.4.4"
-    if "电缆、桥架、母线安装问题" in path_text and any(
-        keyword in observation
-        for keyword in ("导体裸露", "铜线裸露", "母排裸露", "母线接头裸露")
-    ):
-        return "2.4.2.1"
-    if "设备外壳IP等级与封堵问题" in path_text and "锁闭管理" in observation:
-        return "2.5.5"
-    return _submodule_from_path(path_text)
 
 
 def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
@@ -128,25 +125,6 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                 if not _is_placeholder(recommendation):
                     parts.append(f"既有行动建议={recommendation}")
                 fact = "；".join(parts)
-                expected_submodule: str | None = None
-                if submodule_id == "2.4.1.1" and "无法分合" in finding:
-                    expected_submodule = "2.4.1.4"
-                elif submodule_id == "2.4.1.3" and "被遮挡" in finding:
-                    expected_submodule = "2.4.4"
-                if expected_submodule:
-                    gaps.append(
-                        MappingGap(
-                            code="summary_taxonomy_conflict",
-                            message=(
-                                f"汇总表将“{finding}”列入 {submodule_id}，"
-                                f"但内容更接近 {expected_submodule}，需专业复核"
-                            ),
-                            sheet=sheet.title,
-                            cell=f"B{row}:G{row}",
-                            module_id=resolve_submodule(submodule_id).module_id,
-                            submodule_id=submodule_id,
-                        )
-                    )
                 evidence.append(
                     make_evidence(
                         file_id=file_id,
@@ -190,33 +168,29 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                     or observation in {"结论建议汇总表", "发现问题 Topics"}
                 ):
                     continue
-                submodule_id = _submodule_from_conclusion(path_value, observation)
-                if not submodule_id:
+                module_id, submodule_id, mismatch = _route_path(path_value)
+                if module_id is None:
+                    # Kept unassigned: the module authors place it.
                     gaps.append(
                         MappingGap(
                             code="unrouted_conclusion",
-                            message=f"结论建议未匹配报告子模块：{path_value or '未填写分类路径'}",
+                            message=(
+                                "结论建议的分类路径对不上报告小节树，由模块作者归属："
+                                f"{path_value or '未填写分类路径'}"
+                            ),
                             sheet=sheet.title,
                             cell=f"B{row}:F{row}",
                         )
                     )
-                    continue
-                if (
-                    "配置与选型问题" in path_value
-                    and _submodule_from_path(path_value) is None
-                    and submodule_id == "2.4.1.1"
-                ):
+                elif mismatch:
                     gaps.append(
                         MappingGap(
-                            code="inferred_conclusion_submodule",
-                            message=(
-                                "结论路径仅填写到 2.4.1 配置与选型问题；"
-                                f"根据“{observation}”暂按 2.4.1.1 保留，需专业复核"
-                            ),
+                            code="summary_path_mismatch",
+                            message=mismatch,
                             sheet=sheet.title,
-                            cell=f"B{row}:H{row}",
-                            module_id="2.4",
-                            submodule_id="2.4.1.1",
+                            cell=f"B{row}",
+                            module_id=module_id,
+                            submodule_id=submodule_id,
                         )
                     )
                 fact = "；".join(
@@ -237,9 +211,9 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         cell=source_cell,
                         row=row,
                         column="C",
-                        subject=f"评估总表 {submodule_id}",
+                        subject=f"评估总表 {submodule_id or module_id or '待归属'}",
                         fact=fact,
-                        module_id=resolve_submodule(submodule_id).module_id,
+                        module_id=module_id,
                         submodule_id=submodule_id,
                         photo_refs=dispimg_refs(sheet.cell(row, 6).value),
                         confidence=0.6,

@@ -1,7 +1,7 @@
 id: ledger_context
-version: 1.0.0
-description: Shared context, module briefs and chapter 4 plan of a ledger report run
+version: 2.0.0
+description: Module briefs, each judge's materials and the chapter 4 plan of a ledger report run
 adapter: json_schema
 schema:
   type: object
-  required: [run_id, shared, modules, module_titles, has_special_topic, chief_key]
+  required: [run_id, modules, judge_items, module_titles, has_special_topic, chief_key]

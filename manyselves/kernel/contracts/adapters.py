@@ -10,6 +10,7 @@ from jsonschema.validators import validator_for
 from pydantic import TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
+from manyselves.kernel.contracts.relocation import relocate
 from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionKind,
@@ -40,12 +41,30 @@ class PydanticContractAdapter:
 
     def __init__(self, model: Any) -> None:
         self._adapter = TypeAdapter(model)
+        self._json_schema: dict[str, Any] | None = None
 
     def validate(self, value: Any) -> Any:
         try:
             return self._adapter.validate_python(value)
         except PydanticValidationError as exc:
-            raise ContractValidationError(_compact_errors(exc, value)) from exc
+            first = exc
+        # A field submitted at the wrong level goes back where the contract
+        # declares it, when the contract makes that place certain.
+        moved, notes = relocate(value, self._schema())
+        if moved != value:
+            try:
+                return self._adapter.validate_python(moved)
+            except PydanticValidationError as exc:
+                first, value = exc, moved
+        raise ContractValidationError(_compact_errors(first, value, notes)) from first
+
+    def _schema(self) -> dict[str, Any]:
+        if self._json_schema is None:
+            try:
+                self._json_schema = self._adapter.json_schema()
+            except Exception:  # a type without a JSON schema relocates nothing
+                self._json_schema = {}
+        return self._json_schema
 
     def json_schema(self) -> dict[str, Any]:
         return deepcopy(self._adapter.json_schema())
@@ -70,13 +89,24 @@ def _item_label(value: Any, loc: tuple[Any, ...]) -> str:
     return "".join(parts) or "(根)"
 
 
-def _compact_errors(exc: PydanticValidationError, value: Any) -> str:
-    """One line per error with its location, without echoing the submitted values."""
+def _compact_errors(
+    exc: PydanticValidationError, value: Any, notes: list[tuple[str, str]] | None = None
+) -> str:
+    """One line per error with its location, without echoing the submitted values.
 
-    lines = [
-        f"{_item_label(value, tuple(error['loc']))}: {error['msg']}"
-        for error in exc.errors(include_url=False, include_input=False)
-    ]
+    A field the contract places elsewhere is named once, with where it goes;
+    the errors inside it at the wrong place are left out, since they describe
+    the wrong parent's entries and would lead the correction astray.
+    """
+
+    notes = notes or []
+    misplaced = [at for at, _line in notes]
+    lines = [line for _at, line in notes]
+    for error in exc.errors(include_url=False, include_input=False):
+        dotted = ".".join(str(part) for part in error["loc"])
+        if any(dotted == at or dotted.startswith(at + ".") for at in misplaced):
+            continue
+        lines.append(f"{_item_label(value, tuple(error['loc']))}: {error['msg']}")
     return f"{len(lines)} 处不符合：\n" + "\n".join(lines)
 
 
@@ -95,9 +125,18 @@ class JsonSchemaContractAdapter:
     def validate(self, value: Any) -> Any:
         try:
             self._validator.validate(value)
+            return value
         except JsonSchemaValidationError as exc:
-            raise ContractValidationError(exc.message) from exc
-        return value
+            first = exc
+        moved, notes = relocate(value, self._schema)
+        if moved != value:
+            try:
+                self._validator.validate(moved)
+                return moved
+            except JsonSchemaValidationError as exc:
+                first = exc
+        message = "\n".join([line for _at, line in notes] + [first.message])
+        raise ContractValidationError(message) from first
 
     def json_schema(self) -> dict[str, Any]:
         return deepcopy(self._schema)

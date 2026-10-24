@@ -1,0 +1,7 @@
+id: ledger_review_plan
+version: 3.0.0
+description: The module and cross-module reviews' items
+adapter: json_schema
+schema:
+  type: object
+  required: [review_items, cross_items]

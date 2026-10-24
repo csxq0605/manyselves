@@ -10,12 +10,14 @@ from typing import Any, Literal
 
 from pydantic import Field, TypeAdapter, model_validator
 
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    example_report_taxonomy,
+    reset_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     FINAL_AUDIT_SECTION_IDS,
-    TEMPLATE_ROLE_SKILL_IDS,
-    TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
-    TEMPLATE_SKILL_TRANSFER_CATEGORIES,
     ChapterScopedFinalReviewFinding,
     ClaimRecord,
     CrossDecisionPack,
@@ -30,7 +32,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     RevisionResponse,
     StrictModel,
     TableSubmissionInput,
-    TemplateRoleSkillId,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
     CHAPTER1_SECTION_IDS,
@@ -476,78 +477,6 @@ class FinalChapterLaneInput(StrictModel):
             raise ValueError("initial Final lane cannot carry recheck findings or responses")
         if self.phase == "recheck" and not self.required_findings:
             raise ValueError("Final recheck lane requires required findings")
-        return self
-
-
-class TemplateDistillationInput(StrictModel):
-    kind: Literal["template_distillation_input"] = "template_distillation_input"
-    run_id: str = Field(min_length=1, description="Immutable current report run id.")
-    template_ref: str = Field(
-        min_length=1,
-        description="Only template snapshot the distiller may inspect in this task.",
-    )
-    inspect_max_chars: int = Field(
-        ge=1,
-        description="Exact maximum character budget for the one allowed document inspection.",
-    )
-    required_part_ids: list[TemplateRoleSkillId] = Field(
-        description="Exact fourteen role-, module-, and Chief-chapter Skill parts required before submission."
-    )
-    boundary_policy_version: Literal[1] = Field(
-        default=1,
-        description=(
-            "Exact reusable-guidance boundary policy version the submission must declare; "
-            "fact-free worked examples remain part of their corresponding Skill methods."
-        ),
-    )
-    allowed_transfer_categories: list[
-        Literal[
-            "analysis_method",
-            "synthesis_method",
-            "visual_method",
-            "quality_check",
-        ]
-    ] = Field(
-        default_factory=lambda: sorted(TEMPLATE_SKILL_TRANSFER_CATEGORIES),
-        description=(
-            "Only template-content categories permitted in the reusable Skill. Each method "
-            "category includes its fact-free structural, positive, and negative examples."
-        ),
-    )
-    required_exclusion_categories: list[
-        Literal[
-            "domain_knowledge",
-            "domain_standard_or_threshold",
-            "project_fact_or_number",
-            "customer_identity",
-            "project_finding_or_risk",
-            "project_conclusion_or_recommendation",
-            "evidence_or_claim_identifier",
-        ]
-    ] = Field(
-        default_factory=lambda: sorted(TEMPLATE_SKILL_EXCLUSION_CATEGORIES),
-        description="Every non-method category the distiller must explicitly exclude.",
-    )
-
-    @model_validator(mode="after")
-    def exact_parts(self) -> "TemplateDistillationInput":
-        expected = set(TEMPLATE_ROLE_SKILL_IDS)
-        if set(self.required_part_ids) != expected or len(self.required_part_ids) != len(expected):
-            raise ValueError("template distillation requires exactly fourteen role Skill parts")
-        if (
-            set(self.allowed_transfer_categories)
-            != TEMPLATE_SKILL_TRANSFER_CATEGORIES
-            or len(self.allowed_transfer_categories)
-            != len(TEMPLATE_SKILL_TRANSFER_CATEGORIES)
-        ):
-            raise ValueError("template distillation transfer categories are incomplete")
-        if (
-            set(self.required_exclusion_categories)
-            != TEMPLATE_SKILL_EXCLUSION_CATEGORIES
-            or len(self.required_exclusion_categories)
-            != len(TEMPLATE_SKILL_EXCLUSION_CATEGORIES)
-        ):
-            raise ValueError("template distillation exclusion categories are incomplete")
         return self
 
 
@@ -2097,7 +2026,6 @@ class FinalAuditSnapshot(StrictModel):
 
 
 INPUT_CONTRACT_TYPES = {
-    "template_distillation_input": TemplateDistillationInput,
     "module_authoring_input": ModuleAuthoringInput,
     "module_review_input": ModuleReviewInput,
     "cross_review_input": CrossReviewInput,
@@ -2114,7 +2042,6 @@ INPUT_CONTRACT_TYPES = {
 }
 
 INPUT_CONTRACT_SUMMARIES = {
-    "template_distillation_input": "One exact template snapshot and five required durable output parts.",
     "module_authoring_input": "One fixed module scope with role-labelled current-run evidence inputs.",
     "module_review_input": "One exact module subject plus phase-specific immutable review state.",
     "cross_review_input": "Five exact module subjects plus phase-specific Cross closure state.",
@@ -2253,6 +2180,8 @@ def _example_final_audit_metadata() -> dict[str, Any]:
     }
 
 
+# Examples illustrate contracts with the example tree; a run binds its own.
+_EXAMPLE_TAXONOMY = activate_report_taxonomy(example_report_taxonomy())
 _EXAMPLE_MODULES = {
     module_id: module_content_view(
         ModuleSubmission.model_validate(_example_module(module_id))
@@ -2275,13 +2204,6 @@ _EXAMPLE_CROSS_DECISION = {
 }
 
 INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
-    "template_distillation_input": {
-        "kind": "template_distillation_input",
-        "run_id": "report-example",
-        "template_ref": "Work/runs/report-example/templates/template-for-skill.docx",
-        "inspect_max_chars": 100000,
-        "required_part_ids": list(TEMPLATE_ROLE_SKILL_IDS),
-    },
     "module_authoring_input": {
         "kind": "module_authoring_input",
         "run_id": "report-example",
@@ -2551,6 +2473,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         ],
     },
 }
+reset_report_taxonomy(_EXAMPLE_TAXONOMY)
 
 
 def _enrich_properties(node: Any) -> None:

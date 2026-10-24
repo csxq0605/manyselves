@@ -101,3 +101,27 @@ describe("LogsPage", () => {
     });
   });
 });
+
+describe("log rows", () => {
+  it("bound the Agent column so a long Workflow Agent id cannot squeeze the message", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/features/logs/logs-page.css", "utf8");
+    const row = /\.logs-page__list li \{(?<body>[^}]*)\}/s.exec(css)?.groups?.body ?? "";
+    const columns = /grid-template-columns:\s*(?<value>[^;]+);/.exec(row)?.groups?.value ?? "";
+    expect(columns).not.toMatch(/\bauto\b/);
+    expect(columns.trim().split(/\s+(?![^(]*\))/)).toHaveLength(5);
+  });
+
+  it("shows a Workflow Agent by role and piece, with the full id on hover", async () => {
+    const agentId = "distribution-reporting:full-report-0123456789abcdef0123456789abcdef:report-consultant:run:full-report-0123456789abcdef0123456789abcdef:report-consultant:writer:2.4#1";
+    const list = vi.fn().mockResolvedValue({
+      ...response,
+      entries: [{ ...response.entries[0]!, agentId, message: "thinking", type: "agent.status.changed" }],
+      total: 1,
+    });
+    renderPage(fakeApi({ list }));
+
+    const label = await screen.findByText("report-consultant · writer · 2.4#1");
+    expect(label).toHaveAttribute("title", agentId);
+  });
+});

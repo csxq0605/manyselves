@@ -1,0 +1,7 @@
+id: ledger_chief_draft
+version: 1.0.0
+description: Chapters 1 and 3 with the chief's text sections as they now read
+adapter: json_schema
+schema:
+  type: object
+  required: [chapter1, chapter3, texts]

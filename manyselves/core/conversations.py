@@ -81,6 +81,15 @@ class ConversationStore:
         self._migrate_old_files()
         self._load_sessions_without_creating()
 
+    @classmethod
+    def reader(cls, workspace: Path) -> "ConversationStore":
+        """Open another project's conversations to read: creates and migrates nothing."""
+        store = cls.__new__(cls)
+        store._dir = Path(workspace).resolve() / ".manyselves" / "conversations"
+        store._sessions_file = store._dir / "sessions.json"
+        store._current_session_ids = {}
+        return store
+
     # ---- Migration ----
 
     def _migrate_old_files(self) -> None:
@@ -378,8 +387,10 @@ class ConversationStore:
         if extra:
             record.update(extra)
 
-        # Auto-name only from the main panel's first direct user message.
-        if role == "user" and agent_type == "main":
+        # Auto-name only from the main panel's first direct user message; a
+        # system notice sent to Main as a user turn names nothing.
+        direct = str((extra or {}).get("source") or "user") == "user"
+        if role == "user" and agent_type == "main" and direct:
             self.rename_current_session_from_first_message(agent_type, content)
             self.update_session_preview(agent_type, content)
         try:
@@ -480,7 +491,15 @@ class ConversationStore:
     # ---- Read ----
 
     def load_messages(self, agent_type: str, limit: int = 500) -> list[dict[str, Any]]:
-        path = self._get_session_file_path(agent_type)
+        return self._read_records(self._get_session_file_path(agent_type), limit)
+
+    def load_session_messages(
+        self, agent_type: str, session_id: str, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Read one stored session of an Agent, current or not, without touching it."""
+        return self._read_records(self._agent_directory(agent_type) / f"{session_id}.jsonl", limit)
+
+    def _read_records(self, path: Path, limit: int) -> list[dict[str, Any]]:
         if not path.exists():
             return []
         records: list[dict[str, Any]] = []

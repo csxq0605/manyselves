@@ -25,10 +25,9 @@ REPORTING_DOMAIN_PREFIX = "manyselves.core.reporting"
 
 REPORTING_ENTRYPOINTS = {
     "full-report",
-    "module-report",
-    "aggregate-existing",
     "render-existing",
-    "distill-template-skill",
+    "extract-template-skills",
+    "triage-writing-lessons",
 }
 
 
@@ -357,8 +356,14 @@ def test_main_reporting_entrypoint_is_capability_owned_not_runtime_owned() -> No
     assert "RunReportingWorkflowTool" not in manager_source
     assert "RunReportingWorkflowTool" not in loop_source
     assert 'name = "run_reporting_workflow"' in capability_adapter_source
-    assert "_WORKFLOW_BY_OPERATION" in capability_adapter_source
-    assert "run_reporting_workflow" in prompt_source
+    # The kernel's Main prompt stays generic; the report part lives in the
+    # Capability and is appended by the prompt loader.
+    assert "run_reporting_workflow" not in prompt_source
+    assert "配电" not in prompt_source
+    capability_prompt = (REPORTING_CAPABILITY_ROOT / "main_agent.md").read_text(
+        encoding="utf-8"
+    )
+    assert "run_reporting_workflow" in capability_prompt
     assert "ProjectSkillEvolutionTool" not in manager_source
     assert "RunProductSkillMaintainerTool" not in manager_source
     assert "load_packaged_agents" not in manager_source
@@ -417,7 +422,7 @@ def test_legacy_core_reporting_python_package_is_absent() -> None:
 
 
 def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> None:
-    """The five public report operations must start compiled file workflows."""
+    """The public report operations must start compiled file workflows."""
 
     capability_path = REPORTING_CAPABILITY_ROOT / "capability.yaml"
     capability = yaml.safe_load(capability_path.read_text(encoding="utf-8"))
@@ -429,5 +434,5 @@ def test_all_reporting_operations_are_file_declared_workflow_entrypoints() -> No
         if isinstance(payload, dict) and isinstance(payload.get("id"), str)
     }
 
-    assert REPORTING_ENTRYPOINTS <= declared_entrypoints
+    assert REPORTING_ENTRYPOINTS == declared_entrypoints
     assert declared_entrypoints <= workflow_ids

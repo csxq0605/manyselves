@@ -1,0 +1,10 @@
+id: apply-joint-review
+version: 1.0.0
+description: Split the joint reviews into the editor's held findings and the fact check for the chief's one fix
+implementation: capability:distribution-reporting:apply-joint-review
+input_contract: ledger_joint_review_results
+output_contract: ledger_joint_draft
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

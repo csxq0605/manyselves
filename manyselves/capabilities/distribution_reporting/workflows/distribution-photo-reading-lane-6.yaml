@@ -1,0 +1,64 @@
+id: distribution-photo-reading-lane-6
+version: 1.0.0
+description: Photo reading lane 6, one photo per reader turn
+tasks:
+- photo-reading
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tool_input
+output_contract: photo_reading_list
+max_iterations: 5000
+state:
+  plan: {}
+  lane-id: "6"
+  lane-photos: []
+  lane-photo: {}
+  photo-conversation: {}
+  photo-submission: {}
+  photo-reading: {}
+  lane-readings: []
+actions:
+- id: select-photo-lane-6
+  kind: invoke_tool
+  tool: select-photo-reading-lane
+  input_variables:
+    plan: plan
+    lane_id: lane-id
+  output_variable: lane-photos
+- id: each-photo-lane-6
+  kind: for_each
+  items_variable: lane-photos
+  item_variable: lane-photo
+  body: fresh-photo-conversation-6
+  after: finish-photo-lane-6
+- id: fresh-photo-conversation-6
+  kind: reset_conversation
+  agent: photo-reader
+  conversation_key: photo-reading-lane-6
+  mode: run
+  output_variable: photo-conversation
+- id: read-photo-6
+  kind: invoke_agent
+  agent: photo-reader
+  task: photo-reading
+  conversation_variable: photo-conversation
+  input_variable: lane-photo
+  output_variable: photo-submission
+- id: accept-photo-reading-6
+  kind: invoke_tool
+  tool: accept-photo-reading
+  input_variables:
+    item: lane-photo
+    result: photo-submission
+  output_variable: photo-reading
+- id: record-photo-reading-6
+  kind: append_variable
+  variable: lane-readings
+  value_variable: photo-reading
+- id: next-photo-lane-6
+  kind: goto
+  target: each-photo-lane-6
+- id: finish-photo-lane-6
+  kind: end_workflow
+  output_variable: lane-readings
+  output_name: result

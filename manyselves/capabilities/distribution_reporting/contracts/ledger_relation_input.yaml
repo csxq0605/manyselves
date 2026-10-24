@@ -1,6 +1,6 @@
 id: ledger_relation_input
-version: 1.0.0
-description: Other modules' flagged rows and the knowledge base's relation method, for one author
+version: 3.0.0
+description: Other modules' flagged rows, the rows on the same objects and at the same room, and the relation method, for one author
 adapter: json_schema
 schema:
   type: object
@@ -10,6 +10,8 @@ schema:
       type: string
     related:
       type: object
+    group_id:
+      type: string
     flagged_elsewhere:
       type: array
       items:
@@ -20,3 +22,9 @@ schema:
       type: array
       items:
         type: string
+    same_room:
+      type: object
+      description: Row id of another module's flagged row at the same distribution room (the table's room column) -> that row briefly
+    facts:
+      type: string
+      description: The records the candidates cite (related rows, same-room rows), as recorded

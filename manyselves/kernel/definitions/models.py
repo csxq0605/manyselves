@@ -136,7 +136,40 @@ class TaskDefinition(DefinitionBase):
             "in this order, instead of inside the JSON input"
         ),
     )
+    static_first: bool = Field(
+        default=False,
+        description=(
+            "Lay the request out for a batch: shared_fields, then the task, its "
+            "constraints and output schema (the same in every request of the "
+            "batch), then the other context fields and the input; requests that "
+            "start the same way reuse what an earlier one sent"
+        ),
+    )
+    shared_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Context fields every request of a batch carries the same, placed "
+            "first when static_first is set"
+        ),
+    )
     image: TaskImageInput | None = None
+    needs_history: bool = Field(
+        default=False,
+        description=(
+            "The task reads what earlier turns of its conversation hold, so a "
+            "turn over its budget is sent whole instead of starting afresh"
+        ),
+    )
+    attention_budget_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Largest request (system prompt, history, task input and tools) "
+            "this task should send.  Over it, the turn starts afresh from its "
+            "own input; still over, it is sent whole and noted.  Nothing is "
+            "truncated, and only a request over the model's window fails"
+        ),
+    )
 
 
 class RecoveryRule(BaseModel):

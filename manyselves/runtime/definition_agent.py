@@ -43,9 +43,15 @@ from .agent_execution import (
     AgentSessionRestore,
     AgentTurnRequest,
 )
+from .agent_memo import FileAgentTurnMemo, file_digest, turn_key
 from .agent_recovery import AgentRecoveryDriver
 from .agent_results import FileAgentResultStore
-from .conversation_history import FileConversationHistoryStore
+from .context_budget import estimate_request_tokens, provider_context_window
+from .conversation_history import (
+    FileConversationHistoryStore,
+    drop_rejected_attempts,
+    serialize_message,
+)
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
 from .tools.registry import ToolRegistry
@@ -96,6 +102,29 @@ class DefinitionAgentInvoker:
         self.loop_builder = loop_builder
         self.results = FileAgentResultStore(self.workspace, run_id)
         self.histories = FileConversationHistoryStore(self.workspace, run_id)
+        self.memo = FileAgentTurnMemo(self.workspace, run_id)
+
+    def _note_budget(
+        self,
+        task: Any,
+        conversation: ConversationRecord,
+        action: str,
+        estimate: int,
+        sent: int,
+    ) -> None:
+        """Record a turn that went over its task's budget and what was done instead."""
+
+        path = self.workspace / f"Work/runs/{self.run_id}/budget-notes.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "task_id": task.id,
+                "conversation_id": conversation.conversation_id,
+                "action": action,
+                "budget": task.attention_budget_tokens,
+                "estimate": estimate,
+                "sent": sent,
+            }, ensure_ascii=False) + "\n")
 
     async def close(self) -> None:
         await self.execution.close_workflow(self.workflow_id)
@@ -192,11 +221,82 @@ class DefinitionAgentInvoker:
             persist_handoff_summary=False,
         )
         existing = self.execution.session(self.workflow_id, conversation_id)
-        restore = None
+        restore = None if existing is not None else self._restore(conversation)
+        try:
+            images = self._images(task, input_value)
+        except ValueError as exc:
+            return AgentInvocationOutcome(
+                status="failed", session_id=conversation.external_session_id, error=str(exc)
+            )
+        prompt = self._prompt(task, input_value, tools)
+        before = _history_of(existing, restore)
+        if task.attention_budget_tokens is not None:
+            # The budget is where the work changes course, never where it
+            # fails or is cut: over it, the turn starts afresh from its own
+            # input (every task that continues a conversation carries what it
+            # needs, or says it reads its history); still over, it is sent
+            # whole with a note.  Only a request the model's window cannot
+            # hold fails.
+            def estimate_for(history: list[dict[str, Any]]) -> int:
+                return estimate_request_tokens(
+                    system_prompt=agent.instructions,
+                    history=history,
+                    prompt=prompt,
+                    tool_schemas=tools.get_definitions(),
+                    images=len(images),
+                )
+
+            estimate = estimate_for(before)
+            if estimate > task.attention_budget_tokens and before and not task.needs_history:
+                fresh = estimate_for([])
+                if fresh < estimate:
+                    self._note_budget(
+                        task, conversation, "fresh_conversation", estimate, fresh
+                    )
+                    if existing is not None:
+                        replace = getattr(existing.loop, "replace_conversation", None)
+                        if callable(replace):
+                            replace([])
+                    restore = None
+                    before = []
+                    estimate = fresh
+            if estimate > task.attention_budget_tokens:
+                window = provider_context_window(
+                    self.services.agent_defaults, self.services.active_provider
+                )
+                if estimate > window:
+                    return AgentInvocationOutcome(
+                        status="failed",
+                        session_id=conversation.external_session_id,
+                        error=(
+                            f"{ATTENTION_BUDGET_EXCEEDED}: task {task.id} would send about "
+                            f"{estimate} tokens, above the model's window of {window}"
+                        ),
+                    )
+                self._note_budget(task, conversation, "sent_over_budget", estimate, estimate)
+        memo_key = turn_key(
+            system_prompt=agent.instructions,
+            prompt=prompt,
+            tool_schemas=tools.get_definitions(),
+            output_schema=output_contract.json_schema(),
+            image_digests=[file_digest(image["path"]) for image in images],
+            history=before,
+        )
+        replayed = await self._replay(
+            memo_key,
+            before=before,
+            output_contract=output_contract,
+            conversation=conversation,
+            agent=agent,
+            task=task,
+            store_key=store_key,
+            input_value=input_value,
+            live=existing is not None,
+        )
+        if replayed is not None:
+            return replayed
         if existing is not None:
             factory.reconfigure(existing.loop)
-        else:
-            restore = self._restore(conversation)
         turn = TypedAgentTurn(
             execution=self.execution,
             workflow_id=self.workflow_id,
@@ -224,14 +324,8 @@ class DefinitionAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
-        try:
-            images = self._images(task, input_value)
-        except ValueError as exc:
-            return AgentInvocationOutcome(
-                status="failed", session_id=session.session_id, error=str(exc)
-            )
         request = AgentTurnRequest(
-            content=self._prompt(task, input_value, tools),
+            content=prompt,
             images=images,
             message_id=f"{attempt_id}:initial",
             workflow_id=self.workflow_id,
@@ -277,13 +371,100 @@ class DefinitionAgentInvoker:
                         status="ok", result=recovered, session_id=session.session_id
                     )
                 )
+            if mapped.status == "ok":
+                self._settle(session.loop, len(before))
         finally:
             self._save_history(conversation_id, session.loop)
+        if mapped.status == "ok" and not task.tools:
+            self._remember(
+                memo_key,
+                result=mapped.result,
+                before=before,
+                loop=session.loop,
+                detail={
+                    "agent_id": agent.id,
+                    "task_id": task.id,
+                    "store_key": store_key,
+                    "conversation_id": conversation_id,
+                },
+            )
         if mapped.status != "ok":
             reason = self._failure_reason(conversation_id, store_key)
             if reason:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
+
+    async def _replay(
+        self,
+        memo_key: str,
+        *,
+        before: list[dict[str, Any]],
+        output_contract: ContractAdapter,
+        conversation: ConversationRecord,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        store_key: str,
+        input_value: Any,
+        live: bool,
+    ) -> AgentInvocationOutcome | None:
+        """Replay a turn the model already completed for exactly this context."""
+
+        if task.tools:
+            # Turns that call Capability Tools have side effects; replaying
+            # the reply alone would skip them.
+            return None
+        record = self.memo.load(memo_key)
+        if record is None:
+            return None
+        try:
+            result = _json_value(output_contract.validate(record.get("result")))
+        except Exception:  # noqa: BLE001 - a stale record is simply not reused
+            return None
+        conversation_id = conversation.conversation_id
+        self.histories.save(conversation_id, self.memo.history_after(record, before))
+        if live:
+            # The next turn restores from the saved history, so the live
+            # session must not keep the pre-replay conversation.
+            await self.execution.close_session(self.workflow_id, conversation_id)
+        self.results.save(
+            conversation_id=conversation_id,
+            task_id=store_key,
+            agent_id=agent.id,
+            input_value=input_value,
+            status="completed",
+            result=result,
+        )
+        self.memo.log_hit(
+            {
+                "key": memo_key,
+                "conversation_id": conversation_id,
+                "task_id": task.id,
+                "store_key": store_key,
+            }
+        )
+        return AgentInvocationOutcome(
+            status="ok", result=result, session_id=conversation.external_session_id
+        )
+
+    def _remember(
+        self,
+        memo_key: str,
+        *,
+        result: Any,
+        before: list[dict[str, Any]],
+        loop: AgentSessionLoop,
+        detail: Mapping[str, Any],
+    ) -> None:
+        messages = getattr(loop, "conversation_messages", None)
+        if not callable(messages):
+            return
+        self.memo.save(
+            memo_key,
+            result=_json_value(result),
+            before=before,
+            after=messages(),
+            detail=detail,
+        )
 
     async def _reuse(
         self,
@@ -387,6 +568,19 @@ class DefinitionAgentInvoker:
             return AgentSessionRestore(messages=persisted)
         return None
 
+    @staticmethod
+    def _settle(loop: AgentSessionLoop, start: int) -> None:
+        """Keep only the accepted answer of the turn that just finished."""
+
+        messages = getattr(loop, "conversation_messages", None)
+        replace = getattr(loop, "replace_conversation", None)
+        if not callable(messages) or not callable(replace):
+            return
+        current = messages()
+        settled = drop_rejected_attempts(current, start)
+        if len(settled) != len(current):
+            replace(settled)
+
     def _save_history(self, conversation_id: str, loop: AgentSessionLoop) -> None:
         messages = getattr(loop, "conversation_messages", None)
         if callable(messages):
@@ -437,41 +631,33 @@ class DefinitionAgentInvoker:
 
     @staticmethod
     def _prompt(task: TaskDefinition, input_value: Any, tools: ToolRegistry) -> str:
-        parts: list[str] = []
         remaining = input_value
+        blocks: dict[str, str] = {}
         if task.context_fields and isinstance(input_value, Mapping):
             remaining = dict(input_value)
             for field in task.context_fields:
                 if field not in remaining:
                     continue
                 value = remaining.pop(field)
-                text = (
-                    value
-                    if isinstance(value, str)
-                    else json.dumps(value, ensure_ascii=False, indent=2)
-                )
-                parts.append(f"<context name=\"{field}\">\n{text.strip()}\n</context>")
-        parts.append(f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>")
+                text = value if isinstance(value, str) else _compact_json(value)
+                blocks[field] = f"<context name=\"{field}\">\n{text.strip()}\n</context>"
+        static: list[str] = [f"<task id=\"{task.id}\">\n{task.objective.strip()}\n</task>"]
         if task.constraints:
-            parts.append(
+            static.append(
                 "<constraints>\n"
                 + "\n".join(f"- {item}" for item in task.constraints)
                 + "\n</constraints>"
             )
-        parts.append(
-            f"<input contract=\"{task.input_contract}\">\n"
-            + json.dumps(remaining, ensure_ascii=False, indent=2)
-            + "\n</input>"
-        )
         other_tools = [name for name in tools.get_all() if name != "submit_result"]
         if other_tools:
-            parts.append("可用工具：" + "、".join(other_tools) + "。")
+            static.append("可用工具：" + "、".join(other_tools) + "。")
         submit = tools.get("submit_result")
         generic = bool(getattr(submit, "generic", False))
+        schema: list[str] = []
         if generic:
             # The generic tool declares only "an object"; the task's own schema
-            # travels here, after the shared prefix, so the cache still hits.
-            parts.append(
+            # travels in the message.
+            schema.append(
                 f"<output_schema contract=\"{task.output_contract}\">\n"
                 + json.dumps(
                     submit.output_contract.json_schema(),
@@ -480,7 +666,15 @@ class DefinitionAgentInvoker:
                 )
                 + "\n</output_schema>"
             )
-        parts.append(_submit_hint(task, generic) + "资料不足时如实写明，不要编造。")
+        body = f"<input contract=\"{task.input_contract}\">\n" + _compact_json(remaining) + "\n</input>"
+        hint = _submit_hint(task, generic) + "资料不足时如实写明，不要编造。"
+        if task.static_first:
+            # What every request of the batch shares comes first, what varies
+            # last, so a request reuses the prefix an earlier one sent.
+            shared = [blocks.pop(f) for f in task.shared_fields if f in blocks]
+            parts = [*shared, *static, *schema, *blocks.values(), body, hint]
+        else:
+            parts = [*blocks.values(), *static, body, *schema, hint]
         return "\n\n".join(parts)
 
     @staticmethod
@@ -508,6 +702,12 @@ class DefinitionAgentInvoker:
             f"<{tag}>\n{body}\n你仍是 {agent.id}，当前任务是 {task.id}。"
             f"完成后立即{_submit_hint(task, _generic(agent, task))}\n</{tag}>"
         )
+
+
+def _compact_json(value: Any) -> str:
+    """JSON without layout whitespace: the model reads it as well, for fewer tokens."""
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _store_key(task_id: str, task: TaskDefinition) -> str:
@@ -579,10 +779,28 @@ def _event_digests(loop: AgentSessionLoop) -> set[str]:
     return digests
 
 
+ATTENTION_BUDGET_EXCEEDED = "attention budget exceeded"
+
+
+def _history_of(
+    existing: Any, restore: AgentSessionRestore | None
+) -> list[dict[str, Any]]:
+    """The conversation the next turn starts from, as JSON messages."""
+
+    if existing is not None:
+        messages = getattr(existing.loop, "conversation_messages", None)
+        if callable(messages):
+            return [serialize_message(message) for message in messages()]
+        return []
+    if restore is None:
+        return []
+    return [serialize_message(message) for message in restore.messages]
+
+
 def _json_value(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
-__all__ = ["DefinitionAgentInvoker"]
+__all__ = ["ATTENTION_BUDGET_EXCEEDED", "DefinitionAgentInvoker"]

@@ -1,0 +1,10 @@
+id: ledger_chief_followup
+version: 1.0.0
+description: A next chief task that reads what is already in the conversation
+adapter: json_schema
+schema:
+  type: object
+  required: [note]
+  properties:
+    note:
+      type: string

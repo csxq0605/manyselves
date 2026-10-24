@@ -1,5 +1,5 @@
 id: distribution-photo-reading
-version: 1.0.0
+version: 1.1.0
 description: Read every project photo once per run against its bound table records
 tasks:
 - photo-reading
@@ -14,6 +14,10 @@ state:
   lane-id-2: "2"
   lane-id-3: "3"
   lane-id-4: "4"
+  lane-id-5: "5"
+  lane-id-6: "6"
+  lane-id-7: "7"
+  lane-id-8: "8"
   photo-reading-plan: {}
   should-read-photos: false
   photo-reading-outcomes: {}
@@ -43,8 +47,12 @@ actions:
     "2": read-photo-lane-2
     "3": read-photo-lane-3
     "4": read-photo-lane-4
+    "5": read-photo-lane-5
+    "6": read-photo-lane-6
+    "7": read-photo-lane-7
+    "8": read-photo-lane-8
   join: join-photo-reading-lanes
-  max_concurrency: 4
+  max_concurrency: 8
 - id: read-photo-lane-1
   kind: subworkflow
   workflow: distribution-photo-reading-lane-1
@@ -89,6 +97,50 @@ actions:
 - id: complete-photo-lane-4-branch
   kind: goto
   target: join-photo-reading-lanes
+- id: read-photo-lane-5
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-5
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-5
+  child_output_name: result
+  output_variable: lane-readings-5
+- id: complete-photo-lane-5-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-6
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-6
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-6
+  child_output_name: result
+  output_variable: lane-readings-6
+- id: complete-photo-lane-6-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-7
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-7
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-7
+  child_output_name: result
+  output_variable: lane-readings-7
+- id: complete-photo-lane-7-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-8
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-8
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-8
+  child_output_name: result
+  output_variable: lane-readings-8
+- id: complete-photo-lane-8-branch
+  kind: goto
+  target: join-photo-reading-lanes
 - id: join-photo-reading-lanes
   kind: join
   parallel: photo-reading-lanes
@@ -97,6 +149,10 @@ actions:
     "2": lane-readings-2
     "3": lane-readings-3
     "4": lane-readings-4
+    "5": lane-readings-5
+    "6": lane-readings-6
+    "7": lane-readings-7
+    "8": lane-readings-8
   output_variable: photo-reading-outcomes
 - id: reduce-photo-reading
   kind: invoke_tool

@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.kernel.contracts import build_contract_catalog
@@ -34,8 +37,17 @@ from manyselves.kernel.workflow import (
     restore_plan_definition_registry,
 )
 
+from .prefix_lead import watching_first_response
+
 # ``asyncio.Task.cancel`` message for a user-requested Run cancel.
 RUN_CANCEL_REQUESTED = "run cancelled by user"
+RUN_STOPPED_BEFORE = "run stopped before step"
+# After the lead's first token, how long the others still wait for the
+# provider to store the prefix it read.  The provider builds that entry within
+# seconds and does not say when it is done.
+LEAD_CACHE_SETTLE_SECONDS = 3.0
+# How often a Map saves its running items (completed or failed ones at once).
+MAP_CHECKPOINT_SECONDS = 1.0
 
 
 class WorkflowRuntimeEvent(BaseModel):
@@ -78,8 +90,11 @@ class FileWorkflowEventSink:
             / "workflow-events.jsonl"
         )
         path.parent.mkdir(parents=True, exist_ok=True)
+        # The time an event was written, for progress views; not part of the
+        # event itself.
+        line = {**event.model_dump(mode="json"), "ts": datetime.now(UTC).isoformat()}
         with path.open("a", encoding="utf-8") as stream:
-            stream.write(event.model_dump_json())
+            stream.write(json.dumps(line, ensure_ascii=False))
             stream.write("\n")
 
 
@@ -93,11 +108,15 @@ class WorkflowRuntimeHost:
         events: WorkflowEventSink,
         *,
         kernel: StatelessWorkflowKernel | None = None,
+        save_sparingly: Callable[[], bool] | None = None,
     ) -> None:
         self._executors = executors
         self._state_store = state_store
         self._events = events
         self._kernel = kernel or StatelessWorkflowKernel()
+        # True while steps finish at once (skipped, not executed): the state
+        # is then saved every few seconds instead of after every transition.
+        self._save_sparingly = save_sparingly
 
     async def execute(
         self,
@@ -129,12 +148,13 @@ class WorkflowRuntimeHost:
                 tools=tools,
             )
         actions = {action.id: action for action in plan.actions}
+        save = _ThrottledSave(self._state_store.save, self._save_sparingly)
         self._emit("workflow.started", state)
         event = StartWorkflow()
         while True:
             transition = self._kernel.transition(plan, state, event)
             state = transition.state
-            self._state_store.save(state)
+            save(state, now=not transition.effects)
             if isinstance(event, ActionSucceeded):
                 action = actions[event.action_id]
                 self._emit_action_events(state, action.id, event.result)
@@ -164,12 +184,13 @@ class WorkflowRuntimeHost:
                     state,
                     context,
                     plan_bundle=plan.subworkflow_plans,
-                    checkpoint=self._state_store.save,
+                    checkpoint=save,
                 )
             except asyncio.CancelledError as exc:
                 # Only an explicit Run cancel is terminal.  An unlabelled
                 # cancel (process shutdown) leaves RUNNING for Same-run resume.
                 if RUN_CANCEL_REQUESTED not in exc.args:
+                    save.flush()
                     raise
                 failed = self._kernel.transition(
                     plan,
@@ -223,6 +244,8 @@ class WorkflowRuntimeHost:
         plan_bundle: dict[str, ResolvedPlan],
         checkpoint: Callable[[WorkflowState], None],
     ) -> ActionResult:
+        if context.stop_before is not None and action.id in context.stop_before():
+            raise RuntimeError(f"{RUN_STOPPED_BEFORE} {action.id} as requested")
         if isinstance(action, ParallelAction):
             return await self._execute_parallel(
                 plan,
@@ -319,14 +342,13 @@ class WorkflowRuntimeHost:
                         checkpoint_results[branch_id] = {
                             variable: deepcopy(current.variables[variable])
                         }
-                    parallel_state = state.model_copy(deep=True)
-                    parallel_state.parallel_states[action.id] = deepcopy(
-                        checkpoint_states
+                    checkpoint(
+                        _checkpoint_view(
+                            state,
+                            parallel_states={action.id: dict(checkpoint_states)},
+                            parallel_results={action.id: dict(checkpoint_results)},
+                        )
                     )
-                    parallel_state.parallel_results[action.id] = deepcopy(
-                        checkpoint_results
-                    )
-                    checkpoint(parallel_state)
 
                 completed = await self._execute_nested(
                     plan,
@@ -447,17 +469,77 @@ class WorkflowRuntimeHost:
         saved_states = deepcopy(state.map_states.get(action.id, {}))
         item_states: dict[str, dict[str, Any]] = deepcopy(saved_states)
         semaphore = asyncio.Semaphore(action.max_concurrency or max(len(items), 1))
+        pending = [
+            key for key, _item in items
+            if (saved_states.get(key) or {}).get("status") != WorkflowStatus.COMPLETED
+        ]
+        lead_key = pending[0] if action.lead_seconds and len(pending) > 1 else None
+        lead_started = asyncio.Event()
+        lead_done = asyncio.Event()
+        event_loop = asyncio.get_running_loop()
+
+        def lead_responded() -> None:
+            # A tool may run in a worker thread; set the event on the loop.
+            event_loop.call_soon_threadsafe(lead_started.set)
+
+        # Every item step would save the whole Run; with many items starting
+        # at once that blocks the loop for seconds.  Running steps are saved
+        # at most once a second; an item that completes or fails at once.
+        unsaved: dict[str, WorkflowState] = {}
+        save_timer: list[asyncio.TimerHandle | None] = [None]
+        last_save = [float("-inf")]
+
+        def save_items() -> None:
+            if save_timer[0] is not None:
+                save_timer[0].cancel()
+                save_timer[0] = None
+            for unsaved_key, current in unsaved.items():
+                item_states[unsaved_key] = current.model_dump(mode="json")
+            unsaved.clear()
+            last_save[0] = time.monotonic()
+            checkpoint(_checkpoint_view(state, map_states={action.id: dict(item_states)}))
 
         def checkpoint_item(key: str, current: WorkflowState) -> None:
-            item_states[key] = current.model_dump(mode="json")
-            parent_state = state.model_copy(deep=True)
-            parent_state.map_states[action.id] = deepcopy(item_states)
-            checkpoint(parent_state)
+            unsaved[key] = current
+            waited = time.monotonic() - last_save[0]
+            if current.status is not WorkflowStatus.RUNNING or waited >= MAP_CHECKPOINT_SECONDS:
+                save_items()
+            elif save_timer[0] is None:
+                save_timer[0] = event_loop.call_later(MAP_CHECKPOINT_SECONDS - waited, save_items)
 
         async def execute_item(key: str, item: Any) -> WorkflowState:
             saved = saved_states.get(key)
             if saved is not None and saved.get("status") == WorkflowStatus.COMPLETED:
                 return WorkflowState.model_validate(saved)
+            if lead_key is not None and key != lead_key:
+                # The others wait until the provider has read the lead's
+                # prompt (its first token is back) and a moment more for the
+                # cache entry; lead_seconds caps the wait.
+                waited = time.monotonic()
+                try:
+                    await asyncio.wait_for(lead_started.wait(), timeout=action.lead_seconds)
+                except TimeoutError:
+                    logger.info(
+                        "map {} item {}: no response from lead {} within {}s; starting",
+                        action.id, key, lead_key, action.lead_seconds,
+                    )
+                else:
+                    if not lead_done.is_set():
+                        await asyncio.sleep(LEAD_CACHE_SETTLE_SECONDS)
+                    logger.debug(
+                        "map {} item {}: starting {:.1f}s after the lead",
+                        action.id, key, time.monotonic() - waited,
+                    )
+            if key != lead_key:
+                return await run_item(key, item, saved)
+            try:
+                with watching_first_response(lead_responded):
+                    return await run_item(key, item, saved)
+            finally:
+                lead_done.set()
+                lead_started.set()
+
+        async def run_item(key: str, item: Any, saved: dict[str, Any] | None) -> WorkflowState:
             async with semaphore:
                 if saved is not None:
                     child_state = WorkflowState.model_validate(saved)
@@ -497,13 +579,21 @@ class WorkflowRuntimeHost:
                         f"has no output {action.child_output_name}"
                     )
                 snapshot = _completed_nested_state_snapshot(completed)
+                unsaved.pop(key, None)
                 item_states[key] = snapshot
                 return WorkflowState.model_validate(snapshot)
 
-        outcomes = await asyncio.gather(
-            *(execute_item(key, item) for key, item in items),
-            return_exceptions=True,
-        )
+        try:
+            outcomes = await asyncio.gather(
+                *(execute_item(key, item) for key, item in items),
+                return_exceptions=True,
+            )
+        finally:
+            # The Map's own result is saved by its caller; a late timed save
+            # must not write the item states back after that.
+            if save_timer[0] is not None:
+                save_timer[0].cancel()
+                save_timer[0] = None
         results: dict[str, Any] = {}
         errors: dict[str, str] = {}
         completed_items: list[tuple[str, WorkflowState]] = []
@@ -583,11 +673,12 @@ class WorkflowRuntimeHost:
                     }
                 )
         def checkpoint_child(current: WorkflowState) -> None:
-            parent_state = state.model_copy(deep=True)
-            parent_state.subworkflow_states[action.id] = current.model_dump(
-                mode="json"
+            checkpoint(
+                _checkpoint_view(
+                    state,
+                    subworkflow_states={action.id: current.model_dump(mode="json")},
+                )
             )
-            checkpoint(parent_state)
 
         completed = await self._execute_nested(
             child_plan,
@@ -875,3 +966,63 @@ def _prepend_waiting_path(
     waiting = deepcopy(waiting_input or {})
     waiting["path"] = [segment, *waiting.get("path", [])]
     return waiting
+
+
+def _checkpoint_view(state: WorkflowState, **children: dict[str, Any]) -> WorkflowState:
+    """The parent state with one nested entry replaced, for saving only.
+
+    A checkpoint is serialized at once, so the view shares the parent's
+    variables instead of deep-copying the whole state on every nested step.
+    """
+
+    return state.model_copy(
+        update={
+            field: {**getattr(state, field), **entries}
+            for field, entries in children.items()
+        }
+    )
+
+
+class _ThrottledSave:
+    """Save the Run's state after each transition, or every few seconds.
+
+    The state is the whole Run, nested steps included, and a running Run
+    saves it after every transition, so that a stopped process resumes at
+    the step it was in.  While steps are being skipped (a rerun replaying
+    unchanged steps) each finishes at once and saving costs more than the
+    step; then the state is saved at most every ``interval`` seconds.  A
+    state that settles (completed, failed, waiting) is always saved at once.
+    If the process stops between saves, resume repeats a few skipped steps.
+    """
+
+    def __init__(
+        self,
+        save: Callable[[WorkflowState], None],
+        sparingly: Callable[[], bool] | None = None,
+        interval: float = 2.0,
+    ) -> None:
+        self._save = save
+        self._sparingly = sparingly
+        self._interval = interval
+        self._last = float("-inf")
+        self._pending: WorkflowState | None = None
+
+    def __call__(self, state: WorkflowState, *, now: bool = False) -> None:
+        moment = time.monotonic()
+        if (
+            now
+            or state.status is not WorkflowStatus.RUNNING
+            or self._sparingly is None
+            or not self._sparingly()
+            or moment - self._last >= self._interval
+        ):
+            self._save(state)
+            self._last = moment
+            self._pending = None
+        else:
+            self._pending = state
+
+    def flush(self) -> None:
+        if self._pending is not None:
+            self._save(self._pending)
+            self._pending = None

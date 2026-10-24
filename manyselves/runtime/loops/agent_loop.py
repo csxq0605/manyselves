@@ -43,6 +43,7 @@ from ...interfaces.types import (
 )
 from ...utils.agent_labels import get_agent_badge
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
+from ..prefix_lead import notify_first_response
 from ..prompts import PromptLoader
 from ..provider_agent_session import agent_session_handoff_path
 from ..providers.base import (
@@ -1649,6 +1650,13 @@ class AgentLoop:
 
         return list(self._conversation_history)
 
+    def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
+        """Replace the retained conversation between turns (task boundaries stay)."""
+
+        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            raise RuntimeError("cannot replace conversation while the Agent is active")
+        self._conversation_history = list(messages)
+
     def restore_conversation(
         self,
         messages: Sequence[Mapping[str, Any] | LLMMessage],
@@ -2694,6 +2702,7 @@ class AgentLoop:
                         ttft_ms = int(
                             (time.perf_counter() - provider_started) * 1000
                         )
+                        notify_first_response()
                     if chunk.delta:
                         accumulated_content += chunk.delta
                         await self.bus.publish(
@@ -2764,6 +2773,7 @@ class AgentLoop:
                     tool_definitions,
                     **reasoning_kwargs,
                 )
+                notify_first_response()
                 return _LoopLLMResponse(
                     content=response.content or "",
                     tool_calls=response.tool_calls,

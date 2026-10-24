@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -398,11 +399,11 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
     assert reporting["version"] == "1.0.0"
     assert reporting["description"] == "Declarative distribution reporting capability"
     assert {
-        "distribution-cross-owner-cohort",
-        "distribution-module-cohort",
-        "distribution-reporting",
-        "distribution-reporting-tail",
-        "distribution-report-delivery",
+        "full-report",
+        "report-ledger",
+        "ledger-chief",
+        "distribution-photo-reading",
+        "extract-template-skills",
     } <= set(reporting["workflow_ids"])
     assert capabilities[2] == {
         "id": "parameter-adjustment",
@@ -783,7 +784,11 @@ def test_run_events_project_file_sink_for_current_run_only(tmp_path: Path) -> No
 
     facade = _facade(tmp_path, _ReportingAdapter())
 
-    assert facade.get_events("report-1") == {
+    projected = facade.get_events("report-1")
+    # Each line carries the time it was written, for progress views.
+    stamped = projected["events"][0].pop("ts")
+    assert datetime.fromisoformat(stamped).tzinfo is not None
+    assert projected == {
         "run_id": "report-1",
         "events": [
             {

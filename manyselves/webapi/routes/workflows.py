@@ -31,6 +31,7 @@ from ..schemas.workflows import (
     WorkflowInputSchemaResponse,
     WorkflowListResponse,
     WorkflowOutputListResponse,
+    WorkflowProgressResponse,
     WorkflowRunAcceptedResponse,
     WorkflowRunInputRequest,
     WorkflowRunListResponse,
@@ -310,6 +311,18 @@ async def get_run_events(run_id: str, request: Request):
         async with state.runtime_facade.read_transaction():
             return WorkflowEventListResponse.model_validate(
                 _projection(request).get_events(run_id)
+            )
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.get("/runs/{run_id}/progress", response_model=WorkflowProgressResponse)
+async def get_run_progress(run_id: str, request: Request):
+    state = request_runtime_state(request)
+    try:
+        async with state.runtime_facade.read_transaction():
+            return WorkflowProgressResponse.model_validate(
+                _projection(request).get_progress(run_id)
             )
     except Exception as error:
         raise _error(error) from error

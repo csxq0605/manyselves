@@ -93,11 +93,20 @@ class SubmitResultTool(Tool):
             )
         self._failures = 0
         self._seen_errors: dict[str, int] = {}
+        # The last rejected submission: a correction need only carry what was
+        # wrong, and is merged into it before validation.
+        self._rejected: dict[str, Any] | None = None
 
     async def __call__(self, **submission: Any) -> dict[str, Any]:
+        candidate = dict(submission)
+        if self._rejected is not None:
+            candidate = merge_correction(
+                self._rejected, candidate, schema=self.output_contract.json_schema()
+            )
         try:
-            result = self.output_contract.validate(dict(submission))
+            result = self.output_contract.validate(candidate)
         except ContractValidationError as exc:
+            self._rejected = candidate
             return await self._correction(str(exc))
         if hasattr(result, "model_dump"):
             result = result.model_dump(mode="json")
@@ -136,8 +145,10 @@ class SubmitResultTool(Tool):
                 "output_contract": self.output_contract_id,
                 "remaining_attempts": self.max_validation_failures - self._failures,
                 "instruction": (
-                    "结果不符合 output contract。只按 error 修正对应字段，"
-                    "再调用一次 submit_result 提交完整对象；不要重复同一个被拒的提交。"
+                    "结果不符合 output contract。只按 error 修正，再调用一次 submit_result，"
+                    "只交出错的部分：列表里出错的条目（带原来的 id，整条重写），"
+                    "或对象里出错的那个键；其余已交的内容程序会保留并合并。"
+                    "不要整份重交，也不要重复同一个被拒的提交。"
                 ),
             }
             prompt = getattr(decision, "prompt", None)
@@ -187,3 +198,56 @@ class SubmitResultTool(Tool):
 
 
 __all__ = ["GENERIC_SCHEMA", "SubmitResultTool"]
+
+
+def _keyed(items: Any) -> bool:
+    return isinstance(items, list) and bool(items) and all(
+        isinstance(item, dict) and isinstance(item.get("id"), str) for item in items
+    )
+
+
+def merge_correction(
+    rejected: dict[str, Any],
+    correction: dict[str, Any],
+    *,
+    schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The rejected submission with a correction applied.
+
+    A full resubmission (every required field, and no list of items shorter
+    than before) stands on its own.  Otherwise a list of items with ids is
+    merged by id (a corrected item replaces the one with its id, a new id is
+    added in order), an object field is merged key by key, any other field is
+    replaced, and fields the correction leaves out keep their submitted
+    value.  A top-level field the schema does not allow is dropped, so a
+    wrongly named field in the rejected submission cannot come back.
+    """
+
+    schema = schema or {}
+    required = set(schema.get("required") or [])
+    shorter = any(
+        _keyed(rejected.get(field)) and isinstance(value, list)
+        and len(value) < len(rejected[field])
+        for field, value in correction.items()
+    )
+    if required and required <= set(correction) and not shorter:
+        return dict(correction)
+    merged = dict(rejected)
+    for field, value in correction.items():
+        before = rejected.get(field)
+        if _keyed(before) and _keyed(value):
+            replaced = {item["id"]: item for item in value}
+            items = [replaced.pop(item["id"], item) for item in before]
+            merged[field] = items + list(replaced.values())
+        elif isinstance(before, dict) and isinstance(value, dict):
+            merged[field] = {**before, **value}
+        else:
+            merged[field] = value
+    allowed = schema.get("properties")
+    if allowed and schema.get("additionalProperties") is False:
+        merged = {
+            field: value for field, value in merged.items()
+            if field in allowed or field in correction
+        }
+    return merged
+

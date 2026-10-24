@@ -1,0 +1,41 @@
+id: ledger-rows-finish
+version: 2.0.0
+description: Each writer revises once on the editor's findings and the sections resting on the rows the authors fixed; a subworkflow of its own so it runs beside the chief's fix
+tasks: []
+recovery:
+- typed-turn-recovery
+output_contract: ledger_rows_finished
+state:
+  edits: null
+  row_fixed: null
+actions:
+- id: section-revise-items
+  kind: set_variable
+  variable: section_revise_items
+  value_variable: row_fixed
+  field: section_revise_items
+- id: revise-sections
+  kind: map
+  items_variable: section_revise_items
+  key_field: owner
+  workflow: ledger-section-revise
+  key_input_variable: item_key
+  output_variable: section_revisions
+  max_concurrency: 8
+- id: merge-section-revisions
+  kind: invoke_tool
+  tool: merge-section-fixes
+  input_variables:
+    edits: edits
+    fixes: section_revisions
+  output_variable: merged_edits
+- id: rows-result
+  kind: set_variable
+  variable: rows_result
+  value_variables:
+    fixed: row_fixed
+    merged: merged_edits
+- id: finish
+  kind: end_workflow
+  output_variable: rows_result
+  output_name: result

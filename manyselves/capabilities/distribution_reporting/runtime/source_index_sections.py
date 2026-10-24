@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .gap_entries import affects_text
+
 _DISPOSITION_TEXT = {
     "concern": "存在问题",
     "no_concern": "未见问题",
@@ -86,16 +88,51 @@ def data_gap_lines(workspace: Path, run_id: str) -> list[str]:
     rows = [
         "| " + " | ".join([
             f"G{index}",
-            _cell(gap.get("gap")),
-            _cell(gap.get("impact")),
+            _cell(str(gap.get("gap") or "") + (f"。原记录说明：{gap['note']}" if gap.get("note") else "")),
+            _cell(
+                str(gap.get("impact") or "")
+                + (f"；还影响：{affects_text(gap['affects'])}" if gap.get("affects") else "")
+            ),
             _cell(gap.get("requested_input")),
-            _cell(str(gap.get("task_id") or "").removeprefix("module-")),
+            _cell(gap.get("section") or str(gap.get("task_id") or "").removeprefix("module-")),
         ]) + " |"
         for index, gap in enumerate(gaps, 1)
     ]
     return [
         *lines,
         "| 编号 | 缺少的资料 | 对判断的影响 | 需要补充 | 提出环节 |",
+        "| --- | --- | --- | --- | --- |",
+        *rows,
+        "",
+    ]
+
+
+def same_room_lines(workspace: Path, run_id: str) -> list[str]:
+    """Each room once: concerns of different modules found there side by side."""
+
+    path = Path(workspace) / f"Work/runs/{run_id}/ledger/same-room.json"
+    try:
+        rooms = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+    except (OSError, ValueError):
+        rooms = []
+    if not rooms:
+        return []
+    rows = [
+        "| " + " | ".join([
+            _cell(room.get("place")),
+            _cell(row.get("submodule_id")),
+            _cell(row.get("object")),
+            _cell(row.get("checkpoint")),
+            _cell(row.get("finding")),
+        ]) + " |"
+        for room in rooms for row in room.get("rows") or ()
+    ]
+    return [
+        "### 同一配电房的问题",
+        "",
+        "下列问题分属不同专题，各自成立，同在一个配电房，整改和验收宜一并安排。",
+        "",
+        "| 配电房 | 小节 | 对象 | 检查点 | 发现 |",
         "| --- | --- | --- | --- | --- |",
         *rows,
         "",
@@ -110,4 +147,5 @@ def judgment_and_gap_index_markdown(
     return "\n".join([
         *judgment_basis_lines(module_submissions),
         *data_gap_lines(workspace, run_id),
+        *same_room_lines(workspace, run_id),
     ]).rstrip()

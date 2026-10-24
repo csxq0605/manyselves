@@ -1,0 +1,7 @@
+id: ledger_joint_draft
+version: 1.0.0
+description: The editor's held findings by writer and the chief's chapters with their fact check, as the separate passes give them
+adapter: json_schema
+schema:
+  type: object
+  required: [writing, chief]

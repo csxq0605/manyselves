@@ -47,13 +47,13 @@ from manyselves.runtime.exemplar.lessons import LessonBook, load_lessons
 from manyselves.runtime.exemplar.outline import document_outline
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
+from tests.capabilities.distribution_reporting.support import (
+    write_role_skill_fixture as _write_complete_template_skill_fixture,
+)
 from tests.capabilities.distribution_reporting.test_ledger_report import (
     _input_of,
     _task,
     run_ledger_report,
-)
-from tests.capabilities.distribution_reporting.test_public_reporting_runtime import (
-    _write_complete_template_skill_fixture,
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 
@@ -205,6 +205,10 @@ async def _run(workspace: Path, workflow_id: str, values: dict[str, Any], answer
 @pytest.mark.asyncio
 async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_path: Path) -> None:
     _write_complete_template_skill_fixture(tmp_path)
+    # A role the flow no longer declares, left over from an older package.
+    stray = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("old role\n", encoding="utf-8")
     (tmp_path / EXPERT_REPORT_REF).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(TEMPLATE, tmp_path / EXPERT_REPORT_REF)
     published_before = (tmp_path / "Inputs/report-template-role-skills/author-2.1/SKILL.md").read_text(
@@ -257,12 +261,20 @@ async def test_extraction_checks_entries_renders_candidates_and_publishes(tmp_pa
     assert published.read_text(encoding="utf-8") == candidate
     backup = tmp_path / outcome["backup"] / "author-2.1/SKILL.md"
     assert backup.read_text(encoding="utf-8") == published_before
-    chapter4 = tmp_path / "Inputs/report-template-role-skills/chief-editor-chapter-4/SKILL.md"
-    assert "chief-editor-chapter-4: preserve" in chapter4.read_text(encoding="utf-8")
-    source = json.loads(
-        (tmp_path / "Inputs/report-template-role-skills/source.json").read_text(encoding="utf-8")
-    )
+    # The directory is replaced as a whole: roles the flow does not declare are gone
+    # from Inputs (they stay in the backup beside the run).
+    skills_root = tmp_path / "Inputs/report-template-role-skills"
+    assert sorted(p.name for p in skills_root.iterdir() if p.is_dir()) == sorted(extracted)
+    assert (tmp_path / outcome["backup"] / "chief-editor-chapter-4/SKILL.md").is_file()
+    source = json.loads((skills_root / "source.json").read_text(encoding="utf-8"))
     assert source["last_extraction"]["run_id"] == accepted["run_id"]
+    assert source["source"] == "program-extraction" and source["roles"] == list(extracted)
+    boundary = json.loads((skills_root / "boundary.json").read_text(encoding="utf-8"))
+    assert "专家版" in boundary["boundary_statement"]
+    # Publishing again keeps the first backup.
+    again = publish_template_skills(tmp_path, accepted["run_id"])
+    assert again["backup"] != outcome["backup"]
+    assert (tmp_path / outcome["backup"] / "chief-editor-chapter-4/SKILL.md").is_file()
     # The published package still loads for a report run.
     state: dict[str, Any] = {}
     assert load_template_skill(tmp_path, state)

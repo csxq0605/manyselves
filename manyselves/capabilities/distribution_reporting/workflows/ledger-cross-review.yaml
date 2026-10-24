@@ -1,0 +1,30 @@
+id: ledger-cross-review
+version: 1.0.0
+description: One slice of the cross-module review, in a conversation of its own that opens with the shared prefix
+tasks:
+- review-cross-module
+recovery:
+- typed-turn-recovery
+output_contract: ledger_cross_review
+state:
+  item: null
+  item_key: null
+actions:
+- id: open-review
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: cross-review
+  key_variable: item_key
+  mode: run
+  output_variable: review_conversation
+- id: review
+  kind: invoke_agent
+  agent: report-consultant
+  task: review-cross-module
+  conversation_variable: review_conversation
+  input_variable: item
+  output_variable: review
+- id: finish
+  kind: end_workflow
+  output_variable: review
+  output_name: result

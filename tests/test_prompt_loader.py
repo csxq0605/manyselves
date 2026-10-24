@@ -83,12 +83,11 @@ def test_get_filename_normalizes_hyphens_for_task_roles(agents_dir):
     assert loader._get_filename("evidence-auditor") == "evidence_auditor_agent.md"
 
 
-def test_packaged_main_prompt_preserves_distribution_demo_entrypoint():
+def test_packaged_main_prompt_is_generic_plus_the_capability_part():
     prompt = PromptLoader().load_prompt("main")
 
-    assert "配电安全服务 Demo" in prompt
+    # Generic run rules come first, then each Capability's own part.
+    assert "run_notice" in prompt and "resume_run" in prompt
+    assert "还没有完成" in prompt
     assert "run_reporting_workflow" in prompt
-    assert "不需要先列出工作流或读取 Schema" in prompt
-    assert "当前尚未完成" in prompt
-    assert "不要承诺完成后主动汇报" in prompt
-    assert "Kernel 保持无状态且业务无关" in prompt
+    assert prompt.index("resume_run") < prompt.index("run_reporting_workflow")

@@ -12,10 +12,10 @@ it("keeps only a compact latest status in chat and loads cost on demand", async 
       run: { runId: "finished-1", workflowId: "full-report", status: "completed", active: false },
       state: {}, waitingInput: [],
     }, {
-      run: { runId: "old-finished", workflowId: "module-report", status: "completed", active: false },
+      run: { runId: "old-finished", workflowId: "extract-template-skills", status: "completed", active: false },
       state: {}, waitingInput: [],
     }, {
-      run: { runId: "old-failed", workflowId: "aggregate-existing", status: "failed", active: false },
+      run: { runId: "old-failed", workflowId: "triage-writing-lessons", status: "failed", active: false },
       state: {}, waitingInput: [],
     }] })),
     cost: vi.fn(async () => ({ runId: "finished-1", usage: {
@@ -56,7 +56,7 @@ it("keeps only a compact latest status in chat and loads cost on demand", async 
 it("offers recovery for the current failed run and reports a failed resume", async () => {
   const api = {
     listRuns: vi.fn(async () => ({ runs: [{
-      run: { runId: "interrupted", workflowId: "aggregate-existing", status: "failed", active: false },
+      run: { runId: "interrupted", workflowId: "full-report", status: "failed", active: false },
       state: { error: "原始失败原因" }, waitingInput: [],
     }] })),
     resume: vi.fn(async () => { throw new Error("服务暂时不可用"); }),

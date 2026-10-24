@@ -527,3 +527,18 @@ class TestAgentScopedHistory:
         assert store.get_sessions("theory") == []
         # Unfiltered still sees it because main has messages.
         assert [s["id"] for s in store.get_sessions()] == [shared_id]
+
+
+def test_a_system_notice_to_main_does_not_name_the_conversation(store: ConversationStore):
+    store.append_message(
+        "main",
+        "user",
+        '<run_notice run_id="r" workflow="full-report" status="已完成">\n运行已完成。\n</run_notice>',
+        {"source": "system"},
+    )
+    store.append_message("main", "user", "写一份配电报告", {"source": "user"})
+
+    session = store._load_sessions_metadata()[0]
+    assert session["name"] == "写一份配电报告"
+    assert session["preview"] == "写一份配电报告"
+    assert [m["source"] for m in store.load_messages("main")] == ["system", "user"]

@@ -17,7 +17,6 @@ from manyselves.capabilities.distribution_reporting.domain.coverage import (
     evaluate_coverage,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
-    activate_report_taxonomy,
     parse_report_taxonomy_workbook,
 )
 from manyselves.capabilities.distribution_reporting.runtime.intake import (
@@ -29,6 +28,11 @@ from manyselves.capabilities.distribution_reporting.runtime.intake.special_topic
 from manyselves.capabilities.distribution_reporting.runtime.intake.wps_images import (
     canonicalize_photo_bindings,
 )
+from manyselves.capabilities.distribution_reporting.runtime.knowledge_index import (
+    KnowledgeIndex,
+    build_index,
+    route_evidence,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.preparation import (
     FilePreparationResult,
     ManifestFile,
@@ -36,7 +40,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     ProjectManifest,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    REPORT_MODULE_IDS,
     EvidenceItem,
     PhotoAsset,
 )
@@ -45,6 +48,9 @@ from manyselves.capabilities.distribution_reporting.runtime.preparation import (
 )
 from manyselves.capabilities.distribution_reporting.runtime.preparation_snapshot import (
     PreparationSnapshotStore,
+)
+from manyselves.capabilities.distribution_reporting.runtime.research.knowledge_context import (
+    KnowledgeContextBuilder,
 )
 from manyselves.capabilities.distribution_reporting.runtime.research.project_evidence import (
     ProjectEvidenceIndex,
@@ -92,12 +98,40 @@ class PreparationTools:
         snapshot_content: SnapshotContent,
         runtime_photo_ids: RuntimePhotoIDs,
         store: ReportingStore,
+        global_knowledge_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.input_snapshot = input_snapshot
         self.snapshot_content = snapshot_content
         self.runtime_photo_ids = runtime_photo_ids
         self.store = store
+        self.global_knowledge_root = global_knowledge_root
+
+    def _knowledge_index(self, run_id: str) -> KnowledgeIndex:
+        """The run's frozen knowledge base, read for its field index.
+
+        Kept with the run so the routing can be traced to the knowledge base
+        it came from.
+        """
+
+        try:
+            documents = KnowledgeContextBuilder(
+                self.workspace, run_id, global_root=self.global_knowledge_root
+            ).freeze_sources()
+        except (OSError, ValueError):
+            documents = ()
+        index = build_index(document.text for document in documents)
+        self.store.write_json(
+            f"Work/runs/{run_id}/knowledge-routing.json",
+            {
+                "sources": [
+                    {"logicalPath": d.relative_path, "sha256": d.content_sha256}
+                    for d in documents
+                ],
+                **index.to_json(),
+            },
+        )
+        return index
 
     def build_manifest(self, context: PreparationContext) -> PreparationContext:
         """Project the frozen ``Inputs`` inventory into the typed manifest."""
@@ -163,11 +197,9 @@ class PreparationTools:
             source_ref=source_ref,
             source_sha256=source.sha256,
         )
+        # Later steps bind this tree from the context they are given; nothing
+        # is left bound in the process.
         context.report_taxonomy = payload
-        # Coverage and downstream domain helpers read the run-local taxonomy
-        # through this existing capability context.  The serial payload remains
-        # the durable value carried by PreparationContext.
-        activate_report_taxonomy(payload)
         return context
 
     async def parse_artifacts(
@@ -262,6 +294,7 @@ class PreparationTools:
         evidence: list[EvidenceItem] = []
         photo_assets: list[PhotoAsset] = []
         mapping_gaps: list[dict[str, Any]] = []
+        knowledge_index = self._knowledge_index(context.run_id)
         for result in sorted(
             context.preparation_worker_results,
             key=lambda item: item.manifest_order,
@@ -275,7 +308,8 @@ class PreparationTools:
                         "message": f"文件解析失败：{result.source_path.as_posix()}；{result.error or '未知原因'}",
                     })
                 continue
-            mapped_evidence = list(result.provisional_evidence)
+            # Fields the knowledge base indexes go to the sections it names.
+            mapped_evidence = route_evidence(list(result.provisional_evidence), knowledge_index)
             if any(item.photo_refs for item in mapped_evidence):
                 mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                     mapped_evidence,
@@ -287,7 +321,7 @@ class PreparationTools:
                     / "Work"
                     / "runs"
                     / context.run_id
-                    / ("assets/current-inputs" if context.request.operation == "revise_report" else "assets")
+                    / "assets"
                     / result.file_id
                 )
                 for asset in normalized_assets:
@@ -366,6 +400,13 @@ class PreparationTools:
                 )
             )
 
+        if not knowledge_index.fields and any(
+            item.checkpoint_field and item.module_id is None for item in evidence
+        ):
+            mapping_gaps.append({
+                "code": "knowledge_field_index_missing",
+                "message": "知识库没有输入表字段到知识单元的索引；这些检查点由模块作者归属",
+            })
         evidence_id_map: dict[str, str] = {}
         normalized_evidence: list[EvidenceItem] = []
         for index, item in enumerate(evidence, start=1):
@@ -429,9 +470,6 @@ class PreparationTools:
         """Evaluate coverage from normalized evidence without readiness policy."""
 
         request = context.request
-        if request.operation == "revise_report":
-            # Cross and delivery still cover the complete report after a local edit.
-            request = request.model_copy(update={"target_modules": list(REPORT_MODULE_IDS)})
         coverage = evaluate_coverage(
             request,
             context.evidence_items,
@@ -444,7 +482,7 @@ class PreparationTools:
     def load_special_topic_plan(self, context: PreparationContext) -> PreparationContext:
         """Load the optional Chapter 4 plan for full-report preparation only."""
 
-        if context.request.operation in {"full_report", "revise_report"}:
+        if context.request.operation == "full_report":
             frozen_root = self.workspace / "Work/runs" / context.run_id / "frozen-project"
             context.special_topic_plan = load_special_topic_plan(frozen_root)
         else:
@@ -510,6 +548,7 @@ def build_preparation_tools(
     snapshot_content: SnapshotContent,
     runtime_photo_ids: RuntimePhotoIDs,
     store: ReportingStore,
+    global_knowledge_root: Path | None = None,
 ) -> PreparationTools:
     """Construct the capability Tool implementation bundle."""
 
@@ -519,6 +558,7 @@ def build_preparation_tools(
         snapshot_content=snapshot_content,
         runtime_photo_ids=runtime_photo_ids,
         store=store,
+        global_knowledge_root=global_knowledge_root,
     )
 
 
@@ -529,6 +569,7 @@ def build_preparation_tool_implementations(
     snapshot_content: SnapshotContent,
     runtime_photo_ids: RuntimePhotoIDs,
     store: ReportingStore,
+    global_knowledge_root: Path | None = None,
 ) -> dict[str, Any]:
     """Bind the nine file-declared preparation Tool implementation IDs."""
 
@@ -538,6 +579,7 @@ def build_preparation_tool_implementations(
         snapshot_content=snapshot_content,
         runtime_photo_ids=runtime_photo_ids,
         store=store,
+        global_knowledge_root=global_knowledge_root,
     )
     snapshots = PreparationSnapshotStore(store)
     return {

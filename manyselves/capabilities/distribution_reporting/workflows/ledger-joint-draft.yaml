@@ -1,0 +1,112 @@
+id: ledger-joint-draft
+version: 1.0.0
+description: Write the module sections while the chief writes chapters 3 and 1; then one joint pass per writer edits its sections and checks the facts of the chapter 1 and 3 units on its rows, opening with the writer's own material
+tasks: []
+recovery:
+- typed-turn-recovery
+output_contract: ledger_joint_draft
+state:
+  final: null
+  context: null
+  writing_items: null
+actions:
+- id: draft
+  kind: parallel
+  branches:
+    writing: write-modules
+    chief: chief-draft
+  join: join-draft
+  max_concurrency: 2
+- id: write-modules
+  kind: map
+  items_variable: writing_items
+  key_field: group_id
+  workflow: ledger-module-writing
+  key_input_variable: item_key
+  output_variable: written
+  max_concurrency: 8
+  lead_seconds: 30
+- id: writing-done
+  kind: goto
+  target: join-draft
+- id: chief-draft
+  kind: subworkflow
+  workflow: ledger-chief-draft
+  input_variables:
+    final: final
+    context: context
+  output_variable: chief
+- id: chief-done
+  kind: goto
+  target: join-draft
+- id: join-draft
+  kind: join
+  parallel: draft
+  inputs:
+    writing: written
+    chief: chief
+  output_variable: drafted
+- id: written-value
+  kind: set_variable
+  variable: written
+  value_variable: drafted
+  field: writing
+- id: chief-value
+  kind: set_variable
+  variable: chief
+  value_variable: drafted
+  field: chief
+- id: chapter-1-value
+  kind: set_variable
+  variable: chapter1
+  value_variable: chief
+  field: chapter1
+- id: chapter-3-value
+  kind: set_variable
+  variable: chapter3
+  value_variable: chief
+  field: chapter3
+- id: check-1-value
+  kind: set_variable
+  variable: check1
+  value_variable: chief
+  field: check1
+- id: plan-review
+  kind: invoke_tool
+  tool: plan-joint-review
+  input_variables:
+    ledger: final
+    written: written
+    chapter1: chapter1
+    chapter3: chapter3
+  output_variable: review_plan
+- id: review-items
+  kind: set_variable
+  variable: review_items
+  value_variable: review_plan
+  field: review_items
+- id: review
+  kind: map
+  items_variable: review_items
+  key_field: review_id
+  workflow: ledger-joint-review
+  key_input_variable: item_key
+  output_variable: reviews
+  errors_variable: review_errors
+  max_concurrency: 32
+  lead_seconds: 30
+- id: apply-review
+  kind: invoke_tool
+  tool: apply-joint-review
+  input_variables:
+    items: review_items
+    results: reviews
+    ledger: final
+    chapter1: chapter1
+    chapter3: chapter3
+    check1: check1
+  output_variable: drafts
+- id: finish
+  kind: end_workflow
+  output_variable: drafts
+  output_name: result

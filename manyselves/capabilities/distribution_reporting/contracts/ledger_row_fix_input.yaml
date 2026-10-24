@@ -1,0 +1,19 @@
+id: ledger_row_fix_input
+version: 1.2.0
+description: The final ledger, the authors' patches on the rows the joint review found wrong (by judging group), the edited sections, and the chief's fact check with the rows each unit rests on
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger]
+  properties:
+    ledger:
+      type: object
+    fixes:
+      type: object
+      description: Judging group -> the author's row patches
+    edits:
+      type: object
+      description: Owner -> its edited sections and the editor's findings
+    checked:
+      type: object
+      description: The chief's fact check (fact_check, fact_blocking, unit_rows, chapters)

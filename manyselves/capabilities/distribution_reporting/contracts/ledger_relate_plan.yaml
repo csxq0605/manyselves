@@ -1,0 +1,7 @@
+id: ledger_relate_plan
+version: 3.0.0
+description: One relate item per judging group, with the same room's flagged rows and the records the candidates cite
+adapter: json_schema
+schema:
+  type: object
+  required: [relate_items]

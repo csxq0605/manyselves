@@ -20,85 +20,87 @@ from .models.photo_reading import (
     PhotoReading,
     PhotoReadingInput,
     PhotoReadingPlan,
+    PhotoQuantity,
     PhotoReadingRecord,
     PhotoReadingSummary,
-    RecordValue,
 )
 from .models.preparation import PreparationContext
 from .storage import ReportingStore
 
 MATCH_TEXT = {
     "matches": "程序比对：照片读数与记录数值一致",
-    "conflicts": "程序比对：照片读数与记录数值不一致，以表格记录为准，照片读数待核",
+    # The table cell is the fact and a photo only adds to it; a photo that
+    # reads otherwise is simply not used.
+    "conflicts": "程序比对：照片读数与表格记录不符，照片读数不用，以表格记录为准",
     "cannot_tell": "程序比对：无可比数值",
 }
-
-_UNIT_ALIASES = {"°C": "℃", "°c": "℃"}
-_READING = re.compile(
-    r"(?<![A-Za-z\d.])(-?\d+(?:\.\d+)?)\s*(kVA|kW|kV|mA|MΩ|Ω|Hz|℃|°C|%|V|A|K)?(?![\d.A-Za-z])"
-)
-_BARE = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*$")
-_DATE = re.compile(
-    r"\d{4}\s*[-/年]\s*\d{1,2}|\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\s*月\s*\d{1,2}|\d{1,2}\s*:\s*\d{2}"
-)
+UNSTABLE = "读数不稳定（两次读图不一致），照片读数不作为事实"
 
 
-def _readings(text: str) -> list[tuple[float, str | None]]:
-    """Numbers that read as a measurement: with a unit, or a bare number alone.
+def declared_quantities(item: Any) -> list[tuple[str, str, str, float]]:
+    """(quantity, header label, unit, value) the mapper declared for one record."""
 
-    Digits inside codes, names and dates are not readings.
-    """
-
-    if _DATE.search(text):
-        return []
-    if _BARE.match(text):
-        return [(float(text), None)]
-    return [
-        (float(number), _UNIT_ALIASES.get(unit, unit))
-        for number, unit in _READING.findall(text)
-        if unit
+    found = [
+        (m.quantity, m.label or m.quantity, m.unit or "", float(m.value))
+        for m in item.measurements
+        if m.value is not None
     ]
+    value = item.value
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and not any(v == float(value) and u == (item.unit or "") for _, _, u, v in found)
+    ):
+        label = item.checkpoint_field or "记录值"
+        found.append((label, label, item.unit or "", float(value)))
+    return found
 
 
-def compare_with_records(
-    records: list[PhotoReadingRecord], transcription: list[dict[str, Any]]
+def _close(a: float, b: float) -> bool:
+    # Display rounding: 0.05 absolute or 2 %.
+    return abs(a - b) <= max(0.05, 0.02 * abs(a))
+
+
+def compare_readings(
+    readings: list[dict[str, Any]],
+    bound: Mapping[str, list[float]],
+    same_subject: Mapping[str, list[list[Any]]] | None = None,
 ) -> tuple[str, str]:
-    """Compare legible copied readings with the values the records state.
+    """Compare the reader's structured readings with the bound records, by quantity.
 
-    Only a reading in the record's own unit (or a bare number shown alone)
-    is compared, so a watermark temperature or a code next to a current
-    reading is not taken for it.  A value matches within display rounding
-    (0.05 or 2 %).  Only legible items count.
+    ``bound`` holds each quantity's values in the records the photo is bound
+    to; ``same_subject`` holds [value, evidence id] of the same quantity in the
+    object's other records.  A legible reading that matches no bound value is
+    a conflict: the reading or the photo's attribution is to be checked, and
+    a match with another record of the object is named.
     """
 
-    expected = list(
-        dict.fromkeys(
-            (value.value, _UNIT_ALIASES.get(value.unit, value.unit))
-            for record in records
-            for value in record.values
-        )
-    )
-    units = {unit for _, unit in expected}
     seen = [
-        (number, unit)
-        for item in transcription
-        if item.get("legible")
-        for number, unit in _readings(str(item.get("text", "")))
-        if unit is None or unit in units
+        r for r in readings
+        if r.get("legible") and r.get("value") is not None and r.get("quantity") in bound
     ]
-    if not expected or not seen:
-        missing = "记录没有数值" if not expected else "照片没有看清的同单位读数"
-        return "cannot_tell", missing
-    for value, unit in expected:
-        if any(
-            other in (None, unit) and abs(value - number) <= max(0.05, 0.02 * abs(value))
-            for number, other in seen
-        ):
-            return "matches", f"记录值 {value:g}{unit} 在照片中可见"
-    return "conflicts", (
-        "记录值 " + "、".join(f"{v:g}{u}" for v, u in expected)
-        + "；照片可见 " + "、".join(f"{n:g}{u or ''}" for n, u in seen)
-    )
+    if not seen:
+        return "cannot_tell", "照片没有看清所附记录声明的量"
+    matched, mismatched = [], []
+    for reading in seen:
+        quantity, number = reading["quantity"], float(reading["value"])
+        if any(_close(value, number) for value in bound[quantity]):
+            matched.append(f"{quantity}={number:g}")
+            continue
+        others = [
+            evidence_id
+            for value, evidence_id in (same_subject or {}).get(quantity, [])
+            if _close(float(value), number)
+        ]
+        note = f"（与同一对象另一条记录 {'、'.join(others)} 一致）" if others else ""
+        mismatched.append(
+            f"{quantity} 照片 {number:g}，记录 "
+            + "、".join(dict.fromkeys(f"{v:g}" for v in bound[quantity]))
+            + note
+        )
+    if mismatched:
+        return "conflicts", "；".join(mismatched)
+    return "matches", "记录值在照片中可见：" + "、".join(matched)
 
 
 def photo_readings_ref(run_id: str) -> str:
@@ -115,23 +117,83 @@ def load_photo_readings(workspace: Path, run_id: str) -> dict[str, PhotoReading]
 
 
 def reading_label(reading: PhotoReading) -> str:
+    """What a judge or reviewer is told a photo shows.
+
+    The table record is the fact and the photo backs it.  A reading the
+    program could not confirm (it differs from the record, or two
+    independent readings differ) shows no numbers, so it cannot be cited as
+    one, and two readings that differ show no copied text either; entries
+    dated after the photo itself are left out, as the photo cannot show them.
+    """
+
+    unstable = reading.reread_agrees is False
+    usable = reading.record_match != "conflicts" and not unstable
+    later = [item for item in reading.transcription if item.get("after_photo_date")]
     copied = "，".join(
         f"{item.get('label')}={item.get('text') or '（空白）'}"
         + ("" if item.get("legible") else "（看不清）")
         for item in reading.transcription
+        if not item.get("after_photo_date")
+        and not unstable
+        and (usable or not _numeric(item.get("text")))
+    )
+    text = f"{reading.photo_id}：{reading.visible}"
+    if copied:
+        text += f"；抄写：{copied}"
+    if later:
+        text += f"；拍摄日期之后的{len(later)}格未计入"
+    if reading.photo_date:
+        text += f"；照片日期：{reading.photo_date}"
+    if unstable:
+        return text + f"；{UNSTABLE}"
+    if reading.record_match == "conflicts":
+        return text + f"；{MATCH_TEXT['conflicts']}"
+    if reading.readings:
+        text += "；读数：" + "，".join(
+            f"{r.get('quantity')}={r.get('value') if r.get('legible') else '看不清'}{r.get('unit') or ''}"
+            for r in reading.readings
+        )
+    text += f"；{MATCH_TEXT[reading.record_match]}（{reading.reason}）"
+    return text + ("；需人工复核" if reading.needs_review else "")
+
+
+def _numeric(text: Any) -> bool:
+    return bool(re.search(r"\d", str(text or "")))
+
+
+def writer_label(reading: PhotoReading) -> str:
+    """What a writer is told a photo shows: only what can be written as seen.
+
+    The judgment rows already settled what the photo adds.  A writer gets what
+    the photo legibly shows and nothing about readings that were not used, so
+    the prose follows the table record and never says a photo is unclear or
+    disagrees with it.
+    """
+
+    usable = reading.record_match != "conflicts" and reading.reread_agrees is not False
+    copied = "，".join(
+        f"{item.get('label')}={item.get('text')}"
+        for item in reading.transcription
+        if item.get("legible") and item.get("text")
+        and not item.get("after_photo_date")
+        and (usable or not _numeric(item.get("text")))
     )
     text = f"{reading.photo_id}：{reading.visible}"
     if copied:
         text += f"；抄写：{copied}"
     if reading.photo_date:
         text += f"；照片日期：{reading.photo_date}"
-    text += f"；{MATCH_TEXT[reading.record_match]}（{reading.reason}）"
-    return text + ("；需人工复核" if reading.needs_review else "")
+    if usable and reading.record_match == "matches":
+        text += "；照片读数与表格记录一致"
+    return text
 
 
-def photo_reading_labels(workspace: Path, run_id: str) -> dict[str, str]:
+def photo_reading_labels(
+    workspace: Path, run_id: str, *, for_writer: bool = False
+) -> dict[str, str]:
+    label = writer_label if for_writer else reading_label
     return {
-        photo_id: reading_label(reading)
+        photo_id: label(reading)
         for photo_id, reading in load_photo_readings(workspace, run_id).items()
     }
 
@@ -168,6 +230,7 @@ class PhotoReadingTools:
             for sheet, columns in result.column_headers.items()
         }
         lanes: dict[str, list[PhotoReadingInput]] = {lane: [] for lane in PHOTO_READING_LANES}
+        expected: dict[str, Any] = self._expected(context.run_id)
         reused: list[str] = []
         pending = 0
         for photo in context.photo_assets:
@@ -181,19 +244,8 @@ class PhotoReadingTools:
             if not bound:
                 continue
             bound.sort(key=lambda item: item.id != photo.primary_evidence_id)
-            records = [
-                PhotoReadingRecord(
-                    evidence_id=item.id,
-                    subject=item.subject,
-                    fact=item.fact,
-                    sheet=item.source.sheet,
-                    cell=item.source.cell,
-                    submodule_id=item.submodule_id,
-                    primary=index == 0,
-                    values=_record_values(item),
-                )
-                for index, item in enumerate(bound)
-            ]
+            records, quantities = photo_records(bound, context.evidence_items)
+            expected[photo.id] = expected_values(bound, context.evidence_items)
             column = re.sub(r"\d+", "", photo.source_cell or "")
             columns = headers.get((bound[0].source.path.as_posix(), photo.source_sheet or ""), {})
             lane = PHOTO_READING_LANES[pending % len(PHOTO_READING_LANES)]
@@ -206,8 +258,11 @@ class PhotoReadingTools:
                 photo_cell=photo.source_cell,
                 column_header=columns.get(column) if column else None,
                 records=records,
+                quantities=quantities,
             ))
             pending += 1
+        # The recorded values stay with the program; the reader never sees them.
+        self.store.write_json(photo_expected_ref(context.run_id), expected)
         return PhotoReadingPlan(
             run_id=context.run_id,
             photo_count=len(context.photo_assets),
@@ -226,17 +281,26 @@ class PhotoReadingTools:
         item = PhotoReadingInput.model_validate(_dumped(value["item"]))
         submission = PhotoReadingSubmission.model_validate(_dumped(value["result"]))
         transcription = [entry.model_dump(mode="json") for entry in submission.transcription]
-        match, reason = compare_with_records(item.records, transcription)
+        readings = [entry.model_dump(mode="json") for entry in submission.readings]
+        expected = self._expected(item.run_id).get(item.photo_id) or {}
+        match, reason = compare_readings(
+            readings, expected.get("bound") or {}, expected.get("same_subject") or {}
+        )
         return PhotoReading(
             photo_id=item.photo_id,
             evidence_ids=[record.evidence_id for record in item.records],
             visible=submission.visible,
             transcription=transcription,
             photo_date=submission.photo_date,
+            readings=readings,
             record_match=match,
             reason=reason,
             needs_review=submission.needs_review or match == "conflicts",
         ).model_dump(mode="json")
+
+    def _expected(self, run_id: str) -> dict[str, Any]:
+        path = self.workspace / photo_expected_ref(run_id)
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
     def reduce(self, value: Mapping[str, Any]) -> dict[str, Any]:
         plan = _plan(value["plan"])
@@ -264,15 +328,57 @@ class PhotoReadingTools:
         ).model_dump(mode="json")
 
 
-def _record_values(item: Any) -> list[RecordValue]:
-    values = [
-        (float(measurement.value), measurement.unit or "")
-        for measurement in item.measurements
-        if measurement.value is not None
+def photo_expected_ref(run_id: str) -> str:
+    return f"Work/runs/{run_id}/preparation/photo-expected.json"
+
+
+def photo_records(
+    bound: list[Any], items: list[Any]
+) -> tuple[list[PhotoReadingRecord], list[PhotoQuantity]]:
+    """What the reader is told: where the photo sits and what to look for, no values.
+
+    The quantities are those the table declares for the bound records and the
+    object's other records, so a reading that belongs elsewhere still has a
+    name to be reported under.
+    """
+
+    records = [
+        PhotoReadingRecord(
+            evidence_id=item.id,
+            subject=item.subject,
+            checkpoint=item.checkpoint_field or "",
+            sheet=item.source.sheet,
+            cell=item.source.cell,
+            submodule_id=item.submodule_id,
+            primary=index == 0,
+        )
+        for index, item in enumerate(bound)
     ]
-    if isinstance(item.value, (int, float)) and not isinstance(item.value, bool):
-        values.insert(0, (float(item.value), item.unit or ""))
-    return [RecordValue(value=v, unit=u) for v, u in dict.fromkeys(values)]
+    subjects = {item.subject for item in bound}
+    related = [*bound, *(i for i in items if i.subject in subjects and i not in bound)]
+    quantities = {
+        quantity: PhotoQuantity(quantity=quantity, label=label, unit=unit)
+        for item in related
+        for quantity, label, unit, _value in declared_quantities(item)
+    }
+    return records, list(quantities.values())
+
+
+def expected_values(bound: list[Any], items: list[Any]) -> dict[str, Any]:
+    """The bound records' values by quantity, and the object's other records' values."""
+
+    found: dict[str, list[float]] = {}
+    for item in bound:
+        for quantity, _label, _unit, value in declared_quantities(item):
+            found.setdefault(quantity, []).append(value)
+    subjects = {item.subject for item in bound}
+    bound_ids = {item.id for item in bound}
+    others: dict[str, list[list[Any]]] = {}
+    for item in items:
+        if item.subject in subjects and item.id not in bound_ids:
+            for quantity, _label, _unit, value in declared_quantities(item):
+                others.setdefault(quantity, []).append([value, item.id])
+    return {"bound": found, "same_subject": others}
 
 
 def _dumped(value: Any) -> Any:
@@ -293,10 +399,14 @@ def build_photo_reading_tool_implementations(
 
 
 __all__ = [
+    "compare_readings",
+    "declared_quantities",
+    "photo_records",
     "PhotoReadingTools",
     "build_photo_reading_tool_implementations",
     "load_photo_readings",
     "photo_reading_labels",
     "photo_readings_ref",
+    "writer_label",
     "reading_label",
 ]

@@ -1,410 +1,270 @@
-"""Single-step baseline copy and requested-patch boundaries for revise-report.
+"""Plan a revision of an existing report from its base version.
 
-Action ordering, Agent turns, review, and delivery are owned by the YAML graph.
-Only business carriers cross Run boundaries; execution history never does.
+A revision runs under the run's own id as its next version.  What it redoes
+is decided here, from the run's fixed structure only:
+
+- facts: the current facts are compared with the base version's by id and
+  text; a changed fact has a new id, so its old id counts as removed;
+- modules: a module is reopened when it owns a changed or new fact, when one
+  of its base rows cites a removed fact, or when a change asks for its
+  judgment (``scope=judgment``);
+- rows: in a reopened module the base rows that cite no changed fact and lie
+  outside the sections whose judgment was asked for are kept as they were;
+- wording: a ``scope=text`` change reaches only the writing of its section;
+- chief: chapters 1 and 3 are revised from the base version's, only where
+  rows changed or a change names them.
+
+Everything else is left to the run's turn memo: a step whose input is the
+same as in the base version is replayed, not redone.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-from copy import deepcopy
-from functools import partial
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-from .aggregate_existing import AggregateExistingTools
-from .input_snapshot import RunInputSnapshotStore
-from .models.agentic import ModuleSubmission
-from .models.aggregate_existing import AggregateExistingPreparationInput
-from .models.entrypoint import ReportingRunInitializerInput
-from .models.inputs import (
-    RequestedModuleChange,
-    ReviewCompletionRecord,
-    RevisionInputChanges,
-    report_instruction_from_state,
+from .models.reporting import EvidenceItem, ReportRevision
+
+WHOLE_REPORT = "全文"
+CHIEF_TARGETS = {"1", "3"}
+
+MODULE_NOTE = (
+    "这是修改已有报告，不是重写。previous_rows 是上一版本模块的判断行。"
+    "keep_row_ids 里的行程序会按上一版原样保留，不用再提交；"
+    "其余上一版的行要重新判断并提交：它们引用的事实有变化（removed_evidence_ids 是已不存在或已改动的旧事实编号，"
+    "changed_facts 是新的或改动后的事实），或者修改要求点名要重新判断它所在的小节。"
+    "新的事实要进入判断。行编号沿用上一版的，新行用新的编号，不与 keep_row_ids 重复。"
 )
-from .models.module_lane import (
-    DeclarativeModuleRevisionAgentResult,
-    DeclarativeModuleRevisionPreparation,
-    DeclarativeModuleRuntimeLaneContext,
+CHIEF_NOTE = (
+    "这是修改已有报告，不是重写。previous_chapter3 和 previous_chapter1 是上一版本的第三章和第一章。"
+    "只改动引用了 changed_row_ids 里任一行的条目，以及 instructions 点名的内容；其他条目照上一版原样抄写，"
+    "不改措辞。综述类的段落只在它说到的内容变了时才改。"
 )
-from .models.preparation import PreparationContext
-from .models.reporting import REPORT_MODULE_IDS, ReportRequest
-from .module_revision_tools import accept_module_revision, prepare_module_revision
-from .storage import ReportingStore
-
-BUSINESS_KEYS = (
-    "module_submissions", "evidence_items", "photo_assets", "photo_evidence_adjacency",
-    "project_manifest", "parsed_artifacts", "mapping_gaps", "coverage_matrix",
-    "report_taxonomy", "special_topic_plan", "evidence_index_ref", "source_ledger_ref",
-    "template_skill_refs", "template_skill_text", "template_skill_boundary",
-    "module_knowledge_refs", "template_ref", "template_provenance", "input_snapshot_ref",
-    "input_snapshot_digest", "edited_report",
-    "preparation_refs", "preparation_completion_ref",
-)
+SECTION_NOTE = "这是修改已有报告：按 revision_instruction 修改这一节，其余照判断行写。"
 
 
-def _rebase(value: Any, old: str, new: str) -> Any:
-    """Rewrite baseline Run path bindings, including absolute Windows paths."""
-
-    old_slash = old.replace("\\", "/")
-    if isinstance(value, dict):
-        return {k: _rebase(v, old, new) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_rebase(v, old, new) for v in value]
-    if isinstance(value, str):
-        normalized = value.replace("\\", "/")
-        marker = f"/{old_slash}/"
-        index = normalized.find(marker)
-        if index >= 0:
-            return normalized[: index + 1] + new + normalized[index + len(marker) - 1 :]
-        if normalized.startswith(old_slash + "/"):
-            return new + normalized[len(old_slash) :]
-    return value
+def base_dir(workspace: Path, run_id: str, version: int) -> Path:
+    return Path(workspace) / "Work" / "runs" / run_id / "versions" / f"v{version}"
 
 
-def _copy_tree_with_rebase(source: Path, target: Path, *, old: str, new: str) -> None:
-    shutil.copytree(source, target, dirs_exist_ok=True)
-    # Evidence snapshots are content-addressed manifests; keep filenames but
-    # drop copied bodies so the new Run regenerates them from its own evidence.jsonl.
-    for snapshot in (target / "evidence").glob("*.json") if (target / "evidence").is_dir() else []:
-        snapshot.unlink()
-    for path in target.rglob("*"):
-        if not path.is_file() or path.suffix.casefold() not in {".json", ".jsonl"}:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        # JSON escapes Windows separators, so search both raw spellings.
-        if "Work/runs" not in text and "Work\\runs" not in text and "Work\\\\runs" not in text:
-            continue
-        if path.suffix.casefold() == ".json":
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            path.write_text(
-                json.dumps(_rebase_business(payload, old, new), ensure_ascii=False),
-                encoding="utf-8",
-            )
-        else:
-            path.write_text(_rebase_lines(text, old, new), encoding="utf-8")
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
 
 
-def _rebase_business(value: Any, old: str, new: str) -> Any:
-    """Old source references stay bound to archived old bytes after an input edit."""
-    value = _rebase(value, f"{old}/baseline", f"{new}/baseline/inherited")
-    value = _rebase(value, f"{old}/frozen-project", f"{new}/baseline/frozen-project")
-    return _rebase(value, old, new)
+def _module_of(section: str, sections: Mapping[str, Sequence[str]]) -> str | None:
+    for module_id, ids in sections.items():
+        if section == module_id or section in ids:
+            return module_id
+    return None
 
 
-def _rebase_lines(text: str, old: str, new: str) -> str:
-    out: list[str] = []
-    for line in text.splitlines(keepends=True):
-        stripped = line.strip()
-        if not stripped:
-            out.append(line)
-            continue
-        try:
-            payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            out.append(line)
-            continue
-        out.append(json.dumps(_rebase_business(payload, old, new), ensure_ascii=False) + ("\n" if line.endswith("\n") else ""))
-    return "".join(out)
-
-
-def prepare_report_revision(value: Any, *, workspace: Path) -> dict[str, Any]:
-    """Copy one baseline business snapshot, idempotently, into a fresh Run."""
-    initializer = ReportingRunInitializerInput.model_validate(value)
-    request, run_id = initializer.request, initializer.run_id
-    snapshots = RunInputSnapshotStore(workspace)
-    baseline_id = request.baseline_run_id
-    if not baseline_id or run_id == baseline_id:
-        raise ValueError("revision requires a different baseline Run")
-    # Reuse the existing safe Run-component validation at the snapshot boundary.
-    snapshots._manifest_path(run_id)
-    old, new = f"Work/runs/{baseline_id}", f"Work/runs/{run_id}"
-    store = ReportingStore(workspace)
-    saved = workspace / new / "baseline/business-state.json"
-    if saved.is_file():
-        return json.loads(saved.read_text(encoding="utf-8"))
-    persisted = json.loads((workspace / old / "runtime-state.json").read_text(encoding="utf-8"))
-    candidates = [*persisted.get("outputs", {}).values(), *reversed(list(persisted.get("variables", {}).values()))]
-    baseline = next((item for item in candidates if isinstance(item, dict)
-                     and set(item.get("module_submissions", {})) == set(REPORT_MODULE_IDS)), None)
-    if baseline is None:
-        raise ValueError("baseline Run has no complete five-module business snapshot")
-    modules = _rebase_business(
-        {key: ModuleSubmission.model_validate(raw).model_dump(mode="json")
-         for key, raw in baseline["module_submissions"].items()},
-        old,
-        new,
-    )
-    current_inputs = snapshots.freeze(run_id)
-    baseline_inputs = snapshots.load(baseline_id)
-    previous_files = {item.logical_ref.as_posix(): item.sha256 for item in baseline_inputs.files}
-    current_files = {item.logical_ref.as_posix(): item.sha256 for item in current_inputs.files}
-    input_changes = {
-        "added": sorted(current_files.keys() - previous_files.keys()),
-        "removed": sorted(previous_files.keys() - current_files.keys()),
-        "modified": sorted(key for key in current_files.keys() & previous_files.keys()
-                           if current_files[key] != previous_files[key]),
-    }
-    # Successive revisions retain earlier archived bytes as well as this baseline.
-    inherited = workspace / old / "baseline"
-    if inherited.is_dir():
-        _copy_tree_with_rebase(inherited, workspace / new / "baseline/inherited", old=old, new=new)
-    # Retain the old bytes as provenance; the active snapshot belongs to this request.
-    for item in baseline_inputs.files:
-        target = workspace / new / "baseline/frozen-project" / item.logical_ref
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(workspace / item.snapshot_ref, target)
-    # These directories contain data, not execution cursors, reviews, usage, or conversations.
-    for name in ("assets", "indexes", "sources", "templates", "preparation", "source-index"):
-        source = workspace / old / name
-        if source.is_dir():
-            target_name = "baseline/preparation" if name == "preparation" and any(input_changes.values()) else name
-            _copy_tree_with_rebase(source, workspace / new / target_name, old=old, new=new)
-    for name in ("evidence.jsonl", "photo-manifest.json", "context/photo-manifest.json", "ledgers/sources.json", "template-provenance.json"):
-        source = workspace / old / name
-        if source.is_file():
-            target = workspace / new / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if source.suffix == ".json":
-                store.write_json(f"{new}/{name}", _rebase_business(json.loads(source.read_text(encoding="utf-8")), old, new))
-            elif source.suffix == ".jsonl":
-                target.write_text(_rebase_lines(source.read_text(encoding="utf-8"), old, new), encoding="utf-8")
-            else:
-                shutil.copyfile(source, target)
-    state = _rebase_business({key: deepcopy(baseline[key]) for key in BUSINESS_KEYS if key in baseline}, old, new)
-    # Keep baseline prose; only workspace path bindings move to the new Run.
-    state["module_submissions"] = modules
-    state.update(run_id=run_id, request=request.model_dump(mode="json"), resume=False,
-                 requested_modules=request.target_modules, full_report=True,
-                 baseline_run_id=baseline_id, revision_targets=dict(request.requested_changes))
-    state.update(input_changes=input_changes,
-                 input_snapshot_ref=f"{new}/input-snapshot.json",
-                 input_snapshot_digest=current_inputs.inventory_digest)
-    baseline_instruction = report_instruction_from_state(baseline)
-    state["report_instruction"] = (
-        f"原报告要求（与本轮冲突时以本轮要求为准）：\n{baseline_instruction}\n"
-        f"本轮修订要求：\n{request.instruction}"
-        if baseline_instruction else request.instruction
-    )
-    for key, module in modules.items():
-        store.write_json(f"{new}/modules/{key}-r{module['revision']}.json", module)
-    completion_refs = _materialize_baseline_module_review_completions(
-        workspace=workspace,
-        store=store,
-        baseline=baseline,
-        persisted=persisted,
-        modules=modules,
-        old=old,
-        new=new,
-        run_id=run_id,
-    )
-    if completion_refs:
-        state["module_review_completion_refs"] = completion_refs
-    photo_assets = state.get("photo_assets") or []
-    if photo_assets:
-        store.write_json(
-            f"{new}/context/photo-manifest.json",
-            {"assets": photo_assets},
-        )
-    # Preserve the full old business payload for provenance, not as executable state.
-    store.write_json(f"{new}/baseline/original-business-state.json", baseline)
-    store.write_json(f"{new}/baseline/business-state.json", state)
-    return state
-
-
-def _materialize_baseline_module_review_completions(
+def plan_revision(
+    revision: ReportRevision,
     *,
-    workspace: Path,
-    store: ReportingStore,
-    baseline: Mapping[str, Any],
-    persisted: Mapping[str, Any],
-    modules: Mapping[str, Any],
-    old: str,
-    new: str,
-    run_id: str,
-) -> dict[str, str]:
-    """Bind already-reviewed baseline modules into this Run for Cross local regression."""
+    base: Path,
+    items: Sequence[EvidenceItem],
+    sections: Mapping[str, Sequence[str]],
+) -> dict[str, Any]:
+    """Decide what a revision redoes; see the module docstring."""
 
-    refs = dict(baseline.get("module_review_completion_refs") or {})
-    # Older aggregate handoffs omitted these refs from the final output. Recover
-    # only proof for the same module payload from a completed child in this Run.
-    for child in persisted.get("subworkflow_states", {}).values():
-        if child.get("status") != "completed":
+    base_reference = _read_json(base / "ledger" / "reference-values.json", {})
+    base_texts: dict[str, str] = base_reference.get("fact_texts") or {}
+    current = {item.id: item for item in items}
+    changed = sorted(
+        evidence_id
+        for evidence_id, item in current.items()
+        if base_texts.get(evidence_id) != item.fact
+    )
+    removed = sorted(set(base_texts) - set(current))
+    touched = set(changed) | set(removed)
+    base_rows: dict[str, list[dict[str, Any]]] = _read_json(
+        base / "ledger" / "judgments-r0.json", {}
+    )
+
+    judgment_sections: dict[str, list[str]] = {}
+    text_instructions: dict[str, list[str]] = {}
+    chief_instructions: list[str] = []
+    module_instructions: dict[str, list[dict[str, str]]] = {}
+    for change in revision.changes:
+        target = change.target.strip()
+        if target == WHOLE_REPORT:
+            targets = [s for ids in sections.values() for s in ids]
+            chief_instructions.append(change.instruction)
+        elif target in CHIEF_TARGETS:
+            chief_instructions.append(f"第{target}章：{change.instruction}")
             continue
-        result = child.get("outputs", {}).get("result", {})
-        if not isinstance(result, dict):
-            continue
-        for module_id, ref in result.get("module_review_completion_refs", {}).items():
-            if result.get("module_submissions", {}).get(module_id) == baseline["module_submissions"].get(module_id):
-                refs.setdefault(module_id, ref)
-
-    archive_root = f"{new}/baseline/review-artifacts"
-    copied: dict[str, str] = {}
-
-    def copy_value(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: copy_value(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [copy_value(item) for item in value]
-        if isinstance(value, str):
-            rebased = _rebase(value, old, archive_root)
-            if rebased != value and (workspace / value).is_file():
-                return copy_artifact(value)
-            return rebased
-        return value
-
-    def copy_artifact(ref: str) -> str:
-        source = (workspace / ref).resolve()
-        relative = source.relative_to((workspace / old).resolve()).as_posix()
-        if relative in copied:
-            return copied[relative]
-        target_ref = f"{archive_root}/{relative}"
-        copied[relative] = target_ref
-        if source.suffix.casefold() == ".json":
-            payload = json.loads(source.read_text(encoding="utf-8"))
-            store.write_json(target_ref, copy_value(payload))
+        elif target in sections:
+            targets = list(sections[target])
+        elif _module_of(target, sections) is not None:
+            targets = [target]
         else:
-            target = store.workspace / target_ref
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if source.suffix.casefold() == ".jsonl":
-                lines = [copy_value(json.loads(line)) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
-                store.write_jsonl(target_ref, lines)
+            known = "、".join([*sections, *(s for ids in sections.values() for s in ids)])
+            raise ValueError(f"修改目标 {target} 不在本报告的小节里；可用：1、3、{WHOLE_REPORT}、{known}")
+        for section in targets:
+            module_id = _module_of(section, sections)
+            if module_id is None:
+                continue
+            if change.scope == "judgment":
+                judgment_sections.setdefault(module_id, []).append(section)
+                module_instructions.setdefault(module_id, []).append(
+                    {"section": section, "instruction": change.instruction}
+                )
             else:
-                shutil.copyfile(source, target)
-        return target_ref
+                text_instructions.setdefault(section, []).append(change.instruction)
 
-    completed: dict[str, str] = {}
-    for module_id, module in modules.items():
-        revision = module.get("revision", 0)
-        subject_ref = f"{new}/modules/{module_id}-r{revision}.json"
-        source_ref = refs.get(module_id)
-        if not source_ref:
-            # Absence remains absence; Cross owns the existing missing-review error.
-            continue
-        original = ReviewCompletionRecord.model_validate_json(
-            (workspace / source_ref).read_text(encoding="utf-8")
+    affected: list[str] = []
+    for module_id, ids in sections.items():
+        owns_change = any(
+            current[e].module_id == module_id or current[e].module_id is None
+            for e in changed
         )
-        payload = original.model_dump(mode="json")
-        for key in ("finding_refs", "verdict_refs"):
-            payload[key] = [copy_artifact(ref) for ref in payload[key]]
-        copy_artifact(source_ref)
-        payload["run_id"] = run_id
-        payload["subject_refs"] = [subject_ref]
-        target_ref = f"{new}/reviews/module/baseline/{module_id}/completion-r{revision}.json"
-        store.write_json(target_ref, payload)
-        completed[module_id] = target_ref
-    return completed
+        cites_touched = any(
+            touched & set(row.get("evidence_ids") or ()) for row in base_rows.get(module_id, [])
+        )
+        if owns_change or cites_touched or module_id in judgment_sections:
+            affected.append(module_id)
+        del ids
 
-
-def module_has_requested_revision(value: Any) -> bool:
-    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-    return context.status == "ready" and any(
-        target.startswith(context.module_id + ".")
-        for target in context.reporting_state.get("revision_targets", {})
-    )
-
-
-def module_uses_baseline_without_revision(value: Any) -> bool:
-    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-    if context.status != "ready":
-        return False
-    state = context.reporting_state
-    if not state.get("baseline_run_id"):
-        return False
-    module_id = context.module_id
-    if any(target.startswith(module_id + ".") for target in state.get("revision_targets", {})):
-        return False
-    module = state.get("module_submissions", {}).get(module_id)
-    return module is not None
-
-
-def complete_baseline_module_lane(value: Any) -> DeclarativeModuleRuntimeLaneContext:
-    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-    if context.status != "ready":
-        return context
-    state = context.reporting_state
-    module = ModuleSubmission.model_validate(state["module_submissions"][context.module_id])
-    return context.model_copy(
-        update={
-            "status": "reviewed",
-            "module": module,
-            "revision": None,
-            "error": None,
-            "reporting_state": state,
-        }
-    )
-
-
-async def prepare_requested_module_revision(value: Any, *, store: ReportingStore):
-    context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
-    state = context.reporting_state
-    subject = ModuleSubmission.model_validate(state["module_submissions"][context.module_id])
-    changes = [RequestedModuleChange(id=f"USER-{target}", instruction=instruction,
-                                   target_submodule_ids=[target])
-               for target, instruction in state["revision_targets"].items()
-               if target.startswith(context.module_id + ".")]
-    prepared = await prepare_module_revision(
-        workspace=store.workspace, store=store, state=state, workflow_id=context.workflow_id,
-        subject=subject, requested_changes=changes,
-        user_supplements=state["request"].get("user_supplements", []),
-    )
-    return context.model_copy(update={"module": subject, "status": "revision_ready",
-                                      "revision": DeclarativeModuleRevisionPreparation(prepared=prepared)})
-
-
-def accept_requested_module_revision(value: Any, *, store: ReportingStore):
-    context = DeclarativeModuleRuntimeLaneContext.model_validate(value["context"])
-    result = DeclarativeModuleRevisionAgentResult.model_validate(value["result"])
-    if result.status != "completed" or result.submission is None:
-        raise ValueError(result.error or "requested revision did not complete")
-    if context.revision is None:
-        raise ValueError("requested revision preparation is missing")
-    revised, _ref = accept_module_revision(workspace=store.workspace, store=store,
-                                          preparation=context.revision.prepared, result=result.submission)
-    state = deepcopy(context.reporting_state)
-    state.setdefault("specialist_submissions", {})[context.module_id] = revised.model_dump(mode="json")
-    return context.model_copy(update={"reporting_state": state, "module": revised,
-                                      "status": "authored", "revision": None})
-
-
-def prepare_revision_aggregate(value: Any, *, store: ReportingStore):
-    """Project the revised modules plus all untouched baseline modules to the editor."""
-    state = dict(value)
-    request = ReportRequest.model_validate(state["request"])
-    context = AggregateExistingTools(workspace=store.workspace, input_snapshot=None, store=store).prepare_from_modules(
-        AggregateExistingPreparationInput(run_id=state["run_id"], request=request),
-        {key: ModuleSubmission.model_validate(raw) for key, raw in state["module_submissions"].items()},
-        module_review_completion_refs=dict(state.get("module_review_completion_refs") or {}),
-    )
-    preparation_fields = PreparationContext.model_fields
-    preparation = PreparationContext.model_validate({key: value for key, value in state.items() if key in preparation_fields})
-    return context.model_copy(update={
-        "report_instruction": report_instruction_from_state(state),
-        "preparation_context": preparation,
-        "revision_input_changes": RevisionInputChanges.model_validate(state["revision_input_changes"])
-        if state.get("revision_input_changes") else None,
-    })
-
-
-def build_report_revision_tools(workspace: Path) -> dict[str, Any]:
-    from .revision_inputs import build_revision_input_tools
-
-    store = ReportingStore(workspace)
+    keep_rows: dict[str, list[dict[str, Any]]] = {}
+    for module_id in affected:
+        reopened = set(judgment_sections.get(module_id, ()))
+        keep_rows[module_id] = [
+            row
+            for row in base_rows.get(module_id, [])
+            if not touched & set(row.get("evidence_ids") or ())
+            and row.get("submodule_id") not in reopened
+        ]
     return {
-        **build_revision_input_tools(workspace),
-        "prepare-report-revision": partial(prepare_report_revision, workspace=workspace),
-        "module-has-requested-revision": module_has_requested_revision,
-        "module-uses-baseline-without-revision": module_uses_baseline_without_revision,
-        "complete-baseline-module-lane": complete_baseline_module_lane,
-        "prepare-requested-module-revision": partial(prepare_requested_module_revision, store=store),
-        "accept-requested-module-revision": partial(accept_requested_module_revision, store=store),
-        "prepare-revision-aggregate": partial(prepare_revision_aggregate, store=store),
+        "base_version": revision.base_version,
+        "instruction": revision.instruction,
+        "changed_evidence_ids": changed,
+        "removed_evidence_ids": removed,
+        "affected_modules": affected,
+        "module_instructions": module_instructions,
+        "base_rows": {m: base_rows.get(m, []) for m in affected},
+        "keep_rows": keep_rows,
+        "text_instructions": text_instructions,
+        "chief_instructions": chief_instructions,
     }
+
+
+def module_revision_brief(
+    plan: Mapping[str, Any], module_id: str, changed_facts: str
+) -> dict[str, Any] | None:
+    """The part of one module's brief that tells its author what to redo."""
+
+    if module_id not in plan.get("affected_modules", ()):
+        return None
+    keep = plan["keep_rows"].get(module_id, [])
+    return {
+        "note": MODULE_NOTE,
+        "instruction": plan["instruction"],
+        "section_instructions": plan["module_instructions"].get(module_id, []),
+        "previous_rows": plan["base_rows"].get(module_id, []),
+        "keep_row_ids": [row["id"] for row in keep],
+        "removed_evidence_ids": [
+            e
+            for e in plan["removed_evidence_ids"]
+            if any(
+                e in (row.get("evidence_ids") or ())
+                for row in plan["base_rows"].get(module_id, [])
+            )
+        ],
+        "changed_facts": changed_facts,
+    }
+
+
+def splice_kept_rows(
+    module_id: str, rows: Sequence[Mapping[str, Any]], plan: Mapping[str, Any] | None
+) -> list[dict[str, Any]]:
+    """The kept base rows and the author's rows, in the base version's order.
+
+    A resubmitted row takes its base row's place and new rows follow, so an
+    unchanged ledger reads exactly as before and later steps can be reused.
+    """
+
+    if not plan or module_id not in plan.get("keep_rows", {}):
+        return [dict(row) for row in rows]
+    kept = {row["id"]: dict(row) for row in plan["keep_rows"][module_id]}
+    submitted = {row.get("id"): dict(row) for row in rows if row.get("id") not in kept}
+    ordered: list[dict[str, Any]] = []
+    for base_row in plan.get("base_rows", {}).get(module_id, []):
+        row_id = base_row.get("id")
+        if row_id in kept:
+            ordered.append(kept.pop(row_id))
+        elif row_id in submitted:
+            ordered.append(submitted.pop(row_id))
+    return [*ordered, *kept.values(), *submitted.values()]
+
+
+def base_chief_outputs(base: Path) -> dict[str, Any]:
+    """Chapters 1 and 3 as the base version delivered them.
+
+    Versions saved by this code keep them in ``ledger/chief-outputs.json``;
+    older versions only have the chief's last accepted turns.
+    """
+
+    saved = _read_json(base / "ledger" / "chief-outputs.json", None)
+    if isinstance(saved, dict):
+        return {"chapter1": saved.get("chapter1"), "chapter3": saved.get("chapter3")}
+    found: dict[str, Any] = {}
+    for chapter, tasks in (
+        ("chapter3", ("fix-3--revise-chief-actions", "revise-3--revise-chief-actions",
+                      "chapter-3--chief-chapter-3")),
+        ("chapter1", ("fix-1--revise-chief-overview", "revise-1--revise-chief-overview",
+                      "chapter-1--chief-chapter-1")),
+    ):
+        for task in tasks:
+            matches = sorted((base / "agent-results").glob(f"*/{task}.json"))
+            record = _read_json(matches[0], {}) if matches else {}
+            if record.get("status") == "completed":
+                found[chapter] = record.get("result")
+                break
+    return found
+
+
+def chief_revision(
+    plan: Mapping[str, Any],
+    *,
+    base: Path,
+    final_ledger: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, Any] | None:
+    """What the chief redoes, or None when chapters 1 and 3 can stay as they were."""
+
+    base_final = _read_json(base / "ledger" / "judgments.json", {})
+    before = {row["id"]: row for rows in base_final.values() for row in rows}
+    after = {row["id"]: row for rows in final_ledger.values() for row in rows}
+    changed_rows = sorted(
+        row_id for row_id in set(before) | set(after) if before.get(row_id) != after.get(row_id)
+    )
+    if not changed_rows and not plan.get("chief_instructions"):
+        return None
+    previous = base_chief_outputs(base)
+    return {
+        "note": CHIEF_NOTE,
+        "instruction": plan["instruction"],
+        "instructions": list(plan.get("chief_instructions") or ()),
+        "changed_row_ids": changed_rows,
+        "removed_row_ids": sorted(set(before) - set(after)),
+        "previous_chapter3": previous.get("chapter3"),
+        "previous_chapter1": previous.get("chapter1"),
+    }
+
+
+__all__ = [
+    "CHIEF_NOTE",
+    "MODULE_NOTE",
+    "SECTION_NOTE",
+    "WHOLE_REPORT",
+    "base_chief_outputs",
+    "base_dir",
+    "chief_revision",
+    "module_revision_brief",
+    "plan_revision",
+    "splice_kept_rows",
+]

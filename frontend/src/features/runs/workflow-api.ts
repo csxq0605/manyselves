@@ -94,3 +94,78 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRu
     ),
   };
 }
+
+/** One workflow, or one parallel branch of it, as the progress view shows it. */
+export interface RunProgressNode {
+  readonly current: string | null;
+  readonly detail: RunProgressDetail | null;
+  readonly status: string;
+  readonly steps: readonly RunProgressStep[];
+  readonly workflow_id: string;
+}
+
+export interface RunProgressStep {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly workflow?: string;
+}
+
+export interface RunProgressMapItem {
+  readonly key: string;
+  readonly node: RunProgressNode | null;
+  readonly status: string;
+}
+
+export type RunProgressDetail =
+  | { readonly action_id: string; readonly child: RunProgressNode | null; readonly kind: "subworkflow" }
+  | {
+    readonly action_id: string;
+    readonly completed: number;
+    readonly completed_keys: readonly string[];
+    readonly failed: number;
+    readonly items: readonly RunProgressMapItem[];
+    readonly kind: "map";
+    readonly queued: number;
+    readonly queued_keys: readonly string[];
+    readonly running: number;
+    readonly total: number;
+    readonly workflow: string;
+  }
+  | {
+    readonly action_id: string;
+    readonly branches: readonly {
+      readonly branch_id: string;
+      readonly node: RunProgressNode | null;
+      readonly start: string;
+      readonly status: string;
+    }[];
+    readonly kind: "parallel";
+  }
+  | { readonly action_id: string; readonly index: number; readonly kind: "for_each"; readonly total: number };
+
+export interface RunProgressEvent {
+  readonly action_id: string | null;
+  readonly agent_id: string | null;
+  readonly error: string | null;
+  readonly key: string | null;
+  readonly kind: string;
+  readonly reused: boolean | null;
+  readonly tool_id: string | null;
+  readonly ts: string | null;
+  readonly workflow_id: string;
+}
+
+export interface RunProgressResponse {
+  readonly events: readonly RunProgressEvent[];
+  readonly root: RunProgressNode | null;
+  readonly runId: string;
+  /** `workflow/action` → when it first started and last finished (ISO times). */
+  readonly spans?: Readonly<Record<string, { readonly end: string | null; readonly start: string | null }>>;
+  readonly status: string;
+  readonly workflowId: string;
+}
+
+export function fetchRunProgress(gateway: ApiGateway, runId: string): Promise<RunProgressResponse> {
+  return gateway.requestJson(`/api/v1/runs/${encodeURIComponent(runId)}/progress`);
+}

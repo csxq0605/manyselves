@@ -1,0 +1,7 @@
+id: ledger_settle_recheck_input
+version: 1.0.0
+description: The program's recheck of a revision and the faithfulness check's findings on the changed sections, if it ran
+adapter: json_schema
+schema:
+  type: object
+  required: [recheck]

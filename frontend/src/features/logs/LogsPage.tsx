@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 
 import type { ApiGateway } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
+import { shortAgentLabel } from "../agents/agent-label";
 import { createLogApi, type EventLogLevel, type LogApi } from "./log-api";
 import "./logs-page.css";
 import "../runtime/runtime-page.css";
@@ -125,7 +126,7 @@ export function LogsPage({ api, platform, projectId }: LogsPageProps) {
                   <span className={`logs-page__level logs-page__level--${entry.level}`}>{entry.level}</span>
                   <code>{entry.type}</code>
                   <p>{entry.message}</p>
-                  {entry.agentId ? <small>{entry.agentId}</small> : null}
+                  {entry.agentId ? <small title={entry.agentId}>{shortAgentLabel(entry.agentId)}</small> : null}
                 </li>
               ))}
             </ol>

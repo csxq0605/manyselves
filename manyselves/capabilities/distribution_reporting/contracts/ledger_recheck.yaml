@@ -1,0 +1,7 @@
+id: ledger_recheck
+version: 1.0.0
+description: The program's findings on the rows a revision changed, and whether they send the author back
+adapter: json_schema
+schema:
+  type: object
+  required: [blocking, revision_input]

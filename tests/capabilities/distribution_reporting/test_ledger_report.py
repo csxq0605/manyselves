@@ -17,7 +17,11 @@ from uuid import UUID
 import pytest
 
 from manyselves.capabilities.distribution_reporting import CAPABILITY_FILE
-from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
+    REPORT_TAXONOMY,
+    bound_report_taxonomy,
+    example_report_taxonomy,
+)
 from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
     ledger_report_tool_implementations,
 )
@@ -31,8 +35,8 @@ from manyselves.kernel.definitions import load_capability
 from manyselves.runtime.generic_binding import GenericCapabilityRuntimeBinding
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
-from tests.capabilities.distribution_reporting.test_public_reporting_runtime import (
-    _write_complete_template_skill_fixture,
+from tests.capabilities.distribution_reporting.support import (
+    write_role_skill_fixture as _write_complete_template_skill_fixture,
 )
 from tests.runtime.scripted_loop import ScriptedLoop
 
@@ -188,7 +192,9 @@ def _row(module_id: str, number: int) -> dict[str, Any]:
         row.update(
             disposition="concern",
             risk_level="中",
+            finding="温度偏高",
             hazard="可能过热，待核实。",
+            hazard_conditions=["温度持续偏高"],
             action={"measure": "复测温度", "priority": "重要，紧急", "timeframe": "一周内"},
         )
     return row
@@ -198,8 +204,17 @@ def _answer(message):
     content = message.content
     task = _task(content)
     value = _input_of(content)
-    if task in {"read-project", "read-ledger"}:
-        return ("submit", [{"summary": "已读。"}])
+    if task == "review-cross-module":
+        # The rows are in the shared prefix; the slice says what to decide.
+        if "J-2.4-1" in value["focus_rows"] and "J-2.5-1" in content:
+            return ("submit", [{"findings": {}, "proposals": [{
+                "row_id": "J-2.4-1", "other_row_id": "J-2.5-1", "relation": "缺资料影响判断",
+                "reason": "缺少SOP使温度偏高的处置无法核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]}])
+        return ("submit", [{"findings": {}, "proposals": []}])
+    if task == "review-objects":
+        return ("submit", [{"findings": {}}])
     if task == "judge-module":
         module_id = value["module_id"]
         number = REPORT_MODULE_IDS.index(module_id) + 1
@@ -216,11 +231,34 @@ def _answer(message):
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-judgments":
-        # Only blocking findings send an author back.
+        offers = value.get("proposed") or {}
+        if value.get("fact_check"):
+            assert set(value["findings"]) == {"J-2.4-1"}
+            return ("submit", [{"patches": [
+                {"row_id": "J-2.4-1", "fields": {"finding": "温度偏高，待复测确认。"}}
+            ]}])
+        if not value["findings"]:
+            # Only a proposal sends 2.5 back; it takes it too.
+            assert set(offers) == {"J-2.5-1"}
+            (offer,) = offers["J-2.5-1"]
+            return ("submit", [{"relations": {"J-2.5-1": [{
+                "row_id": offer["row_id"], "relation": offer["relation"],
+                "reason": "温度偏高的处置要按SOP核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]}}])
+        # Only blocking findings send an author back, with the proposals on its rows.
         assert set(value["findings"]) == {"J-2.4-1"}
-        row = _row("2.4", REPORT_MODULE_IDS.index("2.4") + 1)
-        row["basis"] = "记录显示温度偏高，需要复测。"
-        return ("submit", [{"rows": [row]}])
+        (offer,) = offers["J-2.4-1"]
+        return ("submit", [{
+            "patches": [
+                {"row_id": "J-2.4-1", "fields": {"basis": "记录显示温度偏高，需要复测。"}}
+            ],
+            "relations": {"J-2.4-1": [{
+                "row_id": offer["row_id"], "relation": offer["relation"],
+                "reason": "缺少SOP使温度偏高的处置无法核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]},
+        }])
     if task == "write-section":
         objects = "、".join(row["object"] for row in value["rows"]) or "本节"
         return (
@@ -232,20 +270,40 @@ def _answer(message):
             "submit",
             [
                 {
-                    "risk_overview": "总体风险可控。",
+                    "risk_summary": ["总体风险可控。"],
+                    "risk_details": [{"module_id": "2.4", "points": ["温度偏高，需复测。"]}],
                     "action_lead": "建议措施如下。",
                     "actions": [
                         {
-                            "priority": "重要，紧急",
+                            "group_id": group["group_id"],
                             "problem": "温度偏高",
-                            "hazard": "可能过热",
+                            "hazard": "若温度持续偏高，可能过热",
                             "solution": "复测温度",
-                            "row_ids": ["J-2.4-1"],
                         }
+                        for group in (value.get("action_groups") or [])
                     ],
                 }
             ],
         )
+    if task == "revise-chief-facts":
+        # One turn answers the fact check of both chapters, on the version checked.
+        # The chapter 1 finding, and, when the row's author changed J-2.4-1,
+        # the 3.2 group resting on it (a fixed row reaches every unit citing it).
+        assert set(value["findings"]) - {"3.2-G-01"} == {"1.2-重点风险-1"}
+        assert value["findings"]["1.2-重点风险-1"]["grounds"]["J-2.4-1"]
+        if "3.2-G-01" in value["findings"]:
+            assert "判断行 J-2.4-1" in json.dumps(value["findings"]["3.2-G-01"], ensure_ascii=False)
+        # Only what the findings point at, by place id: the risk itself and
+        # the 3.2 group that cites the same row (same_elsewhere); no section text.
+        assert value["units"] == {}
+        assert set(value["key_risks"]) == {"1.2-重点风险-1"}
+        assert "chapter1" not in value and "texts" not in value
+        assert [action["group_id"] for action in value["actions"]] == ["G-01"]
+        risk = {**value["key_risks"]["1.2-重点风险-1"], "description": "个别对象温度偏高需复测"}
+        # The 3.2 group did not use the row's old words: declined, so the
+        # reconciliation does not send it back.
+        declined = {"3.2-G-01": "本组没有沿用原来的说法"} if "3.2-G-01" in value["findings"] else {}
+        return ("submit", [{"key_risks": {"1.2-重点风险-1": risk}, "declined": declined}])
     if task in {"chief-chapter-1", "revise-chief-overview"}:
         return (
             "submit",
@@ -274,6 +332,41 @@ def _answer(message):
                 }
             ],
         )
+    if task == "check-chief-facts":
+        findings = {}
+        for unit in value["units"]:
+            if unit["unit_id"] == "1.2-重点风险-1":
+                findings[unit["unit_id"]] = {
+                    "problem": "风险等级写重了。",
+                    "severity": "blocking",
+                    "suggestion": "按所引行写。",
+                    "grounds": ["J-2.4-1"],
+                    "rows_also": ["J-2.4-1"],
+                }
+        return ("submit", [{"findings": findings}])
+    if task == "review-joint" and str(value.get("review_id", "")).endswith("-recheck"):
+        # The check after a revision finds the changed text faithful.
+        return ("submit", [{"findings": {}}])
+    if task == "review-joint":
+        # The editor's and the fact check's answers, in one review.
+        findings = {}
+        for unit in value.get("units") or []:
+            if unit["unit_id"] == "1.2-重点风险-1":
+                findings[unit["unit_id"]] = {
+                    "problem": "风险等级写重了。",
+                    "severity": "blocking",
+                    "suggestion": "按所引行写。",
+                    "grounds": ["J-2.4-1"],
+                    "rows_also": ["J-2.4-1"],
+                }
+        if value.get("owner") == "2.1" and value.get("sections"):
+            findings[next(iter(value["sections"]))] = {
+                "problem": "表述太简单。",
+                "severity": "blocking",
+                "suggestion": "补一句结论。",
+                "grounds": ["J-2.1-1"],
+            }
+        return ("submit", [{"findings": findings}])
     if task == "edit-sections":
         findings = {}
         if value["owner"] == "2.1":
@@ -282,6 +375,7 @@ def _answer(message):
                 "problem": "表述太简单。",
                 "severity": "blocking",
                 "suggestion": "补一句结论。",
+                "grounds": ["J-2.1-1"],
             }
         return ("submit", [{"findings": findings}])
     if task == "revise-sections":
@@ -290,22 +384,25 @@ def _answer(message):
     raise AssertionError(f"unexpected task {task}")
 
 
-async def run_ledger_report(tmp_path: Path, answer=None, evidence=None):
+async def run_ledger_report(
+    tmp_path: Path, answer=None, evidence=None, extra_state=None, run_id: str = RUN_ID
+):
     """Run the ledger report with scripted agents; return binding, run id and loops."""
 
     answer = answer or _answer
     _write_complete_template_skill_fixture(tmp_path)
     evidence = evidence or _evidence()
-    evidence_path = tmp_path / f"Work/runs/{RUN_ID}/preparation/evidence.jsonl"
-    evidence_path.parent.mkdir(parents=True)
+    evidence_path = tmp_path / f"Work/runs/{run_id}/preparation/evidence.jsonl"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
     evidence_path.write_text(
         "".join(item.model_dump_json() + "\n" for item in evidence), encoding="utf-8"
     )
     state = {
-        "run_id": RUN_ID,
+        "run_id": run_id,
         "request": ReportRequest(instruction="写一份完整报告。").model_dump(mode="json"),
         "evidence_items": [item.model_dump(mode="json") for item in evidence],
         "photo_assets": [],
+        **(extra_state or {}),
     }
 
     bus = MessageBus()
@@ -348,7 +445,9 @@ async def run_ledger_report(tmp_path: Path, answer=None, evidence=None):
 
 @pytest.mark.asyncio
 async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: Path) -> None:
-    binding, accepted, loops = await run_ledger_report(tmp_path)
+    binding, accepted, loops = await run_ledger_report(
+        tmp_path, extra_state={"review_mode": "separate"}
+    )
     run = binding.get_run(accepted["run_id"])
     assert run["run"]["status"] == "completed", run["state"].get("error")
     outputs = binding.get_outputs(accepted["run_id"])["outputs"]
@@ -368,6 +467,8 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(
         encoding="utf-8"
     )
+    # The chief's answer to the fact check reaches the report.
+    assert "个别对象温度偏高需复测" in markdown
     docx = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
     # The draft is marked the same way in both files.
     assert markdown.startswith("# 配电安全专家咨询报告（草稿）\n\n草稿：本报告存在资料缺口")
@@ -409,23 +510,62 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     ledger_dir = tmp_path / f"Work/runs/{RUN_ID}/ledger"
     final = json.loads((ledger_dir / "judgments.json").read_text(encoding="utf-8"))
     assert final["2.4"][0]["basis"] == "记录显示温度偏高，需要复测。"
+    fixed = json.loads((ledger_dir / "fact-row-fixes.json").read_text(encoding="utf-8"))
+    assert [row["id"] for row in fixed["rows"]] == ["J-2.4-1"]
+    assert fixed["rows"][0]["finding"] == "温度偏高，待复测确认。"
+    assert list(fixed["sections"]) == ["2.4"]
 
     def tasks_of(loop: ScriptedLoop) -> list[str]:
         return [_task(message.content) for message in loop.received]
 
-    shared = loops[0]
-    assert tasks_of(shared) == ["read-project"]
     authors = {
         _input_of(loop.received[0].content)["module_id"]: loop
         for loop in loops
         if tasks_of(loop)[:1] == ["judge-module"]
     }
     assert set(authors) == set(REPORT_MODULE_IDS)
-    for loop in authors.values():
-        # Every author starts from the shared project reading.
-        assert loop.restored[0][0].content == shared.received[0].content
-    # 2.4 revised only in its own conversation; 2.1 had nothing blocking.
+    for module_id, loop in authors.items():
+        # Every author starts a conversation of its own from its materials:
+        # the project map, its records and the same objects' records elsewhere.
+        assert not loop.restored
+        first = loop.received[0].content
+        assert '<context name="materials">' in first and "# 项目图谱" in first
+        assert f"E-{REPORT_MODULE_IDS.index(module_id) + 1:04d}" in first
+    # Each author related right after judging, with no proposals; the
+    # cross-module review read one shared prefix and proposed what was
+    # missing, which reached both ends in their one revision.
+    crosses = [loop for loop in loops if tasks_of(loop) == ["review-cross-module"]]
+    assert len(crosses) == 1 and not crosses[0].restored
+    cross = crosses[0].received[0].content
+    # Shared prefix first, then the task, then what this slice decides.
+    assert cross.index('<context name="rows">') < cross.index("<task id=") < cross.index("<input contract=")
+    relate_24 = next(
+        _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "relate-judgments"
+    )
+    assert "proposed" not in relate_24
+    assert tasks_of(authors["2.4"]).count("relate-judgments") == 1
+    settle_24 = next(
+        _input_of(m.content) for m in authors["2.4"].received if _task(m.content) == "revise-judgments"
+    )
+    (offer,) = settle_24["proposed"]["J-2.4-1"]
+    assert offer["row_id"] == "J-2.5-1" and offer["other_row"]["id"] == "J-2.5-1"
+    assert "J-2.5-1" in settle_24["proposal_facts"] or settle_24["proposal_facts"]
+    outcome = json.loads((ledger_dir / "cross-proposals-outcome.json").read_text(encoding="utf-8"))
+    assert outcome["proposals_kept"] == 1
+    # Both ends took the proposal, but J-2.5-1 could not be judged and the
+    # pair is project level: the missing SOP is said on its gap entry, as
+    # bearing on J-2.4-1, not as a relation.
+    assert outcome["relations_added"] == 0 and outcome["declined"] == 0
+    assert outcome["one_side_only"] == []
+    assert final["2.4"][0]["relations"] == [] and final["2.5"][0]["relations"] == []
+    routed = json.loads((ledger_dir / "cross-module.json").read_text(encoding="utf-8"))["routed_relations"]
+    assert [(r["rows"], r["route"]) for r in routed] == [(["J-2.4-1", "J-2.5-1"], "一端不能判定且为项目级")]
+    (entry,) = json.loads((ledger_dir / "gap-entries.json").read_text(encoding="utf-8"))
+    assert [a["row_id"] for a in entry["affects"]] == ["J-2.4-1"]
+    # 2.4 revised only in its own conversation; 2.1 had nothing blocking and
+    # no proposal; 2.5 revised for the proposal alone.
     assert "revise-judgments" in tasks_of(authors["2.4"])
+    assert "revise-judgments" in tasks_of(authors["2.5"])
     assert "revise-judgments" not in tasks_of(authors["2.1"])
     # Before review, every author weighs what other modules flagged
     # (the concern of 2.4, the data gap of 2.5) in its own conversation.
@@ -444,14 +584,174 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     )
     assert '<context name="facts">' in review_24 and "E-0004" in review_24
     assert _input_of(review_24)["rows"][0]["id"] == "J-2.4-1"
-    assert "revise-sections" in tasks_of(authors["2.1"])
-    assert "revise-sections" not in tasks_of(authors["2.4"])
-    # Prose is written once per section, after judgment, in the author's conversation.
+    def module_of(section_id: str) -> str:
+        return next(m for m in REPORT_MODULE_IDS if section_id in REPORT_TAXONOMY[m].submodules)
+
+    writers = {
+        module_of(_input_of(loop.received[0].content)["submodule_id"]): loop
+        for loop in loops
+        if tasks_of(loop)[:1] == ["write-section"]
+    }
+    # Each writer revises once: 2.1 on the editor's finding.
+    assert tasks_of(writers["2.1"]).count("revise-sections") == 1
+    # 2.4 has no editor finding; it revises once, only for the fact-check row fix.
+    fix_24 = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "revise-sections"]
+    assert len(fix_24) == 1 and "温度偏高，待复测确认。" in json.dumps(fix_24[0], ensure_ascii=False)
+    # Prose is written once per section, after judgment, by a writer that
+    # starts from its group's material; the story line reaches its sections.
     sections = len(REPORT_TAXONOMY["2.4"].submodules)
-    assert tasks_of(authors["2.4"]).count("write-section") == sections
+    assert tasks_of(writers["2.4"]).count("write-section") == sections
+    assert not writers["2.4"].restored
+    assert '<context name="pack">' in writers["2.4"].received[0].content
+    assert '<context name="pack">' not in writers["2.4"].received[1].content
+    briefs = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "write-section"]
+    # No relation is left, so no story line joins the two sections.
+    assert [b for b in briefs if b.get("story_lines")] == []
     chief = [loop for loop in loops if "chief-chapter-3" in tasks_of(loop)]
     assert len(chief) == 1
     assert tasks_of(chief[0])[:2] == ["chief-chapter-3", "chief-chapter-1"]
+    # The chief reads its own material once; chapter 1 does not resend it.
+    assert not chief[0].restored
+    chief_3, chief_1 = chief[0].received[:2]
+    assert '<context name="map">' in chief_3.content
+    assert [row["id"] for row in _input_of(chief_3.content)["rows"]] == ["J-2.4-1", "J-2.5-1"]
+    assert set(_input_of(chief_1.content)) == {"note"}
+    # Chapters 1 and 3 are fact-checked in small packets, each in a fresh
+    # conversation; a blocking finding on chapter 1 sends the chief back once.
+    checks = [loop for loop in loops if tasks_of(loop) == ["check-chief-facts"]]
+    assert checks and all(not loop.restored for loop in checks)
+    packet = _input_of(checks[0].received[0].content)
+    assert packet["units"] and {"rows", "facts", "values", "counts"} <= set(packet)
+    assert all("basis" in row for row in packet["rows"])
+    # Chapter 3 is checked while chapter 1 is written, chapter 1 after it;
+    # the two batches' packets never share an id and join for the one fix.
+    packets = [_input_of(loop.received[0].content) for loop in checks]
+    by_batch = {
+        prefix: [p for p in packets if p["packet_id"].startswith(prefix)] for prefix in ("F3-", "F1-")
+    }
+    assert by_batch["F3-"] and by_batch["F1-"] and len(packets) == sum(map(len, by_batch.values()))
+    assert all(u["unit_id"].startswith("3.") for p in by_batch["F3-"] for u in p["units"])
+    assert all(u["unit_id"].startswith("1.") for p in by_batch["F1-"] for u in p["units"])
+    joined = json.loads((ledger_dir / "chief-fact-packets.json").read_text(encoding="utf-8"))
+    assert sorted(p["packet_id"] for p in joined) == sorted(p["packet_id"] for p in packets)
+    # The chief has no edit pass of its own; one turn fixes both chapters.
+    edits = [
+        loop for loop in loops
+        if tasks_of(loop) == ["edit-sections"]
+        and _input_of(loop.received[0].content)["owner"] == "chief"
+    ]
+    assert edits == []
+    # The fix runs in a conversation of its own, not in the chief's.
+    assert "revise-chief-facts" not in tasks_of(chief[0])
+    fixes = [loop for loop in loops if tasks_of(loop) == ["revise-chief-facts"]]
+    assert len(fixes) == 1 and not fixes[0].restored
+    # Each review reads its own module only.
+    assert "related_rows" not in _input_of(review_24)
+    assert '<context name="dossiers">' not in review_24
+
+
+@pytest.mark.asyncio
+async def test_joint_review_edits_and_checks_in_one_pass_on_rows_and_records(
+    tmp_path: Path,
+) -> None:
+    binding, accepted, loops = await run_ledger_report(tmp_path)
+    run = binding.get_run(accepted["run_id"])
+    assert run["run"]["status"] == "completed", run["state"].get("error")
+
+    def tasks_of(loop: Any) -> list[str]:
+        return [_task(message.content) for message in loop.received]
+
+    assert not [loop for loop in loops if tasks_of(loop)[:1] in (["edit-sections"], ["check-chief-facts"])]
+    reviews = [loop for loop in loops if tasks_of(loop) == ["review-joint"]]
+    assert reviews and all(not loop.restored for loop in reviews)
+    every = {_input_of(loop.received[0].content)["review_id"]: loop.received[0].content for loop in reviews}
+    items = {rid: c for rid, c in every.items() if not rid.endswith("-recheck")}
+    # After the revisions, a fresh check reads only what changed: 2.1's one
+    # revised section with its rows and records, and the chief's fixed units.
+    rechecks = {rid: _input_of(c) for rid, c in every.items() if rid.endswith("-recheck")}
+    assert set(rechecks["2.1-recheck"]["sections"]) == {next(iter(REPORT_TAXONOMY["2.1"].submodules))}
+    assert rechecks["2.1-recheck"]["rows"] and "units" not in rechecks["2.1-recheck"]
+    assert "chief-recheck" in rechecks and "sections" not in rechecks["chief-recheck"]
+    assert {u["unit_id"] for u in rechecks["chief-recheck"]["units"]} >= {"1.2-重点风险-1"}
+    writers = {
+        _input_of(loop.received[0].content)["submodule_id"]: loop
+        for loop in loops if tasks_of(loop)[:1] == ["write-section"]
+    }
+    # A review carries neither the writer's pack nor the map: it opens with
+    # its task, then the records its rows and cited rows rest on.
+    for review_id, content in items.items():
+        assert '<context name="pack">' not in content and '<context name="map">' not in content
+        assert content.startswith('<task id="review-joint"')
+        if not review_id.startswith("chief") and "sections" in _input_of(content):
+            assert '<context name="facts">' in content
+    # Chapter 1's risk on J-2.4-1 is checked in the review of 2.4's writer.
+    units = {
+        u["unit_id"]: rid for rid, content in items.items() for u in _input_of(content).get("units") or []
+    }
+    assert not units["1.2-重点风险-1"].startswith("chief")
+    # What follows is the same as with separate passes: 2.1 revises once on the
+    # editor's finding, 2.4 once for the row fix, the chief fixes once.
+    assert tasks_of(writers[next(iter(REPORT_TAXONOMY["2.1"].submodules))]).count("revise-sections") == 1
+    fix_24 = [
+        _input_of(m.content) for m in writers[next(iter(REPORT_TAXONOMY["2.4"].submodules))].received
+        if _task(m.content) == "revise-sections"
+    ]
+    assert len(fix_24) == 1 and "温度偏高，待复测确认。" in json.dumps(fix_24[0], ensure_ascii=False)
+    assert len([loop for loop in loops if tasks_of(loop) == ["revise-chief-facts"]]) == 1
+
+
+def test_a_joint_review_over_the_limit_passes_its_units_to_a_next_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import ledger_tools
+
+    tools = ledger_tools.LedgerTools(tmp_path)
+    edit_items = [{"run_id": "r", "owner": "2.4", "module_id": "2.4", "pack": "P" * 50,
+                   "sections": {"2.4.1": "t"}, "rows": [], "program_findings": {}}]
+    unit_packets = [
+        {"module": "2.4", "units": [{"unit_id": f"3.1-汇总-{n}", "where": "w", "text": "x" * 40,
+                                     "row_ids": ["J-2.4-1"], "counts": []}],
+         "rows": [{"id": "J-2.4-1"}], "facts": {"E-1": "f"}, "values": {}, "counts": {}}
+        for n in (1, 2, 3)
+    ]
+    row = {"id": "J-2.4-1", "submodule_id": "2.4.1", "object": "o", "checkpoint": "c",
+           "disposition": "no_concern", "evidence_status": "现场确认", "evidence_ids": ["E-1"], "basis": "b"}
+    monkeypatch.setattr(tools, "check_report", lambda value: {"edit_items": edit_items})
+    monkeypatch.setattr(ledger_tools, "chief_fact_packets", lambda **kw: unit_packets)
+    monkeypatch.setattr(tools, "_slots", lambda run_id: {})
+    monkeypatch.setattr(tools, "_reference", lambda run_id: {})
+    monkeypatch.setattr(tools.store, "write_json", lambda *a: None)
+    one = len(json.dumps({**edit_items[0], "review_id": "2.4"}, ensure_ascii=False))
+    monkeypatch.setattr(ledger_tools, "JOINT_MAX_CHARS", one + 400)
+    items = tools.plan_joint_review(
+        {"ledger": {"run_id": "r", "ledger": {"2.4": [row]}, "chief_input": {"map": "M"}},
+         "written": {}, "chapter1": {}, "chapter3": {}}
+    )["review_items"]
+    # No unit is cut or lost; no item carries the pack or the map.
+    assert [i["review_id"] for i in items] == ["2.4", "2.4#2"]
+    assert sum(len(i["units"]) for i in items) == 3
+    assert all("pack" not in i and "map" not in i for i in items) and "sections" not in items[1]
+    items[1]["sections"] = {"2.4.1": "t"}
+    items[1]["rows"] = [{"id": "J-2.4-1"}]
+    results = {"2.4": {"findings": {}}, "2.4#2": {"findings": {"2.4.1": {
+        "problem": "p", "severity": "blocking", "suggestion": "s", "grounds": ["J-2.4-1"],
+        "rows_also": ["J-2.4-1"]}}}}
+    seen = {}
+
+    def chief_facts(value):
+        seen.update(value)
+        return {"check": {"findings": {}}, "blocking": False, "row_fix_items": [], "packets": value["packets"]}
+
+    monkeypatch.setattr(tools, "apply_chief_facts", chief_facts)
+    monkeypatch.setattr(tools, "_ledger_material", lambda run_id: {})
+    applied = tools.apply_joint_review(
+        {"items": items, "results": results, "ledger": {"run_id": "r"}, "chapter1": {}, "chapter3": {}}
+    )
+    finding = applied["writing"]["2.4"]["findings"]["2.4.1"]
+    assert "rows_also" not in finding and set(applied["chief"]) >= {"fact_check", "row_fix_items", "unit_rows"}
+    # A section's blocking finding the row shares goes to the row's author.
+    assert set(seen["section_row_fixes"]) == {"J-2.4-1"}
+    assert applied["chief"]["unit_rows"]["3.1-汇总-1"] == ["J-2.4-1"]
 
 
 def test_full_report_reaches_only_ledger_agents_and_bound_tools() -> None:
@@ -556,17 +856,22 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
         task = _task(message.content)
         value = _input_of(message.content)
         if task == "review-judgments":
-            seen.setdefault("dossiers", {})[value["module_id"]] = value["dossiers"]
+            # The module lens reads its own module only.
+            seen.setdefault("module_lens", {})[value["module_id"]] = (
+                '<context name="dossiers">' in message.content or "related_rows" in value
+            )
+        if task == "review-cross-module":
+            seen.setdefault("review_related", []).extend(
+                relation["row_id"] for relation in value["relations"]
+            )
         if task == "relate-judgments" and "J-2.2-1" in value.get("related", {}):
             seen["related"] = value["related"]
             return ("submit", [{"relations": {"J-2.2-1": [
                 {"row_id": "J-2.4-1", "relation": "负荷—发热", "reason": "2.4 记录的温度偏高与本行同期。"},
                 {"row_id": "J-9.9-9", "relation": "负荷—发热", "reason": "不存在的行。"},
             ]}}])
-        if task == "review-judgments" and value["module_id"] == "2.2":
-            seen["review_related"] = value.get("related_rows")
         if task == "write-section" and value.get("related_rows"):
-            seen["related_rows"] = value["related_rows"]
+            seen.setdefault("related_rows", {})[value["submodule_id"]] = value["related_rows"]
         if task in {"chief-chapter-3", "revise-chief-actions"}:
             seen["chains"] = value.get("object_chains")
         return _answer(message)
@@ -574,16 +879,114 @@ async def test_other_modules_judgments_on_one_object_reach_the_author_and_the_wr
     binding, accepted, _loops = await run_ledger_report(tmp_path, answer, evidence)
     run = binding.get_run(accepted["run_id"])
     assert run["run"]["status"] == "completed", run["state"].get("error")
-    # Different checkpoints are not a conflict, so the reviewers get no dossier.
-    assert all(not dossiers for dossiers in seen["dossiers"].values())
+    assert not any(seen["module_lens"].values())
     assert [entry["row_id"] for entry in seen["related"]["J-2.2-1"]] == ["J-2.4-1"]
     # The reference to a row that is not on this object is dropped.
     final = json.loads(
         (tmp_path / f"Work/runs/{RUN_ID}/ledger/judgments.json").read_text(encoding="utf-8")
     )
     assert [r["row_id"] for r in final["2.2"][0]["relations"]] == ["J-2.4-1"]
-    # The reviewer of 2.2 sees the related row itself, to check the reason.
-    assert [entry["row"]["id"] for entry in seen["review_related"]] == ["J-2.4-1"]
-    assert [entry["row_id"] for entry in seen["related_rows"]] == ["J-2.4-1"]
+    # The cross-module review checks the authors' relations (2.2's own); the
+    # relation it proposed is settled by the authors after it.
+    assert sorted(seen["review_related"]) == ["J-2.4-1"]
+    assert [
+        [entry["row_id"] for entry in rows]
+        for section_id, rows in seen["related_rows"].items() if section_id.startswith("2.2")
+    ] == [["J-2.4-1"]]
     (chain,) = seen["chains"]
     assert {row["row_id"] for row in chain["rows"]} == {"J-2.2-1", "J-2.4-1"}
+
+
+@pytest.mark.unbound_taxonomy
+@pytest.mark.asyncio
+async def test_every_step_reads_the_tree_of_the_run_and_writes_only_its_sections(
+    tmp_path: Path,
+) -> None:
+    """Nothing is bound in the process: every tool binds the run's own tree.
+
+    This run's table leaves out 2.4.3 and its subsections, so the report has
+    no such heading and no placeholder for it.
+    """
+
+    tree = example_report_taxonomy()
+    for module in tree["modules"]:
+        module["sections"] = [
+            s for s in module["sections"]
+            if s["id"] != "2.4.3" and not s["id"].startswith("2.4.3.")
+        ]
+
+    def answer(message):
+        # The scripted agents read the tree too; real agents read it from the prompt.
+        with bound_report_taxonomy(tree):
+            return _answer(message)
+
+    with bound_report_taxonomy(tree):
+        evidence = _evidence()
+    # Preparation persists the run's tree beside its evidence.
+    persisted = tmp_path / f"Work/runs/{RUN_ID}/preparation/report-taxonomy.json"
+    persisted.parent.mkdir(parents=True)
+    persisted.write_text(json.dumps(tree, ensure_ascii=False), encoding="utf-8")
+    binding, accepted, _loops = await run_ledger_report(
+        tmp_path, answer=answer, evidence=evidence, extra_state={"report_taxonomy": tree}
+    )
+    run = binding.get_run(accepted["run_id"])
+    assert run["run"]["status"] == "completed", run["state"].get("error")
+    markdown = (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").read_text(encoding="utf-8")
+    assert "2.4.2" in markdown
+    assert not re.search(r"^#+ 2\.4\.3", markdown, re.M)
+
+
+def test_chapter_1_is_checked_in_its_own_branch_without_waiting_for_chapter_3() -> None:
+    from manyselves.kernel.definitions import DefinitionKind
+
+    _capability, registry = load_capability(CAPABILITY_FILE)
+    chief = registry.require(DefinitionKind.WORKFLOW, "ledger-chief")
+    ids = [action["id"] for action in chief.actions]
+    parallel = next(a for a in chief.actions if a["id"] == "chapter-1-and-facts-3")
+    chapter_1 = ids[ids.index(parallel["branches"]["chapter1"]):ids.index("chapter-1-done")]
+    chapter_3 = ids[ids.index(parallel["branches"]["facts3"]):ids.index("facts-3-done")]
+    # Chapter 1 is written, then checked, in one branch; chapter 3's packets in the other.
+    assert chapter_1[:3] == ["chapter-1", "check-1", "plan-facts"] and "fact-check" in chapter_1
+    assert "fact-check-3" in chapter_3 and "chapter-1" not in chapter_3
+    assert ids.index("apply-facts") > ids.index(parallel["join"])
+
+
+def test_a_revision_is_reconciled_and_checked_on_what_it_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import ledger_tools
+
+    tools = ledger_tools.LedgerTools(tmp_path)
+    monkeypatch.setattr(tools, "_slots", lambda run_id: {})
+    monkeypatch.setattr(tools, "_copied", lambda run_id: None)
+    monkeypatch.setattr(tools, "_record_hints", lambda *a: None)
+    monkeypatch.setattr(tools, "_revision_check_item", lambda item, changed: {
+        "review_id": "2.4-recheck", "run_id": "r", "owner": "2.4", "sections": dict(changed)} if changed else {})
+    monkeypatch.setattr(tools, "_ledger_material", lambda run_id: {"J-2.4-1": "row", "E-1": "fact"})
+    asked = {
+        "2.4.1": {"problem": "a", "severity": "blocking", "suggestion": "s"},
+        "2.4.2": {"problem": "b", "severity": "blocking", "suggestion": "s"},
+        "2.4.3": {"problem": "c", "severity": "blocking", "suggestion": "s"},
+    }
+    item = {"owner": "2.4", "run_id": "r", "sections": {"2.4.1": "旧", "2.4.2": "旧", "2.4.3": "旧"},
+            "revision_input": {"findings": asked}}
+    revision = {"sections": {"2.4.1": "新"}, "declined": {"2.4.2": "材料不支持"}}
+    recheck = tools.recheck_edit({"item": item, "merged": {"findings": asked}, "revision": revision})
+    # Changed, declined, not handled; only the one not handled goes back.
+    assert recheck["reconciled"] == {"2.4.1": "改了", "2.4.2": "拒了", "2.4.3": "没处理"}
+    assert set(recheck["findings"]) == {"2.4.3"} and recheck["blocking"]
+    # The check reads the changed section only.
+    assert recheck["check_item"]["sections"] == {"2.4.1": "新"}
+    settled = tools.settle_recheck({"recheck": recheck, "check": {"findings": {
+        "2.4.1": {"problem": "加了台账没有的原因", "severity": "blocking", "suggestion": "删去",
+                  "grounds": ["J-2.4-1"], "rows_also": ["J-2.4-1"]},
+        "2.4.2": {"problem": "不是这次改的", "severity": "blocking", "suggestion": "x", "grounds": ["E-1"]},
+        "2.4.9": {"problem": "措辞", "severity": "minor", "suggestion": "x", "grounds": ["E-1"]},
+    }}})
+    assert set(settled["findings"]) == {"2.4.1", "2.4.3"} and settled["blocking"]
+    assert "rows_also" not in settled["findings"]["2.4.1"]
+    assert settled["revision_input"]["findings"] == settled["findings"]
+    # A blocking finding without grounds is not checkable and sends nothing back.
+    quiet = tools.settle_recheck({"recheck": {**recheck, "findings": {}}, "check": {"findings": {
+        "2.4.1": {"problem": "p", "severity": "blocking", "suggestion": "s", "grounds": []}}}})
+    assert quiet["findings"] == {} and not quiet["blocking"]

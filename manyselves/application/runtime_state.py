@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from typing import Any
 
@@ -11,6 +12,7 @@ from ..interfaces.types import (
     Checkpoint,
     Message,
     QueueUpdateMessage,
+    StatusChange,
     ToolCallMessage,
     ToolResult,
 )
@@ -35,11 +37,18 @@ class RuntimeStateProjection:
         self._tool_capacity = tool_capacity
         self._debug: deque[RuntimeDebugSnapshot] = deque(maxlen=debug_capacity)
         self._checkpoints: dict[tuple[str, str], RuntimeCheckpointSnapshot] = {}
+        # Statuses of every Agent that reported one, with when it changed.
+        # Workflow Agents run outside the loop manager, so this is the only
+        # place their live status is kept.
+        self._statuses: dict[str, tuple[str, float]] = {}
 
     def observe(self, message: Message) -> None:
         """Project one already-accepted runtime message into a recoverable read model."""
         with self._lock:
-            if isinstance(message, QueueUpdateMessage):
+            if isinstance(message, StatusChange):
+                status = str(getattr(message.status, "value", message.status))
+                self._statuses[str(message.agent_type)] = (status, time.monotonic())
+            elif isinstance(message, QueueUpdateMessage):
                 self._queues[str(message.agent_type)] = list(message.queued_messages)
             elif isinstance(message, ToolCallMessage):
                 if message.tool_call_id is None:
@@ -170,6 +179,24 @@ class RuntimeStateProjection:
                 checkpoint_rows.values(), key=lambda item: (item.agent_id, item.epoch)
             ),
         }
+
+    def busy_agents(
+        self, *, known: Any = (), stale_after_seconds: float = 1800.0
+    ) -> dict[str, str]:
+        """Agents outside ``known`` that are working now, oldest change first.
+
+        An Agent that went idle is dropped; one silent for longer than
+        ``stale_after_seconds`` is taken to have stopped without saying so.
+        """
+
+        now = time.monotonic()
+        known = set(known)
+        with self._lock:
+            for agent_id, (status, changed) in list(self._statuses.items()):
+                if status == "idle" or now - changed > stale_after_seconds:
+                    del self._statuses[agent_id]
+            rows = sorted(self._statuses.items(), key=lambda item: item[1][1])
+        return {agent_id: status for agent_id, (status, _) in rows if agent_id not in known}
 
     def debug_for(self, agent_id: str) -> list[RuntimeDebugSnapshot]:
         with self._lock:

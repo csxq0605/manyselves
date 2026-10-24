@@ -105,8 +105,9 @@ def _definitions() -> tuple[DefinitionRegistry, dict[str, Any]]:
     return registry, contracts
 
 
-def _task(*, tools: list[str] | None = None) -> TaskDefinition:
+def _task(*, tools: list[str] | None = None, budget: int | None = None) -> TaskDefinition:
     return TaskDefinition(
+        attention_budget_tokens=budget,
         id="answer-question",
         version="1.0.0",
         description="Answer one question",
@@ -203,7 +204,7 @@ async def test_submission_is_validated_and_returned(tmp_path: Path) -> None:
     assert outcome.status == "ok" and outcome.result == {"answer": "yes"}
     prompt = harness.loops[0].received[0].content
     assert "Answer the question in one word." in prompt
-    assert '"text": "q"' in prompt and "Be brief." in prompt
+    assert '"text":"q"' in prompt and "Be brief." in prompt
     assert harness.loops[0].kwargs["system_prompt"] == "You answer questions."
 
 
@@ -436,7 +437,7 @@ async def test_fork_starts_from_the_source_history(tmp_path: Path) -> None:
     assert outcome.result == {"answer": "forked"}
     source_loop, fork_loop = harness.loops
     assert fork_loop.restored[0][0].content == source_loop.history[0].content
-    assert '"text": "context"' in fork_loop.restored[0][0].content
+    assert '"text":"context"' in fork_loop.restored[0][0].content
 
 
 @pytest.mark.asyncio
@@ -509,6 +510,45 @@ async def test_context_fields_are_sent_as_text_ahead_of_the_task(tmp_path: Path)
     assert prompt.startswith('<context name="background">\nline one\nline two\n</context>')
     assert prompt.index("</context>") < prompt.index('<task id="answer-question">')
     assert "background" not in prompt[prompt.index("<input"):]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_task_sends_the_shared_part_first_and_what_varies_last(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+    task = _task().model_copy(update={
+        "context_fields": ["own", "common"],
+        "shared_fields": ["common"],
+        "static_first": True,
+    })
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent,
+                task,
+                {"text": "q", "own": "mine", "common": "everyone's"},
+                _conversation("a"),
+                task_id="ask",
+                recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    prompt = harness.loops[0].received[0].content
+    order = [
+        prompt.index('<context name="common">'),
+        prompt.index('<task id="answer-question">'),
+        prompt.index('<context name="own">'),
+        prompt.index("<input"),
+    ]
+    assert order == sorted(order)
+    assert '"text":"q"' in prompt[prompt.index("<input"):]
 
 
 @pytest.mark.asyncio
@@ -611,3 +651,203 @@ async def test_listed_images_are_all_sent_and_an_empty_list_sends_none(
     assert [image["path"] for image in harness.loops[0].received[0].images or []] == [
         str((tmp_path / "photos" / name).resolve()) for name in names
     ]
+
+
+def _archive(tmp_path: Path, name: str) -> None:
+    """Move results and histories aside, as an in-place re-execution does."""
+
+    run_dir = tmp_path / "Work" / "runs" / RUN_ID
+    target = run_dir / "versions" / name
+    target.mkdir(parents=True)
+    for part in ("agent-results", "conversations"):
+        if (run_dir / part).exists():
+            (run_dir / part).rename(target / part)
+
+
+@pytest.mark.asyncio
+async def test_re_execution_replays_unchanged_turns_and_reruns_changed_ones(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(
+        tmp_path,
+        [
+            ("submit", [{"answer": "shared"}]),
+            ("submit", [{"answer": "forked"}]),
+            ("submit", [{"answer": "forked again"}]),
+        ],
+        [],
+    )
+    source = _conversation("shared")
+    fork = _conversation("shared:item-1", forked_from=source.conversation_id)
+    task = _task()
+
+    async def chain(item: str):
+        invoker = harness.invoker()
+        try:
+            shared = await invoker.invoke(
+                harness.agent, task, {"text": "context"}, source, task_id="read"
+            )
+            judged = await invoker.invoke(
+                harness.agent, task, {"text": item}, fork, task_id="judge"
+            )
+            return shared, judged
+        finally:
+            await invoker.close()
+
+    async def steps():
+        first = await chain("item")
+        _archive(tmp_path, "v1")
+        same = await chain("item")
+        loops_after_same = len(harness.loops)
+        _archive(tmp_path, "v2")
+        changed = await chain("changed item")
+        return first, same, loops_after_same, changed
+
+    first, same, loops_after_same, changed = await _run(harness, steps)
+
+    assert [outcome.result for outcome in first] == [
+        {"answer": "shared"},
+        {"answer": "forked"},
+    ]
+    # Nothing changed: no model session at all, same results.
+    assert loops_after_same == 2
+    assert [outcome.result for outcome in same] == [o.result for o in first]
+    # Only the changed turn reached the model; it continued the replayed source.
+    assert changed[0].result == {"answer": "shared"}
+    assert changed[1].result == {"answer": "forked again"}
+    assert len(harness.loops) == 3
+    restored = harness.loops[-1].restored[0]
+    assert '"text":"context"' in restored[0].content
+    history = tmp_path / "Work" / "runs" / RUN_ID / "conversations"
+    assert len(list(history.glob("*.json"))) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_submission_leaves_the_history_once_accepted(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path, [("submit", [{"wrong": 1}, {"answer": "fixed"}])], []
+    )
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(), {"text": "q"}, _conversation("a"),
+                task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.result == {"answer": "fixed"}
+    history = harness.loops[0].history
+    submitted = [m.tool_calls[0].arguments for m in history if m.tool_calls]
+    assert submitted == [{"answer": "fixed"}]
+    assert [m.role for m in history] == ["user", "assistant"]
+
+
+def test_rejected_attempts_are_dropped_but_other_tools_stay() -> None:
+    from manyselves.runtime.conversation_history import drop_rejected_attempts
+
+    def call(call_id: str, name: str) -> dict[str, Any]:
+        return {"id": call_id, "name": name, "arguments": {}}
+
+    earlier = [{"role": "user", "content": "old"}]
+    turn = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "", "tool_calls": [call("1", "lookup")]},
+        {"role": "tool", "content": "found", "tool_call_id": "1", "is_tool_result": True},
+        {"role": "assistant", "content": "", "tool_calls": [call("2", "submit_result")]},
+        {"role": "tool", "content": "invalid", "tool_call_id": "2", "is_tool_result": True},
+        {"role": "user", "content": "fix it"},
+        {"role": "assistant", "content": "I think"},
+        {"role": "assistant", "content": "", "tool_calls": [call("3", "submit_result")]},
+        {"role": "tool", "content": "ok", "tool_call_id": "3", "is_tool_result": True},
+    ]
+    kept = drop_rejected_attempts(earlier + turn, 1)
+    assert [m["content"] for m in kept] == ["old", "task", "", "found", "", "ok"]
+    assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["1", "3"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_over_its_budget_is_still_sent_and_noted(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=50), {"text": "问" * 200},
+                _conversation("a"), task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok"
+    notes = (tmp_path / f"Work/runs/{RUN_ID}/budget-notes.jsonl").read_text(encoding="utf-8")
+    assert '"sent_over_budget"' in notes
+
+
+@pytest.mark.asyncio
+async def test_a_turn_over_budget_with_history_starts_afresh(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        [("submit", [{"answer": "one"}]), ("submit", [{"answer": "two"}])],
+        [],
+    )
+    invoker = harness.invoker()
+    conversation = _conversation("a")
+
+    async def steps():
+        try:
+            await invoker.invoke_with_recovery(
+                harness.agent, _task(), {"text": "问" * 400},
+                conversation, task_id="first", recovery_policy=POLICY,
+            )
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=300), {"text": "第二问"},
+                conversation, task_id="second", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "ok" and outcome.result == {"answer": "two"}
+    contents = [m.content for m in harness.loops[0].history if m.role == "user"]
+    assert all("问" * 400 not in (c or "") for c in contents)
+    notes = (tmp_path / f"Work/runs/{RUN_ID}/budget-notes.jsonl").read_text(encoding="utf-8")
+    assert '"fresh_conversation"' in notes
+
+
+@pytest.mark.asyncio
+async def test_only_a_request_over_the_model_window_fails(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    harness = Harness(tmp_path, [("submit", [{"answer": "yes"}])], [])
+    harness.services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=harness.bus,
+        active_provider=SimpleNamespace(context_window=80),
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    invoker = harness.invoker()
+
+    async def steps():
+        try:
+            return await invoker.invoke_with_recovery(
+                harness.agent, _task(budget=50), {"text": "问" * 200},
+                _conversation("a"), task_id="ask", recovery_policy=POLICY,
+            )
+        finally:
+            await invoker.close()
+
+    outcome = await _run(harness, steps)
+
+    assert outcome.status == "failed"
+    assert "model's window" in (outcome.error or "")
+    assert not harness.loops or not harness.loops[0].received

@@ -82,7 +82,6 @@ def lesson_problems(
     trigger: Mapping[str, Any],
     known_roles: Iterable[str],
     run_terms: Iterable[str],
-    mandatory_words: Sequence[str],
     trigger_problem: Callable[[Mapping[str, Any]], str | None],
 ) -> list[str]:
     """Why a lesson draft cannot be kept; empty when it can."""
@@ -101,9 +100,6 @@ def lesson_problems(
     named = sorted(term for term in set(run_terms) if term in compact)
     if named:
         problems.append("含本次运行的对象：" + "、".join(named))
-    words = [word for word in mandatory_words if word in text]
-    if words:
-        problems.append("含强制词：" + "、".join(words) + "；硬规定放任务合同")
     issue = trigger_problem(trigger)
     if issue:
         problems.append(issue)

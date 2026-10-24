@@ -22,7 +22,11 @@ from manyselves.runtime.capability_binding import (
     RuntimeBindingCatalog,
     load_runtime_bindings,
 )
+from manyselves.runtime.run_failure import RunFailure, describe_failure
 from manyselves.runtime.state_store import FileWorkflowStateStore
+
+from .run_progress import RunProgressReader
+from .run_supervisor import RunSupervisor
 
 
 class WorkflowProjectionNotFoundError(LookupError):
@@ -95,6 +99,7 @@ class WorkflowProjectionFacade:
         *,
         catalog: CapabilityCatalog | None = None,
         runtime_bindings: RuntimeBindingCatalog | None = None,
+        supervise: bool = True,
     ) -> None:
         self.workspace = Path(workspace)
         self.runtime_services = runtime_services
@@ -104,6 +109,11 @@ class WorkflowProjectionFacade:
             workspace=self.workspace,
             services=runtime_services,
         )
+        self._progress = RunProgressReader(self.workspace)
+        self.supervisor: RunSupervisor | None = None
+        if supervise:
+            self.supervisor = RunSupervisor(self, _main_notifier(runtime_services))
+            self._runtime_bindings.add_settled_listener(self.supervisor.on_settled)
 
     def list_capabilities(self) -> list[dict[str, Any]]:
         return [
@@ -123,6 +133,8 @@ class WorkflowProjectionFacade:
     async def close(self) -> None:
         """Close the account-scoped Capability runtimes behind this projection."""
 
+        if self.supervisor is not None:
+            await self.supervisor.close()
         await self._runtime_bindings.close()
 
     def list_workflows(self) -> list[dict[str, Any]]:
@@ -213,10 +225,19 @@ class WorkflowProjectionFacade:
         self,
         command_id: UUID,
         run_id: str,
+        *,
+        automatic: bool = False,
     ) -> dict[str, Any]:
-        """Resume one persisted Run through its Capability-owned runtime."""
+        """Resume one persisted Run through its Capability-owned runtime.
+
+        The Run keeps its id.  When its definitions changed since it was
+        compiled, the runtime executes it again in place and reuses every
+        unchanged model turn.
+        """
 
         binding, projection = self._locate_run(run_id)
+        if not automatic and self.supervisor is not None:
+            self.supervisor.reset(run_id)
         accepted = await binding.resume(command_id, run_id)
         current = projection["run"]
         return self._accepted(
@@ -224,6 +245,53 @@ class WorkflowProjectionFacade:
             current["capability_id"],
             current["workflow_id"],
         )
+
+    async def rerun(
+        self,
+        command_id: UUID,
+        run_id: str,
+        values: Any = None,
+    ) -> dict[str, Any]:
+        """Run a finished or stopped Run again in place as its next version.
+
+        ``values`` is a Capability-defined revision; without it the Run starts
+        again from its saved input.  Unchanged model turns are reused.
+        """
+
+        binding, projection = self._locate_run(run_id)
+        rerun = getattr(binding, "rerun", None)
+        if not callable(rerun):
+            raise WorkflowNotRunnableError(run_id)
+        if self.supervisor is not None:
+            self.supervisor.reset(run_id)
+        accepted = await rerun(command_id, run_id, values)
+        current = projection["run"]
+        return self._accepted(
+            accepted,
+            current["capability_id"],
+            current["workflow_id"],
+        )
+
+    def versions(self, run_id: str) -> list[dict[str, Any]]:
+        binding, _projection = self._locate_run(run_id)
+        versions = getattr(binding, "versions", None)
+        return list(versions(run_id)) if callable(versions) else []
+
+    def describe_failure(self, run_id: str) -> RunFailure | None:
+        """Where and why a failed Run stopped, and whether resuming may help."""
+
+        self._locate_run(run_id)
+        store = FileWorkflowStateStore(self.workspace)
+        try:
+            plan = store.load_plan(run_id)
+            state = json.loads(
+                (self.workspace / "Work" / "runs" / run_id / "runtime-state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (OSError, ValueError):
+            return None
+        return describe_failure(plan, state)
 
     def request_cancel(self, run_id: str) -> Awaitable[Any] | None:
         """Request a stop of one Run's live execution; None when it is idle."""
@@ -293,6 +361,23 @@ class WorkflowProjectionFacade:
                 events.append(event)
         return {"run_id": run_id, "events": events}
 
+    def get_progress(self, run_id: str) -> dict[str, Any]:
+        """Where the Run is now, read from its persisted state tree."""
+
+        self._locate_run(run_id)
+        try:
+            return self._progress.read(run_id)
+        except FileNotFoundError:
+            run = self.get_run(run_id)["run"]
+            return {
+                "run_id": run_id,
+                "workflow_id": str(run.get("workflow_id") or ""),
+                "status": str(run.get("status") or ""),
+                "root": None,
+                "events": [],
+                "spans": {},
+            }
+
     def _find_workflow(
         self,
         workflow_id: str,
@@ -321,3 +406,18 @@ class WorkflowProjectionFacade:
             "capability_id": capability_id,
             "workflow_id": workflow_id,
         }
+
+
+def _main_notifier(runtime_services: Any):
+    """Send run notices to Main as system messages, when a bus is available."""
+
+    bus = getattr(runtime_services, "bus", None)
+    if bus is None:
+        return None
+
+    async def notify(text: str) -> None:
+        from manyselves.interfaces.types import UserMessage
+
+        await bus.publish(UserMessage(content=text, agent_type="main", source="system"))
+
+    return notify

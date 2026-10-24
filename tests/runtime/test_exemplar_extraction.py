@@ -33,12 +33,14 @@ from manyselves.runtime.exemplar.lessons import (
 )
 from manyselves.runtime.exemplar.outline import document_outline
 
-POLICY = ExemplarPolicy(mandatory_words=["必须", "一律"], organisation_suffixes=["有限公司"])
+POLICY = ExemplarPolicy()
 
 
 def _exemplar(path: Path) -> Path:
     document = Document()
-    document.add_paragraph("受示例花园有限公司委托编写")
+    # The cover: by position it names the exemplar's client.
+    document.add_paragraph("示例花园有限公司")
+    document.add_paragraph("巡查报告")
     document.add_heading("概况", level=1)
     document.add_heading("背景", level=2)
     document.add_paragraph("本次对园区东侧12株乔木进行了巡查，由示例花园有限公司陪同。")
@@ -80,7 +82,7 @@ def test_outline_numbers_headings_and_locates_blocks(outline) -> None:
     assert outline.section("2.2").labels == ("结论",)
     # List items are not labels, and the paragraph before the first heading is front matter.
     assert any(outline.block(loc).list_item for loc in health.blocks)
-    assert outline.front_matter == ("受示例花园有限公司委托编写",)
+    assert outline.front_matter == ("示例花园有限公司", "巡查报告")
 
 
 def test_outline_is_deterministic(tmp_path: Path) -> None:
@@ -116,7 +118,7 @@ def test_role_scope_and_packet_cover_the_subtree(outline) -> None:
     assert role_scope(outline, missing).missing == ("9",)
 
 
-def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> None:
+def test_acceptance_keeps_methods_and_refuses_the_exemplars_facts(outline) -> None:
     scope = role_scope(outline, _role())
     lead = _locator(outline, "2.1", "抽查发现")
     advice = _locator(outline, "2.1", "尽快加固")
@@ -130,7 +132,7 @@ def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> N
                  "applies_when": "未明确", "locator": lead, "quote": "树干开裂，详见下表"},
                 {"use": "method", "text": "列出3株问题树。", "applies_when": "未明确",
                  "locator": lead, "quote": "抽查发现3株树干开裂"},
-                {"use": "method", "text": "建议必须写成加固措施。", "applies_when": "未明确",
+                {"use": "example", "text": "抽查发现〈3株〉树干开裂。", "applies_when": "未明确",
                  "locator": advice, "quote": "尽快加固开裂树干"},
                 {"use": "example", "text": "抽查发现3株树干开裂。", "applies_when": "未明确",
                  "locator": lead, "quote": "抽查发现3株树干开裂"},
@@ -149,8 +151,9 @@ def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> N
     ]
     reasons = {r.index: " ".join(r.reasons) for r in result.rejected}
     assert "数值或编号：3" in reasons[2]
-    assert "强制词：必须" in reasons[3]
-    assert "占位：3" in reasons[4]
+    # A placeholder names a kind of fact; the exemplar's value inside it is refused too.
+    assert "数值或编号：3" in reasons[3]
+    assert "数值或编号：3" in reasons[4]
     assert "找不到" in reasons[5]
     assert "不在本角色的小节里" in reasons[6]
     # 2.2 had only a refused entry, so it is uncovered; 2 is skipped with a reason.
@@ -160,7 +163,6 @@ def test_acceptance_keeps_methods_and_refuses_facts_and_hard_rules(outline) -> N
 
 def test_uses_unavailable_features_and_generated_tables(outline) -> None:
     policy = ExemplarPolicy(
-        mandatory_words=["必须"],
         uses=[
             ExemplarUse(id="judge", title="判断方法", description="怎样下判断"),
             ExemplarUse(id="write", title="写法", description="怎样组织"),
@@ -194,13 +196,15 @@ def test_uses_unavailable_features_and_generated_tables(outline) -> None:
     result = accept_submission(outline, scope, submission, policy)
     reasons = {r.index: " ".join(r.reasons) for r in result.rejected}
     assert "不是本角色可用的用途" in reasons[1]
-    assert "附件" in reasons[2]
+    # What the product does not produce is told to the model, not refused by word.
+    assert packet["unavailable"] == {"附件": "成品不带附件"}
+    assert 2 not in reasons
     assert result.missing_uses == ["judge"] and not result.passed
     text = render_role_skill(outline, scope, result.accepted, source="示例", policy=policy)
     assert "写法：\n- 先交代抽查范围" in text and "判断方法：" not in text
 
 
-def test_organisation_names_are_refused_even_in_scope(tmp_path: Path) -> None:
+def test_the_exemplars_cover_names_are_refused_even_in_scope(tmp_path: Path) -> None:
     outline = document_outline(_exemplar(tmp_path / "e.docx"))
     role = ExemplarRole.model_validate(
         {"id": "bg", "title": "背景", "purpose": "背景", "sections": [{"number": "1"}]}
@@ -212,7 +216,8 @@ def test_organisation_names_are_refused_even_in_scope(tmp_path: Path) -> None:
                       "applies_when": "未明确", "locator": locator, "quote": "示例花园有限公司陪同"}]}
     )
     result = accept_submission(outline, scope, submission, POLICY)
-    assert "单位名称" in result.rejected[0].reasons[0]
+    # The cover line holds the client's name; no suffix list is needed.
+    assert "专家版封面上的名称" in result.rejected[0].reasons[0]
 
 
 def test_rendered_skill_keeps_locators_and_drops_quotes(outline) -> None:
@@ -231,7 +236,7 @@ def test_rendered_skill_keeps_locators_and_drops_quotes(outline) -> None:
     assert "3株" not in text and "抽查发现" not in text
 
 
-def test_lessons_refuse_run_objects_numbers_and_hard_words() -> None:
+def test_lessons_refuse_run_objects_and_numbers() -> None:
     terms = specific_terms(["东门老槐树", "乔木", "园区"], vocabulary=["乔木养护", "园区巡查"])
     assert terms == {"东门老槐树"}
     problems = lesson_problems(
@@ -241,16 +246,15 @@ def test_lessons_refuse_run_objects_numbers_and_hard_words() -> None:
         trigger={"kind": "sometimes"},
         known_roles=["writer"],
         run_terms=terms,
-        mandatory_words=["必须"],
         trigger_problem=lambda trigger: None if trigger.get("kind") == "always" else "触发条件不对",
     )
     joined = " ".join(problems)
-    for expected in ("角色不存在：ghost", "数值或编号：3", "本次运行的对象：东门老槐树", "强制词：必须", "触发条件不对"):
+    for expected in ("角色不存在：ghost", "数值或编号：3", "本次运行的对象：东门老槐树", "触发条件不对"):
         assert expected in joined
     assert lesson_problems(
         roles=["writer"], error_type="把未见记录写成正常", rule="缺资料时写明缺什么、影响什么判断。",
         trigger={"kind": "always"}, known_roles=["writer"], run_terms=terms,
-        mandatory_words=["必须"], trigger_problem=lambda trigger: None,
+        trigger_problem=lambda trigger: None,
     ) == []
 
 
@@ -314,7 +318,7 @@ def _sites_exemplar(path: Path) -> Path:
     return path
 
 
-PLAIN = ExemplarPolicy(organisation_suffixes=["有限公司"])
+PLAIN = ExemplarPolicy()
 TARGETS = [Target("1", "巡查结果"), Target("1.1", "修剪情况"), Target("1.2", "浇水与灌溉情况")]
 ROLE = {"id": "w", "title": "巡查", "purpose": "写巡查时参考。", "sections": [{"number": "1", "title": "巡查结果"}]}
 

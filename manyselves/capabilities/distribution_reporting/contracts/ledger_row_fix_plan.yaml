@@ -1,0 +1,17 @@
+id: ledger_row_fix_plan
+version: 3.0.0
+description: The final ledger with the fixed rows, one revision per writer - the editor's blocking findings with the sections resting on the fixed rows - and the chief's fact check with the units resting on them
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, section_revise_items, changed_rows, chief]
+  properties:
+    ledger:
+      type: object
+    section_revise_items:
+      type: array
+    chief:
+      type: object
+    changed_rows:
+      type: array
+      items: {type: string}

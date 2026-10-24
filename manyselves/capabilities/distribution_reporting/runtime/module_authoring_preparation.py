@@ -24,7 +24,6 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    TEMPLATE_ROLE_SKILL_IDS,
     ModuleDispatchPlan,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
@@ -109,12 +108,14 @@ def _dispatch(value: Any) -> Any:
 
 
 def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
-    """Load a complete user-managed template Skill package from Inputs."""
+    """Load the template Skill package from Inputs: the roles the capability declares."""
+
+    from .template_skills import skill_order
 
     workspace = Path(workspace).resolve()
     refs = {
         skill_id: template_skill_ref(skill_id)
-        for skill_id in TEMPLATE_ROLE_SKILL_IDS
+        for skill_id in skill_order()
     }
     boundary_ref = TEMPLATE_SKILL_BOUNDARY
     required = [*refs.values(), boundary_ref]
@@ -128,7 +129,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
         raise ModuleAuthoringPreparationError(
             "Inputs 中的模板写作 Skill 包不完整，缺少文件："
             f"{', '.join(missing)}；请补齐 Inputs/report-template-role-skills "
-            "或单独运行 operation=distill_template_skill 生成 Skill 包"
+            "或运行 extract-template-skills 提炼后用 publish_template_skills 发布"
         )
     try:
         boundary = TemplateSkillBoundaryManifest.model_validate_json(
@@ -137,7 +138,7 @@ def load_template_skill(workspace: Path, state: dict[str, Any]) -> bool:
     except (OSError, ValueError, AttributeError) as exc:
         raise ModuleAuthoringPreparationError(
             "Inputs 中模板写作 Skill 的 boundary.json 无法解析；"
-            "请修正该文件或单独运行 operation=distill_template_skill 重新生成"
+            "请重新发布 Skill（publish_template_skills 会重写它）"
         ) from exc
     template_skill_text = {
         key: resolved[path].read_text(encoding="utf-8")

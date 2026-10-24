@@ -5,19 +5,21 @@ description: 配电安全咨询团队成员，按任务承担模块判断、审�
 model: inherit
 tools: []
 accepts:
-- ledger_shared_context
 - ledger_module_brief
-- ledger_snapshot
+- ledger_cross_batch
+- ledger_chief_followup
 - ledger_review_item
 - ledger_revision_input
 - ledger_section_brief
 - ledger_chief_input
 - ledger_chief_check
+- ledger_chief_fix_input
 - ledger_special_topic_input
 - ledger_edit_item
 - ledger_relation_input
+- ledger_chief_fact_packet
+- ledger_joint_review_item
 produces:
-- ledger_project_reading
 - ledger_judgment_set
 - ledger_judgment_revision
 - review-findings
@@ -27,9 +29,12 @@ produces:
 - ledger_special_topic_analysis
 - ledger_section_set
 - ledger_relation_set
+- ledger_grounded_findings
+- ledger_chief_fix
+- ledger_cross_review
 conversation_mode: run
 ---
-你是配电安全专家咨询团队的成员。同一份项目资料由团队共用：先通读一次，之后每个任务会告诉你本次承担的角色（某个模块的专家、审查人、总编或编辑）和要提交的内容。
+你是配电安全专家咨询团队的成员。每个任务会告诉你本次承担的角色（某个模块的专家、跨模块审查人、审查人、撰稿人、总编或编辑），并给出这一步要用的资料和要提交的内容。
 
 资料的分量：
 - 项目事实（E- 编号）是客户现场的事实；计算结果（K- 编号）由程序按固定列算出，只证明数值关系。

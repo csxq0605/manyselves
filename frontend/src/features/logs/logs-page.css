@@ -63,8 +63,20 @@
   border-top: 1px solid #ecece9;
   display: grid;
   gap: 8px 12px;
-  grid-template-columns: 154px 58px minmax(150px, 220px) minmax(0, 1fr) auto;
+  /* The Agent column is bounded: Workflow Agent ids are long and unbroken,
+     and an auto column would squeeze the message into a one-character strip. */
+  grid-template-columns: 154px 58px minmax(120px, 200px) minmax(0, 1fr) minmax(0, 220px);
   padding: 11px 12px;
+}
+
+.logs-page__list code { overflow-wrap: anywhere; }
+
+.logs-page__list small {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logs-page__list li:first-child { border-top: 0; }
@@ -135,7 +147,7 @@
 @media (max-width: 800px) {
   .logs-page__filters { grid-template-columns: 1fr; }
   .logs-page__viewport { max-height: min(520px, calc(100dvh - 340px)); }
-  .logs-page__list li { grid-template-columns: 1fr auto; }
+  .logs-page__list li { grid-template-columns: 1fr minmax(0, 50%); }
   .logs-page__list code,
   .logs-page__list p { grid-column: 1 / -1; }
   .logs-page__pagination { flex-wrap: wrap; }

@@ -1,0 +1,36 @@
+id: review-cross-module
+version: 1.2.0
+description: Review the authors' cross-module relations and propose the ones they missed, one slice of a shared prefix
+agent: report-consultant
+objective: 你现在是跨模块审查人，做两件事：一、核对作者记下的跨模块关联是否成立；二、找出作者没有连、但两边的事实确实能看出关联条件的行对，提议给两边作者确认。上面是项目图谱、知识库的跨知识单元关联方法、本范围全部关注和不能判定的行以及所有关联两端的行（rows，全文；other_rows 是本范围以外的关注和不能判定行，每行一句）、这些行所引的原始记录（facts）；下面的输入是你这一份负责的部分：relations 是要核对的关联（for_row 记下了这条关联，row_id 是所关联的行），focus_rows 是要为它们找漏连关联的行。
+input_contract: ledger_cross_batch
+output_contract: ledger_cross_review
+static_first: true
+shared_fields:
+- map
+- relation_method
+- rows
+- other_rows
+- facts
+context_fields:
+- map
+- relation_method
+- rows
+- other_rows
+- facts
+constraints:
+- 这三种行对程序不当关联，会从关联里拿出来另行列出，不用连、也不用提：两行都不能判定（缺口写在缺口条目里）；一行不能判定、两行又不是同一对象也不在同一配电房（写在那条缺口的“还影响哪些判断”里）；两行都是关注、在同一配电房、都没有读数（按配电房合列一次）。
+- 关联指一个模块的判断加重、解释、排除或改变另一个模块的判断：例如一处的读数说明另一处异常的原因，一处缺的资料使另一处的风险无法排除，同一系统里一处的问题放大另一处的后果。只看不同模块之间的行对。
+- 核对 relations：逐条看 reason 里说的条件能不能从两边的事实看出来、对 for_row 结论的作用是否说得过头；看不出来或作用说过头的，对 for_row 判 blocking，要求删掉这条关联。只有缺的那项条件在两边的记录里确实没有记录（没测、没填）时，才可以要求改成待核实并写明缺什么。
+- 知识库没有收录的关联（relation 不在关联方法里，带 mechanism 和 condition）没有知识库兜底：专门核对机理在专业上是否成立、条件是否真能从两边的事实看出来；有一项站不住就判 blocking。
+- status 为“待核实”的关联只看三点：missing 是否写清楚缺哪项条件、补充什么资料或检测能确认；两边的行（对象、检查点、发现）是否确实指向这条关系；reason 有没有把它写成已经成立、拿它加重或解释本行结论。三点都没问题的不写意见，不要求证明关联成立；有一点站不住的判 blocking，要求写清缺口或删掉。
+- 只是同一房间、同一次检查、同一个计划或制度的，以及两边只是同缺一批资料、没有别的联系的，判 blocking，要求删掉。关联成立但 for_row 的 basis、hazard 或风险等级没有体现这层作用、或体现得过头的，判 minor 并说明。
+- findings 的键是 for_row 的行编号；同一行有几条关联有问题的写在一条意见里，写明是哪几条（row_id）。只对 relations 里的关联写意见。
+- 找漏连：只为 focus_rows 里的行找，另一端可以是 rows 里（或 other_rows 里）任何别的模块的行；已经记在 relations 或 rows 的 relations 字段里的行对不再提。两边的事实确实能看出这条关系要核实的条件才提，宁缺不凑；知识库的关联方法是参考，不是要凑满的清单。
+- 提议的 relation 是知识库列出的候选关系就照抄关联方法里的关系名称；知识库没有收录、但两边的事实看得出确实相关的也可以提：relation 自拟简短名称，并必须写 mechanism 和 condition。reason 一句话：两边哪项事实满足条件，对两边的结论有什么作用。只写所给行和记录里有的事实，不新增事实，不替任何一边改结论。
+- 两行引用的是同一个表格单元格（图谱里同一观测在两个小节）时，它们是同一记录的两个视角，不是关联，不提。
+- 理由里引用来源记录时按字段角色写：行动建议是原作者建议做的事，不是评估结论的依据；关联理由把建议写成依据、或把一个字段读成另一个字段的含义的，对 for_row 判 blocking；提议里也不这样写。
+- 没有问题时 findings 留空，没有漏连时 proposals 留空。
+tools: []
+recovery: typed-turn-recovery
+attention_budget_tokens: 280000

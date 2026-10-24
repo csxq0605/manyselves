@@ -14,8 +14,9 @@ has read the diff.
 from __future__ import annotations
 
 import json
+import re
 import shutil
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -44,7 +45,7 @@ from manyselves.runtime.exemplar.lessons import (
     load_lessons,
     render_lessons,
 )
-from manyselves.runtime.exemplar.outline import DocumentOutline, document_outline
+from manyselves.runtime.exemplar.outline import DocumentOutline, document_outline, similar
 
 from ..domain.calculations import compute
 from ..domain.lesson_triage import TriggerKind
@@ -85,6 +86,116 @@ def skill_targets() -> tuple[Target, ...]:
         chapter_2.append(Target(module.id, module.title))
         chapter_2.extend(Target(section.id, section.title) for section in module.sections.values())
     return (*_declared_targets(), *chapter_2)
+
+
+# -- aligning Skills to this run's section tree --------------------------------
+
+_SKILL_SECTION = re.compile(r"^##\s+(2\.\d+(?:\.\d+)*)\s+(.*?)\s*$")
+_SAME_SECTION = 0.5  # the bar distillation uses to align an expert section
+
+
+def _best(title: str, candidates: Mapping[str, str]) -> str | None:
+    """The candidate id whose title is most like ``title``, when alike enough."""
+
+    ranked = sorted(
+        ((similar(title, other), key) for key, other in candidates.items()), reverse=True
+    )
+    if ranked and ranked[0][0] >= _SAME_SECTION:
+        return ranked[0][1]
+    return None
+
+
+def module_skill_roles() -> dict[str, str]:
+    """This run's module id -> the author Skill whose module means the same.
+
+    A Skill learns from one chapter 2 module of the expert report.  The run's
+    table may number or word its modules differently, so the module is
+    matched by title; the number alone decides only when titles agree.
+    """
+
+    modules = {module.id: module.title for module in REPORT_TAXONOMY.values()}
+    chosen: dict[str, str] = {}
+    for role in template_roles():
+        refs = [ref for ref in role.sections if re.fullmatch(r"2\.\d+", ref.number)]
+        if len(refs) != 1:
+            continue
+        ref = refs[0]
+        if ref.number in modules and similar(ref.title, modules[ref.number]) >= _SAME_SECTION:
+            module_id = ref.number
+        else:
+            module_id = _best(ref.title, modules)
+        if module_id is not None:
+            chosen.setdefault(module_id, role.id)
+    return chosen
+
+
+def align_skill_sections(text: str, module_id: str) -> tuple[str, list[str]]:
+    """Head a module Skill's sections with this run's numbers and titles.
+
+    Each "## number title" section is matched to the run's subsection of the
+    same meaning, number first when the titles agree; a section the run's
+    table does not list is left out, since nothing is written for it.
+    Returns the aligned text and what was renumbered or left out.
+    """
+
+    module = REPORT_TAXONOMY[module_id]
+    sections = {section.id: section.title for section in module.sections.values()}
+    notes: list[str] = []
+    out: list[str] = []
+    keep = True
+    for line in text.splitlines():
+        match = _SKILL_SECTION.match(line)
+        if match is None:
+            if line.startswith("## "):
+                keep = True
+            if keep:
+                out.append(line)
+            continue
+        number, title = match.groups()
+        if number.count(".") == 1:
+            # The module's own heading: the Skill's module is this run's module.
+            keep = True
+            out.append(f"## {module.id} {module.title}")
+            continue
+        if number in sections and similar(title, sections[number]) >= _SAME_SECTION:
+            target = number
+        else:
+            target = _best(title, sections)
+        keep = target is not None
+        if target is None:
+            notes.append(f"{number} {title}：本次评估信息汇总表没有这一节，略去")
+            continue
+        if target != number:
+            notes.append(f"{number} {title} → 本次 {target} {sections[target]}")
+        out.append(f"## {target} {sections[target]}")
+    return "\n".join(out) + ("\n" if text.endswith("\n") else ""), notes
+
+
+def skills_for_run(skills: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Skills as this run reads them, and each module's author Skill.
+
+    Returns (Skills by role, with module Skills aligned to the run's tree;
+    the author Skill text per run module; what alignment changed).
+    """
+
+    aligned = dict(skills)
+    by_module: dict[str, str] = {}
+    notes: list[str] = []
+    for module_id, role_id in module_skill_roles().items():
+        if not skills.get(role_id):
+            continue
+        text, changed = align_skill_sections(skills[role_id], module_id)
+        aligned[role_id] = text
+        by_module[module_id] = text
+        notes.extend(f"{role_id}（本次 {module_id}）：{note}" for note in changed)
+    matched = set(module_skill_roles().values())
+    for role in template_roles():
+        refs = [ref for ref in role.sections if re.fullmatch(r"2\.\d+", ref.number)]
+        if len(refs) == 1 and role.id not in matched and skills.get(role.id):
+            # Its module is not in this run's table: nothing is written for it.
+            aligned.pop(role.id, None)
+            notes.append(f"{role.id}：本次评估信息汇总表没有对应模块，略去")
+    return aligned, by_module, notes
 
 
 def template_roles() -> tuple[ExemplarRole, ...]:
@@ -361,53 +472,161 @@ def plain_value(value: Any) -> Any:
     return value
 
 
-def publish_template_skills(
-    workspace: Path, run_id: str, *, roles: Iterable[str] | None = None
-) -> dict[str, Any]:
-    """Copy a run's candidate Skills into Inputs, keeping the replaced files beside the run."""
+BOUNDARY_STATEMENT = (
+    "程序从专家版报告提炼的方法资料：只迁移判断、写法、章节综合和核对的做法，"
+    "每条带专家版出处坐标；不迁移专家版项目的客户、地点、对象、数值、阈值、发现和结论，"
+    "这些只能来自本项目的表格、照片和知识库。任务合同决定范围，Skill 只是参考。"
+)
+
+
+def skill_boundary() -> dict[str, Any]:
+    """The boundary every published package carries: method only, no exemplar facts."""
+
+    from .models.agentic import (
+        TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
+        TEMPLATE_SKILL_TRANSFER_CATEGORIES,
+    )
+
+    return {
+        "policy_version": 1,
+        "transferred_categories": sorted(TEMPLATE_SKILL_TRANSFER_CATEGORIES),
+        "excluded_categories": sorted(TEMPLATE_SKILL_EXCLUSION_CATEGORIES),
+        "boundary_statement": BOUNDARY_STATEMENT,
+    }
+
+
+def preview_template_skills(workspace: Path, run_id: str) -> dict[str, Any]:
+    """What ``publish_template_skills`` would change, without changing anything.
+
+    For each role: ``new`` (no published copy), ``changed`` (with a unified
+    diff, cut to a readable length), ``same``, or ``kept`` (this run did not
+    redo the role; the published copy stays).
+    """
+
+    import difflib
+
+    workspace = Path(workspace).resolve()
+    summary = json.loads(
+        (workspace / run_root(run_id) / "summary.json").read_text(encoding="utf-8")
+    )
+    candidates: dict[str, str] = summary["candidates"]
+    roles: list[dict[str, Any]] = []
+    for role_id in skill_order():
+        published = workspace / template_skill_ref(role_id)
+        old = published.read_text(encoding="utf-8") if published.is_file() else None
+        if role_id not in candidates:
+            roles.append({"role": role_id, "status": "kept" if old else "missing"})
+            continue
+        new = (workspace / candidates[role_id]).read_text(encoding="utf-8")
+        if old is None:
+            roles.append({"role": role_id, "status": "new", "lines": len(new.splitlines())})
+            continue
+        if old == new:
+            roles.append({"role": role_id, "status": "same"})
+            continue
+        diff = list(
+            difflib.unified_diff(
+                old.splitlines(), new.splitlines(), "published", "candidate", lineterm="", n=1
+            )
+        )
+        added = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+        roles.append(
+            {
+                "role": role_id,
+                "status": "changed",
+                "added_lines": added,
+                "removed_lines": removed,
+                "diff": "\n".join(diff[:120]),
+            }
+        )
+    return {"run_id": run_id, "roles": roles}
+
+
+def publish_template_skills(workspace: Path, run_id: str) -> dict[str, Any]:
+    """Replace the published package with exactly the declared roles.
+
+    The Skills directory is emptied first, so nothing a past flow or a manual
+    edition left behind stays in it; what was there is moved beside the run.
+    Each declared role takes this run's candidate, or, when this run redid
+    only some roles, the copy published before (itself a program output).
+    """
 
     workspace = Path(workspace).resolve()
     root = workspace / run_root(run_id)
     summary_path = root / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    wanted = set(roles) if roles is not None else set(summary["candidates"])
-    unknown = wanted - set(summary["candidates"])
-    if unknown:
-        raise ValueError("no candidate for: " + ", ".join(sorted(unknown)))
-    published: dict[str, str] = {}
-    for role_id in [r for r in skill_order() if r in wanted]:
+    candidates: dict[str, str] = summary["candidates"]
+    target_root = workspace / TEMPLATE_SKILL_ROOT
+    previous = root / "previous"
+    texts: dict[str, str] = {}
+    origins: dict[str, str] = {}
+    old_source: dict[str, Any] = {}
+    if (workspace / TEMPLATE_SKILL_SOURCE).is_file():
+        old_source = json.loads((workspace / TEMPLATE_SKILL_SOURCE).read_text(encoding="utf-8"))
+    missing: list[str] = []
+    for role_id in skill_order():
+        if role_id in candidates:
+            texts[role_id] = (workspace / candidates[role_id]).read_text(encoding="utf-8")
+            origins[role_id] = run_id
+            continue
+        kept = workspace / template_skill_ref(role_id)
+        origin = (old_source.get("extracted_roles") or {}).get(role_id, {}).get("run_id")
+        if kept.is_file() and origin:
+            texts[role_id] = kept.read_text(encoding="utf-8")
+            origins[role_id] = origin
+        else:
+            missing.append(role_id)
+    if missing:
+        raise ValueError(
+            "这些角色既没有本次提炼的结果，也没有程序提炼过的现用版本：" + "、".join(missing)
+        )
+    if target_root.exists():
+        # A second publish of the same run keeps the first backup too.
+        number = 1
+        while previous.exists():
+            number += 1
+            previous = root / f"previous-{number}"
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target_root), str(previous))
+    for role_id, text in texts.items():
         target = workspace / template_skill_ref(role_id)
-        if target.is_file():
-            backup = root / "previous" / role_id / "SKILL.md"
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            if not backup.exists():
-                shutil.copyfile(target, backup)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(workspace / summary["candidates"][role_id], target)
-        published[role_id] = template_skill_ref(role_id).as_posix()
-    source_path = workspace / TEMPLATE_SKILL_SOURCE
-    source: dict[str, Any] = {}
-    if source_path.is_file():
-        source = json.loads(source_path.read_text(encoding="utf-8"))
-    extracted = dict(source.get("extracted_roles") or {})
-    for role_id in published:
-        extracted[role_id] = {"run_id": run_id, "date": date.today().isoformat()}
-    source.update(
-        {
-            "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
-            "extracted_roles": extracted,
-            "last_extraction": {
-                "run_id": run_id,
-                "template": summary.get("template_origin", ""),
-                "roles": sorted(published),
-            },
-        }
+        target.write_text(text, encoding="utf-8")
+    (target_root / "boundary.json").write_text(
+        json.dumps(skill_boundary(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    summary["published"] = sorted(published)
+    today = date.today().isoformat()
+    source = {
+        "source": "program-extraction",
+        "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
+        "boundary_ref": (TEMPLATE_SKILL_ROOT / "boundary.json").as_posix(),
+        "roles": list(texts),
+        "extracted_roles": {
+            role_id: (
+                {"run_id": run_id, "date": today}
+                if origin == run_id
+                else (old_source.get("extracted_roles") or {})[role_id]
+            )
+            for role_id, origin in origins.items()
+        },
+        "last_extraction": {
+            "run_id": run_id,
+            "template": summary.get("template_origin", ""),
+            "roles": sorted(candidates),
+        },
+    }
+    (workspace / TEMPLATE_SKILL_SOURCE).write_text(
+        json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    published = {role_id: template_skill_ref(role_id).as_posix() for role_id in texts}
+    summary["published"] = sorted(candidates)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"published": published, "backup": (root / "previous").relative_to(workspace).as_posix()}
+    return {
+        "published": published,
+        "from_this_run": sorted(candidates),
+        "backup": previous.relative_to(workspace).as_posix(),
+    }
 
 
 # -- comparison with the Skills in use -------------------------------------
@@ -488,9 +707,13 @@ __all__ = [
     "ROLES_FILE",
     "TRIGGER_KINDS",
     "TemplateSkillTools",
+    "preview_template_skills",
     "publish_template_skills",
     "skill_order",
+    "align_skill_sections",
+    "module_skill_roles",
     "skill_targets",
+    "skills_for_run",
     "skills_with_lessons",
     "template_policy",
     "template_roles",

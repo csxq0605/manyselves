@@ -32,7 +32,6 @@ from ..domain.taxonomy import REPORT_TAXONOMY
 from .models.reporting import EvidenceItem
 from .template_skills import (
     plain_value,
-    template_policy,
     template_roles,
     trigger_fires,
     trigger_problem,
@@ -40,7 +39,9 @@ from .template_skills import (
 )
 
 _SPACE = re.compile(r"\s+")
-FINDING_ACTIONS = ("review", "edit")
+# A joint review (ledger-joint-review) edits sections and checks chapter 1
+# and 3 units in one result; its section findings are the editor's.
+FINDING_ACTIONS = ("review", "edit", "joint-review")
 
 
 def lesson_root(run_id: str) -> str:
@@ -78,8 +79,11 @@ def collect_findings(workspace: Path, source_run_id: str) -> list[dict[str, Any]
             result = record.get("result") or {}
             source = record.get("input") or {}
             owner = str(source.get("module_id") or source.get("owner") or conversation.name)
+            sections = source.get("sections") or {}
             for target, finding in sorted((result.get("findings") or {}).items()):
                 if not isinstance(finding, Mapping) or not finding.get("problem"):
+                    continue
+                if action == "joint-review" and target not in sections:
                     continue
                 found.append(
                     {
@@ -199,7 +203,6 @@ class LessonTriageTools:
                         trigger=draft.trigger.model_dump(),
                         known_roles=role_ids,
                         run_terms=terms,
-                        mandatory_words=template_policy().mandatory_words,
                         trigger_problem=trigger_problem,
                     )
                 )
@@ -328,7 +331,6 @@ def lesson_admission(
             trigger=lesson.trigger,
             known_roles=role_ids,
             run_terms=run_terms,
-            mandatory_words=template_policy().mandatory_words,
             trigger_problem=trigger_problem,
         )
         fires = [

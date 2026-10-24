@@ -410,14 +410,16 @@ class ReportAssetAssembler:
                 raise ValueError(
                     f"photo {photo_id} requires source-table evidence and a smallest submodule"
                 )
-            if asset.primary_evidence_id is None:
-                source, claim_ids = bindings[0]
-            else:
-                source, claim_ids = next(
+            # The primary evidence may be one the authors did not place; the
+            # photo then goes with the first evidence that has a section.
+            source, claim_ids = next(
+                (
                     binding
                     for binding in bindings
                     if binding[0].id == asset.primary_evidence_id
-                )
+                ),
+                bindings[0],
+            )
             if source.id not in evidence_by_id:
                 raise AssertionError("asset binding indexes are inconsistent")
             report_photos.append(

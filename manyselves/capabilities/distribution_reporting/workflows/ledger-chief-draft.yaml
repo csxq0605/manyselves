@@ -1,0 +1,90 @@
+id: ledger-chief-draft
+version: 1.0.0
+description: The chief merges actions and writes chapters 3 and 1 from the ledger, the program checking their tables; with joint review the facts are checked together with the writers' sections
+tasks:
+- chief-chapter-3
+- revise-chief-actions
+- chief-chapter-1
+recovery:
+- typed-turn-recovery
+output_contract: ledger_chief_chapters
+state:
+  final: null
+  context: null
+  chief_key: chief
+  # Chapter 1 reads the chief input already in the conversation.
+  chief_followup:
+    note: 依据同上：上文的总编资料、输入和你提交的第三章
+actions:
+- id: open-chief
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: writer
+  key_variable: chief_key
+  mode: run
+  output_variable: chief_conversation
+- id: chief-input
+  kind: set_variable
+  variable: chief_input
+  value_variable: final
+  field: chief_input
+- id: chapter-3
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-3
+  conversation_variable: chief_conversation
+  input_variable: chief_input
+  output_variable: chapter3
+- id: check-3
+  kind: invoke_tool
+  tool: check-chief-tables
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+  output_variable: check3
+- id: blocking-3
+  kind: set_variable
+  variable: blocking3
+  value_variable: check3
+  field: blocking
+- id: route-3
+  kind: if
+  condition:
+    variable: blocking3
+    operator: eq
+    value: true
+  then: revise-3
+  otherwise: chapter-1
+- id: revise-3
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-chief-actions
+  conversation_variable: chief_conversation
+  input_variable: check3
+  output_variable: chapter3
+- id: chapter-1
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-1
+  conversation_variable: chief_conversation
+  input_variable: chief_followup
+  output_variable: chapter1
+- id: check-1
+  kind: invoke_tool
+  tool: check-chief-tables
+  input_variables:
+    ledger: final
+    chapter3: chapter3
+    chapter1: chapter1
+  output_variable: check1
+- id: collect
+  kind: set_variable
+  variable: outputs
+  value_variables:
+    chapter1: chapter1
+    chapter3: chapter3
+    check1: check1
+- id: finish
+  kind: end_workflow
+  output_variable: outputs
+  output_name: result

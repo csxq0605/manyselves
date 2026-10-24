@@ -27,9 +27,8 @@ def _context(run_id: str = "prep-tools") -> PreparationContext:
     return PreparationContext(
         run_id=run_id,
         request=ReportRequest(
-            operation="module_report",
+            operation="full_report",
             instruction="characterize preparation",
-            target_modules=["2.1"],
             preparation_mode="serial",
         ),
     )
@@ -67,20 +66,6 @@ def test_preparation_tools_do_not_depend_on_legacy_reporting_module() -> None:
         "manyselves/capabilities/distribution_reporting/runtime/preparation_tools.py"
     ).read_text(encoding="utf-8")
     assert "manyselves.core.reporting" not in source
-
-
-def test_revision_coverage_keeps_other_modules_available_to_cross(tmp_path):
-    tools, _ = _tools(tmp_path)
-    context = PreparationContext(run_id="revision", request=ReportRequest(
-        operation="revise_report", instruction="update", baseline_run_id="baseline",
-        requested_changes={"2.3.1": "update"},
-    ), evidence_items=[EvidenceItem(
-        id="E-0001", subject="fixture", fact="linked module fact", module_id="2.1", submodule_id="2.1.1",
-        source=SourceLocation(file_id="fixture", path=Path("Inputs/fixture.txt")),
-    )])
-    result = tools.evaluate_coverage(context)
-    assert result.request.target_modules == ["2.3"]
-    assert result.coverage_matrix.entries["2.1"].submodules["2.1.1"].evidence_ids == ["E-0001"]
 
 
 def test_preparation_implementation_bundle_binds_all_file_tool_ids(
@@ -161,7 +146,6 @@ def test_prepare_taxonomy_uses_the_manifest_snapshot(monkeypatch: pytest.MonkeyP
         return payload
 
     monkeypatch.setattr(preparation_tools, "parse_report_taxonomy_workbook", parse)
-    monkeypatch.setattr(preparation_tools, "activate_report_taxonomy", lambda _payload: None)
     tools, _photo_calls = _tools(Path("/tmp/preparation-tools-test"))
     context = _context().model_copy(
         update={"project_manifest": ProjectManifest(files=[source])}

@@ -1,0 +1,16 @@
+id: ledger_rows_finished
+version: 1.0.0
+description: The ledger after the authors' row fixes, the edited sections after the writers' revisions, and the row fixes themselves
+adapter: json_schema
+schema:
+  type: object
+  required: [fixed, merged]
+  properties:
+    fixed:
+      type: object
+      description: apply-row-fixes' result, with the fixed ledger under ledger
+    merged:
+      type: object
+      description: merge-section-fixes' result, with the edited sections by owner under edits
+    row_fixes:
+      type: object

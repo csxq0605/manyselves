@@ -1,0 +1,10 @@
+id: plan-judgment-relate
+version: 2.0.0
+description: Check the linker's proposals and give every judging group its relate item with the proposals on its rows
+implementation: capability:distribution-reporting:plan-judgment-relate
+input_contract: ledger_relate_plan_input
+output_contract: ledger_relate_plan
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

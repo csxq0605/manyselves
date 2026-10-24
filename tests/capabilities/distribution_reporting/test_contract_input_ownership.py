@@ -6,12 +6,6 @@ from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 
-from manyselves.capabilities.distribution_reporting import (
-    load_distribution_reporting_capability,
-)
-from manyselves.kernel.contracts import build_contract_catalog
-from manyselves.kernel.definitions import ContractDefinition, DefinitionKind
-
 SUBMISSIONS_MODULE = (
     "manyselves.capabilities.distribution_reporting.runtime.contracts.submissions"
 )
@@ -157,15 +151,3 @@ def test_all_input_and_submission_contract_semantics_remain_complete() -> None:
         assert f"input_contract_kind: {kind}" in inputs.render_input_contract(kind)
 
 
-def test_file_declared_input_contracts_resolve_to_capability_models() -> None:
-    _, registry = load_distribution_reporting_capability()
-    inputs = import_module(INPUTS_MODULE)
-    contracts = build_contract_catalog(registry)
-
-    for contract_id, model_name in INPUT_CONTRACT_MODELS.items():
-        definition = registry.require(DefinitionKind.CONTRACT, contract_id)
-        assert isinstance(definition, ContractDefinition)
-        assert definition.model == f"{INPUTS_MODULE}:{model_name}"
-        assert contracts[contract_id].json_schema() == getattr(
-            inputs, model_name
-        ).model_json_schema()

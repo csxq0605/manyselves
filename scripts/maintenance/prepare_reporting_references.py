@@ -1,4 +1,4 @@
-"""Prepare a separate project copy with the reviewed reporting references.
+"""Prepare a separate project copy with the reviewed knowledge amendments.
 
 No model calls, report generation, source overwrite or frozen-run modification.
 The amendments target the uploaded reference edition, not arbitrary libraries.
@@ -73,51 +73,18 @@ def prepare(project: Path, output: Path) -> dict:
             raise ValueError(f"missing reviewed source: {relative}")
         replacements[relative] = file.read_text(encoding="utf-8")
 
-    skills = REFERENCES / "reviewed-role-skills"
-    source_skills = project / "Inputs/report-template-role-skills"
-    # Validate the existing boundary before making a project copy.
-    boundary = json.loads((source_skills / "boundary.json").read_text(encoding="utf-8"))
-    role_files = sorted(skills.glob("*/SKILL.md"))
-    for file in role_files:
-        if not (source_skills / file.relative_to(skills)).is_file():
-            raise ValueError(f"missing original role: {file.parent.name}")
-
     for name in ("Inputs", "Knowledge"):
         shutil.copytree(project / name, output / name)
     lineage = output / "review-lineage"
-    shutil.copytree(source_skills, lineage / "original-role-skills")
-    target_skills = output / "Inputs/report-template-role-skills"
-    for file in role_files:
-        shutil.copyfile(file, target_skills / file.relative_to(skills))
-    boundary["boundary_statement"] = (
-        "人工审订的方法资料；不迁移原模板客户事实、阈值或操作方案。"
-        "任务合同决定范围；现场判断依赖当前证据及经核实适用规则。"
-        "原模板未重新核验，不声称本版是重新蒸馏的结果。"
-        "当前项目可追溯的设备、数值与定位须保留；示例不增加章节、数量、时限或工程操作要求。"
-    )
-    (target_skills / "boundary.json").write_text(
-        json.dumps(boundary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
-    )
-    # Old hashes and template-distiller producer describe the original only.
-    source = {
-        "source": "manual-reference-review", "revision": "pr6-2026-10-18",
-        "producer": "manual-editorial-revision",
-        "skill_root": "Inputs/report-template-role-skills",
-        "boundary_ref": "Inputs/report-template-role-skills/boundary.json",
-        "boundary_policy_version": boundary["policy_version"],
-        "original_source_ref": "review-lineage/original-role-skills/source.json",
-        "original_template_reinspected": False,
-    }
-    (target_skills / "source.json").write_text(
-        json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
-    )
+    # Role Skills are not touched here: they come only from extraction, and
+    # publish_template_skills replaces the whole Skills directory.
     for relative, content in replacements.items():
         old = lineage / "original-knowledge" / relative
         old.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(project / "Knowledge" / relative, old)
         (output / "Knowledge" / relative).write_text(content, encoding="utf-8")
     summary = {
-        "revision": source["revision"], "roles_revised": len(role_files),
+        "revision": amendments.get("revision", ""),
         "knowledge_units_revised": sorted(changed_units),
         "knowledge_files_revised": sorted(replacements),
         "provider_calls": 0, "report_runs": 0,

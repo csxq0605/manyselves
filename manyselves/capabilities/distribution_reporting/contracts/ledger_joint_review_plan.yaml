@@ -1,0 +1,7 @@
+id: ledger_joint_review_plan
+version: 1.0.0
+description: Joint review items, one or more per writer and for the units on no writer's rows
+adapter: json_schema
+schema:
+  type: object
+  required: [review_items]

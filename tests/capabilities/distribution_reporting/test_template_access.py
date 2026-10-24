@@ -25,10 +25,3 @@ async def test_reporting_injects_template_isolation_into_generic_document_tool(
 
     with pytest.raises(PermissionError, match=FORBIDDEN_AGENT_ACCESS_ERROR):
         await tool(path="Templates/配电安全专家咨询报告(专家优化版).docx")
-
-
-def test_reporting_distiller_may_read_its_isolated_snapshot() -> None:
-    reject_forbidden_agent_document(
-        "Work/runs/run-1/templates/template-for-skill.docx",
-        allow_template_distiller=True,
-    )

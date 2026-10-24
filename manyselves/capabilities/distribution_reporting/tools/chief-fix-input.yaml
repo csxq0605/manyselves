@@ -1,0 +1,10 @@
+id: chief-fix-input
+version: 1.0.0
+description: What the chief's one fix needs in a conversation of its own - the findings with the rows and records they cite, the text sections they point at, chapter 1 when one of its tables is pointed at, and the 3.2 groups pointed at
+implementation: capability:distribution-reporting:chief-fix-input
+input_contract: ledger_chief_fix_source
+output_contract: ledger_chief_fix_input
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

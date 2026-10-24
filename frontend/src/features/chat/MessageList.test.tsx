@@ -16,6 +16,7 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
     interrupt: async () => ({ commandId: "cmd", status: "accepted" }),
     list: async (projectId) => ({ activeSessionId: "s1", conversations: [], projectId }),
     messages: async (projectId) => ({ messages: [], projectId, sessionId: "s1" }),
+    sessionMessages: async (projectId, sessionId) => ({ messages: [], projectId, sessionId }),
     rename: async () => { throw new Error("unused"); },
     rollback: async () => ({ commandId: "cmd", conversationHistory: [], restoredFiles: 0, status: "accepted" }),
     sendFileContext: async () => ({ commandId: "cmd", status: "accepted" }),
@@ -25,6 +26,31 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
 }
 
 describe("MessageList", () => {
+  it("keeps notices the system sent to the Agent out of the chat", () => {
+    render(
+      <MessageList
+        agentId="main"
+        api={fakeApi()}
+        messages={[
+          { content: "写报告", message_id: "m1", role: "user", source: "user" },
+          {
+            content: '<run_notice run_id="r" workflow="full-report" status="已完成">\n运行已完成。\n</run_notice>',
+            message_id: "m2",
+            role: "user",
+            source: "system",
+          },
+          { content: "报告已经写好。", message_id: "m3", role: "agent" },
+        ]}
+        projectId="project-1"
+      />,
+    );
+
+    const chatItems = screen.getByLabelText("消息历史").querySelectorAll("li.message");
+    expect(chatItems).toHaveLength(2);
+    expect(screen.queryByText(/run_notice/)).not.toBeInTheDocument();
+    expect(screen.getByText("报告已经写好。")).toBeVisible();
+  });
+
   it("moves tool call records into an inline runtime panel instead of the chat stream", async () => {
     const user = userEvent.setup();
     render(

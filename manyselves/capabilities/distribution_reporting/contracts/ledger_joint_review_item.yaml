@@ -1,0 +1,7 @@
+id: ledger_joint_review_item
+version: 1.0.0
+description: A writer's sections and program findings, and the chapter 1 and 3 units resting on its rows with their rows, records, values and counts
+adapter: json_schema
+schema:
+  type: object
+  required: [review_id]

@@ -1,5 +1,6 @@
 """Map, keyed record and conversation fork primitives on the generic Runtime."""
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +171,72 @@ async def test_map_runs_one_child_per_selected_item_keyed_by_field(
     assert completed.outputs["result"] == {"a": {"total": 10}, "c": {"total": 30}}
     assert sorted(calls) == ["a", "c"]
     assert completed.map_states == {}
+
+
+@pytest.mark.asyncio
+async def test_map_lead_item_starts_before_the_others(tmp_path: Path) -> None:
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(registry, _map_parent(lead_seconds=60))
+    started: dict[str, float] = {}
+    finished: dict[str, float] = {}
+
+    def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        started[arguments["key"]] = time.monotonic()
+        finished[arguments["key"]] = time.monotonic()
+        return {"total": arguments["item"]["n"]}
+
+    host, _store = _host(tmp_path)
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("map-lead", plan),
+        RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    # The second item waited for the lead, which finished well within its head start.
+    assert started["c"] >= finished["a"]
+    assert started["c"] - started["a"] < 30
+
+
+@pytest.mark.asyncio
+async def test_map_others_start_after_the_leads_first_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from manyselves.runtime import workflow_host
+    from manyselves.runtime.prefix_lead import notify_first_response
+
+    monkeypatch.setattr(workflow_host, "LEAD_CACHE_SETTLE_SECONDS", 0.2)
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(registry, _map_parent(lead_seconds=60))
+    marks: dict[str, float] = {}
+
+    async def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        key = arguments["key"]
+        marks[f"{key}-start"] = time.monotonic()
+        if key == "a":
+            await asyncio.sleep(0.3)  # the provider reads the prompt
+            marks["a-first"] = time.monotonic()
+            notify_first_response()
+            await asyncio.sleep(2.0)  # the lead keeps answering
+        marks[f"{key}-end"] = time.monotonic()
+        return {"total": arguments["item"]["n"]}
+
+    host, _store = _host(tmp_path)
+    completed = await host.execute(
+        plan,
+        WorkflowState.for_plan("map-lead-first", plan),
+        RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    # c started after the lead's first response plus the settle time, and
+    # long before the lead finished.
+    assert marks["c-start"] - marks["a-first"] >= 0.2
+    assert marks["c-start"] < marks["a-end"] - 1.0
 
 
 @pytest.mark.asyncio
@@ -598,3 +665,44 @@ async def test_set_variable_builds_an_object_from_variables(tmp_path: Path) -> N
     )
 
     assert completed.outputs["result"] == {"a": 1, "b": {"n": 2}}
+
+
+@pytest.mark.asyncio
+async def test_map_saves_running_items_at_most_once_a_second(tmp_path: Path) -> None:
+    import asyncio
+
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(
+        registry,
+        _map_parent(max_concurrency=10),
+    )
+    saved: list[WorkflowState] = []
+
+    class CountingStore(FileWorkflowStateStore):
+        def save(self, state: WorkflowState) -> None:
+            saved.append(state)
+            super().save(state)
+
+    async def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        await asyncio.sleep(0.05)
+        return {"total": arguments["item"]["n"]}
+
+    store = CountingStore(tmp_path)
+    host = WorkflowRuntimeHost(build_builtin_executor_registry(), store, InMemoryWorkflowEventSink())
+    state = WorkflowState.for_plan("map-saves", plan)
+    state.variables["items"] = [{"id": f"i{n}", "n": n} for n in range(20)]
+    completed = await host.execute(
+        plan, state, RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert len(completed.outputs["result"]) == 20
+    running_saves = [
+        s for s in saved
+        if s.map_states.get("score-all")
+        and all(v.get("status") == WorkflowStatus.RUNNING for v in s.map_states["score-all"].values())
+    ]
+    # 20 items start together: their running steps share one save, not one each.
+    assert len(running_saves) <= 2
+    assert completed.map_states == {}

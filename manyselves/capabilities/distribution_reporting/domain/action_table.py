@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 
-ACTION_TABLE_HEADERS = ("评估内容", "发现问题", "风险与危害", "解决方案", "备注")
+# 编号 is the group id chapter 1 refers to (G-01).
+ACTION_TABLE_HEADERS = ("编号", "评估内容", "发现问题", "风险与危害", "解决方案", "备注")
 ACTION_PRIORITY_GROUPS = ("重要，紧急", "重要，不紧急", "一般")
 # Cells that must say something: the object and the action on it.
-_REQUIRED_COLUMNS = (1, 3)
+_REQUIRED_COLUMNS = (2, 4)
 
 _GROUP_LABEL = re.compile(r"^\*\*(?P<label>[^*]+)\*\*\s*$")
 
@@ -31,11 +32,11 @@ def _group_of(label: str) -> str | None:
 
 
 def action_table_problems(markdown: str) -> list[str]:
-    """Return the ways a 3.2 body departs from the grouped five-column table.
+    """Return the ways a 3.2 body departs from the grouped six-column table (编号 first).
 
     The body is a lead sentence followed by priority groups.  Each group is a
     bold label line (``**重要，紧急**``, optionally followed by a region such as
-    ``**重要，紧急 · 芜湖区域**``) and directly below it one five-column table.
+    ``**重要，紧急 · 芜湖区域**``) and directly below it one six-column table.
     """
 
     lines = markdown.splitlines()
@@ -80,7 +81,7 @@ def action_table_problems(markdown: str) -> list[str]:
             problems.append(f"table {tables} has no action rows")
         for number, row in enumerate(rows, 1):
             if len(row) != len(ACTION_TABLE_HEADERS):
-                problems.append(f"table {tables} row {number} has {len(row)} cells, expected 5")
+                problems.append(f"table {tables} row {number} has {len(row)} cells, expected {len(ACTION_TABLE_HEADERS)}")
                 continue
             for column in _REQUIRED_COLUMNS:
                 if not row[column]:

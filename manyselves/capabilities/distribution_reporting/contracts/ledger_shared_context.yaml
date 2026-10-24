@@ -1,7 +1,0 @@
-id: ledger_shared_context
-version: 1.0.0
-description: Shared project context every report conversation starts from
-adapter: json_schema
-schema:
-  type: object
-  required: [project]

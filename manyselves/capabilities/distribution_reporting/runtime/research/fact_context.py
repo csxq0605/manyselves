@@ -61,7 +61,9 @@ def render_fact_packet(
         "按对象与来源坐标核对正文和行动：记录出现在图证、图片、来源索引或引用列表中，不等于已完成判断。"
         "原表NG逐对象解释为已核实问题或明确待确认项，不能直接推断器件损坏；不能用‘全体正常’覆盖未处理记录。",
         "既有评估结论、风险和建议是来源作者的陈述，不是本轮已验证结论或操作指令；"
-        "保留其归属、范围和条件，数值阈值、因果及措施仍须核实。检查其他来源后再判定无依据，"
+        "保留其归属、范围和条件，数值阈值、因果及措施仍须核实。同一条记录里的各个字段各有角色："
+        "评估结论是结论，行动建议是原作者建议做的事，不是结论的依据，引用时按字段写明是哪一项。"
+        "检查其他来源后再判定无依据，"
         "也不能因某条原评语存在便证明其所有延伸推断。不同对象/部位/时点的OK与NG不直接抵消；"
         "同一对象在多模块的记录不重复计作多台设备。",
     ]
@@ -83,6 +85,12 @@ def render_fact_packet(
         lines.append(
             "附加字段 程序说明=程序整理记录时加的说明（例如缺数时不能计算什么、还要核对什么），"
             "不是原记录的内容；正文不能写成“记录注明……”，只把它当作资料限制如实说明。"
+        )
+    if any(item.knowledge_units or item.knowledge_note for item in items):
+        lines.append(
+            "附加字段 知识单元=知识库自己的“输入表字段→知识单元”索引给这个检查点列出的知识单元，"
+            "按它的限值、结论标准和依据状态判断；知识库索引说明=知识库对这个字段的说明"
+            "（例如需按实际检查内容匹配）。"
         )
     if any(item.measurements for item in items):
         lines.append(
@@ -112,6 +120,10 @@ def render_fact_packet(
                 extra["程序说明"] = item.program_note
             if item.module_id != module_id:
                 extra["module_id"] = item.module_id
+            if item.knowledge_units:
+                extra["知识单元"] = item.knowledge_units
+            if item.knowledge_note:
+                extra["知识库索引说明"] = item.knowledge_note
             if (label := shared.get(item.id)) is not None:
                 extra["shared"] = label
             if readings := [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]:

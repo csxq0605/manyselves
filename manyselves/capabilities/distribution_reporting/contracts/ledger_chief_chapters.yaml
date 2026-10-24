@@ -1,0 +1,7 @@
+id: ledger_chief_chapters
+version: 1.0.0
+description: Chapters 1 and 3 as written, with the program's check of chapter 1's tables
+adapter: json_schema
+schema:
+  type: object
+  required: [chapter1, chapter3]

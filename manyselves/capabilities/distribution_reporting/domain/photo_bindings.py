@@ -12,7 +12,14 @@ def runtime_photo_ids(
     evidence: list[EvidenceItem],
     photos: list[PhotoAsset],
 ) -> list[str]:
-    """Return every source-table photo in manifest order or reject an orphan."""
+    """The photos the report places, in manifest order; reject an orphan.
+
+    Every photo needs source-table evidence.  It is placed in the report by
+    the section of that evidence.  Evidence the knowledge base left without a
+    section is placed by the authors, who judge it in a section of their
+    choice; until then (``submodule_id`` is None) its photos are not placed
+    and are left out here.  A photo with no evidence at all is an error.
+    """
 
     photo_ids = [photo.id for photo in photos]
     if len(photo_ids) != len(set(photo_ids)):
@@ -47,14 +54,12 @@ def runtime_photo_ids(
         )
     evidence_by_photo: dict[str, list[EvidenceItem]] = {}
     for item in evidence:
-        if item.submodule_id is None:
-            continue
         for photo_id in item.photo_refs:
             evidence_by_photo.setdefault(photo_id, []).append(item)
     orphaned = [photo.id for photo in photos if photo.id not in evidence_by_photo]
     if orphaned:
         raise ValueError(
-            "project photos require source-table evidence and a smallest submodule: "
+            "project photos require source-table evidence: "
             f"{orphaned}"
         )
     invalid_primary_bindings = {}
@@ -77,4 +82,8 @@ def runtime_photo_ids(
             "project photo primary evidence binding must reference exactly one "
             f"candidate: {invalid_primary_bindings}"
         )
-    return [photo.id for photo in photos]
+    return [
+        photo.id
+        for photo in photos
+        if any(item.submodule_id is not None for item in evidence_by_photo[photo.id])
+    ]

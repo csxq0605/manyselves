@@ -31,7 +31,8 @@ def test_source_formula_result_is_not_replaced_by_hardcoded_voltage(tmp_path, ti
     _cache(path, _sheet1({"E3": ("n", "0.119511505722")}))
     context = _normalize(tmp_path, path)
     items = _load_items(context, title)
-    assert len(items) == 2
+    # One record: the knowledge base's field index, not the mapper, routes it.
+    assert len(items) == 1
     for item in items:
         assert item.value == pytest.approx(11.9511505722) and item.unit == "%"
         assert "原表负荷率=11.95%" in item.fact
@@ -47,7 +48,8 @@ def test_missing_source_ratio_keeps_current_and_capacity_without_inventing_volta
     path = _workbook(tmp_path, title, None, "0.00%")
     context = _normalize(tmp_path, path)
     items = _load_items(context, title)
-    assert len(items) == 2
+    # One record: the knowledge base's field index, not the mapper, routes it.
+    assert len(items) == 1
     assert all(item.value == 100 and item.unit == "A" and item.needs_confirmation for item in items)
     assert all(
         "变压器容量=1000kVA" in item.fact and "负荷率结果不可用" in item.fact for item in items

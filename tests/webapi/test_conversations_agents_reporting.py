@@ -435,11 +435,12 @@ async def test_conversation_project_mismatch_rejects_every_resource_mutation(res
     )
     session_id = created.json()["sessionId"]
 
+    missing = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-2", "agentId": "main"},
+    )
+    assert missing.status_code == 404
     mismatches = [
-        await client.get(
-            "/api/v1/conversations",
-            params={"projectId": "project-2", "agentId": "main"},
-        ),
         await client.get(
             "/api/v1/conversations/messages",
             params={"projectId": "project-2", "agentId": "main"},
@@ -477,6 +478,78 @@ async def test_conversation_project_mismatch_rejects_every_resource_mutation(res
         item["sessionId"] == session_id and item["name"] == "Keep"
         for item in current.json()["conversations"]
     )
+
+
+@pytest.mark.asyncio
+async def test_another_projects_history_reads_from_its_folder_without_changing_it(
+    resources,
+) -> None:
+    """The service is bound to one project; another's conversations are read only."""
+    client, _, workspace, _ = resources
+    created = await client.post(
+        "/api/v1/conversations", json={"projectId": "project-1", "name": "Here"}
+    )
+    await client.post(
+        "/api/v1/projects",
+        json={"projectId": "project-2", "displayName": "project-2", "description": ""},
+    )
+    conversations = workspace.parent / "project-2" / ".manyselves" / "conversations"
+    (conversations / "main").mkdir(parents=True, exist_ok=True)
+    (conversations / "sessions.json").write_text(
+        json.dumps([
+            {"id": "old-run", "name": "Earlier run", "timestamp": "2026-10-23T10:00:00Z",
+             "preview": "", "projectId": "project-2"},
+            {"id": "elsewhere", "name": "Other", "timestamp": "2026-10-23T11:00:00Z",
+             "preview": "", "projectId": "project-9"},
+        ]),
+        encoding="utf-8",
+    )
+    lines = [
+        {"role": "user", "content": "start the report", "ts": "2026-10-23T10:00:00Z"},
+        {"role": "agent", "content": "started", "ts": "2026-10-23T10:00:05Z"},
+    ]
+    (conversations / "main" / "old-run.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+    (conversations / "main" / "elsewhere.jsonl").write_text(
+        json.dumps(lines[0]) + "\n", encoding="utf-8"
+    )
+    before = sorted(p.relative_to(conversations) for p in conversations.rglob("*"))
+
+    listed = await client.get(
+        "/api/v1/conversations", params={"projectId": "project-2", "agentId": "main"}
+    )
+    read = await client.get(
+        "/api/v1/conversations/old-run/messages",
+        params={"projectId": "project-2", "agentId": "main"},
+    )
+    foreign = await client.get(
+        "/api/v1/conversations/elsewhere/messages",
+        params={"projectId": "project-2", "agentId": "main"},
+    )
+    own = await client.get(
+        f"/api/v1/conversations/{created.json()['sessionId']}/messages",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+    rename = await client.patch(
+        "/api/v1/conversations/old-run", json={"projectId": "project-2", "name": "No"}
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["readOnly"] is True
+    assert [(i["sessionId"], i["projectId"], i["active"]) for i in listed.json()["conversations"]] == [
+        ("old-run", "project-2", False)
+    ]
+    assert read.status_code == 200
+    assert [m["content"] for m in read.json()["messages"]] == ["start the report", "started"]
+    assert foreign.status_code == 404
+    assert own.status_code == 200 and own.json()["projectId"] == "project-1"
+    assert rename.status_code == 409
+    assert sorted(p.relative_to(conversations) for p in conversations.rglob("*")) == before
+    here = await client.get(
+        "/api/v1/conversations", params={"projectId": "project-1", "agentId": "main"}
+    )
+    assert here.json()["readOnly"] is False
 
 
 @pytest.mark.asyncio
@@ -2087,7 +2160,9 @@ async def test_generic_workflow_run_is_visible_only_in_its_active_project(
     assert started.status_code == 202
     assert visible_in_p2.status_code == 200
     assert events_in_p2.status_code == 200
-    assert events_in_p2.json()["events"][-1] == {
+    last_event = events_in_p2.json()["events"][-1]
+    assert last_event.pop("ts")  # when the line was written
+    assert last_event == {
         "kind": "workflow.completed",
         "runId": run_id,
         "workflowId": "parameter-adjustment",

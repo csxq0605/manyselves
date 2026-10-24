@@ -1,0 +1,31 @@
+id: ledger_chief_fix_input
+version: 2.0.0
+description: The findings on chapters 1 and 3 with the rows and records they cite, and only the pieces of the chapters they point at, by place id
+adapter: json_schema
+schema:
+  type: object
+  required: [findings, blocking, units]
+  properties:
+    findings:
+      type: object
+      description: Location -> problem, severity, suggestion, grounds (the cited rows and records as recorded), same_elsewhere
+    blocking:
+      type: boolean
+    units:
+      type: object
+      description: Place id (1.1-段n, 1.2-段n, 1.3-段n, 3.1-汇总-n, 3.1-详述-module-n) -> the current text, only the pieces pointed at
+    health:
+      type: array
+      description: The 1.2 health rows pointed at, as they stand
+    key_risks:
+      type: object
+      description: Place id (1.2-重点风险-n) -> the key risk as it stands
+    phases:
+      type: object
+      description: Place id (1.2-阶段-n) -> the phase as it stands
+    cross_findings:
+      type: object
+      description: Place id (3.1-综合-n) -> the cross finding as it stands
+    actions:
+      type: array
+      description: The 3.2 action groups pointed at, as they stand

@@ -1,15 +1,14 @@
 id: report-ledger
-version: 1.1.0
-description: Judge into a ledger first, relate across modules, review each row with what it cites, write once, then check and deliver
-tasks:
-- read-project
-- read-ledger
+version: 5.5.0
+description: Judge into a ledger, each author relating its rows right after; review each module's rows with the cases they rest on and the cross-module relations at once, the cross-module review proposing what the authors missed; settle findings and proposals per group in one revision; write once; edit and fact-check the same draft at once, the chief fixing once and each writer revising once
+tasks: []
 recovery:
 - typed-turn-recovery
 input_contract: reporting_tool_input
 input_variable: state
 output_contract: distribution_reporting_output
 state:
+  revision: null
   context: {}
   ledger: {}
   final: {}
@@ -17,41 +16,26 @@ actions:
 - id: prepare
   kind: invoke_tool
   tool: prepare-ledger-context
-  input_variable: state
+  input_variables:
+    state: state
+    revision: revision
   output_variable: context
-- id: shared-context
+# Each judge reads its own module's records, the other modules' records on
+# the same objects and the project-level records, in a conversation of its own.
+- id: judge-items
   kind: set_variable
-  variable: shared
+  variable: judge_items
   value_variable: context
-  field: shared
-- id: open-shared
-  kind: create_conversation
-  agent: report-consultant
-  conversation_key: shared
-  mode: run
-  output_variable: shared_conversation
-- id: read-project
-  kind: invoke_agent
-  agent: report-consultant
-  task: read-project
-  conversation_variable: shared_conversation
-  input_variable: shared
-  output_variable: project_reading
-- id: module-briefs
-  kind: set_variable
-  variable: modules
-  value_variable: context
-  field: modules
+  field: judge_items
 - id: judge-modules
   kind: map
-  items_variable: modules
-  key_field: module_id
+  items_variable: judge_items
+  key_field: group_id
   workflow: ledger-module-judgment
   key_input_variable: item_key
-  input_variables:
-    shared_conversation: shared_conversation
   output_variable: judgments
-  max_concurrency: 5
+  max_concurrency: 8
+  lead_seconds: 30
 - id: build-ledger
   kind: invoke_tool
   tool: build-judgment-ledger
@@ -59,55 +43,135 @@ actions:
     context: context
     judgments: judgments
   output_variable: built
+- id: own-items
+  kind: set_variable
+  variable: own_items
+  value_variable: built
+  field: relate_items
+# Each author relates its rows right after judging, in its judging
+# conversation, to the rows on its objects and the same room's flagged rows.
+- id: plan-relate
+  kind: invoke_tool
+  tool: plan-judgment-relate
+  input_variables:
+    context: context
+    ledger: built
+    own_items: own_items
+  output_variable: relate_plan
 - id: relate-items
   kind: set_variable
   variable: relate_items
-  value_variable: built
+  value_variable: relate_plan
   field: relate_items
-- id: relate-modules
+- id: relate-groups
   kind: map
   items_variable: relate_items
-  key_field: module_id
+  key_field: group_id
   workflow: ledger-module-relate
   key_input_variable: item_key
-  output_variable: relations
-  max_concurrency: 5
+  output_variable: own_relations
+  max_concurrency: 8
+# Photos are read once, while the material is prepared: they only add to the
+# table records, which decide, so none is read again.
 - id: apply-relations
   kind: invoke_tool
   tool: apply-judgment-relations
   input_variables:
     context: context
     ledger: built
-    relations: relations
+    own: own_relations
   output_variable: ledger
-- id: ledger-snapshot
-  kind: set_variable
-  variable: ledger_snapshot
-  value_variable: ledger
-  field: snapshot
-- id: open-review-base
-  kind: fork_conversation
-  source_variable: shared_conversation
-  conversation_key: review-base
-  mode: run
-  output_variable: review_base
-- id: read-ledger
-  kind: invoke_agent
-  agent: report-consultant
-  task: read-ledger
-  conversation_variable: review_base
-  input_variable: ledger_snapshot
-  output_variable: ledger_reading
+# Two reviews at once: each module's rows with what they cite and the cases
+# they rest on (every row on the same column of the same table, in any room
+# or module); and the cross-module review, which checks the relations and
+# proposes the ones the authors missed.  Every batch map sends
+# its first request alone, so the others reuse the opening it sent.
+- id: plan-review
+  kind: invoke_tool
+  tool: plan-judgment-review
+  input_variables:
+    context: context
+    ledger: ledger
+  output_variable: review_plan
 - id: review-items
   kind: set_variable
   variable: review_items
-  value_variable: ledger
+  value_variable: review_plan
   field: review_items
+- id: cross-items
+  kind: set_variable
+  variable: cross_items
+  value_variable: review_plan
+  field: cross_items
+- id: review-lenses
+  kind: parallel
+  branches:
+    modules: review-modules
+    cross: review-cross
+  join: join-review
+  max_concurrency: 2
 - id: review-modules
   kind: map
   items_variable: review_items
   key_field: module_id
   workflow: ledger-module-review
+  key_input_variable: item_key
+  output_variable: module_reviews
+  max_concurrency: 5
+  lead_seconds: 30
+- id: modules-done
+  kind: goto
+  target: join-review
+- id: review-cross
+  kind: map
+  items_variable: cross_items
+  key_field: batch_id
+  workflow: ledger-cross-review
+  key_input_variable: item_key
+  output_variable: cross_reviews
+  max_concurrency: 12
+  lead_seconds: 30
+- id: cross-done
+  kind: goto
+  target: join-review
+- id: join-review
+  kind: join
+  parallel: review-lenses
+  inputs:
+    modules: module_reviews
+    cross: cross_reviews
+  output_variable: lens_reviews
+- id: module-reviews-value
+  kind: set_variable
+  variable: module_reviews
+  value_variable: lens_reviews
+  field: modules
+- id: cross-reviews-value
+  kind: set_variable
+  variable: cross_reviews
+  value_variable: lens_reviews
+  field: cross
+# The findings merged by row, and the proposals that stand, go to the
+# authors: each settles both in one revision.
+- id: gather-reviews
+  kind: invoke_tool
+  tool: gather-judgment-reviews
+  input_variables:
+    plan: review_plan
+    ledger: ledger
+    module_reviews: module_reviews
+    cross_reviews: cross_reviews
+  output_variable: gathered
+- id: settle-items
+  kind: set_variable
+  variable: settle_items
+  value_variable: gathered
+  field: settle_items
+- id: settle-modules
+  kind: map
+  items_variable: settle_items
+  key_field: group_id
+  workflow: ledger-module-settle
   key_input_variable: item_key
   output_variable: reviews
   max_concurrency: 5
@@ -118,12 +182,49 @@ actions:
     context: context
     ledger: ledger
     reviews: reviews
+  output_variable: settled
+# The story lines are the relations that hold, joined by the program, settled
+# before any prose so each section carries its end of a line and the chief
+# starts from the same lines.
+- id: apply-story
+  kind: invoke_tool
+  tool: apply-story-lines
+  input_variables:
+    ledger: settled
   output_variable: final
 - id: writing-items
   kind: set_variable
   variable: writing_items
   value_variable: final
   field: writing_items
+# review_mode "joint" (the default) edits each writer's sections and checks
+# the facts of the chapter 1 and 3 units on its rows in one pass, after both
+# drafts; "separate" keeps the editor and the fact check apart, each running
+# beside the other draft.  Either gives the same drafts to what follows.
+- id: review-mode
+  kind: set_variable
+  variable: review_mode
+  value_variable: context
+  field: review_mode
+- id: choose-review
+  kind: if
+  condition:
+    variable: review_mode
+    operator: eq
+    value: separate
+  then: draft
+  otherwise: joint-draft
+- id: joint-draft
+  kind: subworkflow
+  workflow: ledger-joint-draft
+  input_variables:
+    final: final
+    context: context
+    writing_items: writing_items
+  output_variable: drafts
+- id: joint-done
+  kind: goto
+  target: module-edits
 - id: draft
   kind: parallel
   branches:
@@ -134,49 +235,20 @@ actions:
 - id: write-modules
   kind: map
   items_variable: writing_items
-  key_field: module_id
+  key_field: group_id
   workflow: ledger-module-writing
   key_input_variable: item_key
   output_variable: written
-  max_concurrency: 5
-- id: writing-done
-  kind: goto
-  target: join-draft
-- id: chief-summary
-  kind: subworkflow
-  workflow: ledger-chief
-  input_variables:
-    review_base: review_base
-    final: final
-    context: context
-  output_variable: chief
-- id: chief-done
-  kind: goto
-  target: join-draft
-- id: join-draft
-  kind: join
-  parallel: draft
-  inputs:
-    writing: written
-    chief: chief
-  output_variable: drafts
-- id: written-sections
-  kind: set_variable
-  variable: written_sections
-  value_variable: drafts
-  field: writing
-- id: chief-outputs
-  kind: set_variable
-  variable: chief_outputs
-  value_variable: drafts
-  field: chief
+  max_concurrency: 8
+  lead_seconds: 30
+# Module sections are checked and edited while the chief writes; the chief's
+# chapters are checked by the program and the fact check inside ledger-chief.
 - id: check-report
   kind: invoke_tool
   tool: check-report
   input_variables:
     ledger: final
-    written: written_sections
-    chief: chief_outputs
+    written: written
   output_variable: checked
 - id: edit-items
   kind: set_variable
@@ -189,10 +261,138 @@ actions:
   key_field: owner
   workflow: ledger-edit-pass
   key_input_variable: item_key
-  input_variables:
-    review_base: review_base
   output_variable: edits
-  max_concurrency: 6
+  max_concurrency: 8
+  lead_seconds: 30
+- id: writing-done
+  kind: goto
+  target: join-draft
+- id: chief-summary
+  kind: subworkflow
+  workflow: ledger-chief
+  input_variables:
+    final: final
+    context: context
+  output_variable: chief
+- id: chief-done
+  kind: goto
+  target: join-draft
+- id: join-draft
+  kind: join
+  parallel: draft
+  inputs:
+    writing: edits
+    chief: chief
+  output_variable: drafts
+- id: module-edits
+  kind: set_variable
+  variable: edits
+  value_variable: drafts
+  field: writing
+- id: chief-checked
+  kind: set_variable
+  variable: chief_checked
+  value_variable: drafts
+  field: chief
+- id: row-fix-items
+  kind: set_variable
+  variable: row_fix_items
+  value_variable: chief_checked
+  field: row_fix_items
+# The authors first fix the rows that carry the errors the review found in
+# chapter 2 or chapters 1 and 3, each with its rows on the same case; the
+# program carries each fixed row to every section and unit resting on it.
+# Then the chief fixes chapters 1 and 3 once while each writer revises once,
+# on the editor's findings and the fixed rows.  Both branches are
+# subworkflows: a branch that calls a writing tool directly would make the
+# compiler run the branches one after the other.
+- id: fix-rows
+  kind: map
+  items_variable: row_fix_items
+  key_field: group_id
+  workflow: ledger-row-fix
+  key_input_variable: item_key
+  output_variable: row_fixes
+  max_concurrency: 5
+- id: apply-row-fixes
+  kind: invoke_tool
+  tool: apply-row-fixes
+  input_variables:
+    ledger: final
+    fixes: row_fixes
+    edits: edits
+    checked: chief_checked
+  output_variable: row_fixed
+- id: carried-chief
+  kind: set_variable
+  variable: chief_checked
+  value_variable: row_fixed
+  field: chief
+- id: finish-draft
+  kind: parallel
+  branches:
+    chief: chief-finish
+    rows: rows-finish
+  join: join-finish
+  max_concurrency: 2
+- id: chief-finish
+  kind: subworkflow
+  workflow: ledger-chief-finish
+  input_variables:
+    final: final
+    context: context
+    checked: chief_checked
+  output_variable: chief_outputs
+- id: chief-finish-done
+  kind: goto
+  target: join-finish
+- id: rows-finish
+  kind: subworkflow
+  workflow: ledger-rows-finish
+  input_variables:
+    edits: edits
+    row_fixed: row_fixed
+  output_variable: rows_result
+- id: rows-done
+  kind: goto
+  target: join-finish
+- id: join-finish
+  kind: join
+  parallel: finish-draft
+  inputs:
+    chief: chief_outputs
+    rows: rows_result
+  output_variable: finished
+- id: chief-outputs
+  kind: set_variable
+  variable: chief_outputs
+  value_variable: finished
+  field: chief
+- id: rows-value
+  kind: set_variable
+  variable: rows_result
+  value_variable: finished
+  field: rows
+- id: fixed-value
+  kind: set_variable
+  variable: row_fixed
+  value_variable: rows_result
+  field: fixed
+- id: fixed-ledger
+  kind: set_variable
+  variable: final
+  value_variable: row_fixed
+  field: ledger
+- id: merged-value
+  kind: set_variable
+  variable: merged_edits
+  value_variable: rows_result
+  field: merged
+- id: merged-edits
+  kind: set_variable
+  variable: edits
+  value_variable: merged_edits
+  field: edits
 - id: compose
   kind: invoke_tool
   tool: compose-report

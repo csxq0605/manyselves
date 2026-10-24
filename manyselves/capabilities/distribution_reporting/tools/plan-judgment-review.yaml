@@ -1,0 +1,10 @@
+id: plan-judgment-review
+version: 1.0.0
+description: Build the module, object and relation review lenses after the photos are read again
+implementation: capability:distribution-reporting:plan-judgment-review
+input_contract: ledger_review_plan_input
+output_contract: ledger_review_plan
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -12,7 +12,6 @@ RUNTIME = "manyselves.capabilities.distribution_reporting.runtime"
 MODULES = {
     "adapters": f"{RUNTIME}.intake.adapters",
     "manifest": f"{RUNTIME}.intake.manifest",
-    "workbook": f"{RUNTIME}.intake.workbook",
     "wps_images": f"{RUNTIME}.intake.wps_images",
     "mappers": f"{RUNTIME}.mappers",
     "preparation": f"{RUNTIME}.preparation",
@@ -70,8 +69,6 @@ def test_runtime_io_modules_are_capability_owned_and_import_independently() -> N
     [
         (MODULES["adapters"], "IntakeAdapterRegistry"),
         (MODULES["manifest"], "build_manifest"),
-        (MODULES["workbook"], "WorkbookArtifact"),
-        (MODULES["workbook"], "WorkbookSheetArtifact"),
         (MODULES["wps_images"], "extract_wps_images"),
         (MODULES["wps_images"], "canonicalize_photo_bindings"),
         (f'{MODULES["mappers"]}.s2_1', "map_s2_1"),

@@ -1,0 +1,30 @@
+id: ledger_grounded_findings
+version: 1.1.0
+description: A checker's or editor's findings keyed by unit or section, each naming the material it rests on; an empty object means nothing to fix
+adapter: json_schema
+schema:
+  type: object
+  required: [findings]
+  additionalProperties: false
+  properties:
+    findings:
+      type: object
+      description: Unit or section id to one finding about it
+      additionalProperties:
+        type: object
+        required: [problem, severity, suggestion, grounds]
+        additionalProperties: false
+        properties:
+          problem: {type: string, minLength: 1}
+          severity:
+            type: string
+            enum: [blocking, minor]
+          suggestion: {type: string}
+          grounds:
+            type: array
+            description: 意见所依据的材料编号（判断行 J-…、原始记录 E-…、数值或计数 V-/K-/S-…），只填所给材料里有的
+            items: {type: string}
+          rows_also:
+            type: array
+            description: 所引判断行自己的 finding、hazard 或 action 里也写了同样错误说法的行编号（J-…）；只有判断行本身也错时才填
+            items: {type: string}

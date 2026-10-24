@@ -1,3 +1,9 @@
+"""Main's report command: one operation per user-facing flow."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -7,92 +13,154 @@ from manyselves.capabilities.distribution_reporting.adapters.main_tool import (
     RunReportingWorkflowTool,
     attach_main_reporting_tool,
 )
-from manyselves.runtime.tools.registry import ToolRegistry
+from manyselves.capabilities.distribution_reporting.runtime.template_skills import (
+    TEMPLATE_SKILL_ROOT,
+    run_root,
+    skill_order,
+    template_skill_ref,
+)
+from manyselves.runtime.prompts.loader import PromptLoader
 
 
 class _Projection:
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path | None = None) -> None:
+        self.workspace = workspace or Path(".")
         self.started: list[tuple[UUID, str, object]] = []
+        self.reruns: list[tuple[str, object]] = []
 
-    async def start(
-        self,
-        command_id: UUID,
-        workflow_id: str,
-        values: object,
-    ) -> dict[str, object]:
+    async def start(self, command_id: UUID, workflow_id: str, values: object) -> dict:
         self.started.append((command_id, workflow_id, values))
-        return {
-            "status": "accepted",
-            "run_id": f"{workflow_id}-command",
-            "workflow_id": workflow_id,
-            "capability_id": "distribution-reporting",
-        }
+        return {"status": "accepted", "run_id": f"{workflow_id}-command"}
+
+    async def rerun(self, command_id: UUID, run_id: str, values: object = None) -> dict:
+        self.reruns.append((run_id, values))
+        return {"status": "accepted", "run_id": run_id}
 
 
 class _Conversations:
     def __init__(self) -> None:
         self.bound: list[str] = []
 
-    def bind_run_to_active_conversation(self, run_id: str) -> str:
+    def bind_run_to_active_conversation(self, run_id: str, agent_id: str = "main") -> str:
         self.bound.append(run_id)
         return "conversation-main"
 
 
-@pytest.mark.asyncio
-async def test_distribution_demo_main_starts_full_report_without_workflow_discovery() -> None:
-    projection = _Projection()
+def _tool(projection: _Projection) -> tuple[RunReportingWorkflowTool, _Conversations]:
     conversations = _Conversations()
-    tool = RunReportingWorkflowTool(
-        projection_resolver=lambda: projection,
-        conversation_resolver=lambda: conversations,
+    return (
+        RunReportingWorkflowTool(
+            projection_resolver=lambda: projection,
+            conversation_resolver=lambda: conversations,
+        ),
+        conversations,
     )
 
-    result = await tool(
-        instruction="Generate the complete report from the project Inputs.",
-        operation="full_report",
-        missing_evidence_policy="draft",
-        cost_control_mode="observe",
-        preparation_mode="deterministic_workers",
-        preparation_concurrency=5,
-    )
 
-    assert tool.name == "run_reporting_workflow"
-    assert projection.started[0][1] == "full-report"
-    assert projection.started[0][2] == {
-        "instruction": "Generate the complete report from the project Inputs.",
-        "target_modules": ["2.1", "2.2", "2.3", "2.4", "2.5"],
-        "source_module_refs": None,
-        "source_markdown_ref": None,
-        "output_filename": None,
-        "baseline_run_id": None,
-        "requested_changes": {},
-        "impact_mode": "none",
-        "execution_requirements": [],
-        "user_supplements": [],
-        "missing_evidence_policy": "draft",
-        "cost_control_mode": "observe",
-        "max_provider_attempts": 600,
-        "max_total_tokens": 30_000_000,
-        "preparation_mode": "deterministic_workers",
-        "preparation_concurrency": 5,
-    }
+@pytest.mark.asyncio
+async def test_full_report_starts_a_new_run() -> None:
+    projection = _Projection()
+    tool, conversations = _tool(projection)
+
+    result = await tool(operation="full_report", instruction="从 Inputs 生成完整报告。")
+
+    _command, workflow_id, values = projection.started[0]
+    assert workflow_id == "full-report"
+    assert values["instruction"] == "从 Inputs 生成完整报告。"
+    assert values["target_modules"] == ["2.1", "2.2", "2.3", "2.4", "2.5"]
+    assert not {"baseline_run_id", "requested_changes", "impact_mode"} & set(values)
     assert conversations.bound == ["full-report-command"]
-    assert result["run_id"] == "full-report-command"
     assert result["conversation_id"] == "conversation-main"
 
 
-def test_distribution_demo_attaches_reporting_tool_to_main_runtime() -> None:
+@pytest.mark.asyncio
+async def test_revise_report_reruns_the_same_run_as_a_new_version() -> None:
+    projection = _Projection()
+    tool, _conversations = _tool(projection)
+
+    result = await tool(
+        operation="revise_report",
+        run_id="full-report-abc",
+        instruction="按新资料修订。",
+        changes=[{"target": "2.3.1", "instruction": "语气更客观", "scope": "text"}],
+        new_inputs=True,
+    )
+
+    assert projection.started == []
+    run_id, values = projection.reruns[0]
+    assert run_id == "full-report-abc" and result["run_id"] == "full-report-abc"
+    assert values == {
+        "instruction": "按新资料修订。",
+        "changes": [{"target": "2.3.1", "instruction": "语气更客观", "scope": "text"}],
+        "new_inputs": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_revise_report_needs_the_run_to_change() -> None:
+    tool, _conversations = _tool(_Projection())
+    with pytest.raises(ValueError, match="run_id"):
+        await tool(operation="revise_report", instruction="改一下")
+
+
+@pytest.mark.asyncio
+async def test_extract_and_render_start_their_own_workflows() -> None:
+    projection = _Projection()
+    tool, _conversations = _tool(projection)
+
+    await tool(operation="extract_skills", roles=["author-2.1"])
+    await tool(operation="render_existing", source_markdown_ref="Outputs/a.md")
+
+    assert [item[1] for item in projection.started] == [
+        "extract-template-skills",
+        "render-existing",
+    ]
+    assert projection.started[0][2] == {"roles": ["author-2.1"]}
+    assert projection.started[1][2]["source_markdown_ref"] == "Outputs/a.md"
+
+
+@pytest.mark.asyncio
+async def test_publish_skills_previews_until_confirmed(tmp_path: Path) -> None:
+    roles = skill_order()
+    root = tmp_path / run_root("extract-1")
+    candidates = {}
+    for role in roles:
+        published = tmp_path / template_skill_ref(role)
+        published.parent.mkdir(parents=True, exist_ok=True)
+        published.write_text("旧写法\n", encoding="utf-8")
+        candidate = root / "candidates" / f"{role}.md"
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text("旧写法\n" if role == roles[0] else "新写法\n", encoding="utf-8")
+        candidates[role] = candidate.relative_to(tmp_path).as_posix()
+    (root / "summary.json").write_text(
+        json.dumps({"candidates": candidates}, ensure_ascii=False), encoding="utf-8"
+    )
+    tool, _conversations = _tool(_Projection(tmp_path))
+
+    preview = await tool(operation="publish_skills", run_id="extract-1")
+
+    assert preview["status"] == "preview"
+    statuses = {row["role"]: row["status"] for row in preview["roles"]}
+    assert statuses[roles[0]] == "same"
+    assert statuses[roles[1]] == "changed"
+    # Nothing was published by the preview.
+    assert (tmp_path / template_skill_ref(roles[1])).read_text(encoding="utf-8") == "旧写法\n"
+
+    published = await tool(operation="publish_skills", run_id="extract-1", confirm=True)
+
+    assert published["status"] == "published"
+    assert (tmp_path / template_skill_ref(roles[1])).read_text(encoding="utf-8") == "新写法\n"
+    assert (tmp_path / TEMPLATE_SKILL_ROOT / "boundary.json").is_file()
+
+
+def test_attaches_reporting_tool_to_main_runtime() -> None:
     registered: list[tuple[str, object]] = []
     manager = SimpleNamespace(
-        register_agent_tool=lambda agent_id, tool: registered.append(
-            (agent_id, tool)
-        )
-        or True
+        register_agent_tool=lambda agent_id, tool: registered.append((agent_id, tool)) or True
     )
-    host = SimpleNamespace(loop_manager=manager)
 
     attached = attach_main_reporting_tool(
-        host,
+        SimpleNamespace(loop_manager=manager),
         projection_resolver=lambda: _Projection(),
         conversation_resolver=lambda: _Conversations(),
     )
@@ -102,61 +170,9 @@ def test_distribution_demo_attaches_reporting_tool_to_main_runtime() -> None:
     assert registered[0][1].name == "run_reporting_workflow"
 
 
-def test_distribution_demo_main_tool_exposes_the_six_operation_contract() -> None:
-    registry = ToolRegistry()
-    registry.register(
-        RunReportingWorkflowTool(
-            projection_resolver=lambda: _Projection(),
-            conversation_resolver=lambda: _Conversations(),
-        )
-    )
+def test_main_prompt_gets_the_report_part_from_the_capability() -> None:
+    prompt = PromptLoader().load_prompt("main")
 
-    definition = registry.get_definitions()[0]
-    assert definition["name"] == "run_reporting_workflow"
-    assert definition["input_schema"]["properties"]["operation"]["enum"] == [
-        "distill_template_skill",
-        "full_report",
-        "module_report",
-        "aggregate_existing",
-        "render_existing",
-        "revise_report",
-    ]
-    properties = definition["input_schema"]["properties"]
-    assert "baseline_run_id" in properties
-    assert "requested_changes" in properties
-
-
-@pytest.mark.asyncio
-async def test_main_starts_revision_from_explicit_baseline_and_binds_new_run():
-    projection = _Projection()
-    conversations = _Conversations()
-    tool = RunReportingWorkflowTool(
-        projection_resolver=lambda: projection,
-        conversation_resolver=lambda: conversations,
-    )
-    changes = {"2.3.1": "Clarify the risk", "2.4.1.3": "Explain its linked impact"}
-    result = await tool(
-        operation="revise_report", instruction="Revise the previous report with Cross",
-        baseline_run_id="full-report-baseline", requested_changes=changes,
-    )
-    assert len(projection.started) == 1
-    _command, workflow_id, values = projection.started[0]
-    assert workflow_id == "revise-report"
-    assert values["baseline_run_id"] == "full-report-baseline"
-    assert values["requested_changes"] == changes
-    assert values["target_modules"] == ["2.3", "2.4"]
-    assert "operation" not in values
-    assert conversations.bound == ["revise-report-command"]
-    assert result["conversation_id"] == "conversation-main"
-
-
-@pytest.mark.asyncio
-async def test_main_revision_does_not_guess_a_missing_baseline():
-    projection = _Projection()
-    tool = RunReportingWorkflowTool(
-        projection_resolver=lambda: projection,
-        conversation_resolver=lambda: _Conversations(),
-    )
-    with pytest.raises(ValueError):
-        await tool(operation="revise_report", instruction="Revise", requested_changes={"2.3.1": "Clarify"})
-    assert projection.started == []
+    assert "resume_run" in prompt
+    assert "run_reporting_workflow" in prompt
+    assert prompt.index("resume_run") < prompt.index("run_reporting_workflow")

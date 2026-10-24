@@ -1,6 +1,6 @@
 id: ledger-module-relate
-version: 1.0.0
-description: One author weighs other modules' flagged rows in its judging conversation, before review
+version: 2.0.0
+description: One author weighs the linker's proposals and relates its own rows to the other modules' flagged rows, in its judging conversation
 tasks:
 - relate-judgments
 recovery:

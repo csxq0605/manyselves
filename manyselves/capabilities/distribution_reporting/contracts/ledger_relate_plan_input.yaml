@@ -1,0 +1,11 @@
+id: ledger_relate_plan_input
+version: 3.0.0
+description: Ledger context, the built ledger and each judging group's relate item
+adapter: json_schema
+schema:
+  type: object
+  required: [context, ledger, own_items]
+  properties:
+    own_items:
+      type: array
+      description: One relate item per judging group (built by build-ledger), to which the same room's flagged rows and the candidates' records are added

@@ -105,8 +105,27 @@ class WorkflowEvent(_ProjectionModel):
     action_id: str | None = Field(default=None, alias="actionId")
     error: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
+    ts: str | None = None
 
 
 class WorkflowEventListResponse(_ProjectionModel):
     run_id: str = Field(alias="runId")
     events: list[WorkflowEvent]
+
+
+class WorkflowProgressResponse(BaseModel):
+    """Where a Run is now: its state tree as steps, items and branches.
+
+    The tree is open-ended (nested workflows, maps and branches), so it is
+    passed through as plain objects; ``manyselves.application.run_progress``
+    documents the shape.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    run_id: str = Field(alias="runId")
+    workflow_id: str = Field(alias="workflowId")
+    status: str
+    root: dict[str, Any] | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    spans: dict[str, dict[str, Any]] = Field(default_factory=dict)

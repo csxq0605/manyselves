@@ -16,9 +16,11 @@ their input into independent parts size each part with
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .loops.agent_loop import _SAFETY_BUFFER, _estimate_text_tokens
+from .loops.agent_loop import _SAFETY_BUFFER, IMAGE_TOKEN_ESTIMATE, _estimate_text_tokens
 
 # Used only when neither the configuration nor the model declares a value.
 DEFAULT_CONTEXT_WINDOW = 128_000
@@ -29,6 +31,33 @@ def estimate_text_tokens(text: str) -> int:
     """Provider token estimate used by the Agent loop's own budget checks."""
 
     return _estimate_text_tokens(text)
+
+
+def estimate_request_tokens(
+    *,
+    system_prompt: str = "",
+    history: Sequence[Mapping[str, Any]] = (),
+    prompt: str = "",
+    tool_schemas: Any = None,
+    images: int = 0,
+) -> int:
+    """Estimated input tokens of one request: everything the model reads.
+
+    ``history`` is the conversation as JSON messages (content and tool-call
+    arguments count; earlier reasoning is not sent back and does not).
+    """
+
+    total = _estimate_text_tokens(system_prompt) + _estimate_text_tokens(prompt)
+    for message in history:
+        total += 4 + _estimate_text_tokens(str(message.get("content") or ""))
+        for call in message.get("tool_calls") or ():
+            total += 8 + _estimate_text_tokens(
+                json.dumps(call.get("arguments") or {}, ensure_ascii=False)
+            )
+        total += IMAGE_TOKEN_ESTIMATE * len(message.get("images") or ())
+    if tool_schemas:
+        total += _estimate_text_tokens(json.dumps(tool_schemas, ensure_ascii=False, default=str))
+    return total + IMAGE_TOKEN_ESTIMATE * images
 
 
 def provider_context_window(*owners: Any) -> int:
@@ -105,6 +134,7 @@ def retained_input_budget_for(config: Any, provider: Any = None) -> int:
 __all__ = [
     "DEFAULT_CONTEXT_WINDOW",
     "DEFAULT_MAX_OUTPUT_TOKENS",
+    "estimate_request_tokens",
     "estimate_text_tokens",
     "provider_context_window",
     "request_output_limit",

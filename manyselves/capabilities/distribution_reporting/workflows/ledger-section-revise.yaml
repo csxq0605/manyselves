@@ -1,0 +1,134 @@
+id: ledger-section-revise
+version: 3.0.0
+description: One writer revises once, on the editor's findings and the rows the fact check fixed, in its writing conversation; the program reconciles the findings and checks the revision, a fresh review checks the changed sections against the ledger, and a blocking finding of either sends the writer back once
+tasks:
+- revise-sections
+- review-joint
+recovery:
+- typed-turn-recovery
+output_contract: ledger_owner_result
+state:
+  item: null
+  item_key: null
+  revision: null
+  recheck: null
+  recheck_revision: null
+  revision_check: null
+actions:
+- id: resume-writer
+  kind: resolve_conversation
+  agent: report-consultant
+  conversation_key: writer
+  key_variable: item_key
+  mode: run
+  output_variable: writer_conversation
+- id: revision-input
+  kind: set_variable
+  variable: revision_input
+  value_variable: item
+  field: revision_input
+- id: revise
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-sections
+  conversation_variable: writer_conversation
+  input_variable: revision_input
+  output_variable: revision
+- id: item-findings
+  kind: set_variable
+  variable: item_findings
+  value_variable: item
+  field: findings
+- id: findings
+  kind: set_variable
+  variable: merged
+  value_variables:
+    findings: item_findings
+- id: recheck
+  kind: invoke_tool
+  tool: recheck-edit
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+  output_variable: recheck
+# What the revision changed is checked against the ledger once, in a fresh
+# conversation, on the changed sections, their rows and records only.
+- id: has-check
+  kind: set_variable
+  variable: has_check
+  value_variable: recheck
+  field: has_check
+- id: check-route
+  kind: if
+  condition:
+    variable: has_check
+    operator: eq
+    value: true
+  then: check-item
+  otherwise: settle
+- id: check-item
+  kind: set_variable
+  variable: check_item
+  value_variable: recheck
+  field: check_item
+- id: open-check
+  kind: create_conversation
+  agent: report-consultant
+  conversation_key: revision-check
+  key_variable: item_key
+  mode: run
+  output_variable: check_conversation
+- id: check
+  kind: invoke_agent
+  agent: report-consultant
+  task: review-joint
+  conversation_variable: check_conversation
+  input_variable: check_item
+  output_variable: revision_check
+- id: settle
+  kind: invoke_tool
+  tool: settle-recheck
+  input_variables:
+    recheck: recheck
+    check: revision_check
+  output_variable: recheck
+- id: recheck-blocking
+  kind: set_variable
+  variable: recheck_blocking
+  value_variable: recheck
+  field: blocking
+- id: recheck-route
+  kind: if
+  condition:
+    variable: recheck_blocking
+    operator: eq
+    value: true
+  then: recheck-input
+  otherwise: close
+- id: recheck-input
+  kind: set_variable
+  variable: recheck_revision_input
+  value_variable: recheck
+  field: revision_input
+- id: revise-again
+  kind: invoke_agent
+  agent: report-consultant
+  task: revise-sections
+  conversation_variable: writer_conversation
+  input_variable: recheck_revision_input
+  output_variable: recheck_revision
+- id: close
+  kind: invoke_tool
+  tool: close-edit
+  input_variables:
+    item: item
+    merged: merged
+    revision: revision
+    recheck: recheck
+    recheck_revision: recheck_revision
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

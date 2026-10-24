@@ -1,0 +1,10 @@
+id: plan-chief-facts
+version: 1.0.0
+description: Cut chapters 1 and 3 into small packets, each unit with the rows, records, values and counts it needs
+implementation: capability:distribution-reporting:plan-chief-facts
+input_contract: ledger_chief_check_input
+output_contract: ledger_chief_fact_plan
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

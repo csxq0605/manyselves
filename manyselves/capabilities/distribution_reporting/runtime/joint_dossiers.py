@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .models.agentic import ModuleSubmission
 from .observation_ledger import build_observation_ledger
@@ -28,9 +29,12 @@ from .research.project_evidence import ProjectEvidenceIndex
 
 EXCERPT_CHARS = 240
 ATTENTION = {"concern", "undetermined"}
-# Reasons that need the modules to agree; the others mark judgments that
-# complement each other on one object.
-CONFLICT_REASONS = {"same_fact_differs", "same_quantity_differs", "photo_conflicts_record"}
+# Conflicts the table itself shows: one quantity read with two values, or a
+# photo reading against its record.  These are decided by the program.
+CONFLICT_REASONS = {"same_quantity_differs", "photo_conflicts_record"}
+# One fact judged differently by several modules is only laid side by side;
+# whether the judgments really contradict is left to the reviewers.
+JUDGED_DIFFERENTLY = "same_fact_differs"
 UNIDENTIFIED_PREFIXES = ("未注明",)
 
 
@@ -47,6 +51,22 @@ def object_key(subject: str) -> str:
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"(\d)号", r"\1#", text)
     return text.lower()
+
+
+SAME_RECORD_ROW = "同一记录行"
+SAME_NAME = "同一对象名称"
+
+
+def object_level(facts: Iterable[Mapping[str, Any]]) -> str:
+    """How far facts grouped under one object name are known to be one unit.
+
+    Facts on one record row of the table describe one unit; facts that only
+    share the object's name (different sheets or rows) may be one unit or only
+    entries of one place with the same name.
+    """
+
+    rows = {fact.get("record_row") for fact in facts}
+    return SAME_RECORD_ROW if len(rows) == 1 and None not in rows else SAME_NAME
 
 
 @dataclass
@@ -73,12 +93,13 @@ def _differing_quantities(found: _Dossier) -> list[dict]:
     return differing
 
 
-def _conflicting_facts(found: _Dossier) -> list[dict]:
+def _facts_judged_differently(found: _Dossier) -> list[dict]:
     """One fact judged by two or more modules with different dispositions.
 
-    Only this is a conflict.  Different modules judging different facts of
-    one object differently is normal: each looks at its own checkpoint, and
-    those judgments complement each other.
+    These are laid side by side for the reviewers, who decide whether they
+    contradict.  Different modules judging different facts of one object
+    differently is normal: each looks at its own checkpoint, and those
+    judgments complement each other.
     """
 
     conflicting = []
@@ -185,6 +206,9 @@ def build_dossiers(
             if item.observed_at:
                 fact["observed_at"] = item.observed_at
             fact["sheet"] = sheet
+            if item.source.row:
+                # The table's own record row: facts on one row describe one unit.
+                fact["record_row"] = f"{item.source.file_id}:{sheet}!{item.source.row}"
             if item.photo_refs:
                 fact["photo_ids"] = list(item.photo_refs)
                 read = [photo_readings[ref] for ref in item.photo_refs if ref in photo_readings]
@@ -228,9 +252,9 @@ def build_dossiers(
             reasons.append("modules_disagree")
         if sum(1 for values in by_module.values() if values & ATTENTION) >= 2:
             reasons.append("several_modules_raise_attention")
-        conflicting = _conflicting_facts(found)
-        if conflicting:
-            reasons.append("same_fact_differs")
+        judged_differently = _facts_judged_differently(found)
+        if judged_differently:
+            reasons.append(JUDGED_DIFFERENTLY)
         differing = _differing_quantities(found)
         if differing:
             reasons.append("same_quantity_differs")
@@ -262,9 +286,14 @@ def build_dossiers(
             "facts": sorted(found.facts.values(), key=lambda fact: fact["evidence_id"]),
             "judgments": found.judgments,
         }
-        dossier["kind"] = "conflict" if set(reasons) & CONFLICT_REASONS else "complement"
-        if conflicting:
-            dossier["conflicting_facts"] = conflicting
+        dossier["kind"] = (
+            "conflict" if set(reasons) & CONFLICT_REASONS
+            else "judged_differently" if judged_differently
+            else "complement"
+        )
+        dossier["level"] = object_level(found.facts.values())
+        if judged_differently:
+            dossier["facts_judged_differently"] = judged_differently
         if len(found.subjects) > 1:
             dossier["subject_spellings"] = sorted(found.subjects)
         if differing:
@@ -283,4 +312,4 @@ def dossiers_by_module(dossiers: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-__all__ = ["CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]
+__all__ = ["JUDGED_DIFFERENTLY", "SAME_NAME", "SAME_RECORD_ROW", "object_level", "CONFLICT_REASONS", "build_dossiers", "build_joint_dossiers", "dossiers_by_module", "object_key"]

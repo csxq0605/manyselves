@@ -10,32 +10,12 @@ import pytest
 from manyselves.capabilities.distribution_reporting.adapters.runtime import (
     DistributionReportingRuntimeBinding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
-    ModuleProviderRuntime,
-)
-from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
-    PublicReportingWorkflowRuntime,
-)
 from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.routes.workflows import _projection
-
-
-class _ModuleRuntimeSpy:
-    def __init__(self) -> None:
-        self.calls: list[tuple[UUID, str, object]] = []
-
-    async def start(
-        self,
-        command_id: UUID,
-        workflow_id: str,
-        values: object,
-    ) -> dict:
-        self.calls.append((command_id, workflow_id, values))
-        return {"run_id": "module-run", "task_id": None}
 
 
 class _ResumableRuntime:
@@ -70,40 +50,6 @@ class _ResumableRuntime:
             "state": state.model_dump(mode="json"),
             "waiting_input": [],
         }
-
-
-@pytest.mark.asyncio
-async def test_module_report_start_does_not_use_legacy_reporting_adapter(
-    tmp_path: Path,
-) -> None:
-    services = RuntimeServicesView(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        active_provider=object(),
-        agent_defaults=AgentDefaults(),
-        global_knowledge_root=None,
-    )
-    binding = DistributionReportingRuntimeBinding(tmp_path, services)
-    public = binding._runtimes["module-report"]
-    assert isinstance(public, PublicReportingWorkflowRuntime)
-    assert isinstance(
-        public.module_runtime.agent_invokers["module-2.4-specialist"],
-        ModuleProviderRuntime,
-    )
-
-    runtime = _ModuleRuntimeSpy()
-    binding._runtimes["module-report"] = runtime
-    command_id = UUID("60000000-0000-4000-8000-000000000001")
-    values = {
-        "operation": "module_report",
-        "instruction": "Run the selected module report.",
-        "target_modules": ["2.4"],
-    }
-
-    result = await binding.start(command_id, "module-report", values)
-
-    assert result == {"run_id": "module-run", "task_id": None}
-    assert runtime.calls == [(command_id, "module-report", values)]
 
 
 def test_web_projection_reuses_the_account_runtime_catalog() -> None:
@@ -354,164 +300,3 @@ async def test_persisted_run_resume_reuses_one_in_process_task(
     assert binding.get_run(run_id)["run"]["active"] is False
 
 
-@pytest.mark.asyncio
-async def test_binding_module_provider_reuses_persisted_completed_result_before_provider(
-    tmp_path: Path,
-) -> None:
-    """The account binding must pass its persisted task identity to the bridge."""
-
-    from manyselves.capabilities.distribution_reporting import (
-        load_distribution_reporting_capability,
-    )
-    from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
-        REPORT_TAXONOMY,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.completed_result_recovery import (
-        build_task_correlation,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-        AgentResult,
-        AgentRunStatus,
-        ModuleSubmission,
-        TaskEnvelope,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.models.module_lane import (
-        DeclarativeModuleAuthoringPreparation,
-        DeclarativeModuleRuntimeLaneContext,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
-        ModuleProviderDependencies,
-    )
-    from manyselves.capabilities.distribution_reporting.runtime.state.parallel import (
-        IdentityLeaseManager,
-        TaskAttemptStore,
-    )
-    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
-    from manyselves.kernel.definitions import (
-        DefinitionKind,
-        RecoveryPolicyDefinition,
-        RecoveryRule,
-    )
-    from manyselves.runtime.tools.registry import ToolRegistry
-
-    _capability, registry = load_distribution_reporting_capability()
-    agent = registry.require(DefinitionKind.AGENT, "module-2.4-specialist")
-    task = registry.require(DefinitionKind.TASK, "module-2.4-authoring")
-    workflow_id = "public-reporting"
-    run_id = "binding-module-persisted"
-    session_id = f"{workflow_id}:module-2.4"
-    part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
-    envelope = TaskEnvelope(
-        task_id=task.id,
-        task_attempt_id="attempt-binding-module",
-        run_id=run_id,
-        agent_id=agent.id,
-        objective=task.objective,
-        allowed_outputs=["module_submission"],
-        allowed_tools=list(task.tools),
-        target_submodule_ids=part_ids,
-    )
-    context = DeclarativeModuleRuntimeLaneContext(
-        module_id="2.4",
-        workflow_id=workflow_id,
-        reporting_state={"run_id": run_id},
-        status="author_ready",
-        authoring=DeclarativeModuleAuthoringPreparation(
-            specialist_id=agent.id,
-            envelope=envelope,
-            revision=0,
-            review=False,
-            checkpoint=False,
-        ),
-    )
-    submission = ModuleSubmission(
-        module_id="2.4",
-        submodule_narratives={part_id: f"正文 {part_id}" for part_id in part_ids},
-        claims=[],
-        source_ids=[],
-        unresolved_questions=[],
-        revision=0,
-    )
-    lease_handle = IdentityLeaseManager(tmp_path, run_id).acquire(
-        workflow_id,
-        agent.id,
-    )
-    correlation = build_task_correlation(
-        tmp_path,
-        envelope,
-        workflow_id=workflow_id,
-        identity_key=agent.id,
-        session_id=session_id,
-        identity_lease=lease_handle.lease,
-    )
-    try:
-        store = TaskAttemptStore(tmp_path, run_id)
-        store.activate(correlation)
-        store.persist_result(
-            correlation,
-            AgentResult(
-                task_id=envelope.task_id,
-                run_id=run_id,
-                agent_id=agent.id,
-                session_id=session_id,
-                status=AgentRunStatus.COMPLETED,
-                payload=submission,
-            ).model_dump(mode="json"),
-            status="completed",
-        )
-    finally:
-        lease_handle.release()
-
-    binding = DistributionReportingRuntimeBinding(
-        tmp_path,
-        RuntimeServicesView(
-            workspace=tmp_path,
-            bus=MessageBus(),
-            active_provider=object(),
-            agent_defaults=AgentDefaults(),
-            global_knowledge_root=None,
-        ),
-    )
-    provider = binding._providers[0]
-    provider.dependencies = ModuleProviderDependencies(
-        artifact_gateway=object(),
-        artifact_access=object(),
-        result_index=object(),
-    )
-    provider.tool_builder = lambda *_args, **_kwargs: ToolRegistry()
-    provider_calls = 0
-
-    def forbidden_loop_builder(**_kwargs: object) -> object:
-        nonlocal provider_calls
-        provider_calls += 1
-        raise AssertionError("completed result must be reused before Provider session")
-
-    provider.loop_builder = forbidden_loop_builder
-    conversation = ConversationRegistry().create_or_resolve(
-        ConversationKey(agent_id=agent.id, value="module-2.4", mode="run"),
-        run_id=run_id,
-    )
-    try:
-        outcome = await provider.invoke_with_recovery(
-            agent,
-            task,
-            context,
-            conversation,
-            task_id=task.id,
-            recovery_policy=RecoveryPolicyDefinition(
-                id="binding-module-completed-reuse",
-                version="1.0.0",
-                description="reuse persisted completed result",
-                rules={
-                    "completed_tool_result": RecoveryRule(action="reuse_result"),
-                },
-            ),
-        )
-    finally:
-        await binding.close()
-
-    assert outcome.status == "ok"
-    assert outcome.session_id == session_id
-    assert outcome.result["status"] == "completed"
-    assert ModuleSubmission.model_validate(outcome.result["module"]).module_id == "2.4"
-    assert provider_calls == 0

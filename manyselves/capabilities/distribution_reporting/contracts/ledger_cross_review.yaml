@@ -1,0 +1,5 @@
+id: ledger_cross_review
+version: 1.0.0
+description: The cross-module review of one slice - findings on recorded relations and proposed missing ones
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.domain.judgment_ledger:CrossReview

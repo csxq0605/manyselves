@@ -176,3 +176,17 @@
   }
 
 }
+
+.history-page__read-only {
+  background: #f4f6fb;
+  border: 1px solid #dde3ef;
+  border-radius: 6px;
+  color: #4a5160;
+  font-size: 13px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+}
+
+.history-page--session .message-list {
+  max-width: 920px;
+}

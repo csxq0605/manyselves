@@ -1,0 +1,7 @@
+id: ledger_chief_recheck_input
+version: 1.0.0
+description: The ledger, the fact check the chief answered, its draft after the fix and the faithfulness check's findings on the changed units, if it ran
+adapter: json_schema
+schema:
+  type: object
+  required: [ledger, draft]

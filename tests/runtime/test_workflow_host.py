@@ -1860,3 +1860,38 @@ async def test_run_cancel_repeats_until_lane_code_that_swallows_it_yields(
     assert swallowed == 2
     assert store.load("swallow-run").status is WorkflowStatus.FAILED
     assert owner.cancel("swallow-run") is None
+
+
+@pytest.mark.asyncio
+async def test_a_partial_run_stops_before_the_asked_step_and_resumes_from_it(
+    tmp_path: Path,
+) -> None:
+    from manyselves.runtime.run_failure import describe_failure
+
+    registry, executors, plan, contracts = _workflow()
+    calls = 0
+
+    def double(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        return value * 2
+
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    stop = {"publish"}
+    context = RuntimeContext(
+        tools={"double": double}, contracts=contracts, definitions=registry,
+        stop_before=lambda: stop,
+    )
+
+    with pytest.raises(RuntimeError, match="stopped before step publish"):
+        await host.execute(plan, WorkflowState.for_plan("partial", plan), context)
+    stopped = store.load("partial")
+    failure = describe_failure(plan, stopped.model_dump(mode="json"))
+    assert failure is not None and failure.category == "stopped" and not failure.retryable
+
+    stop.clear()
+    completed = await host.execute(plan, stopped, context)
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": 8}
+    assert calls == 1

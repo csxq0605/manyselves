@@ -1,0 +1,28 @@
+id: check-chief-facts
+version: 1.5.0
+description: Check a few units of chapters 1 and 3 against the rows and records they rest on
+agent: report-consultant
+objective: 你现在是核对员。最前面是全项目的项目图谱（各对象的关注和不能判定的行、已记下的跨模块关联、各表有记录的字段）和跨模块主线（story_lines），所有核对员共用。后面是报告第一、三章里的几个条目（units），以及它们所引或点名的判断行（rows）、这些行所引的原始记录（facts）、相关数值（values）和各列的计数与取值（每个条目的 counts）。只核对事实，不看文字写法和组织方式。
+static_first: true
+input_contract: ledger_chief_fact_packet
+shared_fields:
+- map
+- story_lines
+context_fields:
+- map
+- story_lines
+output_contract: ledger_grounded_findings
+constraints:
+- 逐个条目核对三件事：一、写出的数量、档位、对象和数值是否与 rows、facts、values、counts 一致（例如总数少算一个、几档漏了一档、数值配到了别的对象上）；二、说法是否比所引行更重（把“资料未提供”写成“缺失/没有”，把“可能”写成“将会”，把来源作者意见写成已确认，把照片待核写成事实，风险等级高于所引行）；三、几行合并成一句时有没有改动对象或数值。
+- rows 里行的 gap 是程序合并好的缺口条目（〔G…〕加它的说法）：条目写这条缺口时说法要与它一致，把“未填写”“缺〈参数〉”写成“未提供”，或反过来，算说法写错。
+- 条目里自己做的专业推理和综合判断（几项证据合起来说明什么、先做什么）不算问题，只要不和所引行、原始记录矛盾，也不比它们说得更重。
+- 句中的数量可能是挑选出来的一部分（例如“其中两台”），先看上下文再判断是否写错。
+- 条目说某对象某项“未记录”“未提供”时，先看项目图谱：图谱里这个对象有相应的行或字段的，判 blocking，grounds 写那一行的编号。suggestion 不写“本包”“本包材料未记录”这类核对范围的话。
+- 材料里没有、无法核对的，不判为问题；所引行的依据（basis）没有给出的，按“无法核对”处理，不判 blocking。
+- 每条意见在 grounds 里写它依据的材料编号：说明正确内容的判断行（J-…）、原始记录（E-…）、数值或计数（V-/K-/S-…），只填本包材料或项目图谱里有的。blocking 意见没有本包里的编号，程序会降为 minor 并标“无法核对”。
+- findings 的键是条目的 unit_id。severity：blocking=事实写错（数量、档位、对象、数值不对，或说法比所引行更重），必须改；minor=可以更准确但不影响事实。problem 写清哪里不对、正确的是什么，suggestion 写怎么改。
+- 条目里错误的说法如果在所引判断行自己的 finding、hazard 或 action 里也照样写着（与这一行的 basis 或原始记录不符），把这些行的编号写进 rows_also：程序会把意见同时交给这一行的作者改判断行，第二章和问题表才能一起改对。只是条目写错、判断行本身没错的，不填 rows_also。
+- 没有问题时提交空的 findings。
+tools: []
+attention_budget_tokens: 200000
+recovery: typed-turn-recovery

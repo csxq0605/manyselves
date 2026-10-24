@@ -190,6 +190,32 @@ class ConversationService:
                 items.insert(0, metadata)
         return [self._bound_metadata(item) for item in items], active
 
+    def list_other_project(self, root: Path, project_id: str, agent_id: str = "main") -> list[dict]:
+        """List another project's conversations from its folder, read only.
+
+        The service is bound to one project at a time; another project's
+        conversations can be read but not changed until it is activated.
+        """
+        store = ConversationStore.reader(root)
+        return [
+            {**item, "projectId": project_id}
+            for item in store.get_sessions(agent_id)
+            if item.get("projectId") in (None, project_id)
+        ]
+
+    def session_messages(
+        self, root: Path, project_id: str, session_id: str, agent_id: str = "main"
+    ) -> list[dict[str, Any]]:
+        """Read one stored conversation of any project without activating it."""
+        store = ConversationStore.reader(root)
+        known = any(
+            item.get("id") == session_id and item.get("projectId") in (None, project_id)
+            for item in store._load_sessions_metadata()  # noqa: SLF001
+        )
+        if not known:
+            raise ConversationNotFoundError(session_id)
+        return store.load_session_messages(agent_id, session_id)
+
     @property
     def pending_persistence(self) -> bool:
         """Whether a queued or executing bus callback can still write the store."""
