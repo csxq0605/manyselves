@@ -17,6 +17,18 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     SourceLocation,
 )
 
+# What a mapper writes for a cell the table left empty: the record keeps the
+# column, its value says the cell was blank.  ``blank_value`` is how every
+# reader tells a blank cell from a value.
+BLANK_CELL = "未填写"
+
+
+def blank_value(value: Any) -> bool:
+    """A record field the source table left empty (``BLANK_CELL``, with or without a note)."""
+
+    return not str(value or "").strip() or str(value).strip().startswith(BLANK_CELL)
+
+
 _DISPIMG_PATTERN = re.compile(r'DISPIMG\("([^"]+)"', re.IGNORECASE)
 
 

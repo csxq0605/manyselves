@@ -108,6 +108,7 @@ from .cross_module import (
     unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
+from .gap_entries import gap_entries, gap_sections, objects_text, section_gap_entries, settle_gap_kinds
 from .grounds import grounded
 from .joint_dossiers import build_dossiers
 from .ledger_stage_tools import LedgerStageTools
@@ -570,8 +571,14 @@ def _section_brief(
     names: Sequence[str] = (),
     slots: Mapping[str, Mapping[str, Any]] | None = None,
     fact_texts: Mapping[str, str] | None = None,
+    gaps: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     related = related_rows(rows, ledger, names)
+    # A related row's gap is written once, in the section its gap entry belongs to.
+    written_at = gap_sections(gaps)
+    for entry in related:
+        if entry["row_id"] in written_at:
+            entry["gap_section"] = written_at[entry["row_id"]]
     by_id = {other.id: other for others in ledger.values() for other in others}
     cited = {e for row in rows for e in row.evidence_ids} | {
         e
@@ -592,6 +599,7 @@ def _section_brief(
         # Only concern rows make a problem table.
         "has_problem_table": any(row.disposition == "concern" for row in rows),
         "related_rows": related,
+        "gap_entries": section_gap_entries(gaps, rows, sub["id"]),
         "rule_standards": section_standards(rows, units),
         "data_elsewhere": {row.id: list(elsewhere[row.id]) for row in rows if row.id in elsewhere},
         # What each value slot holds; the prose names the slot, the program writes the value.
@@ -1174,6 +1182,7 @@ class LedgerTools(LedgerStageTools):
         groups = _groups(context)
         row_groups: dict[str, str] = {}
         copied = self._copied(run_id)
+        sites = self._sites(run_id)
         for module in context["modules"]:
             module_id = module["module_id"]
             # A module judged in groups is one judgment set again.
@@ -1193,9 +1202,9 @@ class LedgerTools(LedgerStageTools):
                 module_id, submitted.get("rows") or [], plan
             )
             judgment = JudgmentSet.model_validate(submitted)
-            judgment = judgment.model_copy(update={"rows": settle_evidence_status(
+            judgment = judgment.model_copy(update={"rows": settle_gap_kinds(settle_evidence_status(
                 judgment.rows, reference.get("summary_evidence_ids") or ()
-            )})
+            ), sites)})
             ledger[module_id] = list(judgment.rows)
             findings[module_id] = ledger_findings(
                 judgment,
@@ -1218,7 +1227,6 @@ class LedgerTools(LedgerStageTools):
         for module_id, module_findings in placed.items():
             for target, finding in module_findings.items():
                 findings[module_id][target] = _combined(findings[module_id].get(target), finding)
-        sites = self._sites(run_id)
         for module_id, module_findings in recorded_field_findings(ledger, sites).items():
             for target, finding in module_findings.items():
                 findings.setdefault(module_id, {})
@@ -1681,8 +1689,9 @@ class LedgerTools(LedgerStageTools):
                 if not _foreign_row(row_id, module_id)
             ]
             reference = self._reference(run_id)
-            revised = settle_evidence_status(
-                revised, reference.get("summary_evidence_ids") or ()
+            revised = settle_gap_kinds(
+                settle_evidence_status(revised, reference.get("summary_evidence_ids") or ()),
+                self._sites(run_id),
             )
             ledger[module_id] = apply_revisions(ledger[module_id], revised, dropped)
             if added := revision.get("relations"):
@@ -1723,7 +1732,7 @@ class LedgerTools(LedgerStageTools):
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments.json", dumped)
-        self._write_gaps(run_id, ledger)
+        gaps = self._write_gaps(run_id, ledger)
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/cross-module.json",
             {
@@ -1759,6 +1768,7 @@ class LedgerTools(LedgerStageTools):
                                 ledger=ledger, units=units, elsewhere=elsewhere,
                                 names=names, slots=slots,
                                 fact_texts=reference.get("fact_texts") or {},
+                                gaps=gaps,
                             ),
                             text_instructions.get(sub["id"]),
                         )
@@ -2111,22 +2121,32 @@ class LedgerTools(LedgerStageTools):
                     found[row.id] = places
         return found
 
-    def _write_gaps(self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]) -> None:
-        for module_id, rows in ledger.items():
-            for row in rows:
-                if row.gap is None:
-                    continue
-                self.store.write_json(
-                    f"Work/runs/{run_id}/gaps/GAP-{row.id}.json",
-                    {
-                        "gap": f"{row.object}：{row.gap.missing}",
-                        "impact": row.gap.impact,
-                        "requested_input": row.gap.requested_input,
-                        "task_id": f"module-{module_id}",
-                        "row_id": row.id,
-                        "source_ids": list(row.evidence_ids),
-                    },
-                )
+    def _write_gaps(
+        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
+    ) -> list[dict[str, Any]]:
+        """One gap file per gap entry: rows lacking the same thing are one line naming every object."""
+
+        entries = gap_entries(ledger, self._sites(run_id))
+        folder = self.workspace / f"Work/runs/{run_id}/gaps"
+        for stale in folder.glob("GAP-*.json") if folder.is_dir() else ():
+            stale.unlink()
+        for entry in entries:
+            self.store.write_json(
+                f"Work/runs/{run_id}/gaps/GAP-{entry['gap_id']}.json",
+                {
+                    "gap": f"{entry['wording']}（涉及：{objects_text(entry['objects'])}）",
+                    "impact": entry["impact"],
+                    "requested_input": entry["requested_input"],
+                    "fill": entry["fill"],
+                    "kind": entry["kind"],
+                    "task_id": f"module-{entry['modules'][0]}",
+                    "section": entry["section"],
+                    "row_ids": entry["row_ids"],
+                    "source_ids": entry["source_ids"],
+                },
+            )
+        self.store.write_json(f"Work/runs/{run_id}/ledger/gap-entries.json", entries)
+        return entries
 
     # -- chief and checks --------------------------------------------------
 

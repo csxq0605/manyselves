@@ -9,7 +9,11 @@ from manyselves.capabilities.distribution_reporting.runtime.models.preparation i
     MappingResult,
 )
 
-from .common import cached_formula_workbook, make_evidence
+from .common import BLANK_CELL, cached_formula_workbook, make_evidence
+
+# The checklist's column saying whether a listed document was handed over
+# (OK/NG): an NG row is a document the client did not provide.
+AVAILABILITY = "具备情况"
 
 _DOCUMENT_EXACT_ROUTES = {
     "中低压电气系统图": "2.5.2",
@@ -74,10 +78,10 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
             document_name = _text(sheet.cell(row, 2).value)
             if not document_name:
                 continue
-            availability = _text(sheet.cell(row, 7).value, "未填写")
-            effectiveness = _text(sheet.cell(row, 8).value, "未填写")
+            availability = _text(sheet.cell(row, 7).value, BLANK_CELL)
+            effectiveness = _text(sheet.cell(row, 8).value, BLANK_CELL)
             note = _text(sheet.cell(row, 9).value)
-            fact = f"具备情况={availability}；有效性={effectiveness}"
+            fact = f"{AVAILABILITY}={availability}；有效性={effectiveness}"
             if note:
                 fact += f"；备注={note}"
             submodule_id = _route_document(document_name)

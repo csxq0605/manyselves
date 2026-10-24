@@ -37,6 +37,7 @@ from typing import Any
 
 from ..domain.judgment_ledger import JudgmentRow
 from .joint_dossiers import object_key
+from .mappers.common import blank_value
 
 ATTENTION = {"concern", "undetermined"}
 PROJECT_LEVEL = "项目级记录（不属于某个配电房）"
@@ -198,7 +199,7 @@ class Sites:
             if not sheet or not getattr(item, "place", None):
                 continue
             for label, value in record_fields(item.fact):
-                if value:
+                if not blank_value(value):
                     places = found.setdefault(sheet, {}).setdefault(label, [])
                     if item.place not in places:
                         places.append(item.place)
@@ -295,8 +296,8 @@ def project_map(
                 lines.append(line)
     if fields := sites.fields():
         lines.append(
-            "\n## 各表有记录的字段（字段：有记录的配电房数）\n"
-            "判断某项资料“未提供、未记录”前，先看这里有没有对应的字段。"
+            "\n## 各表填了值的栏（栏名：填了值的配电房数，空着的栏不计）\n"
+            "gap.missing 写缺的具体项前，先看这里：原表某栏空着的，写那一栏的栏名；表里没有的参数，写参数名。"
         )
         lines.extend(
             f"- {sheet}："
@@ -606,15 +607,22 @@ __all__ = [
 ]
 
 
+# The separators of a list of missing items (``A、B与C``).
+_ITEM_SPLIT = re.compile(r"[、，,；;。/与和及或\s]+")
+_BRACKETED = re.compile(r"（[^）]*）|\([^)]*\)")
+
+
 def recorded_field_findings(
     ledger: Mapping[str, Sequence[JudgmentRow]], sites: Sites
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Rows that call a field missing although the project's records fill it.
 
-    A row with a gap (or whose evidence is "资料未提供") whose missing item
-    names a field (a table's ``字段``) that another sheet fills for the row's
-    objects (anywhere, for a row on no object) gets a minor finding naming
-    those records: the author looks and decides.
+    A row with a gap (or whose evidence is "资料未提供") one of whose missing
+    items is a column (a table's ``字段``) that another sheet fills for the
+    row's objects gets a blocking finding naming those records; for a row on
+    no object, filled anywhere, a minor one.  A blank cell (``blank_value``)
+    is not a value, and a row whose basis already names the column has said
+    how it differs.
     """
 
     by_field: dict[str, list[Any]] = {}
@@ -622,15 +630,17 @@ def recorded_field_findings(
         if not getattr(item, "place", None):
             continue
         for label, value in record_fields(item.fact):
-            if value and len(label) >= 2:
+            if not blank_value(value) and len(label) >= 2:
                 by_field.setdefault(label, []).append(item)
     found: dict[str, dict[str, dict[str, Any]]] = {}
     for module_id, rows in ledger.items():
         for row in rows:
             if row.gap is None and row.evidence_status != "资料未提供":
                 continue
-            # What the row says is missing, not what it mentions in passing.
+            # What the row says is missing, item by item, not what it mentions in passing.
             text = row.gap.missing if row.gap else f"{row.checkpoint} {row.finding}"
+            # A bracket explains an item (what a record would contain), it does not ask for more.
+            asked = set(_ITEM_SPLIT.split(_BRACKETED.sub("", text)))
             subjects = {object_key(subject) for subject in sites.row_subjects(row)}
             # A row reading a sheet speaks of that sheet's own cells; the
             # check is for a field another sheet holds.
@@ -640,7 +650,9 @@ def recorded_field_findings(
             }
             hits: dict[str, list[Any]] = {}
             for label, items in by_field.items():
-                if label not in text:
+                # The column itself is asked for, and the row does not already
+                # say how it differs from what it lacks.
+                if not any(item.endswith(label) for item in asked) or label in row.basis:
                     continue
                 chosen = [
                     item for item in items
@@ -659,7 +671,8 @@ def recorded_field_findings(
             )
             found.setdefault(module_id, {})[row.id] = {
                 "problem": f"本行写某项资料未提供或未记录，但项目记录里有这一字段的值：{named}，本行没有引用",
-                "severity": "minor",
+                # Its own objects' records fill the column it says is missing.
+                "severity": "blocking" if subjects else "minor",
                 "suggestion": (
                     "核对这些记录：是同一项资料的，引用它们重新判断；不是同一项的，"
                     "在 basis 里写清缺的是哪一项、与这些记录有什么不同。"

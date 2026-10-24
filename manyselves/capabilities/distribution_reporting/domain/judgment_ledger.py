@@ -42,11 +42,14 @@ Priority = Literal["重要，紧急", "重要，不紧急", "一般"]
 RiskLevel = Literal["高", "中", "低"]
 EvidenceStatus = Literal["现场确认", "来源作者意见", "资料未提供", "照片待核", "推断"]
 RelationStatus = Literal["成立", "待核实"]
+GapFill = Literal["补资料", "现场测量", "问委托方"]
 PENDING_RELATION = "待核实"
 EVIDENCE_STATUS_HELP = (
     "现场确认=表格或照片直接记录了该情况；来源作者意见=原表评语、既有评估等他人结论；"
     "资料未提供=缺资料，不能说明有或没有；照片待核=表格没有记录、只靠照片且照片看不清（表格有记录的按表格，不用照片待核）；"
     "推断=由其他事实推出，现场没有直接记录。"
+    "undetermined 行由程序按所引记录定：收资表记为不具备或没有记录的为资料未提供，"
+    "原表空栏、有读数缺判定参数、只有状态记录的为现场确认，只有汇总评语的为来源作者意见。"
 )
 
 DISPOSITION_LABELS = {
@@ -98,6 +101,10 @@ class JudgmentGap(_RowPart):
     requested_input: str = Field(
         min_length=1,
         description="The step that closes the gap, written as an action, e.g. 补充该柜铭牌参数",
+    )
+    fill: list[GapFill] = Field(
+        default_factory=list,
+        description="怎么补，可多选；不填时程序按缺口类别给默认（收资表缺的补资料，原表空栏的问委托方，只有状态的现场测量）",
     )
 
 

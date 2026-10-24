@@ -89,7 +89,7 @@ def data_gap_lines(workspace: Path, run_id: str) -> list[str]:
             _cell(gap.get("gap")),
             _cell(gap.get("impact")),
             _cell(gap.get("requested_input")),
-            _cell(str(gap.get("task_id") or "").removeprefix("module-")),
+            _cell(gap.get("section") or str(gap.get("task_id") or "").removeprefix("module-")),
         ]) + " |"
         for index, gap in enumerate(gaps, 1)
     ]

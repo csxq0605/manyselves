@@ -17,6 +17,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
 )
 
 from .common import (
+    BLANK_CELL,
     dispimg_refs,
     header_label,
     header_unit,
@@ -38,7 +39,7 @@ def _is_placeholder(value: Any) -> bool:
     return _text(value) in {"", "/", "\\", "--"}
 
 
-PHOTO_ONLY = "未填写（原表仅有图片）"
+PHOTO_ONLY = f"{BLANK_CELL}（原表仅有图片）"
 
 
 def _status_value(value: Any, *photo_values: Any) -> Any:
@@ -762,7 +763,7 @@ def _map_thermal(
             fact_parts.append(f"检测部位={position}")
         else:
             missing_position_rows.append(row)
-            fact_parts.append("检测部位=未填写")
+            fact_parts.append(f"检测部位={BLANK_CELL}")
         fact_parts.append(f"{point.label}={measured:g}{point.unit}")
         load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):

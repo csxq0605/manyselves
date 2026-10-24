@@ -121,7 +121,14 @@ def test_a_field_called_missing_but_recorded_elsewhere_is_flagged() -> None:
     sites = Sites(items)
     ledger = {"2.4": [_row("J-2.4-1", ["E-1"], disposition="undetermined")]}
     found = recorded_field_findings(ledger, sites)["2.4"]["J-2.4-1"]
-    assert found["severity"] == "minor" and "E-2" in found["problem"] and "E-3" not in found["problem"]
+    # The row's own object has the value: a contradiction, not a hint.
+    assert found["severity"] == "blocking" and "E-2" in found["problem"] and "E-3" not in found["problem"]
+    # A blank cell is not a value; a row whose basis names the column has said how it differs.
+    blank = Sites([*items[:1], _item("E-4", "接地", "接地电阻=未填写", field="接地电阻")])
+    assert recorded_field_findings(ledger, blank) == {}
+    told = {"2.4": [_row("J-2.4-1", ["E-1"], disposition="undetermined").model_copy(
+        update={"basis": "接地表的接地电阻是单次读数，缺的是复测记录"})]}
+    assert recorded_field_findings(told, sites) == {}
     # A row on the sheet that holds the field speaks of its own cells.
     reading = {"2.4": [_row("J-2.4-2", ["E-2"], disposition="undetermined")]}
     assert recorded_field_findings(reading, sites) == {}
