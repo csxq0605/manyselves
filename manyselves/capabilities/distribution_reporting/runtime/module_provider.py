@@ -97,6 +97,7 @@ from manyselves.runtime.agent_execution import (
 )
 from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.artifacts.gateway import ArtifactGateway, ArtifactGrant
+from manyselves.runtime.context_budget import retained_input_budget_for
 from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.provider_agent_session import ProviderAgentSessionFactory
@@ -378,7 +379,7 @@ def build_module_provider_tools(
             schema.setdefault("$defs", {}).update(assessment_schema.pop("$defs", {}))
             schema["properties"]["assessments"] = {
                 "type": "array", "items": assessment_schema,
-                "description": "Compact judgments for the observations in this section. Include exact prose/action anchors; group only same-scope, same-reasoning observations. Omitted observations remain visible to reviewers.",
+                "description": "Compact judgments for the observations in this section: E-* ids, disposition and exact prose/action anchors; add scope, basis or rules only for what the prose and E-* records do not already state. Group observations sharing disposition, reasoning and anchors. Omitted observations remain visible to reviewers.",
             }
         else:
             schema["properties"].pop("assessments", None)
@@ -836,6 +837,9 @@ def build_module_provider_composition(
         agent_session_factory=agent_session_factory,
         agent_invokers=provider.agent_invokers,
         global_root=services.global_knowledge_root,
+        input_budget=lambda: retained_input_budget_for(
+            services.agent_defaults, services.active_provider,
+        ),
     )
     return ModuleProviderComposition(
         provider=provider,

@@ -31,7 +31,7 @@ class AgentDefaultsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     model: str
     provider: str
-    max_tokens: int = Field(alias="maxTokens")
+    max_tokens: int | None = Field(alias="maxTokens")
     temperature: float
 
 

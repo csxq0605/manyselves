@@ -126,6 +126,8 @@ class LoopManager:
                     cfg.api_base,
                     cfg.default_model,
                     cfg.extra_headers,
+                    context_window=cfg.context_window,
+                    max_output_tokens=cfg.max_output_tokens,
                 )
                 self._provider_manager.register_provider(cfg.id, provider)
                 logger.info("Initialized {} provider: {}", cfg.provider, cfg.name)

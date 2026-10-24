@@ -1,5 +1,0 @@
-id: declarative_cross_joint_runtime_context
-version: 1.0.0
-description: Joint Cross typed boundary
-adapter: pydantic
-model: manyselves.capabilities.distribution_reporting.runtime.models.cross_owner:DeclarativeCrossJointRuntimeContext

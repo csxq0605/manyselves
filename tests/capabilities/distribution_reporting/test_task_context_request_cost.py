@@ -12,7 +12,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.capabilities.distribution_reporting.runtime.task_context import bind_task_context
 from manyselves.config.schema import AgentDefaults
-from manyselves.runtime.loops.agent_loop import AgentLoop
+from manyselves.runtime.loops.agent_loop import AgentLoop, _with_rolling_cache_breakpoint
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
 from manyselves.runtime.providers.base import LLMToolCall, Message
@@ -62,7 +62,8 @@ async def test_exact_large_write_is_excluded_before_summary_but_reconsidered_on_
     assert any(m.tool_calls and m.tool_calls[0].arguments.get("content") == prose for m in summary_source)
     assert any(m.tool_call_id == "write" for m in summary_source)
     assert "Revised prose" in "\n".join(m.content for m in changed.messages)
-    assert changed.messages[-1].content == "Keep unresolved finding F-7."
+    assert changed.messages[-2].content == "Keep unresolved finding F-7."
+    assert changed.messages[-1].content.startswith("<current_task_state>")
     assert (await projection.rebuild(history, loop=loop)).messages == changed.messages
     loop._request_model_handoff_summary.assert_awaited_once()
 
@@ -94,18 +95,25 @@ async def test_wire_cache_boundary_precedes_changing_draft_without_losing_tool_p
         serialized = json.dumps(wire)
         assert serialized.count(inputs["text"]) == 1
         assert serialized.count(f"Draft version {version}") == 1
+        # Stable input, then the unchanged tool pair, then the changing draft last.
         assert wire[-2]["content"][0]["id"] == wire[-1]["content"][0]["tool_use_id"] == "read"
+        dynamic = wire[-1]["content"][-1]
+        assert "cache_control" not in dynamic and f"Draft version {version}" in dynamic["text"]
         if native:
-            stable, dynamic = wire[0]["content"]
+            stable = wire[0]["content"][0]
             assert stable["cache_control"] == {"type": "ephemeral"}
             assert inputs["text"] in stable["text"] and "Draft version" not in stable["text"]
-            assert "cache_control" not in dynamic and f"Draft version {version}" in dynamic["text"]
         else:
             assert isinstance(wire[0]["content"], str)
             assert "cache_control" not in json.dumps((system, wire))
-    if native:
-        assert requests[0][1][0]["content"][0] == requests[1][1][0]["content"][0]
-        assert requests[0][1][0]["content"][1] != requests[1][1][0]["content"][1]
+        # AgentLoop adds a rolling breakpoint on the last history block.
+        _, marked = provider._convert_messages(_with_rolling_cache_breakpoint(rebuilt.messages))
+        assert ("cache_control" in marked[-1]["content"][0]) is native
+        assert "cache_control" not in marked[-1]["content"][-1]
+    # Everything before the changing draft is byte-identical across requests.
+    assert requests[0][1][:-1] == requests[1][1][:-1]
+    assert requests[0][1][-1]["content"][:-1] == requests[1][1][-1]["content"][:-1]
+    assert requests[0][1][-1]["content"][-1] != requests[1][1][-1]["content"][-1]
     # Inputs are rendered anew, never frozen under an old cache identity.
     inputs["text"] = "Corrected input E-0014: 12.8 A; unresolved finding F-7"
     restored = bind_task_context(loop, tmp_path, task, output_contract="module_submission",

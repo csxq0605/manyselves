@@ -15,7 +15,6 @@ agents:
     context_compaction_strategy: model_summary
     context_compaction_model: claude-haiku-5-5
     temperature: 0.1
-    max_tokens: 16384
     max_tool_iterations: 200
     timezone: Asia/Shanghai
     prompt_templates_dir: templates/agents
@@ -34,6 +33,9 @@ providers:
       api_key: null  # Fill in here, or set ANTHROPIC_API_KEY
       api_base: https://api.anthropic.com
       default_model: claude-haiku-5-5
+      # Fill in the limits the model's documentation declares, in tokens:
+      # context_window: <tokens>
+      # max_output_tokens: <tokens>
       enabled: true
   # Example:
   # - name: Anthropic

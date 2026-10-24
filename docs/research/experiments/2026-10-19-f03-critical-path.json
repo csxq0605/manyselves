@@ -1,0 +1,272 @@
+{
+  "provider_calls": 0,
+  "entry": "full-report",
+  "workflows": "/home/user/manyselves/manyselves/capabilities/distribution_reporting/workflows",
+  "scenarios": {
+    "accept-first-read": {
+      "rounds": {
+        "module_rounds": 0,
+        "cross_rounds": 0,
+        "local_rounds": 0,
+        "final_rounds": 0
+      },
+      "serial_llm_depth": 5,
+      "llm_sessions": 17,
+      "sessions_by_stage": {
+        "module-author": 5,
+        "module-review-loop": 5,
+        "cross": 1,
+        "chief": 3,
+        "final": 3
+      },
+      "sessions_by_task": {
+        "chief-editor-auditor:invoke-final-chapter-auditor": 3,
+        "chief-editor:invoke-chief-chapter-agent": 3,
+        "cross-relation-reviewer:invoke-joint": 1,
+        "evidence-auditor:invoke-current-module-reviewer": 5,
+        "{author_id}:invoke-current-module-author": 5
+      },
+      "critical_chain": [
+        "distribution-module-2.1-runtime-lane:invoke-current-module-author",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-reviewer",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-chief-chapter-1-lane:invoke-chief-chapter-agent",
+        "distribution-final-chapter-1-lane:invoke-final-chapter-auditor"
+      ],
+      "critical_chain_stages": {
+        "module-author": 1,
+        "module-review-loop": 1,
+        "cross": 1,
+        "chief": 1,
+        "final": 1
+      },
+      "request_input": 0
+    },
+    "one-round-each": {
+      "rounds": {
+        "module_rounds": 1,
+        "cross_rounds": 1,
+        "local_rounds": 0,
+        "final_rounds": 1
+      },
+      "serial_llm_depth": 12,
+      "llm_sessions": 44,
+      "sessions_by_stage": {
+        "module-author": 5,
+        "module-review-loop": 15,
+        "cross": 12,
+        "chief": 3,
+        "final": 9
+      },
+      "sessions_by_task": {
+        "chief-editor-auditor:invoke-final-chapter-auditor": 3,
+        "chief-editor-auditor:invoke-final-recheck-agent": 3,
+        "chief-editor:invoke-chief-chapter-agent": 3,
+        "chief-editor:invoke-final-chief-revision-agent": 3,
+        "cross-relation-reviewer:invoke-joint": 2,
+        "evidence-auditor:invoke-current-cross-owner-local-review": 5,
+        "evidence-auditor:invoke-current-module-recheck": 5,
+        "evidence-auditor:invoke-current-module-reviewer": 5,
+        "{author_id}:invoke-current-module-author": 5,
+        "{author_id}:invoke-current-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-revision": 5
+      },
+      "critical_chain": [
+        "distribution-module-2.1-runtime-lane:invoke-current-module-author",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-reviewer",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-revision",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-cross-owner-2.1-repair-lane:invoke-current-cross-owner-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-review",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-chief-chapter-1-lane:invoke-chief-chapter-agent",
+        "distribution-final-chapter-1-lane:invoke-final-chapter-auditor",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent"
+      ],
+      "critical_chain_stages": {
+        "module-author": 1,
+        "module-review-loop": 3,
+        "cross": 4,
+        "chief": 1,
+        "final": 3
+      },
+      "request_input": 0
+    },
+    "one-round-each+local": {
+      "rounds": {
+        "module_rounds": 1,
+        "cross_rounds": 1,
+        "local_rounds": 1,
+        "final_rounds": 1
+      },
+      "serial_llm_depth": 14,
+      "llm_sessions": 54,
+      "sessions_by_stage": {
+        "module-author": 5,
+        "module-review-loop": 15,
+        "cross": 22,
+        "chief": 3,
+        "final": 9
+      },
+      "sessions_by_task": {
+        "chief-editor-auditor:invoke-final-chapter-auditor": 3,
+        "chief-editor-auditor:invoke-final-recheck-agent": 3,
+        "chief-editor:invoke-chief-chapter-agent": 3,
+        "chief-editor:invoke-final-chief-revision-agent": 3,
+        "cross-relation-reviewer:invoke-joint": 2,
+        "evidence-auditor:invoke-current-cross-owner-local-module-recheck": 5,
+        "evidence-auditor:invoke-current-cross-owner-local-review": 5,
+        "evidence-auditor:invoke-current-module-recheck": 5,
+        "evidence-auditor:invoke-current-module-reviewer": 5,
+        "{author_id}:invoke-current-module-author": 5,
+        "{author_id}:invoke-current-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-local-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-revision": 5
+      },
+      "critical_chain": [
+        "distribution-module-2.1-runtime-lane:invoke-current-module-author",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-reviewer",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-revision",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-cross-owner-2.1-repair-lane:invoke-current-cross-owner-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-review",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-chief-chapter-1-lane:invoke-chief-chapter-agent",
+        "distribution-final-chapter-1-lane:invoke-final-chapter-auditor",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent"
+      ],
+      "critical_chain_stages": {
+        "module-author": 1,
+        "module-review-loop": 3,
+        "cross": 6,
+        "chief": 1,
+        "final": 3
+      },
+      "request_input": 0
+    },
+    "two-module-rounds": {
+      "rounds": {
+        "module_rounds": 2,
+        "cross_rounds": 1,
+        "local_rounds": 1,
+        "final_rounds": 1
+      },
+      "serial_llm_depth": 16,
+      "llm_sessions": 64,
+      "sessions_by_stage": {
+        "module-author": 5,
+        "module-review-loop": 25,
+        "cross": 22,
+        "chief": 3,
+        "final": 9
+      },
+      "sessions_by_task": {
+        "chief-editor-auditor:invoke-final-chapter-auditor": 3,
+        "chief-editor-auditor:invoke-final-recheck-agent": 3,
+        "chief-editor:invoke-chief-chapter-agent": 3,
+        "chief-editor:invoke-final-chief-revision-agent": 3,
+        "cross-relation-reviewer:invoke-joint": 2,
+        "evidence-auditor:invoke-current-cross-owner-local-module-recheck": 5,
+        "evidence-auditor:invoke-current-cross-owner-local-review": 5,
+        "evidence-auditor:invoke-current-module-recheck": 10,
+        "evidence-auditor:invoke-current-module-reviewer": 5,
+        "{author_id}:invoke-current-module-author": 5,
+        "{author_id}:invoke-current-module-revision": 10,
+        "{revision_agent_id}:invoke-current-cross-owner-local-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-revision": 5
+      },
+      "critical_chain": [
+        "distribution-module-2.1-runtime-lane:invoke-current-module-author",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-reviewer",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-revision",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-recheck",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-revision",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-cross-owner-2.1-repair-lane:invoke-current-cross-owner-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-review",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-chief-chapter-1-lane:invoke-chief-chapter-agent",
+        "distribution-final-chapter-1-lane:invoke-final-chapter-auditor",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent"
+      ],
+      "critical_chain_stages": {
+        "module-author": 1,
+        "module-review-loop": 5,
+        "cross": 6,
+        "chief": 1,
+        "final": 3
+      },
+      "request_input": 0
+    },
+    "bounded-final-max": {
+      "rounds": {
+        "module_rounds": 1,
+        "cross_rounds": 1,
+        "local_rounds": 1,
+        "final_rounds": 3
+      },
+      "serial_llm_depth": 18,
+      "llm_sessions": 66,
+      "sessions_by_stage": {
+        "module-author": 5,
+        "module-review-loop": 15,
+        "cross": 22,
+        "chief": 3,
+        "final": 21
+      },
+      "sessions_by_task": {
+        "chief-editor-auditor:invoke-final-chapter-auditor": 3,
+        "chief-editor-auditor:invoke-final-recheck-agent": 9,
+        "chief-editor:invoke-chief-chapter-agent": 3,
+        "chief-editor:invoke-final-chief-revision-agent": 9,
+        "cross-relation-reviewer:invoke-joint": 2,
+        "evidence-auditor:invoke-current-cross-owner-local-module-recheck": 5,
+        "evidence-auditor:invoke-current-cross-owner-local-review": 5,
+        "evidence-auditor:invoke-current-module-recheck": 5,
+        "evidence-auditor:invoke-current-module-reviewer": 5,
+        "{author_id}:invoke-current-module-author": 5,
+        "{author_id}:invoke-current-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-local-module-revision": 5,
+        "{revision_agent_id}:invoke-current-cross-owner-revision": 5
+      },
+      "critical_chain": [
+        "distribution-module-2.1-runtime-lane:invoke-current-module-author",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-reviewer",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-revision",
+        "distribution-module-2.1-runtime-lane:invoke-current-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-cross-owner-2.1-repair-lane:invoke-current-cross-owner-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-review",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-revision",
+        "distribution-cross-owner-local-2.1-module-review-lane:invoke-current-cross-owner-local-module-recheck",
+        "distribution-cross-joint-review:invoke-joint",
+        "distribution-chief-chapter-1-lane:invoke-chief-chapter-agent",
+        "distribution-final-chapter-1-lane:invoke-final-chapter-auditor",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent",
+        "distribution-final-chief-revision-1-lane:invoke-final-chief-revision-agent",
+        "distribution-final-recheck-1-lane:invoke-final-recheck-agent"
+      ],
+      "critical_chain_stages": {
+        "module-author": 1,
+        "module-review-loop": 3,
+        "cross": 6,
+        "chief": 1,
+        "final": 7
+      },
+      "request_input": 0
+    }
+  }
+}

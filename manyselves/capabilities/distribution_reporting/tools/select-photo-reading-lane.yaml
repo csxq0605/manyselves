@@ -1,0 +1,10 @@
+id: select-photo-reading-lane
+version: 1.0.0
+description: Select the photos assigned to one lane
+implementation: capability:distribution-reporting:select-photo-reading-lane
+input_contract: reporting_tool_input
+output_contract: photo_reading_input_list
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

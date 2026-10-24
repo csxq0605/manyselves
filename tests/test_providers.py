@@ -845,3 +845,53 @@ def test_provider_manager_get_available():
     available = manager.get_available_providers()
     assert "a" in available
     assert "b" in available
+
+
+def _png(tmp_path):
+    path = tmp_path / "photo.png"
+    path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    return path
+
+
+def test_anthropic_user_message_sends_images_before_text(tmp_path):
+    import base64
+
+    from manyselves.runtime.providers.anthropic_provider import AnthropicProvider
+    from manyselves.runtime.providers.base import ImageInput
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider._supports_cache = False
+    path = _png(tmp_path)
+    tc = LLMToolCall(id="call_1", name="submit", arguments={})
+    messages = [
+        Message(role="user", content="读这张图", images=(ImageInput(str(path), "image/png"),)),
+        Message(role="assistant", content="", tool_calls=[tc]),
+        Message(role="user", content="ok", tool_call_id="call_1", is_tool_result=True),
+    ]
+
+    _, payload = provider._convert_messages(messages)
+
+    first = payload[0]["content"]
+    assert first[0] == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+        },
+    }
+    assert first[-1] == {"type": "text", "text": "读这张图"}
+
+
+def test_openai_user_message_sends_images_as_data_urls(tmp_path):
+    from manyselves.runtime.providers.base import ImageInput
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    path = _png(tmp_path)
+    result = provider._convert_messages([
+        Message(role="user", content="读这张图", images=(ImageInput(str(path), "image/png"),)),
+    ])
+    content = result[0]["content"]
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert content[1] == {"type": "text", "text": "读这张图"}

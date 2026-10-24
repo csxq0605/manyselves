@@ -1,0 +1,10 @@
+id: select-current-module-recheck-batch
+version: 1.0.0
+description: Point the module recheck turn at one submodule batch
+implementation: capability:distribution-reporting:select-current-module-recheck-batch
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

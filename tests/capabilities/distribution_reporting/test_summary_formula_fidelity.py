@@ -166,7 +166,11 @@ def test_assessment_cached_text_routes_and_preserves_photo_formulas(tmp_path, di
     assert second.fact == "既有问题=开关需校核；既有风险=0；既有建议=False"
     assert second.photo_refs == ["P-0001"]
     assert all(item.needs_confirmation for item in context.evidence_items)
-    assert not context.mapping_gaps
+    # The header picture is accounted for as an unbound photo, never as a
+    # narrative or calculation gap.
+    assert [(g["code"], g["cell"]) for g in context.mapping_gaps] == [
+        ("photo_without_record", "B3")
+    ]
 
 
 def test_assessment_missing_formula_is_a_gap_even_when_route_or_whole_row_is_missing(tmp_path):

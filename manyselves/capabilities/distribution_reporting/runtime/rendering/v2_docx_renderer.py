@@ -6,16 +6,19 @@ import json
 import re
 import tempfile
 from contextvars import ContextVar
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT, WD_TAB_LEADER
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
+from docx.text.paragraph import Paragraph
+from loguru import logger
 
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
 
@@ -72,17 +75,22 @@ REPORT_POLICY_CONTEXT: ContextVar[dict[str, Any]] = ContextVar(
     default=DEFAULT_REPORT_POLICY,
 )
 
-BODY_FONT_SIZE_PT = 11
-TABLE_FONT_SIZE_PT = 10
-HEADING_STYLE_TOKENS: dict[str, tuple[float, float, float, float]] = {
-    "Title": (18, 0, 8, 1.15),
-    "Heading 1": (18, 12, 6, 1.2),
-    "Heading 2": (16, 10, 5, 1.2),
-    "Heading 3": (14, 8, 4, 1.2),
-    "Heading 4": (12, 6, 3, 1.15),
-}
-BODY_LINE_SPACING = 1.3
-BODY_SPACE_AFTER_PT = 4
+# Body, heading and label text use the template's own styles (Normal,
+# Heading 1-4, 小标) without size or spacing overrides.
+LABEL_STYLE_NAME = "小标"
+# Table format, measured from the expert report.  Every report table goes
+# through apply_report_table_format, so this is the only place it is defined.
+TABLE_STYLE_NAME = "Table Grid"
+TABLE_TEXT_STYLE_NAME = "表格2"
+TABLE_BORDER_EIGHTH_POINTS = 4  # 0.5 pt single black lines
+TABLE_HEADER_FILL = "D4F4F1"
+# Columns whose header names a description, judgment or measure are left
+# aligned; short fields (position, cabinet, priority, value) are centered.
+TABLE_LEFT_ALIGNED_HEADER_TOKENS = (
+    "问题", "描述", "建议", "措施", "方案", "风险", "危害", "分析",
+    "说明", "备注", "依据", "结论", "影响", "情况", "现状", "内容说明",
+)
+TABLE_SEPARATOR_STYLE_NAME = "表前行距"
 LIST_LEFT_INDENT_TWIPS = 420
 LIST_HANGING_INDENT_TWIPS = 240
 
@@ -119,9 +127,6 @@ _MODULE_HEADINGS = [
 _HEADINGS_AFTER_MODULES: list[tuple[str, str, int]] = [
     ("3", "结论与建议", 1),
     ("3.1", "风险/问题汇总与概览", 2),
-    ("3.1.1", "风险全景图", 3),
-    ("3.1.2", "各维度风险分析", 3),
-    ("3.1.3", "数据缺口分析", 3),
     ("3.2", "改善行动速查表", 2),
     ("4", "专项问题分析", 1),
 ]
@@ -180,50 +185,6 @@ EXPANDABLE_LABELS = (
     "建议",
     "后续建议",
 )
-TOC_PAGE_HINTS = {
-    "1": "4",
-    "1.1": "4",
-    "1.2": "4",
-    "1.3": "5",
-    "2": "6",
-    "2.1": "6",
-    "2.1.1": "6",
-    "2.1.2": "8",
-    "2.1.3": "9",
-    "2.1.4": "10",
-    "2.1.5": "10",
-    "2.2": "11",
-    "2.2.1": "11",
-    "2.2.2": "14",
-    "2.3": "20",
-    "2.3.1": "20",
-    "2.3.2": "21",
-    "2.3.3": "22",
-    "2.4": "24",
-    "2.4.1": "24",
-    "2.4.2": "25",
-    "2.4.3": "29",
-    "2.4.4": "32",
-    "2.5": "33",
-    "2.5.1": "33",
-    "2.5.2": "33",
-    "2.5.3": "33",
-    "2.5.4": "38",
-    "2.5.5": "38",
-    "2.5.6": "39",
-    "2.5.7": "39",
-    "3": "40",
-    "3.1": "40",
-    "3.1.1": "40",
-    "3.1.2": "40",
-    "3.1.3": "41",
-    "3.2": "42",
-    "4": "43",
-    "4.1": "43",
-    "4.2": "45",
-    "4.3": "47",
-    "4.4": "49",
-}
 
 
 def parse_json_object(value: Any) -> dict[str, Any]:
@@ -359,10 +320,10 @@ def render_report_docx(
             document = Document(TEMPLATE_PATH)
             configure_styles(document)
             replace_template_content(document, report_text, model)
-            normalize_static_toc(document)
+            rebuild_toc_field(document)
             enforce_all_table_styles(document)
             compact_report_flow(document)
-            mark_fields_for_update(document)
+            drop_unreferenced_images(document)
         else:
             document = Document()
             configure_styles(document)
@@ -614,23 +575,14 @@ def find_content_start_paragraph_index(document: Document) -> int | None:
 
 
 def configure_styles(document: Document) -> None:
-    normal = document.styles["Normal"]
-    normal.font.size = Pt(BODY_FONT_SIZE_PT)
-    normal_pf = normal.paragraph_format
-    normal_pf.space_before = Pt(0)
-    normal_pf.space_after = Pt(BODY_SPACE_AFTER_PT)
-    normal_pf.line_spacing = BODY_LINE_SPACING
-    for style_name, (size, before, after, line_spacing) in HEADING_STYLE_TOKENS.items():
+    """Keep the template's text styles; only drop automatic heading numbers.
+
+    Headings carry their number in the text ("2.1. ..."), so the template's
+    outline numbering would print it twice.
+    """
+    for style_name in ("Heading 1", "Heading 2", "Heading 3", "Heading 4"):
         if style_name in document.styles:
-            style = document.styles[style_name]
-            style.font.size = Pt(size)
-            style.font.bold = True
-            style_pf = style.paragraph_format
-            style_pf.space_before = Pt(before)
-            style_pf.space_after = Pt(after)
-            style_pf.line_spacing = line_spacing
-            remove_style_numbering(style)
-    ensure_preferred_table_style_name(document)
+            remove_style_numbering(document.styles[style_name])
     ensure_preferred_table_paragraph_style(document)
 
 
@@ -773,23 +725,19 @@ def split_labeled_numbered_line(line: str) -> tuple[str, list[str]] | None:
     return (f"{label}：", parts) if len(parts) >= 2 else None
 
 
+def label_style_name(paragraph) -> str:
+    styles = {style.name for style in paragraph.part.document.styles}
+    return LABEL_STYLE_NAME if LABEL_STYLE_NAME in styles else "Normal"
+
+
 def write_label_paragraph(paragraph, label: str) -> None:
     paragraph.clear()
     strip_template_breaks(paragraph)
     remove_paragraph_numbering(paragraph)
     reset_direct_paragraph_format(paragraph)
-    paragraph.style = "Normal"
-    pf = paragraph.paragraph_format
-    pf.first_line_indent = None
-    pf.space_before = Pt(3)
-    pf.space_after = Pt(2)
-    pf.line_spacing = 1.2
-    pf.keep_with_next = False
-    pf.keep_together = False
-    pf.page_break_before = False
+    paragraph.style = label_style_name(paragraph)
     run = paragraph.add_run(label)
     run.bold = True
-    run.font.size = Pt(BODY_FONT_SIZE_PT)
 
 
 def write_bullet_paragraph(paragraph, text: str) -> None:
@@ -802,18 +750,11 @@ def write_bullet_paragraph(paragraph, text: str) -> None:
     pf = paragraph.paragraph_format
     pf.left_indent = Cm(LIST_LEFT_INDENT_TWIPS / 567)
     pf.first_line_indent = Cm(-LIST_HANGING_INDENT_TWIPS / 567)
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(2)
-    pf.line_spacing = 1.25
-    pf.keep_with_next = False
-    pf.keep_together = False
-    pf.page_break_before = False
     apply_list_numbering(
         paragraph,
         _bullet_numbering_id(paragraph.part.document),
     )
-    body = paragraph.add_run(clean_bullet_item_text(text))
-    body.font.size = Pt(BODY_FONT_SIZE_PT)
+    paragraph.add_run(clean_bullet_item_text(text))
 
 
 def write_numbered_paragraph(paragraph, text: str) -> None:
@@ -826,12 +767,6 @@ def write_numbered_paragraph(paragraph, text: str) -> None:
     pf = paragraph.paragraph_format
     pf.left_indent = Cm(LIST_LEFT_INDENT_TWIPS / 567)
     pf.first_line_indent = Cm(-LIST_HANGING_INDENT_TWIPS / 567)
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(2)
-    pf.line_spacing = 1.25
-    pf.keep_with_next = False
-    pf.keep_together = False
-    pf.page_break_before = False
     apply_list_numbering(
         paragraph,
         _numbered_list_id(
@@ -839,8 +774,7 @@ def write_numbered_paragraph(paragraph, text: str) -> None:
             numbered_list_start(text),
         ),
     )
-    body = paragraph.add_run(clean_numbered_item_text(text))
-    body.font.size = Pt(BODY_FONT_SIZE_PT)
+    paragraph.add_run(clean_numbered_item_text(text))
 
 
 def write_line_to_paragraph(paragraph, line: str) -> None:
@@ -879,6 +813,12 @@ def write_line_to_paragraph(paragraph, line: str) -> None:
         return
     if is_numbered_list_line(display_line):
         write_numbered_paragraph(paragraph, display_line)
+        return
+    bold_line = re.fullmatch(r"\*\*([^*]+)\*\*", display_line)
+    if bold_line is not None:
+        # A line that is bold as a whole is a group label, such as the
+        # priority groups of the action table.
+        write_label_paragraph(paragraph, bold_line.group(1).strip())
         return
     apply_body_format(paragraph, display_line)
     add_inline_formatted_runs(paragraph, clean_inline_marks(display_line))
@@ -921,12 +861,7 @@ def write_markdown_subheading_paragraph(paragraph, text: str) -> None:
     strip_template_breaks(paragraph)
     remove_paragraph_numbering(paragraph)
     reset_direct_paragraph_format(paragraph)
-    paragraph.style = "小标" if "小标" in {style.name for style in paragraph.part.document.styles} else "Normal"
-    pf = paragraph.paragraph_format
-    pf.first_line_indent = None
-    pf.space_before = Pt(6)
-    pf.space_after = Pt(3)
-    pf.line_spacing = 1.2
+    paragraph.style = label_style_name(paragraph)
     run = paragraph.add_run(normalized_label_text(text))
     run.bold = True
 
@@ -951,30 +886,13 @@ def reset_direct_paragraph_format(paragraph) -> None:
 
 
 def apply_heading_format(paragraph, level: int) -> None:
-    # Use one explicit heading rhythm after the template font family is retained.
-    pf = paragraph.paragraph_format
-    pf.left_indent = None
-    pf.right_indent = None
-    pf.first_line_indent = None
-    pf.alignment = None
-    _size, before, after, line_spacing = HEADING_STYLE_TOKENS[f"Heading {level}"]
-    pf.space_before = Pt(before)
-    pf.space_after = Pt(after)
-    pf.line_spacing = line_spacing
-    pf.keep_with_next = level >= 3
+    """Headings take size, spacing and fonts from the template style."""
+    paragraph.paragraph_format.keep_with_next = True
 
 
 def apply_body_format(paragraph, line: str) -> None:
-    pf = paragraph.paragraph_format
-    pf.first_line_indent = Cm(0.74)
-    pf.left_indent = None
-    pf.right_indent = None
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(BODY_SPACE_AFTER_PT)
-    pf.line_spacing = BODY_LINE_SPACING
-    pf.keep_together = False
-    pf.keep_with_next = False
-    pf.page_break_before = False
+    """Body text takes indent and line spacing from the template Normal style."""
+    return None
 
 
 def write_time_group_heading_paragraph(paragraph, text: str) -> None:
@@ -982,21 +900,10 @@ def write_time_group_heading_paragraph(paragraph, text: str) -> None:
     strip_template_breaks(paragraph)
     remove_paragraph_numbering(paragraph)
     reset_direct_paragraph_format(paragraph)
-    paragraph.style = "Normal"
-    pf = paragraph.paragraph_format
-    pf.left_indent = None
-    pf.right_indent = None
-    pf.first_line_indent = None
-    pf.space_before = Pt(4)
-    pf.space_after = Pt(2)
-    pf.line_spacing = 1.2
-    pf.keep_with_next = False
-    pf.keep_together = False
-    pf.page_break_before = False
+    paragraph.style = label_style_name(paragraph)
     display = re.sub(r"^【\s*|\s*】$", "", text).strip().rstrip("：:") + "："
     run = paragraph.add_run(display)
     run.bold = True
-    run.font.size = Pt(BODY_FONT_SIZE_PT)
 
 
 def is_inline_analysis_line(line: str) -> bool:
@@ -1069,8 +976,93 @@ def remove_unused_template_paragraphs(paragraphs: list) -> None:
             parent.remove(element)
 
 
-def normalize_static_toc(document: Document) -> None:
-    """Rewrite the visible TOC lines to match the generated fixed report outline."""
+def drop_unreferenced_images(document: Document) -> None:
+    """Remove template images the generated body no longer shows.
+
+    The body is rewritten from the template, but the template's image
+    relationships stay on the document part, and the package keeps every
+    part a relationship points to.
+    """
+
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    part = document.part
+    referenced = {
+        str(value)
+        for value in part.element.xpath("//@r:embed | //@r:link | //@r:id")
+    }
+    for r_id, relationship in list(part.rels.items()):
+        if relationship.reltype == RT.IMAGE and r_id not in referenced:
+            del part.rels[r_id]
+
+
+def body_toc_entries(document: Document) -> list[tuple[str, str, int]]:
+    """Numbered headings (level 1-3) the generated body actually contains."""
+
+    content_start = find_content_start_paragraph_index(document)
+    if content_start is None:
+        return []
+    entries: list[tuple[str, str, int]] = []
+    for paragraph in document.paragraphs[content_start:]:
+        style_name = paragraph.style.name if paragraph.style is not None else ""
+        match = re.match(r"^Heading ([1-3])$", style_name)
+        if match is None:
+            continue
+        heading = re.match(r"^(\d+(?:\.\d+)*)\.?\s*(.+?)\s*$", clean_inline_marks(paragraph.text))
+        if heading is None:
+            continue
+        entries.append((heading.group(1), heading.group(2), int(match.group(1))))
+    return entries
+
+
+def _remove_field_runs(paragraph) -> None:
+    """Drop field markers and instructions so no field is left half-open."""
+
+    element = paragraph._element
+    for node in list(element.iter(qn("w:fldChar"), qn("w:instrText"))):
+        run = node.getparent()
+        if run is not None and run.getparent() is not None:
+            run.getparent().remove(run)
+
+
+def _field_char_run(kind: str):
+    run = OxmlElement("w:r")
+    char = OxmlElement("w:fldChar")
+    char.set(qn("w:fldCharType"), kind)
+    run.append(char)
+    return run
+
+
+def _instruction_run(text: str):
+    run = OxmlElement("w:r")
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = text
+    run.append(instruction)
+    return run
+
+
+def _text_run(text: str):
+    run = OxmlElement("w:r")
+    node = OxmlElement("w:t")
+    node.set(qn("xml:space"), "preserve")
+    node.text = text
+    run.append(node)
+    return run
+
+
+TOC_FIELD_INSTRUCTION = ' TOC \\o "1-3" \\h \\z \\u '
+
+
+def rebuild_toc_field(document: Document) -> None:
+    """Rewrite the template TOC as one Word TOC field over this report's headings.
+
+    The field result is pre-filled with the headings the body has, in the
+    template's toc 1/2/3 paragraph formats, so the TOC reads correctly on
+    open.  Page numbers are not pre-filled (they belong to the exemplar);
+    they appear when the reader updates the field once in Word.  The
+    document does not ask to refresh fields on open.
+    """
     title_index = next(
         (
             index
@@ -1079,58 +1071,56 @@ def normalize_static_toc(document: Document) -> None:
         ),
         -1,
     )
-    if title_index >= 0:
-        title_paragraph = document.paragraphs[title_index]
-        title_paragraph.style = "Normal"
-        reset_direct_paragraph_format(title_paragraph)
-        remove_paragraph_numbering(title_paragraph)
-        remove_paragraph_outline_level(title_paragraph)
-        for run in title_paragraph.runs:
-            run.bold = True
-            run.font.size = Pt(14)
+    content_start = find_content_start_paragraph_index(document)
+    region_end = content_start if content_start is not None else len(document.paragraphs)
+    region = document.paragraphs[title_index + 1:region_end]
     toc_paragraphs = [
         paragraph
-        for index, paragraph in enumerate(document.paragraphs)
-        if index > title_index
-        and paragraph.style is not None
+        for paragraph in region
+        if paragraph.style is not None
         and paragraph.style.name.startswith("toc ")
         and normalize_heading_title(paragraph.text)
     ]
-    entries = [
-        (number, title, level)
-        for number, title, level in HEADINGS
-        if level <= 3
-    ]
-    if len(toc_paragraphs) < len(entries):
-        content_start = find_content_start_paragraph_index(document)
-        if content_start is not None:
-            anchor = document.paragraphs[content_start]
-            for _ in range(len(entries) - len(toc_paragraphs)):
-                toc_paragraphs.append(anchor.insert_paragraph_before())
-    for paragraph, (number, title, level) in zip(toc_paragraphs, entries):
-        paragraph.clear()
-        paragraph.style = "Normal"
-        reset_direct_paragraph_format(paragraph)
-        remove_paragraph_numbering(paragraph)
-        remove_paragraph_outline_level(paragraph)
-        pf = paragraph.paragraph_format
-        pf.left_indent = Cm(0.45 * max(level - 1, 0))
-        pf.first_line_indent = None
-        pf.space_after = Pt(2)
-        pf.line_spacing = 1.1
-        try:
-            pf.tab_stops.clear_all()
-            pf.tab_stops.add_tab_stop(Cm(15.2), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
-        except Exception:
-            pass
-        paragraph.add_run(f"{number}. {title}")
-        paragraph.add_run().add_tab()
-        paragraph.add_run(TOC_PAGE_HINTS.get(number, ""))
-    for paragraph in toc_paragraphs[len(entries):]:
-        element = paragraph._element
-        parent = element.getparent()
-        if parent is not None:
-            parent.remove(element)
+    for paragraph in region:
+        _remove_field_runs(paragraph)
+    if not toc_paragraphs:
+        return
+    prototypes: dict[int, Any] = {}
+    for paragraph in toc_paragraphs:
+        level_match = re.match(r"^toc ([1-9])$", paragraph.style.name)
+        if level_match is not None and paragraph._p.pPr is not None:
+            prototypes.setdefault(int(level_match.group(1)), deepcopy(paragraph._p.pPr))
+    anchor = toc_paragraphs[0]._p
+    for paragraph in toc_paragraphs:
+        element = paragraph._p
+        if element is anchor:
+            continue
+        element.getparent().remove(element)
+    entries = body_toc_entries(document)
+    new_elements = []
+    for number, title, level in entries:
+        element = OxmlElement("w:p")
+        prototype = prototypes.get(level)
+        if prototype is None and prototypes:
+            prototype = prototypes[min(prototypes)]
+        if prototype is not None:
+            element.append(deepcopy(prototype))
+        element.append(_text_run(f"{number}. {title}"))
+        new_elements.append(element)
+    if not new_elements:
+        anchor.getparent().remove(anchor)
+        return
+    first, last = new_elements[0], new_elements[-1]
+    first_text = first.find(qn("w:r"))
+    first_text.addprevious(_field_char_run("begin"))
+    first_text.addprevious(_instruction_run(TOC_FIELD_INSTRUCTION))
+    first_text.addprevious(_field_char_run("separate"))
+    last.append(_field_char_run("end"))
+    previous = anchor
+    for element in new_elements:
+        previous.addnext(element)
+        previous = element
+    anchor.getparent().remove(anchor)
 
 
 def paragraph_has_section_properties(paragraph) -> bool:
@@ -1320,22 +1310,15 @@ def restore_template_heading_numbering(paragraph, level: int) -> None:
 
 
 def format_table_cell_paragraph(paragraph, header: bool = False) -> None:
+    """Table text uses the template's 「表格2」 style with no direct formatting."""
     try:
         paragraph.style = find_preferred_table_paragraph_style(paragraph) or "Normal"
     except Exception:
         pass
     reset_direct_paragraph_format(paragraph)
-    paragraph.alignment = None
-    pf = paragraph.paragraph_format
-    pf.left_indent = None
-    pf.right_indent = None
-    pf.first_line_indent = None
-    pf.line_spacing = None
-    pf.space_before = None
-    pf.space_after = None
     for run in paragraph.runs:
         run.font.size = None
-        run.bold = None
+        run.bold = True if header else None
 
 
 def find_preferred_table_paragraph_style(paragraph):
@@ -1352,37 +1335,21 @@ def find_preferred_table_paragraph_style(paragraph):
 
 
 def ensure_preferred_table_paragraph_style(document: Document):
+    """Use the template's 「表格2」; add the expert's 9 pt single-spaced one if absent."""
     for style in document.styles:
-        if style.element.get(qn("w:type")) == "paragraph" and style.name == "表格2":
-            configure_table_paragraph_style(style)
+        if style.element.get(qn("w:type")) == "paragraph" and style.name == TABLE_TEXT_STYLE_NAME:
             return style
     try:
-        style = document.styles.add_style("表格2", WD_STYLE_TYPE.PARAGRAPH)
+        style = document.styles.add_style(TABLE_TEXT_STYLE_NAME, WD_STYLE_TYPE.PARAGRAPH)
     except Exception:
         return None
-    configure_table_paragraph_style(style)
+    style.font.size = Pt(9)
+    pf = style.paragraph_format
+    pf.line_spacing = 1.0
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+    pf.first_line_indent = Pt(0)
     return style
-
-
-def configure_table_paragraph_style(style) -> None:
-    # Preserve the template font family while keeping dense technical tables
-    # readable and independent from the Normal style's first-line indent.
-    style.font.size = Pt(TABLE_FONT_SIZE_PT)
-    p_pr = style.element.get_or_add_pPr()
-    for tag in ("w:numPr", "w:tabs", "w:ind"):
-        child = p_pr.find(qn(tag))
-        if child is not None:
-            p_pr.remove(child)
-    spacing = p_pr.find(qn("w:spacing"))
-    if spacing is None:
-        spacing = OxmlElement("w:spacing")
-        p_pr.append(spacing)
-    spacing.set(qn("w:line"), "276")
-    spacing.set(qn("w:lineRule"), "auto")
-    ind = OxmlElement("w:ind")
-    ind.set(qn("w:firstLine"), "0")
-    ind.set(qn("w:firstLineChars"), "0")
-    p_pr.append(ind)
 
 
 def parse_section_reasoning_results(value: Any) -> dict[str, dict[str, Any]]:
@@ -1474,13 +1441,8 @@ def section_reasoning_block_lines(result: dict[str, Any]) -> list[str]:
 
 
 def format_table_title_paragraph(paragraph) -> None:
-    reset_direct_paragraph_format(paragraph)
-    paragraph.alignment = None
-    pf = paragraph.paragraph_format
-    pf.first_line_indent = None
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(0)
-    pf.line_spacing = 1.15
+    """Keep the line introducing a table on the same page as the table."""
+    paragraph.paragraph_format.keep_with_next = True
 
 
 def write_markdown_table(
@@ -1506,50 +1468,137 @@ def write_markdown_table(
     reset_direct_paragraph_format(anchor_paragraph)
     column_count = max(len(row) for row in rows)
     table = document.add_table(rows=len(rows), cols=column_count)
-    apply_preferred_table_style(document, table)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = False
-    set_fixed_table_layout(table)
-    set_table_widths(table, column_count)
 
     for row_index, row in enumerate(rows):
         for col_index in range(column_count):
             header = rows[0][col_index] if rows and col_index < len(rows[0]) else ""
             value = normalize_table_cell_value(row[col_index] if col_index < len(row) else "", header, row_index == 0)
             cell = table.cell(row_index, col_index)
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            set_cell_margins(cell, top=80, start=80, bottom=80, end=80)
-            if row_index == 0:
-                shade_cell(cell, "D9F2F0")
             photo_payload = photo_payload_from_table_cell(value, model)
             if photo_payload:
                 write_photo_cell(cell, photo_payload)
-                continue
             else:
                 cell.text = str(value)
-            for paragraph in cell.paragraphs:
-                format_table_cell_paragraph(paragraph, header=row_index == 0)
-    set_table_widths(table, column_count)
+    apply_report_table_format(table)
 
     table_element = table._tbl
     table_element.getparent().remove(table_element)
     anchor_p = anchor_paragraph._p
     anchor_p.addnext(table_element)
-    insert_table_bottom_spacer(table_element)
     remove_paragraph_element(anchor_p)
 
 
-def insert_table_bottom_spacer(table_element) -> None:
-    spacer = OxmlElement("w:p")
-    p_pr = OxmlElement("w:pPr")
-    spacing = OxmlElement("w:spacing")
-    spacing.set(qn("w:before"), "160")
-    spacing.set(qn("w:after"), "0")
-    spacing.set(qn("w:line"), "160")
-    spacing.set(qn("w:lineRule"), "exact")
-    p_pr.append(spacing)
-    spacer.append(p_pr)
-    table_element.addnext(spacer)
+def is_left_aligned_column(header: str) -> bool:
+    text = clean_text(header)
+    return any(token in text for token in TABLE_LEFT_ALIGNED_HEADER_TOKENS)
+
+
+def set_table_borders(table) -> None:
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.find(qn("w:tblBorders"))
+    if borders is not None:
+        tbl_pr.remove(borders)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        node = OxmlElement(f"w:{edge}")
+        node.set(qn("w:val"), "single")
+        node.set(qn("w:sz"), str(TABLE_BORDER_EIGHTH_POINTS))
+        node.set(qn("w:space"), "0")
+        node.set(qn("w:color"), "000000")
+        borders.append(node)
+    tbl_pr.append(borders)
+
+
+def set_table_look_without_banding(table) -> None:
+    tbl_pr = table._tbl.tblPr
+    look = tbl_pr.find(qn("w:tblLook"))
+    if look is None:
+        look = OxmlElement("w:tblLook")
+        tbl_pr.append(look)
+    for key, value in {
+        "firstRow": "1", "lastRow": "0", "firstColumn": "0",
+        "lastColumn": "0", "noHBand": "1", "noVBand": "1",
+    }.items():
+        look.set(qn(f"w:{key}"), value)
+    look.set(qn("w:val"), "0420")
+
+
+def set_autofit_table_layout(table) -> None:
+    """Let Word size columns from their content, as the expert tables do."""
+    tbl_pr = table._tbl.tblPr
+    layout = tbl_pr.find(qn("w:tblLayout"))
+    if layout is not None:
+        tbl_pr.remove(layout)
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), "0")
+    tbl_w.set(qn("w:type"), "auto")
+    for tc_pr in table._tbl.iter(qn("w:tcPr")):
+        tc_w = tc_pr.find(qn("w:tcW"))
+        if tc_w is not None and not tc_pr.getparent().xpath(".//w:drawing"):
+            tc_w.set(qn("w:w"), "0")
+            tc_w.set(qn("w:type"), "auto")
+
+
+def apply_report_table_format(table) -> None:
+    """Apply the one report table format: grid lines, plain header, autofit."""
+    document = table.part.document
+    style = next(
+        (
+            item
+            for item in document.styles
+            if item.element.get(qn("w:type")) == "table" and item.name == TABLE_STYLE_NAME
+        ),
+        None,
+    )
+    if style is not None:
+        table.style = style
+    set_table_borders(table)
+    set_table_look_without_banding(table)
+    set_autofit_table_layout(table)
+    table.autofit = True
+    tc_mar = table._tbl.tblPr.find(qn("w:tblCellMar"))
+    if tc_mar is not None:
+        table._tbl.tblPr.remove(tc_mar)
+    if not table.rows:
+        return
+    headers = [clean_text(cell.text) for cell in table.rows[0].cells]
+    for row_index, row in enumerate(table.rows):
+        for col_index, cell in enumerate(row.cells):
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            tc_pr = cell._tc.get_or_add_tcPr()
+            for tag in ("w:shd", "w:tcMar"):
+                node = tc_pr.find(qn(tag))
+                if node is not None:
+                    tc_pr.remove(node)
+            if row_index == 0:
+                shade_cell(cell, TABLE_HEADER_FILL)
+            if cell_has_drawing(cell):
+                for paragraph in cell.paragraphs:
+                    format_photo_cell_paragraph(paragraph)
+                continue
+            header = headers[col_index] if col_index < len(headers) else ""
+            for paragraph in cell.paragraphs:
+                format_table_cell_paragraph(paragraph, header=row_index == 0)
+                if row_index == 0 or not is_left_aligned_column(header):
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def separate_adjacent_tables(document: Document) -> None:
+    """Word joins two tables that touch; put one 「表前行距」 line between them."""
+    body = document.element.body
+    style_names = {style.name for style in document.styles}
+    for table in list(body.iterchildren(qn("w:tbl"))):
+        following = table.getnext()
+        if following is None or following.tag != qn("w:tbl"):
+            continue
+        spacer = Paragraph(OxmlElement("w:p"), document._body)
+        table.addnext(spacer._p)
+        spacer.style = (
+            TABLE_SEPARATOR_STYLE_NAME if TABLE_SEPARATOR_STYLE_NAME in style_names else "Normal"
+        )
 
 
 def remove_paragraph_element(paragraph_element) -> None:
@@ -1558,78 +1607,19 @@ def remove_paragraph_element(paragraph_element) -> None:
         parent.remove(paragraph_element)
 
 
-def ensure_preferred_table_style_name(document: Document) -> str:
-    """Return the bundled template table style id without renaming styles."""
-    preferred = find_preferred_table_style(document)
-    if preferred is None:
-        return "21"
-    return preferred.style_id
-
-
-def find_preferred_table_style(document: Document):
-    for style in document.styles:
-        style_type = style.element.get(qn("w:type"))
-        if style_type != "table":
-            continue
-        if style.style_id == "21" or style.name in {"表格2", "表格 2", "Doc Table Band 2nd"}:
-            return style
-    for style in document.styles:
-        if style.element.get(qn("w:type")) == "table" and style.name == "Table Grid":
-            return style
-    return None
-
-
-def apply_preferred_table_style(document: Document, table) -> None:
-    """Use the template table style shown as "表格2" in WPS when available."""
-    style_id = ensure_preferred_table_style_name(document)
-    preferred = find_preferred_table_style(document)
-    if preferred is not None:
-        try:
-            table.style = preferred
-        except Exception:
-            table.style = preferred.name
-        force_table_style_id(table, preferred.style_id)
-        return
-    force_table_style_id(table, style_id)
-
-
-def force_table_style_id(table, style_id: str | None = None) -> None:
-    style_id = style_id or "21"
-    tbl_pr = table._tbl.tblPr
-    tbl_style = tbl_pr.find(qn("w:tblStyle"))
-    if tbl_style is None:
-        tbl_style = OxmlElement("w:tblStyle")
-        tbl_pr.insert(0, tbl_style)
-    tbl_style.set(qn("w:val"), style_id)
-
-
 def enforce_all_table_styles(document: Document) -> None:
     for table in document.tables:
-        apply_preferred_table_style(document, table)
+        apply_report_table_format(table)
+    separate_adjacent_tables(document)
 
 
 def normalize_table_cell_value(value: Any, header: Any = "", is_header: bool = False) -> str:
     text = clean_text(value)
-    header_text = clean_text(header)
     if is_header:
         return text or "字段"
-    if text:
-        return text
-    if "图片" in header_text or "照片" in header_text:
-        return missing_photo_text()
-    if "时间" in header_text:
-        return "未测试"
-    if "状态" in header_text or "判定" in header_text:
-        return "待评估"
-    if any(token in header_text for token in ["位置", "区域", "配电"]):
-        return "待核实位置"
-    if any(token in header_text for token in ["柜号", "回路", "设备", "负荷", "名称"]):
-        return "待核实"
-    if any(token in header_text for token in ["数值", "电流", "容量", "温度", "THD", "限值", "超标率"]):
-        return "未测量"
-    if "建议" in header_text or "措施" in header_text:
-        return "结合现场资料进一步核实。"
-    return "待补充"
+    # An empty cell stays empty: the renderer does not write content the
+    # approved text does not have.
+    return text
 
 
 def photo_payload_from_table_cell(value: Any, model: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1890,6 +1880,7 @@ def mark_report_photo_inserted() -> None:
 
 def compressed_photo_path(path: Path) -> Path:
     if Image is None or ImageOps is None:
+        logger.warning("Pillow is unavailable; report photos are embedded uncompressed")
         return path
     try:
         stat = path.stat()
@@ -1923,9 +1914,25 @@ def compressed_photo_path(path: Path) -> Path:
             elif image.mode != "RGB":
                 image = image.convert("RGB")
             image.save(cached, format="JPEG", quality=PHOTO_JPEG_QUALITY, optimize=True)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Report photo was not compressed and is embedded as-is: {}: {}", path.name, exc)
         return path
     return cached if cached.exists() and cached.stat().st_size > 0 else path
+
+
+def photo_source(path: Path) -> str | io.BytesIO:
+    """The photo to embed, always under a part name with its real extension.
+
+    Photos extracted from workbooks are often stored without an extension.
+    python-docx names the image part after the file's extension, so such a
+    file would become ``image7.``, which Word rejects.  A stream makes
+    python-docx name the part from the detected image format instead.
+    """
+
+    source = compressed_photo_path(path)
+    if source.suffix:
+        return str(source)
+    return io.BytesIO(source.read_bytes())
 
 
 def write_photo_cell(cell, payload: dict[str, Any]) -> None:
@@ -1957,7 +1964,7 @@ def write_photo_cell(cell, payload: dict[str, Any]) -> None:
             if cell_width:
                 width_cm = min(width_cm, max(cell_width - 0.2, 0.8))
             run.add_picture(
-                str(compressed_photo_path(path)),
+                photo_source(path),
                 **photo_fit_dimensions(path, width_cm, height_cm),
             )
             inserted = True
@@ -2042,7 +2049,7 @@ def format_row(row, header: bool) -> None:
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
         set_cell_margins(cell, top=100, start=80, bottom=100, end=80)
         if header:
-            shade_cell(cell, "D9F2F0")
+            shade_cell(cell, TABLE_HEADER_FILL)
         if cell_has_drawing(cell):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             set_cell_margins(cell, top=40, start=40, bottom=40, end=40)
@@ -2450,15 +2457,6 @@ def remove_body_tables_after_start(document: Document, start_paragraph_index: in
             table._element.getparent().remove(table._element)
 
 
-def mark_fields_for_update(document: Document) -> None:
-    settings = document.settings._element
-    update_fields = settings.find(qn("w:updateFields"))
-    if update_fields is None:
-        update_fields = OxmlElement("w:updateFields")
-        settings.append(update_fields)
-    update_fields.set(qn("w:val"), "true")
-
-
 def compact_report_flow(document: Document) -> None:
     """Remove pagination leftovers around generated analysis/advice blocks."""
     for paragraph in document.paragraphs:
@@ -2484,10 +2482,6 @@ def compact_report_flow(document: Document) -> None:
         pf.keep_with_next = False
         pf.keep_together = False
         pf.page_break_before = False
-        if is_inline_analysis_line(text):
-            pf.space_before = Pt(0)
-            pf.space_after = Pt(BODY_SPACE_AFTER_PT)
-            pf.line_spacing = BODY_LINE_SPACING
 
 
 def is_flow_sensitive_paragraph(text: str) -> bool:
@@ -3628,7 +3622,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         key=lambda item: v2_priority_rank(item),
     )[:top_risk_count]
     lines = [
-        "#### 3.1.1 风险全景图",
+        "**风险全景**",
         f"本次评估共覆盖{total}个检测项，其中：OK {counts.get('OK', 0)}项、一般 {counts.get('一般', 0)}项、NG {ng_count}项、数据缺失 {counts.get('数据缺失', 0) + counts.get('待核实', 0)}项、数据异常 {counts.get('数据冲突', 0)}项。",
         f"整体判断：{v2_overall_judgement(ng_count)}",
         "",
@@ -3638,7 +3632,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         lines.append(f"{index}. {v2_issue_sentence(issue)}")
     if not urgent:
         lines.append("1. 本次未识别到明确NG项，建议跟踪一般项和数据缺口。")
-    lines.extend(["", "#### 3.1.2 各维度风险分析"])
+    lines.extend(["", "**各维度风险**"])
     for prefix, title in [
         ("2.1", "系统架构"),
         ("2.2", "环境工况"),
@@ -3661,7 +3655,7 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         lines.append("")
 
     if policy_bool("chapter_3_policy", "include_data_gap_analysis", True):
-        lines.extend(["", "#### 3.1.3 数据缺口分析"])
+        lines.extend(["", "**数据缺口**"])
         missing_items = [item for item in issues if _v2_status(item) in {"数据缺失", "待核实"}]
         if missing_items:
             lines.append("本次评估中以下数据项尚未收到，建议按优先级补充：")

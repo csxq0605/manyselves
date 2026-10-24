@@ -1,0 +1,5 @@
+id: photo_reading_plan
+version: 1.0.0
+description: Photos still to read in this run, split over fixed lanes
+adapter: pydantic
+model: manyselves.capabilities.distribution_reporting.runtime.models.photo_reading:PhotoReadingPlan

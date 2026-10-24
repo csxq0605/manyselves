@@ -1,0 +1,10 @@
+id: accept-photo-reading
+version: 1.0.0
+description: Accept one typed photo reading
+implementation: capability:distribution-reporting:accept-photo-reading
+input_contract: reporting_tool_input
+output_contract: photo_reading
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

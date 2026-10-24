@@ -45,15 +45,14 @@ from manyselves.capabilities.distribution_reporting.runtime.storage import Repor
 
 from .assessment_context import final_observation_context
 from .final_review_tools import build_final_review_tool_implementations
+from .observation_consolidation import ledger_source_context
 from .template_skill_context import read_template_skill, render_template_skill
 
 _STATIC_SECTION_BODIES = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
     "1.3": "regional_executive_summary",
-    "3.1.1": "risk_panorama",
-    "3.1.2": "dimension_risk_analysis",
-    "3.1.3": "data_gap_analysis",
+    "3.1": "risk_summary",
     "3.2": "improvement_action_plan",
 }
 def _template_skill_context(
@@ -182,9 +181,17 @@ class FinalChapterTools:
             review_focus=list(final_lane_specialization(typed_chapter).review_focus),
             section_ids=list(section_ids),
             section_bodies=_section_bodies(edited, typed_chapter),
-            source_context=final_observation_context(
-                state.get("module_submissions", {}), edited, _section_bodies(edited, typed_chapter),
-            ),
+            source_context={
+                **final_observation_context(
+                    state.get("module_submissions", {}), edited,
+                    _section_bodies(edited, typed_chapter),
+                    workspace=self.workspace, run_id=str(state["run_id"]),
+                ),
+                **ledger_source_context(
+                    dict(state), ReportingStore(self.workspace),
+                    relations=typed_chapter == "3",
+                ),
+            },
             special_topic_plan=edited.special_topic_plan,
             revision=0,
         )
@@ -381,9 +388,16 @@ class FinalChapterTools:
             review_focus=list(final_lane_specialization(typed_chapter).review_focus),
             section_ids=list(section_ids),
             section_bodies=changed_bodies,
-            source_context=final_observation_context(
-                state.get("module_submissions", {}), review.current, changed_bodies,
-            ),
+            source_context={
+                **final_observation_context(
+                    state.get("module_submissions", {}), review.current, changed_bodies,
+                    workspace=self.workspace, run_id=run_id,
+                ),
+                **ledger_source_context(
+                    dict(state), ReportingStore(self.workspace),
+                    relations=typed_chapter == "3",
+                ),
+            },
             unchanged_section_sha256=unchanged_section_sha256,
             required_findings=list(findings),
             revision_responses=list(review.revision_responses[typed_chapter]),

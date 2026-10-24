@@ -16,7 +16,7 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceMeasurement,
 )
 
-from .common import dispimg_refs, make_evidence
+from .common import dispimg_refs, make_evidence, unbound_photo_gaps
 
 
 def _text(value: Any) -> str:
@@ -25,6 +25,20 @@ def _text(value: Any) -> str:
 
 def _is_placeholder(value: Any) -> bool:
     return _text(value) in {"", "/", "\\", "--"}
+
+
+PHOTO_ONLY = "未填写（原表仅有图片，需复核）"
+
+
+def _status_value(value: Any, *photo_values: Any) -> Any:
+    """An empty status cell next to a photo keeps the photo as a record.
+
+    Returns None when the checkpoint has neither a status nor a photo.
+    """
+
+    if not _is_placeholder(value):
+        return value
+    return PHOTO_ONLY if dispimg_refs(*photo_values) else None
 
 
 def _subject(room: Any, cabinet: Any = None) -> str:
@@ -103,12 +117,22 @@ def _map_low_voltage(
             value = float(current)
             unit = "A"
             fact = f"运行电流={current:g}A"
+            measurements = [EvidenceMeasurement(
+                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
+            )]
             if isinstance(capacity, (int, float)) and capacity:
                 fact += f"；变压器容量={capacity:g}kVA"
+                measurements.append(EvidenceMeasurement(
+                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
+                    source_cell=f"D{row}",
+                ))
                 reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
+                    measurements.append(EvidenceMeasurement(
+                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    ))
                 routes = (("2.4", "2.4.1.1"), ("2.1", "2.1.1"))
                 needs_confirmation = True
             else:
@@ -131,6 +155,7 @@ def _map_low_voltage(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        measurements=measurements,
                         needs_confirmation=needs_confirmation,
                     )
                 )
@@ -144,8 +169,11 @@ def _map_low_voltage(
             (22, 23, "变压器温度", "2.2.2.1"),
         )
         for value_column, photo_column, label, submodule_id in paired_fields:
-            value = sheet.cell(row, value_column).value
-            if _is_placeholder(value):
+            value = _status_value(
+                sheet.cell(row, value_column).value,
+                sheet.cell(row, photo_column).value if photo_column else None,
+            )
+            if value is None:
                 continue
             end_column = photo_column or value_column
             photo_value = sheet.cell(row, end_column).value if photo_column else None
@@ -165,16 +193,21 @@ def _map_low_voltage(
                     module_id=submodule_id.rsplit(".", 2)[0],
                     submodule_id=submodule_id,
                     photo_refs=dispimg_refs(photo_value),
-                    needs_confirmation=_text(value).upper().startswith("NG")
-                    and not dispimg_refs(photo_value),
+                    needs_confirmation=(
+                        _text(value).upper().startswith("NG")
+                        and not dispimg_refs(photo_value)
+                    )
+                    or value == PHOTO_ONLY,
                 )
             )
         for value_column, photo_column, label, module_id, submodule_id in (
             (17, 18, "谐波", "2.2", "2.2.1.1"),
             (19, 20, "电涌保护装置", "2.3", "2.3.3"),
         ):
-            value = sheet.cell(row, value_column).value
-            if _is_placeholder(value):
+            value = _status_value(
+                sheet.cell(row, value_column).value, sheet.cell(row, photo_column).value,
+            )
+            if value is None:
                 continue
             start_letter = get_column_letter(value_column)
             end_letter = get_column_letter(photo_column)
@@ -191,7 +224,8 @@ def _map_low_voltage(
                     module_id=module_id,
                     submodule_id=submodule_id,
                     photo_refs=dispimg_refs(sheet.cell(row, photo_column).value),
-                    needs_confirmation=_text(value).upper().startswith("NG"),
+                    needs_confirmation=_text(value).upper().startswith("NG")
+                    or value == PHOTO_ONLY,
                 )
             )
 
@@ -299,12 +333,24 @@ def _map_total_distribution(
             value = float(current)
             unit = "A"
             fact = f"运行电流={current:g}A"
+            measurements = [EvidenceMeasurement(
+                quantity="running_current", value=float(current), unit="A", source_cell=f"C{row}",
+            )]
             if isinstance(capacity, (int, float)) and capacity:
                 fact += f"；变压器容量={capacity:g}kVA"
+                measurements.append(EvidenceMeasurement(
+                    quantity="transformer_capacity", value=float(capacity), unit="kVA",
+                    source_cell=f"D{row}",
+                ))
                 reported_fact, load_rate = _source_load_rate(sheet, value_sheet, row, gaps)
                 fact += reported_fact
                 if load_rate is not None:
                     value, unit = load_rate, "%"
+                    measurements.append(EvidenceMeasurement(
+                        quantity="load_rate", value=float(load_rate), unit="%", source_cell=f"E{row}",
+                    ))
+            else:
+                fact += "；未提供额定容量，不能据此计算负荷率或判断过载"
             for module_id, submodule_id in (
                 ("2.4", "2.4.1.1"),
                 ("2.1", "2.1.1"),
@@ -323,6 +369,7 @@ def _map_total_distribution(
                         submodule_id=submodule_id,
                         value=value,
                         unit=unit,
+                        measurements=measurements,
                         needs_confirmation=True,
                     )
                 )
@@ -364,8 +411,11 @@ def _map_total_distribution(
             (18, 19, "电涌保护装置", "2.3", "2.3.3"),
             (20, None, "变压器噪声震动", "2.2", "2.2.2.3"),
         ):
-            value = sheet.cell(row, value_column).value
-            if _is_placeholder(value):
+            value = _status_value(
+                sheet.cell(row, value_column).value,
+                sheet.cell(row, photo_column).value if photo_column else None,
+            )
+            if value is None:
                 continue
             photo_value = sheet.cell(row, photo_column).value if photo_column else None
             start_letter = get_column_letter(value_column)
@@ -412,14 +462,17 @@ def _map_total_distribution(
                     value=numeric_value,
                     unit=unit,
                     needs_confirmation=(
-                        _text(value).upper().startswith("NG")
-                        or (
-                            label == "实测剩余电流"
-                            and numeric_value is not None
-                            and numeric_value > 10
+                        (
+                            _text(value).upper().startswith("NG")
+                            or (
+                                label == "实测剩余电流"
+                                and numeric_value is not None
+                                and numeric_value > 10
+                            )
                         )
+                        and not dispimg_refs(photo_value)
                     )
-                    and not dispimg_refs(photo_value),
+                    or value == PHOTO_ONLY,
                 )
             )
     if capacity_only_rows:
@@ -473,14 +526,23 @@ def _map_general_inspection(path: Path, file_id: str, sheet: Any) -> list:
     }
     for row in range(4, sheet.max_row + 1):
         room = sheet.cell(row, 1).value
-        populated = [sheet.cell(row, column).value for column in labels]
+        populated = [
+            sheet.cell(row, column).value
+            for status_column in labels
+            for column in (
+                (status_column, status_column + 1) if status_column < 20 else (status_column,)
+            )
+        ]
         if not room or not any(value not in (None, "") for value in populated):
             continue
         for column, label in labels.items():
-            value = sheet.cell(row, column).value
-            if _is_placeholder(value):
-                continue
             photo_column = column + 1 if column < 20 else None
+            value = _status_value(
+                sheet.cell(row, column).value,
+                sheet.cell(row, photo_column).value if photo_column else None,
+            )
+            if value is None:
+                continue
             photo_value = sheet.cell(row, photo_column).value if photo_column else None
             photo_refs = dispimg_refs(photo_value)
             companion_note = (
@@ -507,8 +569,10 @@ def _map_general_inspection(path: Path, file_id: str, sheet: Any) -> list:
                     module_id=route_module,
                     submodule_id=route_submodule,
                     photo_refs=photo_refs,
-                    needs_confirmation=_text(value).upper().startswith("NG")
-                    and not photo_refs,
+                    needs_confirmation=(
+                        _text(value).upper().startswith("NG") and not photo_refs
+                    )
+                    or value == PHOTO_ONLY,
                 )
             )
     return evidence
@@ -530,6 +594,8 @@ def _map_busbar(path: Path, file_id: str, sheet: Any) -> list:
         for column, photo_column, label, submodule_id in fields:
             value = sheet.cell(row, column).value
             if value in (None, ""):
+                value = PHOTO_ONLY if dispimg_refs(sheet.cell(row, photo_column).value) else None
+            if value is None:
                 continue
             start_letter = get_column_letter(column)
             end_letter = get_column_letter(photo_column)
@@ -546,6 +612,7 @@ def _map_busbar(path: Path, file_id: str, sheet: Any) -> list:
                     module_id="2.4",
                     submodule_id=submodule_id,
                     photo_refs=dispimg_refs(sheet.cell(row, photo_column).value),
+                    needs_confirmation=value == PHOTO_ONLY,
                 )
             )
     return evidence
@@ -587,6 +654,26 @@ def _map_thermal(
         position = _text(sheet.cell(row, 6).value)
         measured = _numeric_value(sheet, value_sheet, row, 7)
         if not isinstance(measured, (int, float)):
+            photo_refs = dispimg_refs(sheet.cell(row, 11).value)
+            if position:
+                # A listed checkpoint without a reading is missing content, not "no defect".
+                gaps.append(MappingGap(
+                    code="missing_thermal_reading",
+                    message=f"红外测点缺少实测温度：第 {row} 行（{position}）",
+                    sheet=sheet.title, cell=f"G{row}",
+                ))
+            if position and photo_refs:
+                # The thermal image of a listed checkpoint is still evidence; keep
+                # it with the stated gap. A photo with no checkpoint stays a gap.
+                fact = f"检测部位={position}；测点温度={PHOTO_ONLY}"
+                for module_id, submodule_id in (("2.4", "2.4.4"), ("2.2", "2.2.2.1")):
+                    evidence.append(make_evidence(
+                        file_id=file_id, path=path, sheet=sheet.title,
+                        cell=f"A{min(room_row, cabinet_row)}:K{row}", row=row, column="G",
+                        subject=_subject(current_room, current_cabinet), fact=fact,
+                        module_id=module_id, submodule_id=submodule_id,
+                        photo_refs=photo_refs, needs_confirmation=True,
+                    ))
             continue
         rise = (
             float(Decimal(str(measured)) - Decimal(str(current_environment)))
@@ -614,6 +701,10 @@ def _map_thermal(
         load_rate = _numeric_value(sheet, value_sheet, load_row, 5)
         if isinstance(load_rate, (int, float)):
             fact_parts.append(f"检测时负荷率={load_rate * 100:.2f}%")
+            measurements.append(EvidenceMeasurement(
+                quantity="load_rate", value=round(float(load_rate) * 100, 4), unit="%",
+                source_cell=f"E{load_row}",
+            ))
         if current_environment is not None:
             fact_parts.append(f"环境温度={current_environment:g}℃")
             fact_parts.append(f"相对环境温升={rise:.1f}K")
@@ -802,6 +893,7 @@ def map_s4_4(path: Path, *, file_id: str) -> MappingResult:
             gaps.extend(thermal_gaps)
         else:
             gaps.append(_missing_sheet_gap("红外热成像检测记录表", "2.4.4"))
+        gaps.extend(unbound_photo_gaps(workbook, evidence))
         return MappingResult(evidence_items=evidence, gaps=gaps)
     finally:
         value_workbook.close()

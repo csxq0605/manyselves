@@ -1294,6 +1294,9 @@ class AllReadySupervisor:
                                 "finished_at_ns": time.time_ns(),
                             }
                         )
+            except asyncio.CancelledError:
+                # A cancelled run stops here; the open claim stays resumable.
+                raise
             except BaseException as exc:  # ordinary lane failures must drain siblings
                 disposition = self._exception_disposition(exc)
                 status = "deferred" if disposition == "deferred" else "failed"
@@ -2238,6 +2241,8 @@ class RecoveryStateStore:
                 )
                 try:
                     value = await self._invoke_recovery_callback(runner, lane_id, attempt)
+                except asyncio.CancelledError:
+                    raise
                 except BaseException as exc:
                     failed = attempt.model_copy(
                         update={

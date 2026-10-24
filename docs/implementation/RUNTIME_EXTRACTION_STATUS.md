@@ -22,37 +22,209 @@
 ## Current position
 
 - Current FA work package: `Post-acceptance reporting quality maintenance`
-- Current slice: `PR #6 plan rechecked at 35cf858: confirmed budget defect separated from audit hypotheses; actual Task tools and submission Schema traced; original 17 objectives and three workflow alternatives retained`
-- Current branch: `agent/declarative-runtime-implementation` (local checkout; compiler slice baseline `a635c3c`; joint Cross committed there)
+- Current slice: `2026-10-20 第 6 次真跑后按专家版改造：写法与审查职责（B）、版式（D）、提示词缓存与工具错误（C3/C4）`
+- Current branch: `claude/project-thread-k64k3v` → pushed to PR #7 head `claude/jolly-einstein-xhhfza` (user asked to push and run, 2026-10-19)
 - Merge commit: `a2f5b31 Merge PR #4: declarative runtime architecture`
 - Program status: `Complete. revise_report supports impact_mode=none|auto|confirm and persists impact-analysis.json; confirm WAITING and accept_selected are part of the accepted product flow. DOCX openability failures block, while content/title/token findings publish with validation warnings. Cost reporting uses the accepted observe-and-display contract; reserved warn/pause and max_* inputs are not stop guarantees.`
 - Final real-test status: `Accepted complete by the user after the real Provider/project/browser, report delivery, revision, document, download and merge evidence recorded below.`
 - Blockers: 原14份Skill、输入及Knowledge已收到并核查，文件位置不再阻碍本轮；官方标准站被云端代理403阻挡（三个官方域名配置草稿已保存、待环境设置发布）；无当前Provider/route配置。后二者分别影响官方现行性核验、真实模型测量，不妨碍其他离线实施。
-- Next automatic action: 按指导的有界工作项先修S04完整请求预算（含工具Schema，明确重建器绑定/未绑定入口），同时将S06/Q06工具核对收束为真实Task→envelope→注册工具→所需引用的差异。随后完成Q03/Q05新增判断/行动字段的必要性与净负担处置，并交付F01/F02三种写作组织的职责/依赖比较；独立分析不等核心全面审计。S01非自动返工、S02紧凑交接、S05稳定前缀、Q02已复现读取修复不重复开发。模型测量及官方状态核验分别暂缓，不挂起其余工作。
+- Next automatic action: A、B1–B6、C1、C3、C4、D1–D4 均为本地提交，未推送；推送和对照真跑需用户同意。C2（思考强度）：实测只有 effort=low 有效，用户选「先不做」，各角色保持默认，并删除了角色定义里没人读取的 `limits` 块（max_turns/max_tokens/effort 等）。之后在 Mac 用新 Skill 生成新项目做一次对照真跑。未做：revise-report 仍走旧的分模块 Cross；未关闭问题未写入 DOCX；设置页尚无上限表单。
+
+### 2026-10-20 按专家版改造（B/C3/C4/D，本地提交）
+
+参照物是专家优化版报告（`docs/research/session-records/2026-10-10_to_2026-10-15/audit_manyselves/配电安全专家咨询报告(专家优化版).docx.txt`），完整方案见项目文件 `handoff/run6-plan-20261020.md`。角色和阶段不变，只改职责、合同和渲染。
+
+- B1–B4 `a433b04`：作者 Skill、模块身份和起草策略改成专家写法（现状→风险→建议→依据，按对象计算，同类对象一张表，缺资料一句话指向数据缺口表，正文不写 E- 编号）；审查把“同类对象逐段重复论证”和“汇总层再论证”列为必须修改；修订允许删减。
+- B5 `83999ef`：3.1 不再分三个下级标题（`risk_summary` 取代原三字段）；3.2 速查表固定五列（评估内容｜发现问题｜风险与危害｜解决方案｜备注），按「重要，紧急 / 重要，不紧急 / 一般」加区域分组，`domain/action_table.py` 在 Chief 提交时检查结构。
+- B6 `ca719bf`：《证据与来源索引》增加「判断依据与边界」「数据缺口表」两节，索引 DOCX 支持表格。
+- D1–D4 `f33219c`：渲染器不再覆盖模板的正文、标题、表格2 样式；所有表格走 `apply_report_table_format` 一处定义（Table Grid、0.5 磅单线、无隔行底色、表头 D4F4F1 居中加粗、自动列宽、短字段居中）；整行加粗的分组标签用「小标」；空单元格不再补写占位文字；目录改为 TOC 域（预填条目，页码需在 Word 更新一次）；照片放进问题表「现场图片」列（作者填 P- 编号），不再另起照片表，未进表的照片只在证据索引列出。测试 `test_report_docx_package.py`、`test_report_photo_cells.py`。
+- C3 `170bc2f`：各角色首条 user 消息不再重复 system prompt；固定的任务、工具、输出合同在前；Final 三条 lane 把全运行共享的 source_context 放在最前并解码成 JSON，便于共享缓存前缀。Cross 各 owner 视图按对象裁剪，共享前缀有限。
+- C4：截断工具结果改用短句柄 `TR-xxxxxxxxxxxx`（服务端映射到签名 ref，身份校验不变）；“未按引用交付”改为结构化错误并列出 `readable_refs`；每轮 4 个调用的上限写进系统提示，超出的只读调用依次执行，只跳过会改动内容的调用。
+- effort 实测（Mac，8 次×5 种）：只有 `effort=low` 有效（输出约少 4 成、耗时约 60%）；medium/high 与不设相同；`budget_tokens` 无效。
+
+### 2026-10-20 第 6 次真跑（Mac，@`b12843c`）与 A 组/C1 修复
+
+- 第 6 次全链路跑通：83.6 分钟、584 次请求、约 ¥35.4；写满输出 0 次、压缩 0 次。复盘见项目文件 `handoff/run6-review-20261020.md`。
+- Word 报"无法读取的内容"的原因：静态目录化后残留孤立的域结束标记；无扩展名照片被 python-docx 存成 `imageN.`（非法部件名）。"是否更新域"提示来自 `updateFields`。另有未引用的模板图片留在包内。
+- 修复（`v2_docx_renderer.py`）：目录区去掉全部域标记，条目只按正文实际的 1–3 级标题生成、不带页码（第 4 章只在输入有专项问题分析时出现）；不再写 `updateFields`；删除未引用的图片关系；无扩展名照片以内存流嵌入以得到正确扩展名，压缩失败写日志。测试 `test_report_docx_package.py`。
+- C1：`public_reporting._tools` 先注册仅存储版的模块 lane 工具，再由绑定的模块运行时覆盖，使审查/复核分批使用请求预算（原先顺序相反，预算退回 128k，2.4 仍分 2 批）。测试 `test_bound_module_runtime_owns_the_review_and_recheck_tools`，旧顺序下失败。
+
+### 2026-10-19 PR #7 审计更正（用户审计 `76c5637`）
+
+PR #7 不是“收束”或“只剩最后验收”：完整报告从未跑通，下列问题未解决前不建议合并。
+
+- **取消没有停下模型会话（已修，本地）**：取消只取消了 Host 等待任务，AgentLoop 继续运行，取消后还会执行工具写文件。替身 Provider 离线复现后修复：`AgentExecutionService.dispatch_turn` 被取消时调用会话的 `cancel_current()` 并等待该轮结束（最多 30 秒），再让取消继续传播；`tests/runtime/test_agent_turn_cancellation.py`。后续（本地）：吞掉 BaseException 的只有 `state/parallel.py` 的 `AllReadySupervisor.run`/`retry_lanes`，二者不在生产调用链（无调用方，属待删除债务），已改为先重新抛出 `CancelledError`；生产并行走 `WorkflowRuntimeHost._execute_parallel`。新增从入口到底的测试：`DetachedRunTaskOwner.cancel` → Host → 两个并行分支 → `invoke_agent` → 真实 AgentLoop，一次取消即记 FAILED 且两个分支都不再写文件（去掉 `dispatch_turn` 修复则失败）。`_settle_cancel` 的重复取消保留为保险。
+- **流程比较不成立（F01 重新打开）**：`writing_organizations.py` 把“一位主笔”算成旧流程全部作者、审查、修订耗时之和再加尾段，保留了应重新评估的重复工作，264 对 110 分钟不能支持“现有组织更好”。需要按工作量（事实量、正文量、审查对象数）而不是旧会话耗时重建模型后再下结论。
+  - **按工作量重建（本地）**：`scripts/benchmarks/writing_organizations.py` 改为固定工作量（事实、正文、判断及各角色输出 token），各组织自行切分会话，逐请求按 Agent loop 的压缩规则累计；请求耗时用归档运行 44 个会话的 usage 拟合（R²=0.983，每千输出 token 约 23.5 秒，主导耗时）。结果（12 组参数，[JSON](../research/experiments/2026-10-19-f01-workload-organizations.json)）：章节并行墙钟 51–59 分钟、提供方总时长 191–225 分钟；一位主笔逐模块写 166–194 / 166–194；专题并行＋主笔 112–133 / 159–187；主笔一次持有全部事实时必需输入 11.3–13.8 万 token，超过保留输入预算（4.3 万），每次请求都压缩，374–501 分钟。结论：现有组织墙钟约快 2–3 倍，代价是总工作量多约 15–20%（多出的是分开的审查会话与联合审查）；这只比较耗时和上下文可行性，没有比较成稿质量和一致性，输出量相同是假设，不能据此说“现有组织更好”。
+- **压缩阈值不是等价换算（已更正注释）**：36K（0.3 token/字）→72K（按字符类估算）只对报告样本近似；中文和数字表格提前到约 0.83 倍字符数压缩，英文推迟到约 2.2 倍，JSON 约 1.3 倍。72K 约为 128k 窗口的 56%；适用范围已写进 `config/schema.py`。
+- **完整报告仍未跑通**：本机实跑 Cross 首次输入约 20.4 万字符超预算，Chief/Final/DOCX 未执行。本地分支已把 Cross 输入改为按设备卷宗（离线约 1.6 万字符），但尚未经真实运行验证。
+  - **发送前预算检查与分批（本地）**：新增通用 `runtime/context_budget.py`：保留输入预算 = min(窗口 − max_tokens − 工具 − 余量, working_memory_tokens × 压缩目标比例)，默认 43,200 token。超过压缩目标的必需输入会让每个请求都压缩（真实运行里压缩 114 次的形态）。Cross 每个 owner 准备时估算输入，超出就按卷宗顺序分批（同一对象的事实和判断不拆开），文件定义的 owner 流程用 `for_each` 每批一轮、同一会话，合并结果（重复 ID 加批次后缀）后再进入修订；复核只带产生待复核问题的批次。每批有独立任务 ID 和结果文件，Same-run 只补跑未完成的批次。单个卷宗本身超预算时仍单独发送，由通用运行时以 `context_budget_exhausted` 停止。Compiler 现在把 `for_each` 视为循环的显式出口（它在开始时冻结列表，必然结束）。测试 `tests/capabilities/distribution_reporting/test_cross_owner_input_batches.py`（含通用 Host 跑通分批）。未做：预算未计入系统提示和工具定义（按输入合同估算）；修订、复核输入未分批。
+
+- **已有的测试失败（本轮之前就存在，未处理）**：`tests/webapi/test_lifecycle.py` 5 项（FakeRuntimeHost 缺 bus）；`test_cross_reduction.py::...closed_by_owner_recheck[True]`、`test_domain_module_ownership.py::test_pure_domain_representative_outputs_remain_exact`、`test_task_context.py::test_fact_scope_is_complete_including_unassigned_and_last_anomaly`，均已在未改动的代码上复现。
+
+### 2026-10-19 流程重构：判断台账 + 程序汇总 + 有界返工（本地分支 `claude/project-thread-k64k3v`）
+
+用户看过复盘（/mnt/project-files/handoff/review-flow-and-interaction-20261019.md）后选择“直接重构”，推翻 F01 的“保留现有拓扑”。设计见 /mnt/project-files/handoff/flow-refactor-design-20261019.md。
+
+- **根因（已核对源码）**：映射器把同一原始观测按路由复制成多个 E-ID（运行电流 `s4_4.py:112,117`，测温 `:633-651`），每个模块各自判断；一致性只靠 Cross 读完五章全文（`CrossReviewInput.modules`），输入随正文增长，真实运行约 20.4 万字符超窗口；Cross 修复、模块复审都没有轮次上限，Final 默认 3 轮且超出即 `RuntimeError`。
+- **切片1 `43924c6`**：`runtime/observation_ledger.py` 按精确来源分组，组内编号最小的 E-ID（映射器主路由）为负责小节。事实包和审查证据给引用副本标 `judged_by`；`expected_evidence_ids` 不含引用副本；`write_result_part` 对引用副本的判断记录返回结构化纠正并点名负责小节。程序检查报告负责漏判、引用重复判断、结论冲突，不阻断。
+- **切片2 `2fe5613`**：尾段第一步改为 `distribution-observation-consolidation`（Python Tool `consolidate-observation-ledger`），写 `reviews/observation-ledger.json`（台账、检查、第三章关系上下文），并写零发现的 `cross-completion.json`/`cross-decision-pack.json` 以保持 Chief/Final/Delivery 合同（“cross”命名是待改名债务）。Chief 第三章读 `observation_relations`；Chief/Final 读 `observation_ledger` 与 `observation_ledger_checks`；Final 审计员同时负责成稿一致性。Final 返工默认 1 轮，超出后未关闭发现写入 `open_at_round_limit_ids` 和 `final_residual_risks`，不再使运行失败。
+- **切片3 `e8fbb3f`**：模块“修订→复审”最多 `max_module_recheck_rounds`（默认 2）轮，仍未关闭的发现记入模块完成记录 `open_at_round_limit_ids`，台账汇总把它们列为 `module_review_open` 交给 Chief/Final。完成记录校验要求 resolved ∪ deferred ∪ open 覆盖全部发现。
+- **清理**：删除不再在生产图中的联合 Cross 工作流、修复队列、repair-lane 模板、`cross-relation-reviewer` Agent 及其 Task/Tool/Contract、`cross_joint.py` 和对应测试（-1641 行）。`revise-report` 的分模块 Cross 管线未动，仍是待迁移债务。
+- **取舍**：第二章各模块正文之间的语义矛盾不再由模型通读五章查找，改为从源头只判断一次，并由程序比对判断记录；没有判断记录、只在正文里写出的相反结论，程序查不到，只在 Final 对第 1/3/4 章的审查中部分覆盖。五模块仍并行写作，非负责模块写作时看不到负责模块的结论，只能指向负责小节。
+- **验证**：Ruff；新增/改写定向测试（台账与纠正 4 项、尾段无模型汇总、编译图、Final 有界返工、模块有界复审），受影响的模块、Cross（revise-report）、Chief/Final/交付、定义加载测试分批运行全部通过；`test_cross_reduction owner_recheck[True]` 为既有失败。没有真实 Provider 运行，效果全部待测。
+
+- **角色 Skill 写作范例（用户选“先补 Skill 范例”）：** `templates/reporting/reviewed-role-skills` 14份方法末尾各加非强制范例，按专家版写法给出逐对象问题表、优先级三档与建议时限（写明理由，理由不足写待定）、复核与验收、第一章三张表、第三章速查表；作者与审查对“分级/时限须独立依据”的禁止改为“须写理由”。14份合计 24,260→约39,500 字节。仅 Inputs 采用新副本的项目生效；真实提示遵循未验证。
+
+- **用户纠正后的联合审查（覆盖上面“联合 Cross 由程序汇总替代”的取舍）：** 用户指出一个点会出现在多个地方，所以联合审查必须保留，判断错了靠审查纠正。
+  - `365aedd`：任何位置都可以按自己的方面判断共享观测。事实和审查证据带 `shared` 标注；负责规则 `domain/observation-ownership.yaml` 只决定同一方面的冲突以谁为准；审查员要报告违反事实计算限制的判断。
+  - 本切片：尾段改为 `build-joint-dossiers` → 分 owner 的 Cross cohort → `consolidate-observation-ledger`。程序按对象整理卷宗（事实、各模块判断、正文摘录），只保留跨模块判断不同或多个模块都提出关注的对象。每个 owner 只审查与自己相关的卷宗，正文范围和其他模块的视图都裁到卷宗涉及的部分；没有卷宗的 owner 不调用模型。纠正仍走原有的 owner 修订 → 局部审查 → 复审链。`revise-report` 没有卷宗时行为不变。
+  - 固定结构稳健性：卷宗按规范化的配电房/柜号对齐设备（全半角、空格、“#/号”），“未注明”对象不合并；同一设备同一测量量（类型与单位相同）在两张表数值不同即进卷宗，不设阈值。S4-4 负荷行补测量量，总配电缺容量时写明不能计算负荷率，红外测点缺读数记 `missing_thermal_reading` 缺口。新增 `scripts/benchmarks/fixed_structure_variants.py`（清空容量/环境温度/红外读数、注入负荷矛盾、改设备写法），合成表格全部通过；真实资料尚未跑。
+  - 图片稳健性：共享观测的图片主证据跟随负责规则（红外图归 2.2.2.1，与负责判断同节）；表中引用但文件取不到的图记 `photo_media_missing`，记录保留，整表不再失败；状态格为空或红外缺读数但同行有图时保留“未填写（原表仅有图片，需复核）”记录；任何未落到记录的内嵌图记 `photo_without_record`；卷宗事实带 `photo_ids`。变体检查改走生产准备 worker，新增清空图旁状态、删除图片媒体两种变体和“每张图有着落”“共享图跟负责小节”检查，合成表格全部通过。
+  - 读图：通用运行时的用户消息可带图片（Anthropic/OpenAI 兼容两种格式）。新增文件定义的 `photo-reader` 与 `distribution-photo-reading`（4 条并行通道，逐张新会话，同次运行已读的图不重发），在 full/module report 的资料就绪后、模块写作前运行。读图结果写 `preparation/photo-readings.json`，进入事实包 `photo_reading` 和卷宗 `photo_readings`；`conflicts` 让卷宗以 `photo_conflicts_record` 进入联合审查。仅离线测试，未用真实 Provider 验证。revise-report 复用已有读图结果，未接入新读图。
+  - 设计与离线模拟见 /mnt/project-files/handoff/orchestration-scheduling-design-20261019.md §8–9。用户 Mac 上起草了方面相关表（v0），还没纳入代码。
+
+
+### 2026-10-19 — Cross 首次请求是估算误拦（另一会话在 PR 分支 `6f7b4b2`，已合入本地分支）
+
+- **根因：** Cross提示按`indent=2`序列化五模块快照；S04估算把每个缩进空格按0.5 token计，BPE实际把空白串并成约1个token。用归档正文、S06紧凑记录和归档证据重建的载荷估算125,350，超过119,808预算；三个分词器实测94,571–101,838，本可发送。
+- **改动：** 通用`_estimate_text_tokens`把连续两个及以上的ASCII空白计为1个token；Cross `_prompt`改用紧凑JSON。无新门禁或字段。
+- **效果：** 重建载荷估算125,350→92,919，DeepSeek实测94,571→84,071。S04各类内容比值不变（Python源码1.42→1.11，缩进JSON 1.23→0.97）。见`scripts/benchmarks/cross_request_size.py`与[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#真实运行后cross-首次请求被估算误拦)。
+- **验证：** Ruff（仅既有N818）；compaction/task projection/recovery turn/Cross provider·joint·recheck·round·host·revision等定向测试通过，改一处断言为紧凑格式；未新增测试。
+- **待真实运行：** 真实五模块的实际余量、Chief/Final/DOCX。
+
+### 2026-10-20 真实运行（Mac，PR #7 @`39f95ff`）
+
+- `full-report-fddf1504…`：电脑合盖睡眠，读图请求断网，Connection error 重试两次后整个 Run 失败（环境问题）。未改：读图单张请求的网络错误会直接让 Run 失败，没有等网络恢复。
+- `full-report-881d573883fe4ea59b2b968f14dbabb0`：读图 6 个请求的输入只有 1.2–1.3k token，模型对每张照片都 `report_blocked`（“消息中没有图片”）。根因：`AgentLoop._build_messages` 和 `_sanitize_provider_messages` 重建消息时没有复制 `images`，照片从未发给 Provider。已修复，新增测试 `tests/runtime/loops/test_agent_loop_images.py::test_turn_images_reach_the_provider_request`，经 AgentExecutionService 发出一轮带图请求，断言 Provider 收到图片；修复前该测试失败。两次合计花费不到 ¥0.05，模块、Cross、Chief、Final、DOCX 都未开始。
+
+- `full-report-8a17a6c61b354c4e910f026dd4186344`（@`144062c`）：读图 64 请求，63 张照片相符 35、无法判断 26、矛盾 2；五个模块初稿完成（173 请求，输入 1037 万 token，缓存命中 81%）。2.4 审查首个请求约 25 万字符（证据 9.9 万、正文与判断 6.2 万、claims 4.2 万、知识 1.4 万），发送前被 `context_budget_exhausted` 拦下，监控按停止条件取消；花费约 ¥3.85。原因：带写作范例的 Skill 让 2.4 正文与 claims 各涨约一倍，而模块审查一次装下整个模块。
+- **模块审查按小节分批（用户选定）**：`module_review_batches.py`。首次审查和复审在准备时估算输入（与 Cross 同一预算），超出就按固定小节顺序分成连续批次，批次输入写文件；车道定义用 `for_each` 在同一审查会话里每批一轮，结果合并后再走原接受逻辑（首审 finding 跨批重新编号，复审合并 verdict 与新 finding）。复审每批只带本批小节的 finding、作者回应和 diff（`build_module_recheck_delta` 新增 `view`，校验仍按整个复审范围）。批次结果文件存在时 Same-run 跳过该批；全部完成时准备阶段直接合并。测试 `tests/capabilities/distribution_reporting/test_module_review_batches.py`（含通用 Host 跑通首审 14 批、复审 2 批，同一会话）。未做：Cross 触发的 local_regression 未分批；单个小节本身超预算时仍单独发送，由运行时 `context_budget_exhausted` 停止；格式纠正提示仍附整个车道上下文。
+
+- `full-report-454fecece07849979cce232e588d587d`（@`3314ff4`）：模块审查分批生效（2.1/2.2/2.5 各 2 批，2.3 不分批，2.4 4 批），2.1、2.3 修订并复审完成。2.4 修订首个请求约 26.2 万字符被发送前拦下，监控取消；约 ¥8.88。根因：作者修订提示把整个 `ModuleRevisionPreparation`（含完整模块 `subject`，约 21.2 万字符）原样序列化，而修订输入里已有目标小节视图。已改为不序列化 `subject`（完整模块留在 `subject_ref` 引用）；测试 `test_revision_prompt_carries_only_target_submodules`，修复前失败。修订本身仍是一次整模块目标修订，未分批。
+
+- `full-report-f60fa38e787441328d6ba8e54f26f687`（@`8ebadc8`，用户取消，约 ¥18.14）：审查分批 2.1=2、2.2=2、2.3=1、2.4=3、2.5=2；2.4 修订通过（首个请求 177,789 字符，最大 243,567 字符，无压缩）。全程 46 次写满 `max_tokens=8192`，其中 45 次正文为空，2.2 审查被判 no-progress 失败，2.5 卡住。原因推断：思考与正文共用 8192 额度，DeepSeek 的 Anthropic 接口不支持 `budget_tokens`，续写时思考不回放。
+- **整体复盘（用户确认）**：见项目文件区 `handoff/real-run-retrospective-20261020.md`。10-19 Cross、第 3、4、5 次真跑卡住的都是产品写死的数字：窗口一律按 128k（配置无法声明窗口），输出 8192，工作记忆 72k、保留输入 43,200；deepseek-flash 声明的是 1M 窗口、384K 输出。此前的估算系数、Cross/模块审查分批、修订瘦身、「思考写满就翻倍重发」，是同一类迁就。用户确认的方向是：上限由模型声明决定，分批只在真正装不下时触发；「翻倍重发」丢弃不提交。
+- **模型声明的上限**：
+  - `ApiConfig.context_window` 和 `max_output_tokens` 声明模型能力，经 `ProviderFactory` 写到 Provider 上。
+  - `AgentDefaults.max_tokens` 和 `working_memory_tokens` 默认为空。为空时，每个请求的输出上限用模型声明值；压缩在历史装不进「窗口 − 输出」时触发。显式设置仍可压低上限。
+  - 保留输入预算改为 min(窗口 − 输出 − 缓冲, 工作记忆)，不再乘 0.6，所以两处分批只在输入本身装不下时触发。
+  - 未声明时退回 128k 窗口、8192 输出。
+  - 用量账本每行增加 `stop_reason`、`output_limit`、`response_text_chars`、`response_thinking_chars`、`response_thinking_tokens_estimate`。
+  - 测试：`tests/runtime/test_model_limits.py`。
+  - 未做：设置页还没有这两项的表单，目前只能写在 YAML 里；Cross 的估算空白系数待真跑后再定。
+
+### 2026-10-19 真实运行（Mac / DeepSeek deepseek-flash，Anthropic 兼容端点）
+
+- Run `full-report-7b81a3ee9fbf42e3bf7ff5bf28e3f26d`，PR #7 @`697b1ee`，项目副本由 `prepare_reporting_references.py` 生成；14:14 开始，15:05 强制结束服务进程。现场、usage 账本与结果文件保存在用户本机 `runs/real-run-20261019*`，不入仓库。
+- 模块阶段：五模块 r1 定稿；首轮 9 条 blocking 复审全部解决；作者 189 请求 18.4 分钟，审查 111 请求 21.4 分钟，缓存命中约 82–83%；终稿未判断 5/6/2/26/9。知识送达 2.1 5/5、2.2 7/7、2.3 3/3、2.4 13/14（KU-2.4-14 被运行头部挤出，离线为 14/14）、2.5 9/9；作者 `open_reference` 2 次。
+- Cross：`cross-joint-r0` 首次请求约 20.4 万字符（4 条消息）+ 1.0 万字符工具定义，超过 `128k − max_tokens(8192)` 预算；`context_budget_exhausted` 被解释为“自然语言未提交”，纠正回合无上限，拦截 20,778 次、压缩 114 次，输入约 438 万 token、0 产出。Chief/Final/DOCX 未运行。
+- 产品层：无取消 Run 入口；`DetachedRunTaskOwner.close()` 关停时等待全部任务，导致 SIGINT/SIGTERM 无法退出。网页保存的 `max_tokens=8192`（示例 16384）。
+- 已修复（本分支）：通用 Recovery 在收到 `context_budget_exhausted` 时以明确原因停止（不再纠正重发），标记不再写入会话历史；新增 `POST /api/v1/runs/{run_id}/cancel`，Runtime Host 把带标签的取消记为 FAILED（`run cancelled by user`），无标签取消（进程关停）仍保留 RUNNING 供 Same-run 恢复；取消会重复发出直到 Host 停下（部分 Reporting lane 代码捕获 BaseException）；聊天状态栏与运行页新增“停止运行”。
+- 未修复：Cross 首次输入超预算本身（需裁剪或分片，Cross 仍会失败，只是不再空转；后查明是估算误拦，见下条）；关停时等待任务的行为；lane 代码捕获 BaseException 吞掉取消。
+- 模块定稿评估（对比 9 月 9 日 mimo-v2.5 完整运行 `full-report-8c70828`，模型与 Skill 版本均不同）：内容 4/3、一致性 3/2、范例模仿 2/4、知识配合 3/2、时间成本 4/3；本次约 ¥23.8（DeepSeek 官方价，10 月 19 日读取），其中 Cross 空转约 ¥9.1。
 
 ### 17项清单的当前处置（2026-10-19再次复核）
 
-“已实现”只指已记录的机制行为；候选设计仍需取舍，专业效果单独验收。以下为唯一动态表，原指导的927aef5表继续作为历史基线。
+“机制”只指已记录的代码/定义行为；“根因证据”是决定该处置的复现或测量；“效果”分开写已测（离线、口径限定）和待测（需真实Provider运行）。四列互不替代：机制已接线不代表效果成立，离线数值不冒充计费或质量。以下为唯一动态表，原指导的927aef5表继续作为历史基线。实验均记录于[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)。
 
-| 清单 | 已有实现与证据范围 | 尚需实施或作出决定 | 外部证据／效果边界 |
-| --- | --- | --- | --- |
-| S01 | advisory留档、不自动返工，blocking路径保留 | 完成F01中的返工触发/职责分析；有重复任务证据才查派发 | 历史逐finding成本不可恢复，当前误报/返工收益未测 |
-| S02 | Cross 15→10字段；Chief/Final消费及恢复已接通 | 将字段与阶段新增价值纳入F01，不重做已闭合交接 | 专业质量与实际输出/token收益未测 |
-| S03 | 审查直接结构化提交指引已接入 | 以真实Schema/终止协议定位重复输出；未见差异时不增改造 | 模型遵循和重复可见输出减少未测 |
-| S04 | 当前事实/草稿重建，历史精确去重后压缩 | 工具Schema未计入预算仍未修；明确实际窗口、请求开销及适用入口 | 真实摘要量、token估算偏差和净成本未测 |
-| S05 | 稳定前缀/动态状态分离，原生/兼容序列化已离线核验 | 预算改动时复核受影响状态/缓存路径；已有布局不重复重构 | 缓存命中和费用收益未测 |
-| S06 | 作者紧凑提交、成功写入无需固定再列举；Module读取器局部修复 | 真实Task工具/引用差异、判断记录净负担尚待收束；拆章/并发需明确取舍 | 简化输入下组合分歧不是所有角色生产缺工具；实际往返减少未测 |
-| Q01 | 完整已解析事实/未引用事实可审；预期集合与显式记录对照 | 沿对象到请求/正文定位首次遗漏，结合Q03/Q05决定最小交接 | 已送达不等于使用，来源命中不等于判断/行动覆盖 |
-| Q02 | dimension、合并环境范围、公式缓存/缺值及错误读取缺陷已修 | 保持已修项关闭；新格式问题须有复现再纳入 | 缓存新鲜度、其他格式/OCR和大表内存仍有限制，不等于须全面重写 |
-| Q03 | 保留量/单位；撤销固定电压补算；判断条件随记录传递 | 既有事实/计算/parts与assessments的最小必要分工尚未决定 | 规则选择、条件适用及专业推理正确性未验收 |
-| Q04 | Cross共同快照；同源坐标及路由副本对照已进入输入 | 同对象同条件矛盾与合理差异的处置仍须核查；按证据追版本问题 | 同源坐标不证明设备身份，也不保证专业一致 |
-| Q05 | 显式判断、正文/行动锚点和最终章链接已接通，缺省/修订有处理 | assessments/observation_links的保留、简化或替代及成本决定未完成 | 可选记录和锚点只作诊断，语义覆盖未验收 |
-| Q06 | 来源归档/定位、规则状态依据传递、Module读取及修订影响已实现 | 核查实际审查职责所需来源能否到达，不自动给所有角色加读取器 | 官方状态核验受先前403阻挡；作者声明与ID存在不是现行/适用证明 |
-| Q07 | 蒸馏/消费条件指引、材料审计、候选回退及完整来源目录已处理 | 继续核指令冲突、候选遗漏与交付；不把手工修材料当蒸馏成功 | 无Provider配置；角色选模、新蒸馏遵循和语义召回效果未验收 |
-| F01 | 现有阶段职责与依赖已有记录，主要写审/Cross/Chief/Final流程保留 | 三种写作组织的明确比较与阶段保留/合并/取消/条件触发决定未完成 | 不以角色名相近删阶段；收益尚未测量 |
-| F02 | 判断优先实验有已知边界；生产已有随正文写入的可选判断记录 | 与直接写/写后审比较最小交接，不预设判断优先胜出 | 新字段不证明模型先判断，候选效果仍未验收 |
-| F03 | 历史525请求、分阶段及当前请求构造已有取证 | 补当前关键路径、已删/新增负担及最后实测口径 | 历史不可恢复项标明；当前墙钟/token/费用待代表性运行 |
-| F04 | 分开记录代码、材料审计、人工改稿及模型结果 | 执行有限工作项并逐项更新；静态假设不当已证实缺陷 | 中立固定值Invoker不作通用模型证据，测试数量不作完成率 |
+| 清单 | 机制状态 | 根因证据 | 决策 | 效果：已测 ／ 待测 |
+| --- | --- | --- | --- | --- |
+| S01 | advisory留档、不自动返工；blocking复审保留 | F01逐阶段核对：复审、修复轮、Final轮均只由blocking触发；历史逐finding成本不可恢复 | 关闭；有重复任务证据才查派发 | — ／ 误报率与返工收益 |
+| S02 | Cross 15→10字段；Chief/Final消费及恢复接通 | F01：Cross是第三章跨模块关系的唯一产出者 | 关闭，不重做已闭合交接 | — ／ 专业质量、输出token |
+| S03 | 审查直接结构化提交指引已接入 | 未定位到重复输出的具体Schema/终止协议差异 | 暂缓（用户已定）；真实运行出现重复可见输出再定位 | — ／ 重复输出是否减少 |
+| S04 | 按字符类别估算token，空白串计一次；工具Schema计入裁剪预算与Provider准入；压缩阈值72000 | E4复现：固定0.3系数低估中文，Schema未计入；真实运行：缩进JSON逐空格计导致Cross被误拦 | 关闭；usage明显偏差再校准 | 三个公开分词器，中文内容比值0.92–1.12，缩进JSON 1.23→0.97 ／ 估算对Provider usage |
+| S05 | 稳定前缀→只追加历史→可变状态；滚动缓存断点≤4 | 13请求回放：可变状态位于历史之前，阻断复用 | 关闭 | 离线可复用份额：兼容60.6%→79.8%，Anthropic 52.5%→71.8% ／ 实际cached比例 |
+| S06 | 作者紧凑提交；`scope`/`basis`可选；Final对象身份由运行时补（Q07） | 合成下限：判断记录复写E-*对象/时点和正文推理；Q07：Final读不到E-* | 关闭；F01不合并模块（单会话事实×2.4–3.6），拆2.4无瓶颈证据 | 作者判断输出29.1k→15.6k（下限）；Final判断上下文31.1k→22.7k ／ 实际输出与续写次数 |
+| Q01 | 范围内全部事实可审（标未绑定）；未判断列表；Cross同源链接；审计逐E-ID核对合并记录 | 三处缺陷回放：测温末两行改前审查者不可见（送达缺口），E-0071/SPD改前已送达 | 关闭机制部分；作者合并不同观测时只剩审查者比对 | 当前三处缺陷均到达审查者，测温行另有未判断信号和Cross链接 ／ 遗漏率、审查发现率 |
+| Q02 | dimension、合并环境范围、公式缓存/缺值读取已修 | 已复现的读取缺陷 | 关闭；新格式问题须有复现 | — ／ 其他格式、OCR、大表内存 |
+| Q03 | 保留量/单位；撤销固定电压补算；判断条件随记录 | E-0071数值矛盾、SPD数量差异已送达作者，属判断错误 | 分工已定：事实/计算在事实包，判断在紧凑记录，推理在正文 | — ／ 规则选择、条件适用、专业推理 |
+| Q04 | Cross共同快照；同源坐标与路由副本对照 | 回放：测温两行的2.2/2.4路由副本在同一链接 | 关闭；矛盾由Cross按链接判断，不自动判定 | 两侧未判断同时可见 ／ 同对象是否一致表述 |
+| Q05 | 显式判断、正文/行动锚点、最终章observation_links | S06逐字段净负担测量 | 关闭（observation_links保留，scope/basis可选） | Chief/Final module_assessments 31.1k→16.7k（Final另加对象身份6.0k） ／ 定位列表是否有用 |
+| Q06 | 来源归档/定位、规则状态依据传递、Module读取、修订影响 | E3：Task→envelope→工具对照；只有Final无读取器，Q07按职责补身份而非工具 | 关闭可离线部分；不给所有角色加读取器 | — ／ 官方现行性（403阻挡） |
+| Q07 | Skill/知识方法边界、候选回退、完整来源目录；Final `observation_identities`；按小节前缀退让的知识内联 | Final可定位对象记录208→0（S06）→208；三处缺陷规则KU均被所在小节检索命中；上传库38/38本模块KU完整内联，2.4余量约80字，改前超出89字即14→0 | 关闭可离线部分 | 同左；超出目标时2.4为13/14（+89字）、7/14（+4k字） ／ 角色选模、蒸馏遵循、语义召回、`open_reference`调用次数 |
+| F01 | 重新打开（2026-10-19 审计）：原结论“章节并行拓扑保留”不成立；已按工作量重建，只证明墙钟快 2–3 倍、总工作量多 15–20%，质量未比较 | 活跃时间下限：章节并行110.4分钟，主笔264.0，专题＋主笔156.7–179.6；Cross保本点60.4–167.7分钟，历史最大14.1 | 关闭；不以“只改措辞”跳过局部审查（需新门禁） | 旧编排归档下限 ／ 墙钟、成稿质量 |
+| F02 | 作者同会话随正文提交紧凑判断记录，无独立判断阶段 | 2026-10-15实验：先判断把缺环境温度误判为缺规则 | 关闭 | — ／ 模型是否先判断 |
+| F03 | `run_metrics.py`按阶段统计请求/token/缓存/压缩/活跃并集/等待链；`reporting_critical_path.py`给出结构关键路径 | 历史525请求与分角色活跃时间 | 关闭；最后真实运行按下节口径测量 | 结构串行深度12–14（首读通过为5） ／ 各阶段实际耗时 |
+| F04 | 本表四列分列；中立固定值Invoker不作通用模型证据，测试数量不作完成率 | 原表把实现、证据与效果混写，测试通过曾被当作整项完成 | 关闭；后续变化只改对应格，未测项不得写入“已测” | 17项均有决策；离线可答部分已测 ／ 下节真实运行 |
+
+### 最后一次真实运行口径（真实运行待做；不是唯一待执行项，见下方 2026-10-19 审计更正）
+
+只运行一次，失败保留现场，不自动重跑。不与归档运行做同版本A/B：归档是旧编排，只用于定位；没有可比基线的指标只报告当前绝对值。模型与route由用户确定后填写，不在此预设。
+
+1. **输入与版本。** 用`uv run python scripts/maintenance/prepare_reporting_references.py --project <上传项目> --output <新目录>`生成项目副本（不覆盖原件），通过产品外壳正常启动一次完整报告。记录分支提交、各角色实际模型（取自usage ledger）、Knowledge快照（`context-manifests/knowledge-sources.json`）。
+2. **耗时与关键路径。** `uv run python scripts/benchmarks/run_metrics.py --ledger <workspace>/.manyselves/usage/<run_id>.jsonl`，按阶段记录请求数、活跃并集、观测等待链。与`reporting_critical_path.py`的结构深度对照，确认实际走了哪个场景（几轮复审、是否触发局部回归），找出最长阶段。
+3. **Token与缓存。** 同一输出中的input/cached/output与压缩占比，对照S04离线估算（估算/实际input比）和S05离线可复用份额。偏差明显时才校准S04系数。
+4. **判断与对象质量。** 由用户评审整份报告，系统侧另记录诊断：
+   - 各模块终稿未判断列表大小、审查blocking/advisory数量。
+   - 三处历史缺陷（E-0071、SPD四处NG、测温末两行）在模块正文、Cross、Chief、Final中的表述。只作观察，不据此调提示拟合样例。
+   - Final发现是否指名对象。
+5. **知识送达。** 内联状态已用上传库离线测得（Q07）；真实运行只核对`context/module-*-knowledge.md`与离线结果一致，并记录作者`open_reference`调用次数。
+6. **暂缓项。** 本次不包括S03改造和官方标准现行性核验；出现重复可见输出时，按S03记录现场。
+
+### 2026-10-19 — Q07 KU内联实测与按小节前缀退让
+
+- **实测：** 用上传库经`prepare_reporting_references.py`生成副本，`scripts/benchmarks/ku_inline.py`构建2.1–2.5：本模块KU 5/5、7/7、3/3、14/14、9/9完整内联，38个KU都带依据状态与检索主题行；2.4为13,921字，距14k目标约80字。原文不入仓库，[JSON](../research/experiments/2026-10-19-q07-ku-inline.json)只含计数与KU编号。
+- **问题：** 按小节选取是全有或全无。目标调低89字，2.4从14/14变为0/14；调低4k字，2.1、2.5也降为0。
+- **改动：** `KnowledgeContextBuilder._assemble`在整份放不下时，取能放下的最长小节前缀（仍是完整小节），并点名被省略的小节检索词，保留`open_reference`。全部放得下时输出不变：当前库五个模块和质量上下文逐字节一致。内联目标、字段、门禁不变。
+- **效果：** 超出89字/1k/2k/4k时2.4分别为13/12/10/7个KU；4k时2.1、2.5为4/5、8/9（改前均为0）。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q07-指令冲突检索遗漏与final对象身份)。
+- **验证：** Ruff；知识上下文与research ownership定向测试14项通过；未新增测试。
+
+### 2026-10-19 — F04 逐项收束与真实运行口径
+
+- **改动：** 17项动态表由三列（实现与证据混写）改为机制状态、根因证据、决策、效果（已测／待测）四列，每项的离线数值和待测项分开写。新增“最后一次真实运行口径”，覆盖输入版本、关键路径、token/缓存、判断与对象质量、知识送达。
+- **更正：** Q07中“S06前29.7k”是同批记录按当前序列化补回scope的值；S06改前代码实测为31.1k，已在实验记录和本文件注明。
+- **结论：** 离线可答部分没有未处置项。S03与官方现行性核验暂缓，真实效果全部列为待测，状态保持“实施中”。没有代码改动或新测试。
+
+### 2026-10-19 — Q07 Final对象身份、指令冲突与候选检索
+
+- **发现：** S06以“各消费者都能读E-*”为由把`scope`改为可选；Final审计实际只有`submit_result`，输入不含E-*内容，S06后判断记录在Final处没有对象。
+- **改动：** `final_observation_context`新增运行时派生的`observation_identities`（每个已判断E-ID的subject/observed_at），Final初审、复审和Final修订三处调用传入workspace/run_id；Final审计提示补用途说明。不是模型字段，不含判断，无新门禁。
+- **实验：** `scripts/benchmarks/final_identity.py`（S06合成记录，MiMo分词器）：Final可定位对象的记录208→0（S06）→208；判断相关上下文16.7k→22.7k token，仍低于S06改前实测的31.1k（同批记录按当前序列化补回scope为29.7k）。定位串/事实文字和仅覆盖concern的方案已对比并放弃，理由见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q07-指令冲突检索遗漏与final对象身份)。
+- **核对未发现：** Skill/知识/审查指令优先级一致；生产提示与模板镜像除空行外一致；KU准备脚本给每个KU加本小节检索主题，三处已知缺陷的规则KU都被所在小节命中，不是检索漏召。
+- **待真实运行：** 同一KU文件超过14k字内联目标时整份退为未展开，上传库不在仓库，无法离线测量（后已用上传库实测并修复，见上一条）。
+- **验证：** Ruff；Final provider/投影/入口/合同/Skill权威相关定向测试40项通过；未新增测试。
+
+### 2026-10-19 — Q01/Q03/Q04 已知遗漏的首次可见位置
+
+- **实验：** `scripts/benchmarks/observation_visibility.py`用历史小节正文作作者提交，经当前`_review_evidence`、`module_assessment_views`、`source_observation_groups`回放三处已评审缺陷，比较“只记录正文讨论的对象”与“全部合成一条no_concern”两种作者行为。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#q01--q03--q04-已知遗漏在哪个消费者首次可见)。
+- **结果：** 测温末两行（两节都未引用）改前审查者不可见；当前在两种作者行为下都进入审查证据（标未绑定）、未判断列表，并有2.2/2.4完全相同路由副本的Cross链接。E-0071和SPD四处NG改前已送达审查者，缺陷在作者判断：当前只要不被合并就进入未判断列表，被合并时只剩审查者比对。
+- **改动：** `evidence-auditor`提示补充合并记录逐个E-ID核对；同步`templates/reporting`镜像（S06遗漏）。无新增字段、门禁或依据NG文字的运行时判断。
+- **验证：** prompt loader、agentic模型归属、template access、Cross定义归属18项通过；脚本Ruff通过。Provider调用0。
+- **未覆盖：** 模型是否合并不同观测、审查发现率，待真实运行。
+
+### 2026-10-19 — F01/F02 三种写作组织与阶段职责
+
+- **实验：** `scripts/benchmarks/writing_organizations.py`按角色归类归档运行各会话Provider活跃秒数，按依赖组合三种组织（串行相加、并行取最大），用生产token估算器量事实包。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#f01--f02-三种写作组织与阶段职责)及[结果JSON](../research/experiments/2026-10-19-f01-writing-organizations.json)。
+- **结果：** 章节并行（当前）110.4分钟（最慢2.2通道64.2，其中审计34.8）；一位主笔264.0；专题并行＋主笔156.7–179.6。替代组织省掉的Cross须超过60.4–167.7分钟才划算，历史最长14.1。单写作会话事实：12.7k / 30.5k / 46.1k token（working memory 72k）。
+- **阶段处置：** 模块写审、联合Cross、Owner修订＋局部审查、Chief、Final全部保留；后四者的返工轮已是条件触发。局部审查不能并入联合复审：联合审查者无项目证据工具，且`merge_repairs`/联合复审读取局部审计结果。未采纳“只改措辞跳过局部审查”（需新门禁）。
+- **F02：** 不增加独立判断阶段；作者同会话随正文提交紧凑判断记录即最小交接，保留候选规则与缺失条件，避开2026-10-15判断优先原型把缺环境量误成缺规则的失败。
+- **改动：** 新增离线脚本与结果；未改Workflow、Python运行时或提示。Provider调用0。
+- **未覆盖：** 活跃时间来自旧编排，不是同版本墙钟；三种组织的成稿质量须真实模型比较。
+
+### 2026-10-19 — S06/Q05 判断记录与Chief链接的净负担
+
+- **实验：** `scripts/benchmarks/assessment_burden.py`用生产工具构造量Schema，用归档五模块316条真实观测合成判断记录（推理为短模板，是下限），下游走生产`assessment_source_context`。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#s06--q05-作者判断记录assessments与-chief-链接observation_links的净负担)。
+- **发现：** Schema不是主要负担（作者+860、Chief+约340 token，可缓存）；主要是作者输出（分组下限29.1k token，2.4为12.9k，已接近单次回复上限12,288）和Chief/Final每次请求的31.1k token副本。其中`scope`复写E-*记录已有的对象/位置/时点，`basis`复写锚点处正文的推理。
+- **改动：** `ObservationAssessment.scope`/`basis`改为可选，只写E-*记录与正文未写明的条件和理由；审查视图省略空的可选字段；作者工具说明、提交合同、evidence-auditor与cross-relation-reviewer提示改为按E-ID读原始证据。`evidence_ids`、`disposition`、`rules`、锚点、`no_action_reason`、`observation_links`保留。
+- **结果：** 作者判断输出29.1k→15.6k（逐条40.3k→21.2k），2.4为12.9k→6.7k；下游副本31.1k→16.7k；作者Schema+62 token。
+- **边界：** 无新增门禁；缺省`scope`/`basis`不是缺陷，语义审查不跳过。模型实际输出、推理是否更多进入正文待真实运行。
+- **验证：** 涉及写入工具、assessments、提交Schema、module provider、审查输入、Chief/Final的38个测试文件：407通过；2项失败（`test_cross_reduction`旧消息正则、`test_runtime_binding`旧阶段名）在未改动的`eebca47`上同样失败，与本切片无关。Ruff通过。Provider调用0。
+
+### 2026-10-19 — F03 运行指标与结构关键路径
+
+- **交付：** `scripts/benchmarks/run_metrics.py`（usage账本→阶段请求/token/缓存/压缩、活跃并集、请求级等待链；`--sessions`读旧会话窗口）与`reporting_critical_path.py`（按生产YAML和命名场景计算串行LLM深度/会话数）。Provider调用0，未改生产代码。
+- **改前口径：** 账本`summarize`只求和，历史活跃时间求和340分钟，而并集108、跨度118分钟。
+- **结果：** 历史旧编排中模块审查循环窗口7.5–75.4分钟、压缩请求23%。当前full-report首读即通过为5个串行阶段/17会话；每处返工一轮为12–14/44–54，Cross每轮占4–6个串行阶段。详见[实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md#f03-运行指标与当前关键路径)。
+- **边界：** 结构计数不是耗时预测；联合Cross须等五模块Join。下一项S06/Q05，然后F01用同一工具比较拓扑。
+
+### 2026-10-19 — S04/S05 逐项实施与改前/改后实验
+
+- **用户要求：** 重新参考计划逐一完成，每项做实验对比。实验统一记录在[PR6逐项实验记录](../research/experiments/2026-10-19-PR6-EXPERIMENTS.md)，脚本在`scripts/benchmarks/request_token_estimate.py`、`request_cache_prefix.py`，Provider调用0。
+- **S04：** 固定0.3/字符把中文内容低估约一半（0.43–0.55），128k窗口检查实际约250k真实token才触发；工具Schema（2.4作者17个工具约3.5k token）不进预算。改为四类字符系数并把工具定义计入`_trim_typed_context_to_budget`与Provider准入；`working_memory_tokens`换算为72000使真实压缩触发点不变。组合2.4请求估算覆盖率50%→99%。
+- **S05：** `<current_task_state>`/`<runtime_task_state>`每轮变化却排在历史前，导致历史每轮全价。改为稳定前缀→历史→可变状态，并在最后一条历史上加滚动断点；裁剪始终保留最新交互组。离线13请求会话可复用份额60.6%→79.8%（兼容自动前缀）、52.5%→71.8%（Anthropic断点）。
+- **验证：** 受影响的agent_loop/providers/compaction/runtime/task_context测试通过；`test_task_context.py`两项位置断言改为新顺序（检查内容不变）。reporting/application/webapi其余35项失败/错误在基线`846b965`上同样存在（PyQt/libEGL缺失、webapi fixture、旧字符串及过时阶段名），与本切片无关。
+- **未覆盖：** 真实缓存计费、Provider usage对照、模型是否因状态移到末尾改变行为。
 
 ### 2026-10-19 — 再核计划的依赖、反证与具体交付
 

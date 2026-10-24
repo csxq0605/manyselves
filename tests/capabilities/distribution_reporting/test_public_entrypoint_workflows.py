@@ -86,6 +86,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
         "project-preparation-for-readiness",
         "run-evidence-readiness",
         "attach-readiness-preparation",
+        "run-photo-reading",
         "attach-readiness-to-context",
         "build-reporting-state",
         "run-module-cohort",
@@ -102,6 +103,7 @@ def test_full_report_declares_the_complete_root_topology() -> None:
     assert subworkflows == [
         "distribution-reporting-preparation",
         "distribution-evidence-readiness",
+        "distribution-photo-reading",
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]
@@ -117,6 +119,7 @@ def test_module_report_is_module_scoped_and_has_no_tail_stages() -> None:
     assert subworkflows == [
         "distribution-reporting-preparation",
         "distribution-evidence-readiness",
+        "distribution-photo-reading",
         "distribution-module-cohort",
     ]
     assert not any(
@@ -264,3 +267,17 @@ def test_public_root_compile_boundary_is_existing_child_specialization(
             workflow,
             load_distribution_reporting_capability()[1],
         )
+
+
+@pytest.mark.parametrize("workflow_id", ("full-report", "module-report", "revise-report"))
+def test_public_root_plans_survive_a_serialization_round_trip(workflow_id: str) -> None:
+    """A persisted plan is validated again on start; every action must re-load."""
+
+    from manyselves.kernel.workflow import ResolvedPlan
+
+    registry = _registry_with_existing_workflow_specializers()
+    workflow = registry.require(DefinitionKind.WORKFLOW, workflow_id)
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+    assert ResolvedPlan.model_validate(plan.model_dump(mode="json")) == plan
+    assert ResolvedPlan.model_validate_json(plan.model_dump_json()) == plan

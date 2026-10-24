@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,9 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
 from manyselves.capabilities.distribution_reporting.runtime.module_provider import (
     build_module_provider_composition,
 )
+from manyselves.capabilities.distribution_reporting.runtime.photo_reader_provider import (
+    PhotoReaderProviderRuntime,
+)
 from manyselves.capabilities.distribution_reporting.runtime.public_reporting import (
     PublicReportingWorkflowRuntime,
 )
@@ -61,6 +65,7 @@ from manyselves.capabilities.distribution_reporting.runtime.template_provider im
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.context_budget import retained_input_budget_for
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,
     DetachedRuntime,
@@ -142,7 +147,12 @@ class DistributionReportingRuntimeBinding:
             services,
             execution=self._execution,
         )
-        cross_lifecycle = CrossOwnerRuntime(self.workspace)
+        cross_lifecycle = CrossOwnerRuntime(
+            self.workspace,
+            input_budget=lambda: retained_input_budget_for(
+                services.agent_defaults, services.active_provider,
+            ),
+        )
         cross = build_cross_provider_composition(
             services,
             cross_runtime=cross_lifecycle,
@@ -164,6 +174,10 @@ class DistributionReportingRuntimeBinding:
             workflow_id="public-reporting",
             execution=self._execution,
         )
+        photo_reader = PhotoReaderProviderRuntime(
+            services,
+            execution=self._execution,
+        )
         tail = ReportingTailComposition(
             self.workspace,
             cross_runtime=cross_lifecycle,
@@ -181,6 +195,7 @@ class DistributionReportingRuntimeBinding:
             **aggregate.agent_invokers,
             **cross.agent_invokers,
             **full_final.agent_invokers,
+            **photo_reader.agent_invokers,
             "chief-editor": chief_router,
         }
         self._providers = (
@@ -193,6 +208,7 @@ class DistributionReportingRuntimeBinding:
             chief,
             full_final,
             full_final_chief,
+            photo_reader,
         )
 
         public = PublicReportingWorkflowRuntime(
@@ -317,6 +333,12 @@ class DistributionReportingRuntimeBinding:
             state_store=store,
             operation=runtime.resume(command_id, run_id),
         )
+
+    def cancel(self, run_id: str) -> Awaitable[Any] | None:
+        """Request a stop of this process's in-flight execution of one Run."""
+
+        self._runtime_for_run(run_id)
+        return self._detached_runs.cancel(run_id)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         projection = self._runtime_for_run(run_id).get_run(run_id)

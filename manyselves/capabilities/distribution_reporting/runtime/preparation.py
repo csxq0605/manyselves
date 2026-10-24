@@ -71,16 +71,26 @@ def prepare_manifest_file(
                 ),
                 required_image_ids=referenced_photo_ids,
             )
-        evidence = [
-            item.model_copy(
-                update={
-                    "source": item.source.model_copy(
-                        update={"path": manifest_file.path}
-                    )
-                }
-            )
-            for item in mapped.evidence_items
-        ]
+        mapping_gaps = list(mapped.gaps)
+        evidence = []
+        for item in mapped.evidence_items:
+            update: dict = {"source": item.source.model_copy(update={"path": manifest_file.path})}
+            missing = [ref for ref in item.photo_refs if ref not in raw_photo_assets]
+            if missing:
+                # The table points at a photo the file does not carry: keep the
+                # record, state the missing media, and let the rest proceed.
+                update.update({
+                    "photo_refs": [ref for ref in item.photo_refs if ref in raw_photo_assets],
+                    "fact": f"{item.fact}；原表引用的图片无法从文件中取出",
+                    "needs_confirmation": True,
+                })
+                mapping_gaps.append(preparation_models.MappingGap(
+                    code="photo_media_missing",
+                    message=f"原表引用的图片无法从文件中取出：{item.source.sheet or ''}!{item.source.cell or ''}",
+                    sheet=item.source.sheet, cell=item.source.cell,
+                    module_id=item.module_id, submodule_id=item.submodule_id,
+                ))
+            evidence.append(item.model_copy(update=update))
         return preparation_models.FilePreparationResult(
             manifest_order=manifest_order,
             file_id=manifest_file.id,
@@ -90,7 +100,7 @@ def prepare_manifest_file(
             status="parsed",
             provisional_evidence=evidence,
             raw_photo_assets=raw_photo_assets,
-            mapping_gaps=[gap.model_dump(mode="json") for gap in mapped.gaps],
+            mapping_gaps=[gap.model_dump(mode="json") for gap in mapping_gaps],
         )
     except Exception as exc:
         return preparation_models.FilePreparationResult(

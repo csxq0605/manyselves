@@ -21,6 +21,12 @@ from docx.shared import Inches, Pt, RGBColor
 _FIXED_DOCX_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _BULLET = re.compile(r"^-\s+(.+?)\s*$")
+_TABLE_SEPARATOR = re.compile(r"^:?-{3,}:?$")
+
+
+def _table_cells(line: str) -> list[str]:
+    body = line.strip().removeprefix("|").removesuffix("|")
+    return [cell.strip() for cell in body.split("|")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,9 +157,23 @@ class SourceIndexDocxRenderer:
     def _write_content(cls, document: Document, markdown: str) -> list[str]:
         expected_visible: list[str] = []
         title_written = False
-        for raw_line in markdown.splitlines():
-            line = raw_line.strip()
+        lines = markdown.splitlines()
+        index = 0
+        while index < len(lines):
+            line = lines[index].strip()
+            index += 1
             if not line:
+                continue
+            if line.startswith("|"):
+                rows = [_table_cells(line)]
+                while index < len(lines) and lines[index].strip().startswith("|"):
+                    rows.append(_table_cells(lines[index]))
+                    index += 1
+                rows = [
+                    row for row in rows
+                    if not all(_TABLE_SEPARATOR.fullmatch(cell) for cell in row)
+                ]
+                expected_visible.extend(cls._write_table(document, rows))
                 continue
             heading = _HEADING.match(line)
             if heading is not None:
@@ -195,6 +215,23 @@ class SourceIndexDocxRenderer:
         if not title_written:
             raise ValueError("source-index Markdown requires a heading")
         return expected_visible
+
+    @classmethod
+    def _write_table(cls, document: Document, rows: list[list[str]]) -> list[str]:
+        width = max(len(row) for row in rows)
+        table = document.add_table(rows=len(rows), cols=width)
+        table.style = "Table Grid"
+        written: list[str] = []
+        for row_index, row in enumerate(rows):
+            for column, text in enumerate(row):
+                cell = table.cell(row_index, column)
+                cell.text = text
+                if row_index == 0:
+                    for run in cell.paragraphs[0].runs:
+                        run.bold = True
+                if text:
+                    written.append(text)
+        return written
 
     @classmethod
     def _set_style_font(
@@ -239,6 +276,9 @@ class SourceIndexDocxRenderer:
     @staticmethod
     def _verify_visible_content(document: Document, expected: list[str]) -> None:
         visible = [paragraph.text.strip() for paragraph in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                visible.extend(cell.text.strip() for cell in row.cells)
         expected_counts = Counter(expected)
         visible_counts = Counter(visible)
         missing = [

@@ -1,0 +1,10 @@
+id: select-cross-owner-initial-batch
+version: 1.0.0
+description: Point the Cross owner initial turn at one dossier batch
+implementation: capability:distribution-reporting:select-cross-owner-initial-batch
+input_contract: reporting_tool_input
+output_contract: declarative_cross_owner_runtime_context
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

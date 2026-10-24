@@ -417,31 +417,7 @@ class PublicReportingWorkflowRuntime:
         contracts: Mapping[str, ContractAdapter],
         plan: ResolvedPlan,
     ) -> dict[str, Any]:
-        reporting_store = ReportingStore(self.workspace)
-        from .aggregate_existing import build_aggregate_existing_tool_implementations
-        from .report_revision import build_report_revision_tools
-        from .revision_impact import bind_revision_impact_tools
-
-        implementations = {
-            **build_aggregate_existing_tool_implementations(
-                workspace=self.workspace, input_snapshot=self.input_snapshot, store=reporting_store,
-            ),
-            **build_report_revision_tools(self.workspace),
-            **bind_revision_impact_tools(reporting_store),
-            **build_public_entrypoint_tool_implementations(),
-            **build_preparation_tool_implementations(
-                workspace=self.workspace,
-                input_snapshot=self.input_snapshot,
-                snapshot_content=self.snapshot_content,
-                runtime_photo_ids=self.runtime_photo_ids,
-                store=reporting_store,
-            ),
-            **build_evidence_readiness_tool_implementations(),
-            **self._module_tool_implementations(),
-            **build_module_lane_tool_implementations(store=reporting_store),
-            **build_module_cohort_tool_implementations(),
-            **self.additional_tool_implementations,
-        }
+        implementations = self._tool_implementations(ReportingStore(self.workspace))
         factory = CapabilityToolAdapterFactory(
             "distribution-reporting",
             implementations,
@@ -457,6 +433,36 @@ class PublicReportingWorkflowRuntime:
                 continue
             tools[tool_id] = factory.build(definition)
         return tools
+
+    def _tool_implementations(self, reporting_store: ReportingStore) -> dict[str, Any]:
+        from .aggregate_existing import build_aggregate_existing_tool_implementations
+        from .photo_reading import build_photo_reading_tool_implementations
+        from .report_revision import build_report_revision_tools
+        from .revision_impact import bind_revision_impact_tools
+
+        return {
+            **build_aggregate_existing_tool_implementations(
+                workspace=self.workspace, input_snapshot=self.input_snapshot, store=reporting_store,
+            ),
+            **build_report_revision_tools(self.workspace),
+            **bind_revision_impact_tools(reporting_store),
+            **build_public_entrypoint_tool_implementations(),
+            **build_preparation_tool_implementations(
+                workspace=self.workspace,
+                input_snapshot=self.input_snapshot,
+                snapshot_content=self.snapshot_content,
+                runtime_photo_ids=self.runtime_photo_ids,
+                store=reporting_store,
+            ),
+            **build_evidence_readiness_tool_implementations(),
+            **build_photo_reading_tool_implementations(self.workspace, reporting_store),
+            # Store-only lane tools first: when a module runtime is bound,
+            # its implementations (which carry the request budget) win.
+            **build_module_lane_tool_implementations(store=reporting_store),
+            **self._module_tool_implementations(),
+            **build_module_cohort_tool_implementations(),
+            **self.additional_tool_implementations,
+        }
 
     def _module_tool_implementations(self) -> dict[str, Any]:
         runtime = self.module_runtime
@@ -486,6 +492,12 @@ class PublicReportingWorkflowRuntime:
             "resume-current-module-authoring": "resume_author_lane",
             "module-lane-can-review": "can_review_lane",
             "prepare-current-module-review": "prepare_review_lane",
+            "list-current-module-review-batches": "list_review_batches",
+            "select-current-module-review-batch": "select_review_batch",
+            "merge-current-module-review-batches": "merge_review_batches",
+            "list-current-module-recheck-batches": "list_recheck_batches",
+            "select-current-module-recheck-batch": "select_recheck_batch",
+            "merge-current-module-recheck-batches": "merge_recheck_batches",
             "module-review-preflight-needs-revision": "review_preflight_needs_revision",
             "prepare-current-module-preflight-revision": "prepare_preflight_revision_lane",
             "accept-current-module-preflight-revision": "accept_preflight_revision_lane",

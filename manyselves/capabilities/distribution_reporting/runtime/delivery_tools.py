@@ -29,6 +29,7 @@ from .rendering.pds_docx_renderer import PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .report_validation import validate_final_report_structure
 from .review_artifacts import validated_final_audit_subject
+from .source_index_sections import judgment_and_gap_index_markdown
 from .source_ledger import SourceLedger
 from .storage import ReportingStore
 from .template_resolver import resolve_report_template
@@ -223,10 +224,17 @@ class DeliveryTools:
             f"Work/runs/{state['run_id']}/report/{report_stem}.md",
             delivery_markdown,
         )
-        source_index_markdown = ledger.source_index_markdown(
-            evidence_items=state.get("evidence_items", []),
-            photo_assets=state.get("photo_assets", []),
-        )
+        source_index_markdown = "\n\n".join([
+            ledger.source_index_markdown(
+                evidence_items=state.get("evidence_items", []),
+                photo_assets=state.get("photo_assets", []),
+            ).rstrip(),
+            judgment_and_gap_index_markdown(
+                self.workspace,
+                state["run_id"],
+                state.get("module_submissions") or {},
+            ),
+        ])
         source_index_path = self.store.write_text(
             f"Work/runs/{state['run_id']}/source-index/证据与来源索引.md",
             source_index_markdown.rstrip() + "\n",

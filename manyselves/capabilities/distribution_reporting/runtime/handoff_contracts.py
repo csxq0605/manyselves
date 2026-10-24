@@ -63,20 +63,16 @@ def write_handoff_contracts(store: ReportingStore, state: dict[str, Any]) -> Pat
             ],
         },
         {
-            "stage": "cross-review",
+            "stage": "joint-review",
             "producer": "five independently reviewed module pipelines",
-            "consumer": "cross-relation-reviewer",
-            "input": "CrossReviewInput with five exact ModuleSubmission artifacts",
-            "output": (
-                "coverage + CrossReviewFinding + CrossSynthesisInput + "
-                "original-reviewer ResolutionVerdict"
-            ),
+            "consumer": "build-joint-dossiers (program), per-owner cross-module-reviewer, consolidate-observation-ledger (program)",
+            "input": "five exact ModuleSubmission artifacts, the shared-observation ledger and per-object joint dossiers",
+            "output": "per-owner Cross findings/corrections, then observation-ledger.json: ledger, program checks, Chapter 3 relation context",
             "content_checks": [
-                "cross-module terminology, facts, risk levels, dependencies, propagation, and joint verification only",
-                "no routine re-audit of module-local prose, evidence sufficiency, or image binding",
-                "owner specialist corrects blocking findings; optional Cross advisories are retained without automatic revision",
-                "module auditor checks only local regression",
-                "the original Cross reviewer closes corrective findings; deferred advice is not marked resolved",
+                "several modules may judge one observed object from their own angles; the owner decides same-angle conflicts",
+                "the joint review reads per-object dossiers (facts, judgments, prose excerpts), not five module texts",
+                "corrections go only to the module the finding names, followed by its local review and recheck",
+                "module findings left open at the round limit are carried to Chief and Final",
             ],
         },
         {

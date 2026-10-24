@@ -31,9 +31,7 @@ class CanonicalReportContent:
     findings_overview: str
     regional_executive_summary: str
     module_narratives: dict[str, str]
-    risk_panorama: str
-    dimension_risk_analysis: str
-    data_gap_analysis: str
+    risk_summary: str
     improvement_action_plan: str
     special_topic_plan: SpecialTopicPlan | None = None
     special_topic_analysis: str | None = None
@@ -206,17 +204,7 @@ def compose_canonical_markdown(content: CanonicalReportContent) -> str:
             "",
             "### 3.1 风险/问题汇总与概览",
             "",
-            "#### 3.1.1 风险全景图",
-            "",
-            _section_body(content.risk_panorama, content.tables),
-            "",
-            "#### 3.1.2 各维度风险分析",
-            "",
-            _section_body(content.dimension_risk_analysis, content.tables),
-            "",
-            "#### 3.1.3 数据缺口分析",
-            "",
-            _section_body(content.data_gap_analysis, content.tables),
+            _section_body(content.risk_summary, content.tables),
             "",
             "### 3.2 改善行动速查表",
             "",

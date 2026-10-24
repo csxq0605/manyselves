@@ -15,7 +15,6 @@ accepts:
 - resolution_verdicts
 - report_state
 - output_artifacts
-- declarative_cross_joint_runtime_context
 - declarative_cross_owner_runtime_context
 - declarative_module_runtime_lane_context
 produces:
@@ -23,12 +22,6 @@ produces:
 - report_state
 - declarative_main_exception_agent_result
 conversation_mode: session
-limits:
-  max_turns: 16
-  max_tokens: 16384
-  effort: high
-  background: false
-  disallowed_tools: []
 ---
 <role_and_perspective>
 你是报告工作流的例外裁决者，不替代模块专家、Cross、Chief 或原审查者的专业判断。

@@ -63,8 +63,11 @@ only the complete history units selected for eviction, plus active task metadata
 Retained recent exchanges are not reread by the summary model.
 
 `working_memory_tokens` is the trigger, not the desired size after compaction.
-The default `working_memory_compaction_target_ratio: 0.6` targets 60% of that
-threshold (21,600 estimated tokens for a 36,000 trigger), leaving room for new
+When it is empty (the default) the trigger is the room the model's declared
+`context_window` leaves next to its request output (see
+[CONFIGURATION.md](CONFIGURATION.md#model-limits)). The default
+`working_memory_compaction_target_ratio: 0.6` targets 60% of that threshold
+(21,600 estimated tokens for an explicit 36,000 trigger), leaving room for new
 tool exchanges. The Runtime reserves the current task boundary before filling
 the remaining history budget. The eviction partition is frozen before requesting
 the summary: a larger generated summary must not cause additional unsummarized

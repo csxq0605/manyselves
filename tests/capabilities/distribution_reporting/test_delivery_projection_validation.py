@@ -55,9 +55,7 @@ def _edited_report() -> EditedReportSubmission:
             )
             for module_id, definition in REPORT_TAXONOMY.items()
         },
-        risk_panorama="panorama",
-        dimension_risk_analysis="risk analysis",
-        data_gap_analysis="gaps",
+        risk_summary="panorama",
         improvement_action_plan="actions",
     )
 
@@ -377,3 +375,59 @@ def test_final_audit_reconstructs_missing_snapshot_without_provider_boundary(
             store=store,
             state=tampered,
         )
+
+
+def test_final_rework_is_bounded_and_open_findings_become_residual_risks(
+    tmp_path: Path,
+) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime.final_review_tools import (
+        FinalReviewTools,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
+        ChapterScopedFinalReviewFinding,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.final_review import (
+        DeclarativeFinalReviewContext,
+    )
+
+    run_id = "final-bounded-rework"
+    edited = _edited_report()
+    finding = ChapterScopedFinalReviewFinding(
+        id="F-3-001", target_section_ids=["3.2"],
+        target_changes=[{
+            "target_section_id": "3.2",
+            "required_change": "修改 3.2 中 G5 柜负荷的结论，使其服从 2.4.1.1 负责小节的判断",
+            "reviewer_checks": ["3.2 与 2.4.1.1 结论一致"],
+        }],
+        category="consistency", impact="blocking",
+        observation="3.2 对 G5 柜负荷的结论与 2.4.1.1 的负责判断不一致",
+        evidence_refs=["E-0001"],
+    )
+    lane_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-3-r0.json"
+    ReportingStore(tmp_path).write_json(
+        f"Work/runs/{run_id}/edited-revisions/chief-r0.json", edited.model_dump(mode="json"),
+    )
+    ReportingStore(tmp_path).write_json(lane_ref, {
+        "kind": "final_chapter_lane_finding_submission",
+        "findings": [finding.model_dump(mode="json")],
+    })
+    review = DeclarativeFinalReviewContext(
+        state=_state(run_id, edited), current=edited,
+        subject_ref=f"Work/runs/{run_id}/edited-revisions/chief-r0.json",
+        findings_by_chapter={"3": [finding]}, pending_by_chapter={"3": [finding]},
+        initial_lane_refs={"3": lane_ref}, revision_number=1,
+    )
+    serialized = json.loads(review.model_dump_json())
+
+    # One rework round already ran: no second round, the Run is not failed.
+    assert FinalReviewTools.needs_round(serialized) is False
+    completed = FinalReviewTools(workspace=tmp_path).complete_review(serialized)
+
+    assert any("F-3-001" in risk for risk in completed["final_residual_risks"])
+    completion, _ = load_current_review_completion(
+        workspace=tmp_path, run_id=run_id,
+        completion_ref=completed["final_review_completion_ref"], lifecycle="final",
+        reviewer_agent_id="chief-editor-auditor", reviewer_session_key="final-chapter-wave",
+    )
+    assert completion.open_at_round_limit_ids == ["F-3-001"]
+    assert completion.resolved_finding_ids == []

@@ -12,7 +12,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ..artifacts.gateway import ToolContractError
+from ..artifacts.gateway import TOOL_RESULT_HANDLE_RE, ToolContractError
 
 
 _OPAQUE_PREFIX = "artifact:v1:"
@@ -147,7 +147,7 @@ def normalize_tool_call(
 
     ref = args.get("ref")
     if name == "open_tool_result" and isinstance(ref, str):
-        if ref.startswith(_OPAQUE_PREFIX):
+        if ref.startswith(_OPAQUE_PREFIX) or TOOL_RESULT_HANDLE_RE.fullmatch(ref):
             return result
         if _is_authorized(ref, refs, capability):
             result.update(

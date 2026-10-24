@@ -17,10 +17,23 @@ class TestEstimateTokens:
         assert _estimate_tokens(msgs) == 4
 
     def test_text_content_estimation(self):
-        content = "a" * 100
-        msgs = [LLMMessage(role="user", content=content)]
-        # 4 overhead + 100 * 0.3 = 34
-        assert _estimate_tokens(msgs) == 34
+        # Character classes: ASCII letters 0.22, non-ASCII (Chinese) 0.72.
+        assert _estimate_tokens([LLMMessage(role="user", content="a" * 100)]) == 4 + 22
+        assert _estimate_tokens([LLMMessage(role="user", content="配电" * 50)]) == 4 + 72
+
+    def test_typed_trim_budget_counts_tool_schemas(self):
+        from manyselves.runtime.loops.agent_loop import _trim_typed_context_to_budget
+
+        msgs = [
+            LLMMessage(role="system", content="system"),
+            LLMMessage(role="user", content="旧" * 4000),
+            LLMMessage(role="assistant", content="ok"),
+            LLMMessage(role="user", content="current"),
+        ]
+        window = dict(context_window=8000, max_output=1000)
+        assert len(_trim_typed_context_to_budget(msgs, **window).messages) == 4
+        trimmed = _trim_typed_context_to_budget(msgs, **window, tool_tokens=3500)
+        assert [m.content for m in trimmed.messages] == ["system", "ok", "current"]
 
     def test_tool_calls_add_overhead(self):
         from manyselves.runtime.providers.base import LLMToolCall

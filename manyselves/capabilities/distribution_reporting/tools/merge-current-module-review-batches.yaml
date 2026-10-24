@@ -1,0 +1,10 @@
+id: merge-current-module-review-batches
+version: 1.0.0
+description: Record one module review after all its submodule batches
+implementation: capability:distribution-reporting:merge-current-module-review-batches
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

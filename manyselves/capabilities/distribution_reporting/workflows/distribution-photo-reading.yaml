@@ -1,0 +1,111 @@
+id: distribution-photo-reading
+version: 1.0.0
+description: Read every project photo once per run against its bound table records
+tasks:
+- photo-reading
+recovery:
+- current-reporting-recovery
+input_contract: preparation_context
+input_variable: preparation-context
+output_contract: photo_reading_summary
+state:
+  preparation-context: {}
+  lane-id-1: "1"
+  lane-id-2: "2"
+  lane-id-3: "3"
+  lane-id-4: "4"
+  photo-reading-plan: {}
+  should-read-photos: false
+  photo-reading-outcomes: {}
+  photo-reading-summary: {}
+actions:
+- id: prepare-photo-reading
+  kind: invoke_tool
+  tool: prepare-photo-reading
+  input_variable: preparation-context
+  output_variable: photo-reading-plan
+- id: photo-reading-requires-agent
+  kind: invoke_tool
+  tool: photo-reading-requires-agent
+  input_variable: photo-reading-plan
+  output_variable: should-read-photos
+- id: choose-photo-reading-path
+  kind: if
+  condition:
+    variable: should-read-photos
+    operator: truthy
+  then: photo-reading-lanes
+  otherwise: reduce-photo-reading
+- id: photo-reading-lanes
+  kind: parallel
+  branches:
+    "1": read-photo-lane-1
+    "2": read-photo-lane-2
+    "3": read-photo-lane-3
+    "4": read-photo-lane-4
+  join: join-photo-reading-lanes
+  max_concurrency: 4
+- id: read-photo-lane-1
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-1
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-1
+  child_output_name: result
+  output_variable: lane-readings-1
+- id: complete-photo-lane-1-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-2
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-2
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-2
+  child_output_name: result
+  output_variable: lane-readings-2
+- id: complete-photo-lane-2-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-3
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-3
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-3
+  child_output_name: result
+  output_variable: lane-readings-3
+- id: complete-photo-lane-3-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: read-photo-lane-4
+  kind: subworkflow
+  workflow: distribution-photo-reading-lane-4
+  input_variables:
+    plan: photo-reading-plan
+    lane-id: lane-id-4
+  child_output_name: result
+  output_variable: lane-readings-4
+- id: complete-photo-lane-4-branch
+  kind: goto
+  target: join-photo-reading-lanes
+- id: join-photo-reading-lanes
+  kind: join
+  parallel: photo-reading-lanes
+  inputs:
+    "1": lane-readings-1
+    "2": lane-readings-2
+    "3": lane-readings-3
+    "4": lane-readings-4
+  output_variable: photo-reading-outcomes
+- id: reduce-photo-reading
+  kind: invoke_tool
+  tool: reduce-photo-reading
+  input_variables:
+    plan: photo-reading-plan
+    outcomes: photo-reading-outcomes
+  output_variable: photo-reading-summary
+- id: finish-photo-reading
+  kind: end_workflow
+  output_variable: photo-reading-summary
+  output_name: result

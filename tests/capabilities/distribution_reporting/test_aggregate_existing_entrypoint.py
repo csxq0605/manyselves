@@ -102,9 +102,7 @@ def _edited_submission():
             module_id: _structured(module_id).markdown
             for module_id in REPORT_MODULE_IDS
         },
-        risk_panorama="风险全景",
-        dimension_risk_analysis="维度风险",
-        data_gap_analysis="数据缺口",
+        risk_summary="风险全景",
         improvement_action_plan="改进行动",
     )
 
@@ -1449,7 +1447,7 @@ async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     result_refs = {}
     for chapter_id, section_ids in {
         "1": ("1.1", "1.2", "1.3"),
-        "3": ("3.1.1", "3.1.2", "3.1.3", "3.2"),
+        "3": ("3.1", "3.2"),
         "4": ("4.1",),
     }.items():
         result_ref = (

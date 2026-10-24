@@ -1,0 +1,62 @@
+{
+  "provider_calls": 0,
+  "totals": {
+    "requests": 525,
+    "compaction_requests": 120,
+    "input_tokens": 0,
+    "cached_input_tokens": 0,
+    "output_tokens": 0,
+    "span_minutes": 118.0,
+    "active_union_minutes": 116.7
+  },
+  "stages": {
+    "cross": {
+      "requests": 20,
+      "compaction_requests": 7,
+      "active_union_minutes": 41.2,
+      "window_minutes": [
+        36.7,
+        77.9
+      ]
+    },
+    "final": {
+      "requests": 5,
+      "compaction_requests": 0,
+      "active_union_minutes": 16.1,
+      "window_minutes": [
+        102.0,
+        118.0
+      ]
+    },
+    "chief": {
+      "requests": 86,
+      "compaction_requests": 18,
+      "active_union_minutes": 36.0,
+      "window_minutes": [
+        79.3,
+        115.3
+      ]
+    },
+    "module-author": {
+      "requests": 144,
+      "compaction_requests": 24,
+      "active_union_minutes": 19.0,
+      "window_minutes": [
+        0.0,
+        19.0
+      ]
+    },
+    "module-review-loop": {
+      "requests": 270,
+      "compaction_requests": 71,
+      "active_union_minutes": 67.9,
+      "window_minutes": [
+        7.5,
+        75.4
+      ]
+    }
+  },
+  "critical_chain": null,
+  "note": "Archived per-session windows only: stage time is session-window union, not provider-active union; tokens and the request-level chain are unavailable.",
+  "run": "full-report-8c70828443b9499d80f8a6bda41c670c"
+}

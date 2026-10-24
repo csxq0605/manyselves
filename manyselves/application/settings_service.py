@@ -151,6 +151,8 @@ class SettingsService:
                 provider_config.api_base,
                 provider_config.default_model,
                 provider_config.extra_headers,
+                context_window=provider_config.context_window,
+                max_output_tokens=provider_config.max_output_tokens,
             )
             async with asyncio.timeout(timeout_seconds):
                 await provider.chat(

@@ -8,6 +8,23 @@ from ..artifacts.gateway import ArtifactGateway, ToolContractError, contract_err
 from .registry import Tool
 
 
+def not_delivered_result(ref: str, allowed_refs: Iterable[str]) -> dict:
+    """Say which refs this task can open instead of a bare permission error."""
+
+    readable = sorted(allowed_refs)
+    return contract_error_result(
+        ToolContractError(
+            "this artifact was not delivered by reference for this task; content "
+            "shown in the task input is already inline and needs no reopening",
+            code="capability_denied",
+            repair_code="use_readable_refs",
+            details={"ref": ref, "readable_refs": readable},
+        ),
+        ref=ref,
+        readable_refs=readable,
+    )
+
+
 class OpenArtifactTool(Tool):
     name = "open_artifact"
     description = "Open a bounded page of an attached project artifact by path or opaque ref."
@@ -33,7 +50,7 @@ class OpenArtifactTool(Tool):
         self, ref: str, offset: int = 0, limit: int | None = None
     ) -> dict:
         if self.allowed_refs is not None and ref not in self.allowed_refs:
-            raise PermissionError("artifact was not delivered by reference for this task")
+            return not_delivered_result(ref, self.allowed_refs)
         bounded_limit = min(
             max(limit or self.default_limit, self.minimum_limit), self.maximum_limit
         )
@@ -60,7 +77,7 @@ class OpenToolResultTool(Tool):
         """Open the next page of a truncated tool result.
 
         Args:
-            ref: Opaque full_result_ref returned by the truncation envelope.
+            ref: The full_result_ref handle (TR-...) returned by the truncation envelope.
             offset: Character offset; use the prior envelope or page's next_offset.
             limit: Page size in characters. Defaults to the maximum 8000 characters.
         """
@@ -91,7 +108,7 @@ class SearchTextTool(Tool):
 
     async def __call__(self, ref: str, query: str, max_matches: int = 20, context_lines: int = 2) -> dict:
         if self.allowed_refs is not None and ref not in self.allowed_refs:
-            raise PermissionError("artifact was not delivered by reference for this task")
+            return not_delivered_result(ref, self.allowed_refs)
         if self.research_guard is not None:
             self.research_guard()
         requested = {"max_matches": max_matches, "context_lines": context_lines}

@@ -33,6 +33,10 @@ state:
   reporting-state: {}
   module-id: "{module_id}"
   lane-outcomes: {}
+  module-review-batches: []
+  module-review-batch: {}
+  module-recheck-batches: []
+  module-recheck-batch: {}
 actions:
 - id: start-current-module-lane
   kind: invoke_tool
@@ -369,6 +373,36 @@ actions:
   conversation_key: "{auditor_conversation_key}"
   mode: run
   output_variable: module-reviewer-conversation
+- id: list-current-module-review-batches
+  kind: invoke_tool
+  tool: list-current-module-review-batches
+  input_variable: lane-context
+  output_variable: module-review-batches
+- id: each-current-module-review-batch
+  kind: for_each
+  items_variable: module-review-batches
+  item_variable: module-review-batch
+  body: select-current-module-review-batch
+  after: merge-current-module-review-batches
+- id: select-current-module-review-batch
+  kind: invoke_tool
+  tool: select-current-module-review-batch
+  input_variables:
+    context: lane-context
+    batch: module-review-batch
+  output_variable: lane-context
+- id: module-review-batch-requires-agent
+  kind: invoke_tool
+  tool: module-review-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-review-batch
+- id: choose-module-review-batch-source
+  kind: if
+  condition:
+    variable: should-invoke-module-review-batch
+    operator: truthy
+  then: invoke-current-module-reviewer
+  otherwise: next-current-module-review-batch
 - id: invoke-current-module-reviewer
   kind: invoke_agent
   agent: evidence-auditor
@@ -382,6 +416,14 @@ actions:
   input_variables:
     context: lane-context
     result: module-review-agent-result
+  output_variable: lane-context
+- id: next-current-module-review-batch
+  kind: goto
+  target: each-current-module-review-batch
+- id: merge-current-module-review-batches
+  kind: invoke_tool
+  tool: merge-current-module-review-batches
+  input_variable: lane-context
   output_variable: lane-context
 - id: continue-after-module-review
   kind: goto
@@ -535,6 +577,36 @@ actions:
   conversation_key: "{auditor_conversation_key}"
   mode: run
   output_variable: module-recheck-conversation
+- id: list-current-module-recheck-batches
+  kind: invoke_tool
+  tool: list-current-module-recheck-batches
+  input_variable: lane-context
+  output_variable: module-recheck-batches
+- id: each-current-module-recheck-batch
+  kind: for_each
+  items_variable: module-recheck-batches
+  item_variable: module-recheck-batch
+  body: select-current-module-recheck-batch
+  after: merge-current-module-recheck-batches
+- id: select-current-module-recheck-batch
+  kind: invoke_tool
+  tool: select-current-module-recheck-batch
+  input_variables:
+    context: lane-context
+    batch: module-recheck-batch
+  output_variable: lane-context
+- id: module-recheck-batch-requires-agent
+  kind: invoke_tool
+  tool: module-recheck-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-recheck-batch
+- id: choose-module-recheck-batch-source
+  kind: if
+  condition:
+    variable: should-invoke-module-recheck-batch
+    operator: truthy
+  then: invoke-current-module-recheck
+  otherwise: next-current-module-recheck-batch
 - id: invoke-current-module-recheck
   kind: invoke_agent
   agent: evidence-auditor
@@ -548,6 +620,14 @@ actions:
   input_variables:
     context: lane-context
     result: module-recheck-agent-result
+  output_variable: lane-context
+- id: next-current-module-recheck-batch
+  kind: goto
+  target: each-current-module-recheck-batch
+- id: merge-current-module-recheck-batches
+  kind: invoke_tool
+  tool: merge-current-module-recheck-batches
+  input_variable: lane-context
   output_variable: lane-context
 - id: continue-after-module-recheck
   kind: goto

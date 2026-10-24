@@ -166,6 +166,11 @@ class ParameterAdjustmentRuntimeBinding:
         await self._execute(plan, state, registry, contracts, tools)
         return {"run_id": run_id, "task_id": None}
 
+    def cancel(self, run_id: str) -> None:
+        """Short runs finish inside their request; nothing is left to cancel."""
+
+        self._load_state(run_id)
+
     def get_run(self, run_id: str) -> dict[str, Any]:
         state = self._load_state(run_id)
         waiting_input = [state.waiting_input] if state.waiting_input is not None else []

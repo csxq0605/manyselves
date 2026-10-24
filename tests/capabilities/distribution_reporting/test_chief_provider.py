@@ -391,8 +391,9 @@ async def test_chief_provider_composition_uses_real_tools_and_one_provider_sessi
         truncated["full_result_ref"], offset=truncated["next_offset"],
     )
     assert page["content"] == full_text[truncated["next_offset"]:truncated["next_offset"] + 8000]
-    with pytest.raises(PermissionError, match="not delivered"):
-        await loops[0].kwargs["tools"].get("open_artifact")(truncated["full_result_ref"])
+    assert truncated["full_result_ref"].startswith("TR-")
+    denied = await loops[0].kwargs["tools"].get("open_artifact")(truncated["full_result_ref"])
+    assert denied["code"] == "capability_denied"
 
 
 @pytest.mark.asyncio

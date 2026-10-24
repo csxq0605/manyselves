@@ -1,0 +1,10 @@
+id: prepare-photo-reading
+version: 1.0.0
+description: Plan the photos still to read in this run over fixed lanes
+implementation: capability:distribution-reporting:prepare-photo-reading
+input_contract: preparation_context
+output_contract: photo_reading_plan
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

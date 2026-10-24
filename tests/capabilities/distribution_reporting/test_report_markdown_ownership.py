@@ -100,9 +100,7 @@ def test_canonical_markdown_exact_output_remains_stable() -> None:
         findings_overview="总览正文",
         regional_executive_summary="区域正文",
         module_narratives=module_narratives,
-        risk_panorama="风险正文",
-        dimension_risk_analysis="维度正文",
-        data_gap_analysis="缺口正文",
+        risk_summary="风险正文",
         improvement_action_plan=(
             "行动说明\n\n动作表\n\n| 旧列 |\n| --- |\n| 旧值 |\n\n尾段"
         ),
@@ -148,12 +146,7 @@ def test_canonical_markdown_exact_output_remains_stable() -> None:
         "2.5 正文\n\n"
         "## 3. 结论与建议\n\n"
         "### 3.1 风险/问题汇总与概览\n\n"
-        "#### 3.1.1 风险全景图\n\n"
         "风险正文\n\n"
-        "#### 3.1.2 各维度风险分析\n\n"
-        "维度正文\n\n"
-        "#### 3.1.3 数据缺口分析\n\n"
-        "缺口正文\n\n"
         "### 3.2 改善行动速查表\n\n"
         "行动说明\n\n"
         "尾段\n\n"

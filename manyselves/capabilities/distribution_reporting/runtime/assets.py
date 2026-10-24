@@ -250,9 +250,6 @@ def validate_final_report_markdown(
     tail = [
         ("3. 结论与建议", 2),
         ("3.1 风险/问题汇总与概览", 3),
-        ("3.1.1 风险全景图", 4),
-        ("3.1.2 各维度风险分析", 4),
-        ("3.1.3 数据缺口分析", 4),
         ("3.2 改善行动速查表", 3),
     ]
     if special_topic_plan is not None:

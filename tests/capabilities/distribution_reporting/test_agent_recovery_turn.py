@@ -148,3 +148,45 @@ async def test_no_progress_stop_preserves_the_actual_continuation_boundary(
     assert "no_progress" in result.error
     assert boundary in result.error
     dispatch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_context_budget_exhaustion_stops_instead_of_requesting_correction() -> None:
+    """A mandatory context over the Provider window cannot shrink by re-asking.
+
+    Real run 2026-10-19 (cross-joint-r0): the exhausted marker was read as
+    natural language without submission, so correction turns repeated the same
+    pre-send block about every 13 seconds until the process was killed.
+    """
+    execution = AgentExecutionService(object())  # type: ignore[arg-type]
+    session = AgentExecutionSession(
+        workflow_id="workflow", conversation_key="conversation",
+        loop=object(), session_id="session", runtime_id="runtime", created=False,
+    )
+    request = AgentTurnRequest(
+        content="initial", message_id="message", workflow_id="workflow",
+        run_id="run", task_id="task", task_attempt_id="attempt",
+    )
+    exhausted = AgentTurnOutcome(
+        kind="response",
+        message=AgentResponse(
+            agent_type="runtime", message_id="message",
+            content="context_budget_exhausted",
+        ),
+        session_id="session", runtime_id="runtime",
+    )
+    dispatch = AsyncMock(side_effect=[exhausted, exhausted, exhausted])
+    execution.dispatch_turn = dispatch
+    result = await execute_reporting_recovery(
+        execution, session, request,
+        recovery_policy=RecoveryPolicyDefinition(
+            id="recovery", version="1.0.0", description="current policy",
+            rules={"natural_language_without_submission": RecoveryRule(action="correct"),
+                   "no_progress": RecoveryRule(action="stop")},
+        ),
+        terminals=(), prompt_builder=lambda _event: "submit",
+        result_decoder=lambda _ref: None,
+    )
+    assert result.status == "incomplete"
+    assert "context_budget_exhausted" in result.error
+    dispatch.assert_awaited_once()
