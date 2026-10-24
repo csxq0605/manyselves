@@ -1,9 +1,0 @@
-{
-  "workflow_id": "distribution-aggregate-existing-tail",
-  "identity_key": "final-chapter-1",
-  "owner_id": "Csxq-Laptop:18568:57177b3a56654330a0162671aae6648f:attempt-a3c7eb045dfb45618468622d338f9483",
-  "lease_epoch": 2,
-  "acquired_at_ns": 1791809212150904000,
-  "released_at_ns": 1791809212650307600,
-  "status": "released"
-}

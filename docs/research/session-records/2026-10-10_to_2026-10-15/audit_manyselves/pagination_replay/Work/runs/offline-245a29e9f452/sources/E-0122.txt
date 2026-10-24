@@ -1,1 +1,0 @@
-{"id":"E-0122","subject":"文体中心配电房/3#","fact":"色标标识=OK","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"总配评估详情表","cell":"N8:O8","page":null,"row":8,"column":"N","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.4","submodule_id":"2.4.2.4","photo_refs":[]}

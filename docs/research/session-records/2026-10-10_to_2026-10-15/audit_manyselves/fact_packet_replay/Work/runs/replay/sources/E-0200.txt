@@ -1,1 +1,0 @@
-{"id":"E-0200","subject":"老配电房（低压）","fact":"出口应急灯=NG","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"配电房合规性","cell":"D10:E10","page":null,"row":10,"column":"D","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.2.3","photo_refs":["P-0009"]}

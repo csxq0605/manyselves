@@ -1,1 +1,0 @@
-{"id":"E-0159","subject":"13号楼配电房","fact":"门窗合规=OK","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"配电房合规性","cell":"B5:C5","page":null,"row":5,"column":"B","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.2.3","photo_refs":[]}

@@ -4,7 +4,7 @@
 >
 > 适用范围：仓库结构、公共接口、Capability 包、运行时、FastAPI、React、测试与发布
 >
-> 实施状态：产品、核心架构与验收已完成；最终结论见 [`implementation/RUNTIME_EXTRACTION_STATUS.md`](implementation/RUNTIME_EXTRACTION_STATUS.md)
+> 实施状态：产品与核心架构已完成；当前报告流程见仓库 [README](../README_zh.md)
 
 ## 1. 一句话定位
 

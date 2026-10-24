@@ -1,1 +1,0 @@
-{"id":"E-0013","subject":"运行、维护与试验记录/电能质量分析报告","fact":"具备情况=NG；有效性=NG","source":{"file_id":"file-0e493d3e291ad22b","path":"Inputs/S2-1收资表.xlsx","sheet":"收资表","cell":"G14:H14","page":null,"row":14,"column":"G","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.2","submodule_id":"2.2.1.1","photo_refs":[]}

@@ -1,1 +1,0 @@
-{"task_id":"module-2.4-initial-review-r0","run_id":"module-reviewer-provider-attempt","agent_id":"evidence-auditor","session_id":"public-reporting:module-reviewer-provider-attempt","status":"completed","payload":{"kind":"module_review_finding_submission","coverage":{"submodule_ids":["2.4.1.1"]},"findings":[]},"raw_output":"","reason":null}
