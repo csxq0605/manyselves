@@ -83,6 +83,20 @@ def header_label(sheet: Any, row: int, column: int, fallback: str) -> str:
     return field_name(sheet.cell(row, column).value) or fallback
 
 
+def _first_record_row(counts: dict[int, int]) -> int:
+    """The row the sheet's records start on.
+
+    A record a mapper reads from the header area itself (a graphic embedded
+    in a header cell) stands alone on its row while the records below share
+    theirs; it does not move the header above the records.
+    """
+
+    rows = sorted(counts)
+    if counts[rows[0]] == 1 and (later := [row for row in rows[1:] if counts[row] > 1]):
+        return later[0]
+    return rows[0]
+
+
 def source_layout(
     path: Path, evidence: list[EvidenceItem], image_ids: set[str]
 ) -> tuple[dict[str, dict[str, str]], dict[str, tuple[str, str]]]:
@@ -93,11 +107,13 @@ def source_layout(
     span. The image location is the cell holding its DISPIMG formula.
     """
 
-    first_row: dict[str, int] = {}
+    per_row: dict[str, dict[int, int]] = {}
     for item in evidence:
         sheet, row = item.source.sheet, item.source.row
         if sheet and row:
-            first_row[sheet] = min(first_row.get(sheet, row), row)
+            counts = per_row.setdefault(sheet, {})
+            counts[row] = counts.get(row, 0) + 1
+    first_row = {sheet: _first_record_row(counts) for sheet, counts in per_row.items()}
     headers: dict[str, dict[str, str]] = {}
     cells: dict[str, tuple[str, str]] = {}
     workbook = load_workbook(path, read_only=False, data_only=False)

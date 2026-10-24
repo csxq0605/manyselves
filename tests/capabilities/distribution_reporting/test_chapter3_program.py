@@ -65,7 +65,7 @@ def test_a_note_every_action_of_a_priority_shares_is_said_once() -> None:
     assert "**一般 · 以下各项依据：来源作者意见**" in table
 
 
-def test_risk_overview_has_two_layers_one_line_each_with_cross_findings_kept() -> None:
+def test_risk_overview_has_two_layers_one_line_each_with_cross_findings_named() -> None:
     chapter3 = ChiefChapter3(
         risk_summary=["散热条件差，温升偏高。"],
         risk_details=[{"module_id": "2.2", "points": ["积灰。", "缺空调。"]}],
@@ -75,7 +75,8 @@ def test_risk_overview_has_two_layers_one_line_each_with_cross_findings_kept() -
         actions=[],
     )
     text = risk_overview_markdown(chapter3, {"2.2": "环境"})
-    assert text.startswith("风险汇总如下：\n\n1. 散热条件差，温升偏高。\n2. 温升与积灰相互印证。")
+    # A cross-object conclusion names its object, so its line stands alone.
+    assert text.startswith("风险汇总如下：\n\n1. 散热条件差，温升偏高。\n2. 1#：温升与积灰相互印证。")
     assert "详述见下：\n\n**环境**\n\n- 积灰。\n- 缺空调。" in text
 
 

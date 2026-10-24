@@ -354,30 +354,40 @@ def related_rows(
     ledger: Mapping[str, Sequence[JudgmentRow]],
     names: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """The other modules' rows that this section's rows say bear on their conclusions."""
+    """The other modules' rows joined to this section's rows by a relation, either way.
+
+    A relation is recorded on one row; the row at its other end sees it too
+    (``inbound``), so neither side writes or edits as if the other's record
+    did not exist.
+    """
 
     index = _row_index(ledger)
+    own = {row.id for row in rows}
     found: dict[str, dict[str, Any]] = {}
+
+    def entry_for(other: JudgmentRow) -> dict[str, Any]:
+        return found.setdefault(
+            other.id,
+            {
+                "row_id": other.id,
+                "submodule_id": other.submodule_id,
+                "object": other.object,
+                "checkpoint": other.checkpoint,
+                "disposition": other.disposition,
+                "evidence_status": other.evidence_status,
+                **({"risk_level": other.risk_level} if other.risk_level else {}),
+                "basis": other.basis,
+                "for_rows": [],
+            },
+        )
+
     for row in rows:
         for relation in row.relations:
             row_id = relation.row_id
             if row_id not in index:
                 continue
             _module, other = index[row_id]
-            entry = found.setdefault(
-                row_id,
-                {
-                    "row_id": other.id,
-                    "submodule_id": other.submodule_id,
-                    "object": other.object,
-                    "checkpoint": other.checkpoint,
-                    "disposition": other.disposition,
-                    "evidence_status": other.evidence_status,
-                    **({"risk_level": other.risk_level} if other.risk_level else {}),
-                    "basis": other.basis,
-                    "for_rows": [],
-                },
-            )
+            entry = entry_for(other)
             entry["for_rows"].append(
                 {
                     "row_id": row.id,
@@ -391,6 +401,26 @@ def related_rows(
                         {}
                         if not names or in_knowledge_base(relation, names)
                         else {"in_knowledge_base": False}
+                    ),
+                }
+            )
+    outbound = {(row.id, relation.row_id) for row in rows for relation in row.relations}
+    for _module, other in index.values():
+        if other.id in own:
+            continue
+        for relation in other.relations:
+            if relation.row_id not in own or (relation.row_id, other.id) in outbound:
+                continue
+            entry_for(other)["for_rows"].append(
+                {
+                    "row_id": relation.row_id,
+                    "relation": relation.relation,
+                    "reason": relation.reason,
+                    # Recorded on the other row: its reason speaks of that row as 本行.
+                    "inbound": True,
+                    **(
+                        {"status": relation.status, "missing": relation.missing}
+                        if relation.pending else {}
                     ),
                 }
             )

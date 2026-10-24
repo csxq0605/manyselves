@@ -432,14 +432,18 @@ def packet_material(packet: Mapping[str, Any]) -> dict[str, str]:
 
 
 def apply_fact_findings(
-    packets: Sequence[Mapping[str, Any]], results: Mapping[str, Any]
+    packets: Sequence[Mapping[str, Any]],
+    results: Mapping[str, Any],
+    ledger_material: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The checkers' findings on chapters 1 and 3, for the chief's one revision.
 
     Each finding is held to the packet it was written on: a blocking finding
     citing nothing of that packet cannot be checked and becomes minor
     (see ``grounds``).  A packet whose check failed is left out; a finding on
-    a unit the packet does not hold is ignored.
+    a unit the packet does not hold is ignored.  ``ledger_material`` (every
+    row and record of the ledger) grounds a finding on a row the checker found
+    through the project map rather than in its packet.
     """
 
     # Where each unit sits and which rows it rests on, across all packets, so
@@ -458,7 +462,8 @@ def apply_fact_findings(
             continue
         where = {unit["unit_id"]: unit["where"] for unit in packet["units"]}
         for unit_id, finding in grounded(
-            {u: f for u, f in found.items() if u in where}, packet_material(packet)
+            {u: f for u, f in found.items() if u in where},
+            {**(ledger_material or {}), **packet_material(packet)},
         ).items():
             rows = {g for g in finding.get("grounds") or {} if g.startswith("J-")}
             elsewhere = list(dict.fromkeys(

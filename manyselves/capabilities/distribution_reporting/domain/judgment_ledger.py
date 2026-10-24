@@ -175,8 +175,8 @@ class JudgmentRow(_RowPart):
     hazard_sources: list[str] = Field(
         default_factory=list,
         description=(
-            "hazard 里后果的出处：本行所引的事实、计算、照片编号或知识单元 KU 编号；"
-            "没有出处的后果写成“可能……，待核实”"
+            "hazard 里前提的出处：本行所引的事实、计算、照片编号或知识单元 KU 编号；"
+            "前提没有出处的后果写成“可能……，待核实”；从有出处的前提推出的后果是专业推理，不另要出处"
         ),
     )
     hazard_mechanism: str = Field(
@@ -858,6 +858,10 @@ class Phase(_Model):
     time: str = Field(min_length=1, description="时间范围；第三章没有时限的行动归入“时限待定”")
     tasks: str = Field(min_length=1, description="核心任务：第三章中建议时限落在这一范围的行动")
     effect: str = Field(min_length=1, description="预期效果")
+    row_ids: list[str] = Field(
+        default_factory=list,
+        description="这一阶段的任务所依据的判断行（J-…）；程序核对这些行的时限落在本阶段的时间里",
+    )
 
 
 class CrossFinding(_Model):
@@ -1184,7 +1188,8 @@ def risk_overview_markdown(
 
     summary = [
         *(line.strip() for line in chapter3.risk_summary if line.strip()),
-        *(f.conclusion.strip() for f in chapter3.cross_findings),
+        # A cross-object conclusion names its object: the line stands alone.
+        *(f"{f.subject.strip()}：{f.conclusion.strip()}" for f in chapter3.cross_findings),
         *(line.strip() for line in conflicts if line.strip()),
     ]
     blocks = []
@@ -1198,6 +1203,101 @@ def risk_overview_markdown(
             blocks.append(f"**{module_titles.get(dimension.module_id, dimension.module_id)}**")
             blocks.append("\n".join(f"- {point.strip()}" for point in dimension.points))
     return "\n\n".join(blocks)
+
+
+_NUMERALS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_N = r"\d+|[一二两三四五六七八九十]+"
+_TERM = re.compile(rf"({_N})\s*(?:(?:至|到|-|－|～|~)\s*({_N})\s*)?(个月|周|天|日)")
+
+
+def _number(text: str) -> int:
+    if text.isdigit():
+        return int(text)
+    if text.startswith("十"):
+        return 10 + _NUMERALS.get(text[1:], 0)
+    if "十" in text:
+        tens, _, ones = text.partition("十")
+        return _NUMERALS.get(tens, 1) * 10 + _NUMERALS.get(ones, 0)
+    return _NUMERALS.get(text, 0)
+
+
+def time_terms(text: str) -> list[tuple[int, str]]:
+    """The deadlines a text names, in order: "1至3个月内" -> (1, 个月), (3, 个月)."""
+
+    terms: list[tuple[int, str]] = []
+    for match in _TERM.finditer(str(text or "")):
+        unit = "天" if match.group(3) == "日" else match.group(3)
+        for number in (match.group(1), match.group(2)):
+            if number and (term := (_number(number), unit)) not in terms:
+                terms.append(term)
+    return terms
+
+
+def _term_text(term: tuple[int, str]) -> str:
+    return f"{term[0]}{term[1]}"
+
+
+def deadline_findings(
+    groups: Sequence[Mapping[str, Any]], texts: Sequence[ActionText]
+) -> dict[str, dict[str, str]]:
+    """A group's words name only the deadlines its rows give.
+
+    The chief may order the measures and say what is done meanwhile, but a
+    deadline none of the group's rows gives moves a row's own deadline.
+    """
+
+    by_group = {text.group_id: text for text in texts}
+    problems = []
+    for group in groups:
+        text = by_group.get(group["group_id"])
+        allowed = {t for timeframe in group.get("timeframes") or () for t in time_terms(timeframe)}
+        if text is None or not allowed:
+            continue
+        if extra := [t for t in time_terms(f"{text.solution} {text.interim}") if t not in allowed]:
+            problems.append(
+                f"{group['group_id']} 写了时限 {'、'.join(map(_term_text, extra))}，"
+                f"本组判断行的时限只有 {'、'.join(group.get('timeframes') or ())}"
+            )
+    if not problems:
+        return {}
+    return {
+        "3.2": _finding(
+            "；".join(problems),
+            "每项措施的时限照它所在判断行的时限写，不合并成区间、不另定期限；先后关系写在 interim。",
+        )
+    }
+
+
+def phase_findings(
+    phases: Sequence[Phase], rows_by_module: Mapping[str, Sequence[JudgmentRow]]
+) -> dict[str, dict[str, str]]:
+    """Each phase's rows are due within the phase's time, as their own deadlines say."""
+
+    timeframe = {
+        row.id: row.action.timeframe
+        for rows in rows_by_module.values()
+        for row in rows
+        if row.action is not None
+    }
+    problems = []
+    for number, phase in enumerate(phases, 1):
+        allowed = time_terms(phase.time)
+        if not allowed:
+            continue
+        for row_id in phase.row_ids:
+            own = time_terms(timeframe.get(row_id, ""))
+            if own and own[0] not in allowed:
+                problems.append(
+                    f"1.2-阶段-{number}（{phase.time}）列入了 {row_id}，该行时限为“{timeframe[row_id]}”"
+                )
+    if not problems:
+        return {}
+    return {
+        "1.2": _finding(
+            "；".join(problems),
+            "阶段按判断行的时限归并：把这些任务移到与其时限相同的阶段，或改写阶段时间。",
+        )
+    }
 
 
 def action_group_findings(
@@ -1627,6 +1727,9 @@ __all__ = [
     "DimensionPoints",
     "action_group_findings",
     "action_groups",
+    "deadline_findings",
+    "phase_findings",
+    "time_terms",
     "grouped_actions",
     "risk_overview_markdown",
     "settle_evidence_status",

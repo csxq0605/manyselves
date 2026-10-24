@@ -47,6 +47,7 @@ from ..domain.judgment_ledger import (
     apply_row_patches,
     chief_findings,
     cross_finding_findings,
+    deadline_findings,
     drop_mirrored_relations,
     findings_overview_markdown,
     grouped_actions,
@@ -54,6 +55,7 @@ from ..domain.judgment_ledger import (
     layout_findings,
     ledger_findings,
     ledger_judgments,
+    phase_findings,
     place_problem_table,
     problem_table,
     process_terms,
@@ -86,6 +88,8 @@ from .context_packs import (
     brief_row,
     compact_row,
     project_map,
+    record_fields,
+    recorded_field_findings,
     section_groups,
 )
 from .cross_module import (
@@ -246,6 +250,38 @@ def column_headers(state: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, 
         for sheet, columns in (value.get("column_headers") or {}).items():
             headers[(path, sheet)] = dict(columns)
     return headers
+
+
+_STATE_VALUE = re.compile(r"^(OK|NG)(?![A-Za-z])", re.IGNORECASE)
+
+
+def checkpoints_of(items: Sequence[Any]) -> dict[str, str]:
+    """The checkpoint a record's column (or summary-sheet row) declares, for grouping actions.
+
+    A column groups its rows only when it records one kind of check: most of
+    its values are a state (OK/NG) or a number.  A free-text column (a table's
+    catch-all remarks) holds unrelated findings; its rows keep their own
+    checkpoints.
+    """
+
+    def structured(item: Any) -> bool:
+        if isinstance(item.value, (int, float)) and not isinstance(item.value, bool):
+            return True
+        pairs = record_fields(item.fact)
+        value = next((v for k, v in pairs if k == item.checkpoint_field), pairs[0][1] if pairs else "")
+        return bool(_STATE_VALUE.match(value))
+
+    columns: dict[tuple[str, str], list[bool]] = {}
+    for item in items:
+        if item.checkpoint_field and not item.summary_entry:
+            columns.setdefault((item.source.sheet or "", item.checkpoint_field), []).append(structured(item))
+    kept = {key for key, flags in columns.items() if sum(flags) * 2 >= len(flags)}
+    return {
+        item.id: item.subject if item.summary_entry else item.checkpoint_field
+        for item in items
+        if item.summary_entry
+        or (item.checkpoint_field and (item.source.sheet or "", item.checkpoint_field) in kept)
+    }
 
 
 def _combined(
@@ -512,10 +548,9 @@ def _section_brief(
     by_id = {other.id: other for others in ledger.values() for other in others}
     cited = {e for row in rows for e in row.evidence_ids} | {
         e
-        for row in rows
-        for relation in row.relations
-        if relation.row_id in by_id
-        for e in by_id[relation.row_id].evidence_ids
+        for entry in related
+        if entry["row_id"] in by_id
+        for e in by_id[entry["row_id"]].evidence_ids
     }
     slot_ids = [
         *(c for row in rows for c in row.calculation_ids),
@@ -990,11 +1025,7 @@ class LedgerTools(LedgerStageTools):
                 "slots": slots,
                 "object_names": object_names(item.subject for item in items),
                 # The checkpoint a record's column (or summary-sheet row) declares.
-                "checkpoint_of": {
-                    item.id: (item.subject if item.summary_entry else item.checkpoint_field)
-                    for item in items
-                    if item.summary_entry or item.checkpoint_field
-                },
+                "checkpoint_of": checkpoints_of(items),
                 "fact_texts": {item.id: item.fact for item in items},
                 "section_titles": section_titles,
                 "request_texts": requirements,
@@ -1159,6 +1190,11 @@ class LedgerTools(LedgerStageTools):
         for module_id, module_findings in placed.items():
             for target, finding in module_findings.items():
                 findings[module_id][target] = _combined(findings[module_id].get(target), finding)
+        sites = self._sites(run_id)
+        for module_id, module_findings in recorded_field_findings(ledger, sites).items():
+            for target, finding in module_findings.items():
+                findings.setdefault(module_id, {})
+                findings[module_id][target] = _combined(findings[module_id].get(target), finding)
         dossiers = build_dossiers(self.workspace, run_id, ledger_judgments(ledger))
         see_also = see_also_by_row(dossiers, ledger)
         # Shared by every author's revision; each sees the other modules' lines.
@@ -1182,7 +1218,6 @@ class LedgerTools(LedgerStageTools):
                 },
             },
         )
-        sites = self._sites(run_id)
         judged_map = project_map(sites, ledger)
         self.store.write_text(f"Work/runs/{run_id}/ledger/project-map-judged.md", judged_map)
         return {
@@ -2085,9 +2120,15 @@ class LedgerTools(LedgerStageTools):
                 if isinstance(text, str)
             },
         )
+        if chapter1:
+            phases = [Phase.model_validate(p) for p in chapter1.get("phases", [])]
+            for key, finding in phase_findings(phases, ledger).items():
+                findings[key] = _combined(findings.get(key), finding)
         if not chapter1:
             findings.pop("1.2", None)
             findings.update(action_group_findings(groups, chapter3.actions))
+            for key, finding in deadline_findings(groups, chapter3.actions).items():
+                findings[key] = _combined(findings.get(key), finding)
             findings.update(
                 cross_finding_findings(
                     chapter3.cross_findings,
@@ -2146,7 +2187,14 @@ class LedgerTools(LedgerStageTools):
         )
         name = f"chief-fact-packets-{chapter}" if chapter else "chief-fact-packets"
         self.store.write_json(f"Work/runs/{run_id}/ledger/{name}.json", packets)
-        return {"fact_items": packets}
+        # Every checker reads the project map and the story lines the chief
+        # wrote from, first and in the same words: a record outside its packet
+        # is not taken for a missing one, and the packets share one prefix.
+        chief_input = final.get("chief_input") or {}
+        shared = {
+            key: chief_input[key] for key in ("map", "story_lines") if chief_input.get(key)
+        }
+        return {"fact_items": [{**shared, **packet} for packet in packets]}
 
     def apply_chief_facts(self, value: dict[str, Any]) -> dict[str, Any]:
         """The fact check's findings and the program's certain problems, for one fix.
@@ -2163,8 +2211,12 @@ class LedgerTools(LedgerStageTools):
         early = _plain(value.get("chapter3_facts")) or {}
         packets = [*(early.get("packets") or []), *(value.get("packets") or [])]
         results = {**(early.get("results") or {}), **_plain(value.get("results") or {})}
-        checked = apply_fact_findings(packets, results)
         final = value.get("ledger")
+        checked = apply_fact_findings(
+            packets,
+            results,
+            self._ledger_material(final["run_id"]) if final and final.get("run_id") else None,
+        )
         if final and early:
             self.store.write_json(
                 f"Work/runs/{final['run_id']}/ledger/chief-fact-packets.json", packets
@@ -2396,11 +2448,12 @@ class LedgerTools(LedgerStageTools):
         elsewhere = self._data_elsewhere(run_id, ledger)
         row_sections = {row.id: row.submodule_id for rows in ledger.values() for row in rows}
         items = []
-        group_modules = {
-            group["group_id"]: group["module_id"]
+        writing_groups = {
+            group["group_id"]: group
             for group in value["ledger"].get("writing_items") or []
             if "group_id" in group
         }
+        group_modules = {group_id: group["module_id"] for group_id, group in writing_groups.items()}
         skills = reference.get("author_skills") or {}
         copied = self._copied(run_id)
         edit_hints: dict[str, list[str]] = {}
@@ -2414,27 +2467,33 @@ class LedgerTools(LedgerStageTools):
                 slots=slots,
                 row_sections=row_sections,
             )
-            cited = {
-                entry["row_id"]: entry
-                for row in ledger.get(module_id, [])
-                if row.submodule_id in texts
-                for entry in related_rows([row], ledger)
+            own_rows = [row for row in ledger.get(module_id, []) if row.submodule_id in texts]
+            cited = {entry["row_id"]: entry for entry in related_rows(own_rows, ledger)}
+            group = writing_groups.get(owner) or {}
+            briefs = group.get("sections") or []
+            pack = next((brief["pack"] for brief in briefs if brief.get("pack")), "")
+            story = {
+                brief["submodule_id"]: brief["story_lines"]
+                for brief in briefs
+                if brief.get("story_lines") and brief.get("submodule_id") in texts
             }
             items.append(
                 {
                     "run_id": run_id,
                     "owner": owner,
                     "module_id": module_id,
+                    # The editor reads what the writer read, first and in the
+                    # same words, so it reuses the writer's cached prefix and
+                    # does not take a record the writer had for a missing one.
+                    **(
+                        {"pack": pack}
+                        if pack
+                        else {"method": skills.get(module_id) or "（本模块没有专家版方法）"}
+                    ),
                     "sections": texts,
-                    # The editor reads in a conversation of its own: the
-                    # settled rows of these sections and the expert method.
-                    "rows": [
-                        compact_row(row)
-                        for row in ledger.get(module_id, [])
-                        if row.submodule_id in texts
-                    ],
-                    "method": skills.get(module_id) or "（本模块没有专家版方法）",
+                    "rows": [compact_row(row) for row in own_rows],
                     **({"cited_rows": list(cited.values())} if cited else {}),
+                    **({"story_lines": story} if story else {}),
                     "program_findings": _with_layout(
                         _with_table_terms(
                             report_check_findings(

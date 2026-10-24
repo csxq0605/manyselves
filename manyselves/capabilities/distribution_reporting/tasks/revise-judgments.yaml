@@ -1,5 +1,5 @@
 id: revise-judgments
-version: 4.0.0
+version: 4.1.0
 description: Revise only the rows a review named, in the conversation that judged them
 agent: report-consultant
 objective: 审查人和程序对你提交的判断行提出了意见，跨模块审查可能还提议了你没有连的关联（proposed）（输入里有 recheck 的，是程序对你上一次改动的复查；有 fact_check 的，是成稿第一、三章写错的说法在你的判断行里也这样写，要把判断行一起改对）。核对后只提交要改的地方，并逐条决定提议是否采纳。
@@ -14,7 +14,7 @@ constraints:
 - 键是事实编号（E-…）的意见，说的是这条事实还没有任何模块判断：属于本模块某个小节的，新增判断行并写所依据的知识单元；不属于的，在 responses 里说明。
 - 把事实放在默认以外的小节时，保留或补写 placement_reason，rule_refs 写覆盖本小节的知识单元。
 - basis、hazard、checkpoint 里写的测量值（带单位的数值）只能取自本行所引的事实、计算、照片或知识单元；要用某个值，就把它的出处写进 evidence_ids、calculation_ids、photo_ids 或 rule_refs。程序会核对，对不上的退回。
-- 专家版方法里的后果（某种现状会导致什么），是那个项目的证据支持的；只有本项目的事实支持它的前提（方法里写的“前提”）时才写进 hazard，前提没有证据的，hazard 写成待核实的可能后果。
+- 专家版方法里的后果（某种现状会导致什么），是那个项目的证据支持的；只有本项目的事实支持它的前提（方法里写的“前提”）时才写进 hazard，前提没有证据的，hazard 写成待核实的可能后果。前提有证据时，从前提推出的后果是专业推理，不需要原文逐字写过，也不加“待核实”。
 - 没被点名的行不要改。只提交本模块的行（J-本模块-…），别的模块的行改不了。
 - concern 行的 hazard_conditions 不能为空：写明后果要在什么条件下才会发生。
 tools: []

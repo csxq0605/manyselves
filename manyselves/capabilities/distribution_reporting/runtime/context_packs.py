@@ -139,6 +139,18 @@ def _flagged(ledger: Mapping[str, Sequence[JudgmentRow]]) -> list[tuple[str, Jud
 # -- sites and objects --------------------------------------------------------
 
 
+def record_fields(fact: str) -> list[tuple[str, str]]:
+    """A record's ``字段=值`` pairs, in order."""
+
+    pairs = []
+    for part in str(fact or "").split("；"):
+        if "=" in part:
+            label, value = part.split("=", 1)
+            if label.strip():
+                pairs.append((label.strip(), value.strip()))
+    return pairs
+
+
 class Sites:
     """Records by site and object, as the table's columns give them."""
 
@@ -172,6 +184,25 @@ class Sites:
 
         places = [p for p in self.row_places(row) if p != PROJECT_LEVEL]
         return places[0] if len(set(places)) == 1 else PROJECT_LEVEL
+
+    def fields(self) -> dict[str, dict[str, list[str]]]:
+        """Sheet -> each field its records fill (``字段=值``) -> the sites holding a value.
+
+        The same parse the records are written in; a field whose every value
+        is blank is not listed.
+        """
+
+        found: dict[str, dict[str, list[str]]] = {}
+        for item in self.items.values():
+            sheet = getattr(item.source, "sheet", None) or ""
+            if not sheet or not getattr(item, "place", None):
+                continue
+            for label, value in record_fields(item.fact):
+                if value:
+                    places = found.setdefault(sheet, {}).setdefault(label, [])
+                    if item.place not in places:
+                        places.append(item.place)
+        return found
 
     def objects(self) -> dict[str, dict[str, list[Any]]]:
         """Site -> object -> its records, in the table's order."""
@@ -262,6 +293,16 @@ def project_map(
                 lines.extend(f"  - {row_line(row)}" for row in flagged)
             else:
                 lines.append(line)
+    if fields := sites.fields():
+        lines.append(
+            "\n## 各表有记录的字段（字段：有记录的配电房数）\n"
+            "判断某项资料“未提供、未记录”前，先看这里有没有对应的字段。"
+        )
+        lines.extend(
+            f"- {sheet}："
+            + "、".join(f"{label}（{len(places)}）" for label, places in columns.items())
+            for sheet, columns in fields.items()
+        )
     if unplaced:
         lines.append("\n## 只引汇总表或项目级资料的关注和不能判定行")
         lines.extend(f"- {row_line(row)}" for row in unplaced)
@@ -563,3 +604,65 @@ __all__ = [
     "row_line",
     "writing_groups",
 ]
+
+
+def recorded_field_findings(
+    ledger: Mapping[str, Sequence[JudgmentRow]], sites: Sites
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Rows that call a field missing although the project's records fill it.
+
+    A row with a gap (or whose evidence is "资料未提供") whose missing item
+    names a field (a table's ``字段``) that another sheet fills for the row's
+    objects (anywhere, for a row on no object) gets a minor finding naming
+    those records: the author looks and decides.
+    """
+
+    by_field: dict[str, list[Any]] = {}
+    for item in sites.items.values():
+        if not getattr(item, "place", None):
+            continue
+        for label, value in record_fields(item.fact):
+            if value and len(label) >= 2:
+                by_field.setdefault(label, []).append(item)
+    found: dict[str, dict[str, dict[str, Any]]] = {}
+    for module_id, rows in ledger.items():
+        for row in rows:
+            if row.gap is None and row.evidence_status != "资料未提供":
+                continue
+            # What the row says is missing, not what it mentions in passing.
+            text = row.gap.missing if row.gap else f"{row.checkpoint} {row.finding}"
+            subjects = {object_key(subject) for subject in sites.row_subjects(row)}
+            # A row reading a sheet speaks of that sheet's own cells; the
+            # check is for a field another sheet holds.
+            read = {
+                getattr(sites.items[e].source, "sheet", None)
+                for e in row.evidence_ids if e in sites.items
+            }
+            hits: dict[str, list[Any]] = {}
+            for label, items in by_field.items():
+                if label not in text:
+                    continue
+                chosen = [
+                    item for item in items
+                    if item.id not in row.evidence_ids
+                    and getattr(item.source, "sheet", None) not in read
+                    and (not subjects or object_key(item.subject) in subjects)
+                ]
+                if chosen:
+                    hits[label] = chosen
+            if not hits:
+                continue
+            named = "；".join(
+                f"「{label}」{'、'.join(dict.fromkeys(i.place for i in items))}"
+                f"（{'、'.join(i.id for i in items[:6])}{'等' if len(items) > 6 else ''}）"
+                for label, items in hits.items()
+            )
+            found.setdefault(module_id, {})[row.id] = {
+                "problem": f"本行写某项资料未提供或未记录，但项目记录里有这一字段的值：{named}，本行没有引用",
+                "severity": "minor",
+                "suggestion": (
+                    "核对这些记录：是同一项资料的，引用它们重新判断；不是同一项的，"
+                    "在 basis 里写清缺的是哪一项、与这些记录有什么不同。"
+                ),
+            }
+    return found

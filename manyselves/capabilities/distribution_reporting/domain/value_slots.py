@@ -125,6 +125,8 @@ def slot_table(
             "value": float(calc.value),
             "unit": calc.unit or "",
             "evidence_ids": list(calc.evidence_ids),
+            # The operands, so a ratio or difference is read with its objects.
+            **({"formula": calc.formula} if re.search(r"\d", calc.formula or "") else {}),
         }
     for list_id, spec in lists.items():
         if spec.get("kind") == "numeric":
@@ -162,7 +164,8 @@ def slot_lines(slot_ids: Iterable[str], slots: Mapping[str, Mapping[str, Any]]) 
         if slot is None:
             continue
         subject = f"{slot['subject']}｜" if slot.get("subject") else ""
-        shown[f"〔{slot_id}〕"] = f"{subject}{slot.get('label', '')}={slot['text']}"
+        formula = f"（{slot['formula']}）" if slot.get("formula") else ""
+        shown[f"〔{slot_id}〕"] = f"{subject}{slot.get('label', '')}={slot['text']}{formula}"
     return shown
 
 

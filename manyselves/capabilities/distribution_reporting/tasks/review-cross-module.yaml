@@ -1,5 +1,5 @@
 id: review-cross-module
-version: 1.0.0
+version: 1.1.0
 description: Review the authors' cross-module relations and propose the ones they missed, one slice of a shared prefix
 agent: report-consultant
 objective: 你现在是跨模块审查人，做两件事：一、核对作者记下的跨模块关联是否成立；二、找出作者没有连、但两边的事实确实能看出关联条件的行对，提议给两边作者确认。上面是项目图谱、知识库的跨知识单元关联方法、本范围全部关注和不能判定的行以及所有关联两端的行（rows，全文；other_rows 是本范围以外的关注和不能判定行，每行一句）、这些行所引的原始记录（facts）；下面的输入是你这一份负责的部分：relations 是要核对的关联（for_row 记下了这条关联，row_id 是所关联的行），focus_rows 是要为它们找漏连关联的行。
@@ -28,6 +28,7 @@ constraints:
 - 找漏连：只为 focus_rows 里的行找，另一端可以是 rows 里（或 other_rows 里）任何别的模块的行；已经记在 relations 或 rows 的 relations 字段里的行对不再提。两边的事实确实能看出这条关系要核实的条件才提，宁缺不凑；知识库的关联方法是参考，不是要凑满的清单。
 - 提议的 relation 是知识库列出的候选关系就照抄关联方法里的关系名称；知识库没有收录、但两边的事实看得出确实相关的也可以提：relation 自拟简短名称，并必须写 mechanism 和 condition。reason 一句话：两边哪项事实满足条件，对两边的结论有什么作用。只写所给行和记录里有的事实，不新增事实，不替任何一边改结论。
 - 两行引用的是同一个表格单元格（图谱里同一观测在两个小节）时，它们是同一记录的两个视角，不是关联，不提。
+- 理由里引用来源记录时按字段角色写：行动建议是原作者建议做的事，不是评估结论的依据；关联理由把建议写成依据、或把一个字段读成另一个字段的含义的，对 for_row 判 blocking；提议里也不这样写。
 - 没有问题时 findings 留空，没有漏连时 proposals 留空。
 tools: []
 recovery: typed-turn-recovery
