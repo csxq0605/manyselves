@@ -132,7 +132,7 @@ def _imports_of(name: str, path: Path) -> frozenset[str]:
     cached = _module_imports.get(cache_key)
     if cached is not None:
         return cached
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     package = name if path.name == "__init__.py" else name.rpartition(".")[0]
     found: set[str] = set()
     for node in ast.walk(tree):

@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from manyselves.config.schema import AppConfig
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
@@ -15,12 +17,16 @@ from tests.webapi.auth_helpers import login
 class _ReleaseRuntimeHost:
     def __init__(self) -> None:
         self.is_ready = False
+        self.workspace: Path | None = None
+        self.bus = MessageBus()
+        self.config_manager = SimpleNamespace(config=AppConfig())
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: {"main": "idle"},
             get_agent_session_id=lambda _agent_id: "session-1",
         )
 
     async def start(self, _workspace: Path) -> None:
+        self.workspace = _workspace
         self.is_ready = True
 
     async def switch_workspace(self, _workspace: Path) -> None:
