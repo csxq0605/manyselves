@@ -101,12 +101,28 @@ def test_rows_lacking_the_same_thing_are_one_entry_naming_every_object() -> None
     assert gap_sections(entries)["J-2.2-1"] == "2.4.4"
 
 
-def test_a_different_way_to_close_the_gap_is_a_different_entry() -> None:
+def test_rows_closed_in_different_ways_are_still_one_entry_with_every_way() -> None:
     ledger = {"2.5": [
         _row("J-2.5-1", ["E-1"], "应急预案", section="2.5.1"),
         _row("J-2.5-2", ["E-1"], "应急预案", section="2.5.1", fill=["问委托方"]),
     ]}
-    assert len(gap_entries(ledger, SITES)) == 2
+    (entry,) = gap_entries(ledger, SITES)
+    assert entry["fill"] == ["补资料", "问委托方"]
+
+
+def test_an_entrys_words_name_only_what_the_records_show() -> None:
+    ledger = {"2.1": [
+        _row("J-2.1-1", ["E-4"], "变压器容量栏为空，回路额定电流未提供", section="2.1.1"),
+        _row("J-2.1-2", ["E-5"], "电容柜台账未提供", section="2.1.1"),
+        _row("J-2.1-3", ["E-6"], "防鼠板尺寸未提供", section="2.1.1"),
+    ]}
+    reading, opinion, state = gap_entries(ledger, SITES)
+    assert reading["wording"] == "原表低配的运行电流有记录读数，缺判定所需的参数，不能判定"
+    assert opinion["wording"] == "只有汇总的原评估结论，缺支撑记录"
+    assert state["wording"] == "原表合规的防鼠板只有状态记录，不能判定"
+    # The authors' words stay with the entry for the gap table, not in its words.
+    assert all("未提供" not in e["wording"] and "为空" not in e["wording"] for e in (reading, opinion, state))
+    assert reading["note"] == "变压器容量栏为空，回路额定电流未提供"
 
 
 def test_chapters_one_and_three_read_each_gap_once_as_its_entry() -> None:

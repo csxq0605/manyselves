@@ -16,9 +16,15 @@ never from the words:
 - ``NONE``: the row cites no record.
 
 The kind fixes the row's evidence status, the default way to close the gap
-and the words the report uses for it.  Rows whose gap is the same (kind,
-structural key, way to close it) are one gap entry naming every object: the
-ledger keeps a row per object, the report says the gap once.
+and the words the report uses for it.  Rows whose gap is the same (kind and
+structural key) are one gap entry naming every object: the ledger keeps a row
+per object, the report says the gap once.  The ways to close it are all its
+rows' ways together.
+
+The words of an entry are built only from what the program reads in the
+records: the checklist's document names, the table and column names, the
+quantities read.  What the authors wrote the row lacks is kept as the entry's
+note for the gap table, never put into those words.
 """
 
 from __future__ import annotations
@@ -109,8 +115,16 @@ def gap_kind(row: JudgmentRow, sites: Sites) -> str:
     return STATE
 
 
+FILL_ORDER = ("补资料", "现场测量", "问委托方")
+
+
 def fill_of(row: JudgmentRow, kind: str) -> list[str]:
     return list(row.gap.fill) if row.gap and row.gap.fill else list(DEFAULT_FILL[kind])
+
+
+def _fills(rows: Sequence[JudgmentRow], kind: str) -> list[str]:
+    chosen = {way for row in rows for way in fill_of(row, kind)}
+    return [way for way in FILL_ORDER if way in chosen]
 
 
 def settle_gap_kinds(rows: Sequence[JudgmentRow], sites: Sites) -> list[JudgmentRow]:
@@ -130,51 +144,84 @@ def _key(row: JudgmentRow, kind: str, sites: Sites) -> tuple[Any, ...]:
     """Rows with the same key lack the same thing; the key is read from the records only."""
 
     items = _cited(row, sites)
-    fill = tuple(fill_of(row, kind))
     if kind == LISTED:
-        return (kind, tuple(sorted(item.id for item in items if _listed(item))), fill)
+        return (kind, tuple(sorted(item.id for item in items if _listed(item))))
     if kind == BLANK:
-        return (kind, tuple(sorted(_blank_fields(row, items))), fill)
+        return (kind, tuple(sorted(_blank_fields(row, items))))
     if kind == OPINION:
-        return (kind, tuple(sorted(row.evidence_ids)), fill)
+        return (kind, tuple(sorted(row.evidence_ids)))
     if kind in (READING, STATE):
         # The same columns read in the same section, short of the same judgement.
         columns = sorted(
             {(_sheet(item), label) for item in items for label, _value in record_fields(item.fact)}
         )
-        return (kind, row.submodule_id, tuple(columns), fill)
-    return (kind, row.id, fill)
+        return (kind, row.submodule_id, tuple(columns))
+    return (kind, row.id)
 
 
 def _document(item: Any) -> str:
     return str(item.subject).rsplit("/", 1)[-1]
 
 
+def _by_sheet(pairs: Sequence[tuple[str, str]]) -> str:
+    by_sheet: dict[str, list[str]] = {}
+    for sheet, label in dict.fromkeys(pairs):
+        if label not in by_sheet.setdefault(sheet, []):
+            by_sheet[sheet].append(label)
+    return "；".join(
+        f"{sheet}的{'、'.join(labels)}" if sheet else "、".join(labels)
+        for sheet, labels in by_sheet.items()
+    )
+
+
 def _missing_text(kind: str, rows: Sequence[JudgmentRow], sites: Sites) -> str:
+    """What the entry names, from the records alone: documents, tables, columns, quantities."""
+
+    items = list({item.id: item for row in rows for item in _cited(row, sites)}.values())
     if kind == LISTED:
-        items = [item for row in rows for item in _cited(row, sites) if _listed(item)]
-        return "、".join(dict.fromkeys(_document(item) for item in items))
+        return "、".join(dict.fromkeys(_document(item) for item in items if _listed(item)))
     if kind == BLANK:
-        pairs = dict.fromkeys(pair for row in rows for pair in _blank_fields(row, _cited(row, sites)))
-        by_sheet: dict[str, list[str]] = {}
-        for sheet, label in pairs:
-            by_sheet.setdefault(sheet, []).append(label)
-        return "；".join(f"{sheet}的{'、'.join(labels)}" for sheet, labels in by_sheet.items())
-    # Rows of one entry lack the same thing in their own words; the first says it for all.
-    return next((row.gap.missing for row in rows if row.gap), "")
+        return _by_sheet(
+            [pair for row in rows for pair in _blank_fields(row, _cited(row, sites))]
+        )
+    if kind == READING:
+        return _by_sheet([
+            (_sheet(item), m.label or m.quantity)
+            for item in items for m in item.measurements or ()
+            if getattr(m, "value", None) is not None and (m.label or m.quantity)
+        ])
+    if kind == STATE:
+        return _by_sheet([
+            (_sheet(item), item.checkpoint_field or label)
+            for item in items for label, _value in record_fields(item.fact)[:1]
+        ])
+    if kind == OPINION:
+        return "、".join(dict.fromkeys(_sheet(item) for item in items if _sheet(item)))
+    return ""
+
+
+def _note(rows: Sequence[JudgmentRow]) -> str:
+    """What the authors wrote the rows lack, in their words, for the gap table only."""
+
+    return "；".join(
+        dict.fromkeys(row.gap.missing.strip() for row in rows if row.gap and row.gap.missing.strip())
+    )
 
 
 def wording(kind: str, missing: str) -> str:
     """How the report says a gap of this kind; only a document not handed over is 未提供."""
 
-    return {
-        LISTED: f"{missing}未提供（收资表记为不具备）",
-        NONE: f"{missing}未提供",
-        BLANK: f"原表{missing}未填写",
-        READING: f"有记录读数，缺{missing}，不能判定",
-        OPINION: f"只有原评估结论，缺支撑记录：{missing}",
-        STATE: f"只有状态记录，缺{missing}，不能判定",
-    }[kind]
+    if kind == LISTED:
+        return f"{missing}未提供（收资表记为不具备）"
+    if kind == BLANK:
+        return f"原表{missing}未填写"
+    if kind == READING:
+        return f"原表{missing}有记录读数，缺判定所需的参数，不能判定" if missing else "有记录读数，缺判定所需的参数，不能判定"
+    if kind == STATE:
+        return f"原表{missing}只有状态记录，不能判定" if missing else "只有状态记录，不能判定"
+    if kind == OPINION:
+        return f"只有{missing}的原评估结论，缺支撑记录" if missing else "只有原评估结论，缺支撑记录"
+    return "没有对应记录，不能判定"
 
 
 def objects_text(objects: Sequence[str]) -> str:
@@ -183,14 +230,19 @@ def objects_text(objects: Sequence[str]) -> str:
 
 
 def gap_entries(
-    ledger: Mapping[str, Sequence[JudgmentRow]], sites: Sites
+    ledger: Mapping[str, Sequence[JudgmentRow]],
+    sites: Sites,
+    *,
+    affects: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Every gap once: the rows lacking the same thing, in ledger order.
 
     A row with a gap that is not undetermined (a concern that also lacks a
     document) is an entry of its own kind too.  The entry's section is where
     most of its rows are (the first of them on a tie); the other sections
-    point to it.
+    point to it.  ``affects`` (row id -> other rows) are the rows of other
+    sections a gap bears on, taken out of the relations; the entry lists
+    them once, without its own rows.
     """
 
     grouped: dict[tuple[Any, ...], list[tuple[str, JudgmentRow]]] = {}
@@ -224,11 +276,37 @@ def gap_entries(
                 "section": section,
                 "impact": rows[0].gap.impact,
                 "requested_input": "；".join(dict.fromkeys(row.gap.requested_input for row in rows)),
-                "fill": list(key[-1]),
+                "fill": _fills(rows, kind),
+                "note": _note(rows),
+                "affects": _affected(rows, affects or {}),
                 "source_ids": list(dict.fromkeys(e for row in rows for e in row.evidence_ids)),
             }
         )
     return entries
+
+
+def _affected(
+    rows: Sequence[JudgmentRow], affects: Mapping[str, Sequence[Mapping[str, str]]]
+) -> list[dict[str, str]]:
+    own = {row.id for row in rows}
+    found: dict[str, dict[str, str]] = {}
+    for row in rows:
+        for other in affects.get(row.id) or ():
+            if other["row_id"] not in own:
+                found.setdefault(other["row_id"], dict(other))
+    return list(found.values())
+
+
+def affects_text(affected: Sequence[Mapping[str, str]]) -> str:
+    """The rows a gap bears on, one clause per section."""
+
+    by_section: dict[str, list[str]] = {}
+    for other in affected:
+        named = f"{other['object']}的{other['checkpoint']}"
+        listed = by_section.setdefault(other["submodule_id"], [])
+        if named not in listed:
+            listed.append(named)
+    return "；".join(f"{section} {'、'.join(names)}" for section, names in by_section.items())
 
 
 def section_gap_entries(
@@ -255,6 +333,7 @@ def section_gap_entries(
                         "objects": objects_text(entry["objects"]),
                         "fill": entry["fill"],
                         "requested_input": entry["requested_input"],
+                        **({"affects": affects_text(entry["affects"])} if entry.get("affects") else {}),
                     }
                     if write_here
                     else {"see_section": entry["section"]}
@@ -276,6 +355,7 @@ def chief_gap_entries(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, An
             "row_ids": list(entry["row_ids"]),
             "fill": list(entry["fill"]),
             "requested_input": entry["requested_input"],
+            **({"affects": affects_text(entry["affects"])} if entry.get("affects") else {}),
         }
         for entry in entries
     ]
@@ -305,6 +385,7 @@ def gap_sections(entries: Sequence[Mapping[str, Any]]) -> dict[str, str]:
 
 __all__ = [
     "BLANK",
+    "affects_text",
     "DEFAULT_FILL",
     "GAP_KINDS",
     "LISTED",

@@ -238,11 +238,14 @@ def _answer(message):
                 {"row_id": "J-2.4-1", "fields": {"finding": "温度偏高，待复测确认。"}}
             ]}])
         if not value["findings"]:
-            # Only a proposal sends 2.5 back; it declines.
+            # Only a proposal sends 2.5 back; it takes it too.
             assert set(offers) == {"J-2.5-1"}
-            return ("submit", [{"declined_proposals": [{
-                "row_id": "J-2.5-1", "other_row_id": "J-2.4-1", "reason": "SOP 缺失与温度无关。",
-            }]}])
+            (offer,) = offers["J-2.5-1"]
+            return ("submit", [{"relations": {"J-2.5-1": [{
+                "row_id": offer["row_id"], "relation": offer["relation"],
+                "reason": "温度偏高的处置要按SOP核对。",
+                "mechanism": "处置依据缺失", "condition": "两边都缺同一类资料",
+            }]}}])
         # Only blocking findings send an author back, with the proposals on its rows.
         assert set(value["findings"]) == {"J-2.4-1"}
         (offer,) = offers["J-2.4-1"]
@@ -539,8 +542,16 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     assert "J-2.5-1" in settle_24["proposal_facts"] or settle_24["proposal_facts"]
     outcome = json.loads((ledger_dir / "cross-proposals-outcome.json").read_text(encoding="utf-8"))
     assert outcome["proposals_kept"] == 1
-    assert outcome["relations_added"] == 1 and outcome["declined"] == 1
-    assert [r["row_id"] for r in final["2.4"][0]["relations"]] == ["J-2.5-1"]
+    # Both ends took the proposal, but J-2.5-1 could not be judged and the
+    # pair is project level: the missing SOP is said on its gap entry, as
+    # bearing on J-2.4-1, not as a relation.
+    assert outcome["relations_added"] == 0 and outcome["declined"] == 0
+    assert outcome["one_side_only"] == []
+    assert final["2.4"][0]["relations"] == [] and final["2.5"][0]["relations"] == []
+    routed = json.loads((ledger_dir / "cross-module.json").read_text(encoding="utf-8"))["routed_relations"]
+    assert [(r["rows"], r["route"]) for r in routed] == [(["J-2.4-1", "J-2.5-1"], "一端不能判定且为项目级")]
+    (entry,) = json.loads((ledger_dir / "gap-entries.json").read_text(encoding="utf-8"))
+    assert [a["row_id"] for a in entry["affects"]] == ["J-2.4-1"]
     # 2.4 revised only in its own conversation; 2.1 had nothing blocking and
     # no proposal; 2.5 revised for the proposal alone.
     assert "revise-judgments" in tasks_of(authors["2.4"])
@@ -584,11 +595,8 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     assert '<context name="pack">' in writers["2.4"].received[0].content
     assert '<context name="pack">' not in writers["2.4"].received[1].content
     briefs = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "write-section"]
-    assert [b["story_lines"][0]["other_sections"] for b in briefs if b.get("story_lines")] == [
-        [next(iter(REPORT_TAXONOMY["2.5"].submodules))]
-    ]
-    story = json.loads((ledger_dir / "story-lines.json").read_text(encoding="utf-8"))
-    assert [line["row_ids"] for line in story["lines"]] == [["J-2.4-1", "J-2.5-1"]]
+    # No relation is left, so no story line joins the two sections.
+    assert [b for b in briefs if b.get("story_lines")] == []
     chief = [loop for loop in loops if "chief-chapter-3" in tasks_of(loop)]
     assert len(chief) == 1
     assert tasks_of(chief[0])[:2] == ["chief-chapter-3", "chief-chapter-1"]

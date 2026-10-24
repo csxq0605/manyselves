@@ -1,5 +1,5 @@
 id: chief-chapter-3
-version: 1.8.0
+version: 1.9.0
 description: Merge the ledger's actions into the 3.2 quick reference and write 3.1
 agent: report-consultant
 objective: 你现在是总编。上面是委托与报告结构、程序统计、篇幅参考、第一章和第三章的专家版方法，以及项目图谱（各配电房、对象、各模块的关注和不能判定行、已审定的关联）。rows 是全部关注和不能判定的判断行（终版，basis 截短），module_counts 是各模块各种处置的行数，story_lines 是写正文前已定的跨模块主线。依据这些写第三章：3.1 风险/问题汇总与概览（两层，一行一项），以及 3.2 改善行动速查表每组的文字。
@@ -25,7 +25,7 @@ constraints:
 - story_lines 是主线规划已定的跨模块证据链，第二章各节已按它交代；cross_findings 先从这些主线写起，再看 object_chains 里还有没有合得出结论的对象。
 - 每条 cross_findings 的 conclusion 一句、一行，程序把它作为“风险汇总”的一条写进 3.1（前面加 subject），risk_summary 里不再重写。同一种叠加（例如同样两项缺陷）出现在几个对象上时合成一条，subject 列出这几个对象，不按对象重复写。理由只用所引判断行写着的事实，不加行里没有的说法。
 - unresolved_conflicts 是返修后仍然冲突的事实：在 risk_summary 里各写一条，如实写明两边结论不一致、需要核实，不替任何一边下结论。
-- gap_entries 是程序合并好的资料缺口，一条一项：rows 里不能判定行的 gap 只给 gap_id，内容见 gap_entries。写到缺口时按条目写，用它的 wording 和 objects，与第二章说法一致；同一条缺口在本章只写一次，不逐对象、逐行重复。只有 wording 里有“未提供”的条目才写“未提供”，其他条目按 wording 写“未填写”“缺〈参数〉”等，不换成别的说法。
+- gap_entries 是程序合并好的资料缺口，一条一项：rows 里不能判定行的 gap 只给 gap_id，内容见 gap_entries。写到缺口时按条目写，用它的 wording 和 objects，与第二章说法一致；同一条缺口在本章只写一次，不逐对象、逐行重复。只有 wording 里有“未提供”的条目才写“未提供”，其他条目按 wording 写“未填写”“有记录读数，缺判定所需的参数”等，不换成别的说法；条目带 affects 的，写这条缺口时可以一并说明还影响哪几处判断。same_room 是同一配电房里分属不同专题、各自成立的问题（每个配电房一项，列出行号）：它们不是互相加重的关联，安排措施时可以按配电房合并整改和验收，但不要写成一处问题加重另一处。
 - 每条结论不能强于所引判断行的 evidence_status：资料未提供不写成缺失或没有，可能不写成将会，来源作者意见注明出处，照片待核不写成事实。摘要只引用第二章已定的结论，不复述论证。
 tools: []
 attention_budget_tokens: 200000

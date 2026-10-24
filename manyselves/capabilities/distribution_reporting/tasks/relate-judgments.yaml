@@ -1,5 +1,5 @@
 id: relate-judgments
-version: 4.1.0
+version: 4.2.0
 description: Right after judging, decide which other modules' rows bear on this group's rows, in one turn
 agent: report-consultant
 objective: 五个模块都判断完了。flagged_elsewhere 是别的模块判为关注或不能判定的全部行，related 是别的模块对你这些对象的判断，same_room 是别的模块在你这些行所在配电房判为关注或不能判定的其他行；facts 是这些候选行所引记录的原文。按本次的实际情况判断它们是否加重、解释或改变了你刚才提交的判断行的结论；成立才连，没有就不连。你漏看的，审查阶段的跨模块审查会再提给你确认。
@@ -9,6 +9,7 @@ context_fields:
 - relation_method
 - facts
 constraints:
+- 这三种行对程序不当关联，会从关联里拿出来另行列出，不用连、也不用提：两行都不能判定（缺口写在缺口条目里）；一行不能判定、两行又不是同一对象也不在同一配电房（写在那条缺口的“还影响哪些判断”里）；两行都是关注、在同一配电房、都没有读数（按配电房合列一次）。
 - relation_method 是知识库的跨知识单元关联方法，relation_names 是它列出的候选关系。flagged_elsewhere 每行一句（行编号 小节｜对象｜检查点（处置）：发现）；related 的键是本模块的行，值是别的模块对同一主体的判断，同一主体可能只是同一个配电场所的同名条目，表中同一记录行才是同一设备单元；reason 里按这个层级写。
 - 知识库的关联方法是参考，不是要凑满的清单：不要求每种候选关系都连，也不要求逐条下结论。两边的事实确实能看出这条关系要核实的条件时才连；本次情况下不成立的就不连，不用写拒绝理由，愿意的话可以把关系名称放进 considered，只表示"考虑过、不成立"。
 - 知识库没有收录、但两边的事实能看出确实相关的关联也可以连：relation 自拟一个简短名称，并必须写 mechanism（两边为什么相关的机理）和 condition（这条关联成立要满足的条件，以及两边哪项事实满足了它）。这类关联没有知识库兜底，会被审查专门核对。

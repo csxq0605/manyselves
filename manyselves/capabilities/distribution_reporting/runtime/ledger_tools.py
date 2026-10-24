@@ -108,6 +108,8 @@ from .cross_module import (
     unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
+from .relation_routes import gap_affects, routed_relations, same_room_issues, still_routed
+from .row_photos import filled_photos, photos_not_shown
 from .gap_entries import (
     chief_gap_entries,
     gap_entries,
@@ -712,6 +714,48 @@ def _with_added_relations(
                 seen.add((value.get("row_id"), value.get("relation")))
         result.append(JudgmentRow.model_validate({**row.model_dump(mode="json"), "relations": relations}))
     return result
+
+
+def _adopted_by_both(
+    adopted: Mapping[str, Mapping[str, Sequence[Any]]],
+) -> tuple[dict[str, dict[str, list[Any]]], list[dict[str, Any]]]:
+    """The proposed relations both rows' authors took, and the ones only one end took.
+
+    A proposal goes to the authors of both its rows; a relation joins two
+    judgments, so it stands only when neither author turned it down.
+    """
+
+    taken = {
+        frozenset((row_id, _plain(relation).get("row_id")))
+        for rels in adopted.values() for row_id, items in rels.items() for relation in items
+    }
+    taken_by: dict[frozenset[str], set[str]] = {}
+    for rels in adopted.values():
+        for row_id, items in rels.items():
+            for relation in items:
+                pair = frozenset((row_id, _plain(relation).get("row_id")))
+                taken_by.setdefault(pair, set()).add(row_id)
+    both = {pair for pair in taken if taken_by.get(pair) == set(pair)}
+    kept: dict[str, dict[str, list[Any]]] = {}
+    one_side: list[dict[str, Any]] = []
+    for module_id, rels in adopted.items():
+        for row_id, items in rels.items():
+            for relation in items:
+                other = _plain(relation).get("row_id")
+                if frozenset((row_id, other)) in both:
+                    kept.setdefault(module_id, {}).setdefault(row_id, []).append(relation)
+                else:
+                    one_side.append({"row_id": row_id, "other_row_id": other,
+                                     "relation": _plain(relation).get("relation")})
+    return kept, one_side
+
+
+def _merged_routes(*lists: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    found: dict[tuple[str, ...], dict[str, Any]] = {}
+    for routes in lists:
+        for entry in routes:
+            found.setdefault(tuple(entry["rows"]), dict(entry))
+    return [found[key] for key in sorted(found)]
 
 
 def _with_instruction(brief: dict[str, Any], instructions: Sequence[str] | None) -> dict[str, Any]:
@@ -1323,6 +1367,10 @@ class LedgerTools(LedgerStageTools):
         names = relation_names(self._relation_method(run_id))
         observation_of, owner_sections = self._observation_map(run_id)
         ledger, dropped = checked_relations(ledger, names, observation_of)
+        # Pairs that are two gaps, a gap bearing on a project-level row, or two
+        # findings side by side in one room are not relations: they go to the
+        # gap entries and the room listing, and the review never sees them.
+        ledger, routed = routed_relations(ledger, self._sites(run_id))
         program_findings = {
             module_id: dict(found) for module_id, found in built["program_findings"].items()
         }
@@ -1357,6 +1405,7 @@ class LedgerTools(LedgerStageTools):
                     if chosen.get("declined_proposals")
                 },
                 "unlisted_relations": unlisted_relations(ledger, names),
+                "routed_relations": routed,
             },
         )
         # The review lenses are built after the photos are read again
@@ -1374,6 +1423,7 @@ class LedgerTools(LedgerStageTools):
         ledger: Mapping[str, Sequence[JudgmentRow]],
         adopted: Mapping[str, Mapping[str, Sequence[Any]]],
         declined: Mapping[str, Sequence[Any]],
+        one_side: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         """What the cross-module review added beyond the authors' own relations, by kind.
 
@@ -1425,6 +1475,8 @@ class LedgerTools(LedgerStageTools):
             "relations_added": len(added),
             "added_by_kind": by_kind,
             "declined": sum(len(v) for v in declined.values()),
+            # Taken by one row's author and not the other's: not a relation.
+            "one_side_only": list(one_side),
             "added": sorted(added.values(), key=lambda e: e["rows"]),
             "declined_by_module": {k: list(v) for k, v in declined.items()},
         })
@@ -1704,8 +1756,9 @@ class LedgerTools(LedgerStageTools):
             )
             ledger[module_id] = apply_revisions(ledger[module_id], revised, dropped)
             if added := revision.get("relations"):
-                ledger[module_id] = _with_added_relations(ledger[module_id], added, module_id)
-                adopted[module_id] = {row_id: list(rels) for row_id, rels in added.items()}
+                adopted.setdefault(module_id, {})
+                for row_id, rels in added.items():
+                    adopted[module_id].setdefault(row_id, []).extend(rels)
             if revision.get("declined_proposals"):
                 declined_proposals[module_id] = list(revision["declined_proposals"])
             changed.extend({"module_id": module_id, **row} for row in _dump_rows(revised))
@@ -1718,6 +1771,10 @@ class LedgerTools(LedgerStageTools):
             )
             if missing := [target for target in blocking if target not in answered]:
                 unanswered.setdefault(module_id, []).extend(missing)
+        # A proposed relation stands only when the authors at both ends took it.
+        adopted, one_side = _adopted_by_both(adopted)
+        for module_id, added in adopted.items():
+            ledger[module_id] = _with_added_relations(ledger[module_id], added, module_id)
         lens_path = self.workspace / f"Work/runs/{run_id}/ledger/review-lens-findings.json"
         lens_findings = (
             json.loads(lens_path.read_text(encoding="utf-8")) if lens_path.is_file() else {}
@@ -1735,19 +1792,29 @@ class LedgerTools(LedgerStageTools):
         names = relation_names(self._relation_method(run_id))
         observation_of, _owners = self._observation_map(run_id)
         ledger, dropped_relations = checked_relations(ledger, names, observation_of)
-        self._record_cross_proposals(run_id, ledger, adopted, declined_proposals)
+        sites = self._sites(run_id)
+        ledger, routed = routed_relations(ledger, sites)
+        routed = _merged_routes(still_routed(self._r1_routes(run_id), ledger, sites), routed)
+        # A concern row that named no photo shows its own records' photos.
+        ledger = filled_photos(ledger, sites)
+        self._record_cross_proposals(run_id, ledger, adopted, declined_proposals, one_side)
         self._write_knowledge_candidates(run_id, ledger, names)
         conflicts = unresolved_conflicts(dossiers, lens_findings.get("by_row") or {})
         chains = object_chains(dossiers, ledger)
         dumped = {module_id: _dump_rows(rows) for module_id, rows in ledger.items()}
         self.store.write_json(f"Work/runs/{run_id}/ledger/judgments.json", dumped)
-        gaps = self._write_gaps(run_id, ledger)
+        gaps = self._write_gaps(run_id, ledger, affects=gap_affects(routed, ledger))
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/same-room.json", same_room_issues(routed, ledger)
+        )
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/cross-module.json",
             {
                 "unresolved_conflicts": conflicts,
                 "object_chains": chains,
                 "dropped_relations": dropped_relations,
+                # Pairs taken out of the relations: gaps and same-room listings.
+                "routed_relations": routed,
                 # Relations one end gave up in revision, dropped from the other end.
                 "mirrored_removals": mirrored,
             },
@@ -1832,6 +1899,8 @@ class LedgerTools(LedgerStageTools):
                 "rows": story_input["rows"],
                 # Every gap once; an undetermined row in ``rows`` names its entry.
                 "gap_entries": story_input["gap_entries"],
+                # Concerns of different modules side by side in one room, each room once.
+                "same_room": self._same_room(run_id),
                 "module_counts": {
                     module_id: {
                         disposition: sum(1 for row in rows if row.disposition == disposition)
@@ -2133,11 +2202,15 @@ class LedgerTools(LedgerStageTools):
         return found
 
     def _write_gaps(
-        self, run_id: str, ledger: Mapping[str, Sequence[JudgmentRow]]
+        self,
+        run_id: str,
+        ledger: Mapping[str, Sequence[JudgmentRow]],
+        *,
+        affects: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
     ) -> list[dict[str, Any]]:
         """One gap file per gap entry: rows lacking the same thing are one line naming every object."""
 
-        entries = gap_entries(ledger, self._sites(run_id))
+        entries = gap_entries(ledger, self._sites(run_id), affects=affects)
         folder = self.workspace / f"Work/runs/{run_id}/gaps"
         for stale in folder.glob("GAP-*.json") if folder.is_dir() else ():
             stale.unlink()
@@ -2149,6 +2222,8 @@ class LedgerTools(LedgerStageTools):
                     "impact": entry["impact"],
                     "requested_input": entry["requested_input"],
                     "fill": entry["fill"],
+                    "note": entry.get("note") or "",
+                    "affects": entry.get("affects") or [],
                     "kind": entry["kind"],
                     "task_id": f"module-{entry['modules'][0]}",
                     "section": entry["section"],
@@ -2158,6 +2233,23 @@ class LedgerTools(LedgerStageTools):
             )
         self.store.write_json(f"Work/runs/{run_id}/ledger/gap-entries.json", entries)
         return entries
+
+    def _r1_routes(self, run_id: str) -> list[dict[str, Any]]:
+        """The pairs taken out of the relations right after relating."""
+
+        path = self.workspace / f"Work/runs/{run_id}/ledger/relations-r1.json"
+        if not path.is_file():
+            return []
+        return list(json.loads(path.read_text(encoding="utf-8")).get("routed_relations") or [])
+
+    def _same_room(self, run_id: str) -> list[dict[str, Any]]:
+        path = self.workspace / f"Work/runs/{run_id}/ledger/same-room.json"
+        if not path.is_file():
+            return []
+        return [
+            {"place": room["place"], "row_ids": [row["row_id"] for row in room.get("rows") or ()]}
+            for room in json.loads(path.read_text(encoding="utf-8"))
+        ]
 
     def _gap_entries(self, run_id: str) -> list[dict[str, Any]]:
         """The settled ledger's gap entries (none before the ledger is settled)."""
@@ -3203,6 +3295,11 @@ class LedgerTools(LedgerStageTools):
             {
                 "note": "这些照片对应的记录没有任何判断行放进小节，报告里不出现，需人工确认。",
                 "photos": unplaced,
+                "in_section_not_shown_note": (
+                    "这些照片的记录已被本小节的关注行引用，但没有一行放出这张照片"
+                    "（记录不属于该行的对象，或几行共用、分不出是哪一处），报告里不出现，需人工确认。"
+                ),
+                "in_section_not_shown": photos_not_shown(ledger, self._sites(run_id)),
             },
         )
         return result

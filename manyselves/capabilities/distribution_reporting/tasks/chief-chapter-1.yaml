@@ -1,5 +1,5 @@
 id: chief-chapter-1
-version: 1.8.0
+version: 1.9.0
 description: Write chapter 1 from the ledger and the chapter 3 just settled
 agent: report-consultant
 objective: 继续作为总编，依据上文的总编资料和输入（rows、module_counts、story_lines、object_chains、same_observation、value_slots 等）以及你提交的第三章，写第一章：1.1 评估背景、1.2 健康度总览（总体评价加三张表的结构化行）、1.3 各区域执行摘要。输入没有重发，按上文的为准。
@@ -16,7 +16,7 @@ constraints:
 - 总体评价和区域摘要要有取舍：为什么这几项优先、多项证据合起来支持什么判断、哪项复测结果会改变方案；来源和限制集中交代一次，不逐句加限定。
 - 不能把未知写成良好，不用多数正常覆盖少数异常。区域摘要可以合并同类事项，但保留覆盖的对象和主要例外。
 - 数量、档位和对象名单用占位符（value_slots 里的台账数量和各检查项的计数，或上文“程序统计”里的〔K-…〕〔S-…〕〔S-…:取值〕），不自己数，也不把正文里的数重新归纳成新的数量；数量占位符只填一个数字，量词接着写（“〔K-0040〕个单元”）；其他数字照常写。区域归属按事实里的对象写，不把全站数量写成某个区域的数量。同一措施在第一章、第三章各出现一次，不在总体评价、摘要和表之间反复改写。
-- gap_entries 是程序合并好的资料缺口，一条一项：rows 里不能判定行的 gap 只给 gap_id，内容见 gap_entries。写到缺口时按条目写，用它的 wording 和 objects，与第二章说法一致；同一条缺口在本章只写一次，不逐对象、逐行重复。只有 wording 里有“未提供”的条目才写“未提供”，其他条目按 wording 写“未填写”“缺〈参数〉”等，不换成别的说法。
+- gap_entries 是程序合并好的资料缺口，一条一项：rows 里不能判定行的 gap 只给 gap_id，内容见 gap_entries。写到缺口时按条目写，用它的 wording 和 objects，与第二章说法一致；同一条缺口在本章只写一次，不逐对象、逐行重复。只有 wording 里有“未提供”的条目才写“未提供”，其他条目按 wording 写“未填写”“有记录读数，缺判定所需的参数”等，不换成别的说法；条目带 affects 的，写这条缺口时可以一并说明还影响哪几处判断。
 - 每条结论不能强于所引判断行的 evidence_status：资料未提供不写成缺失或没有，可能不写成将会，来源作者意见注明出处，照片待核不写成事实。摘要只引用第二章已定的结论，不复述论证。
 tools: []
 needs_history: true
