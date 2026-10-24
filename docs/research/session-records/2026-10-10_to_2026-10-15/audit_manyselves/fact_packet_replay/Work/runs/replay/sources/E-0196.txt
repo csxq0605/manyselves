@@ -1,1 +1,0 @@
-{"id":"E-0196","subject":"老配电房（高压）","fact":"操作工具=NG；补充记录=无台账","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"配电房合规性","cell":"L9:M9","page":null,"row":9,"column":"L","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.5","submodule_id":"2.5.5","photo_refs":[]}

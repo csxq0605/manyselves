@@ -1,9 +1,0 @@
-{
-  "workflow_id": "distill-template-skill",
-  "identity_key": "template-distiller",
-  "owner_id": "Csxq-Laptop:25088:fcf260f57dd4460e8e5266ad32dece33:attempt-ca55514ab62b44818568208548928528",
-  "lease_epoch": 2,
-  "acquired_at_ns": 1792024841000191200,
-  "released_at_ns": 1792024841042042300,
-  "status": "released"
-}

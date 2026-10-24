@@ -1,1 +1,0 @@
-{"id":"E-0013","subject":"设备13","fact":"实测剩余电流=0.1A","source":{"file_id":"input-1","path":"Inputs/检测.xlsx","sheet":"测点","cell":"J13","page":null,"row":13,"column":"J","image_id":null},"value":0.1,"unit":"A","measurements":[],"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.4","submodule_id":"2.4.3.1","photo_refs":[]}

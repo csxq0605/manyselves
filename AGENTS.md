@@ -5,13 +5,9 @@
 ## 1. 必读顺序
 
 1. [`docs/PROJECT_POSITIONING.md`](docs/PROJECT_POSITIONING.md)
-2. [`docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
-3. [`docs/CODEX_AUTONOMOUS_EXECUTION.md`](docs/CODEX_AUTONOMOUS_EXECUTION.md)
-4. [`docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`](docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md)
-5. [`docs/implementation/RUNTIME_EXTRACTION_STATUS.md`](docs/implementation/RUNTIME_EXTRACTION_STATUS.md)
-6. 当前切片涉及的源码、文件定义、测试和持久化 Run 产物
+2. 当前改动涉及的源码、文件定义、测试和持久化 Run 产物
 
-这些文件分别决定产品定位、最终架构、连续执行方式、外部研究基线和当前实施位置。历史交接、旧迁移计划、代码注释或测试名称与它们冲突时，不得据此保留已经废止的兼容目标；必须检查生产调用链并更新规范或实现。
+定位文档决定产品与架构边界。历史交接、旧迁移计划、代码注释或测试名称与它冲突时，不得据此保留已经废止的兼容目标；必须检查生产调用链并更新规范或实现。计划、调研、交接和实验记录不放在本仓库。
 
 ## 2. 唯一目标形态
 
@@ -159,8 +155,6 @@ Legacy Reporting Runner、旧 Reporting API、旧 Run 恢复和双路径 A/B 不
 
 ## 9. 连续自主实施
 
-本项目采用一次总任务、按最终架构依赖顺序持续推进、最后一次真实测试。活动阶段和切片见主实施方案。
-
 每个可验证垂直切片必须：
 
 1. 检查生产入口、调用链、定义和测试；
@@ -168,7 +162,7 @@ Legacy Reporting Runner、旧 Reporting API、旧 Run 恢复和双路径 A/B 不
 3. Characterization First；
 4. 实现最小完整纵切；
 5. 运行 focused tests 和受影响测试；
-6. 更新唯一状态文件；
+6. 在 PR 说明里记录差异和验证；
 7. 创建并推送聚焦提交；
 8. 自动进入下一切片。
 
@@ -223,7 +217,7 @@ Characterization 不是永久保留旧类结构。它用于把应保留的业务
 - Application/FastAPI/React 是否存在 Capability-ID 分支；
 - 文档状态是否与当前分支、提交和测试证据一致。
 
-发现设计与实际不一致时，立即把差异写入 `RUNTIME_EXTRACTION_STATUS.md`，补充 Characterization，调整后续切片；不得用已存在的类、通过的窄测试或历史真实 Run 掩盖生产未接线。
+发现设计与实际不一致时，立即在 PR 说明里写清差异，补充 Characterization，调整后续切片；不得用已存在的类、通过的窄测试或历史真实 Run 掩盖生产未接线。
 
 ## 14. 调研规则
 
@@ -234,19 +228,11 @@ Characterization 不是永久保留旧类结构。它用于把应保留的业务
 3. 官方文档与设计说明；
 4. 隔离的最小 POC。
 
-只使用官方一手技术来源形成架构结论。若结论不改变实现选择，不必增加研究文件；若改变长期边界，记录到 `docs/research/decisions/`。调研不能替代生产接线和验证。
+只使用官方一手技术来源形成架构结论。若结论不改变实现选择，不必增加研究文件；若改变长期边界，更新 `docs/PROJECT_POSITIONING.md`。调研不能替代生产接线和验证。
 
 ## 15. 分支、提交和状态
 
-长期实施分支：
-
-```text
-base: agent/declarative-runtime-plan
-head: agent/declarative-runtime-implementation
-PR: one long-lived PR; keep it Draft during implementation and mark it ready only after the merge-scope checks pass
-```
-
-每个架构切片独立提交和推送。`docs/implementation/RUNTIME_EXTRACTION_STATUS.md` 是唯一跨会话实施状态；它不是运行时状态，也不应复制 Event Log。
+从 `main` 开分支，每个改动独立提交，经 PR 合并到 `main`。进度和交接不写进仓库。
 
 ## 16. 完成定义
 
@@ -262,7 +248,7 @@ PR: one long-lived PR; keep it Draft during implementation and mark it ready onl
 8. Recovery、Conversation、Tool Result 和 Same-run 行为在最终路径成立；
 9. 未使用的新旧兼容 Runner、Facade、入口和测试已删除或明确隔离，不在生产图；
 10. focused/affected 自动验证、包构建和最后一次真实 Provider/项目/浏览器测试通过；
-11. 文档、状态、生产调用链和发布产物一致。
+11. 文档、生产调用链和发布产物一致。
 
 在这些条件满足前，状态必须保持“实施中”，不得因旧兼容路径可运行或历史真实 Run 成功而宣称完成。
 
@@ -276,4 +262,4 @@ git branch --show-current
 git log -1 --oneline
 ```
 
-然后读取本文件和唯一状态文件，从 `Current slice` / `Next automatic action` 继续；不得重复已完成切片，不得退回“双路径兼容即完成”的旧目标。
+然后读取本文件和 `docs/PROJECT_POSITIONING.md`，从当前代码和 PR 继续；不得重复已完成切片，不得退回“双路径兼容即完成”的旧目标。

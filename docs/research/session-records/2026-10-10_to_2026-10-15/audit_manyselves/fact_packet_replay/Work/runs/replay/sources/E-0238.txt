@@ -1,1 +1,0 @@
-{"id":"E-0238","subject":"评估总表 2.1.5","fact":"既有评估结论=多数电容柜未投入使用","source":{"file_id":"file-013a9efb52231caa","path":"Inputs/S4-6评估总表.xlsx","sheet":"评估信息汇总表","cell":"F9:G9","page":null,"row":9,"column":"F","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":0.65,"needs_confirmation":true,"module_id":"2.1","submodule_id":"2.1.5","photo_refs":[]}

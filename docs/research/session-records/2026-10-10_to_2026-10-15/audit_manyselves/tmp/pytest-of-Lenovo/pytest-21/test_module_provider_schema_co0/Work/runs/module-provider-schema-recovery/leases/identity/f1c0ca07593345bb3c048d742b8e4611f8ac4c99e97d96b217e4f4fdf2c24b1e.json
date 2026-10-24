@@ -1,9 +1,0 @@
-{
-  "workflow_id": "public-reporting",
-  "identity_key": "module-2.4-specialist",
-  "owner_id": "Csxq-Laptop:25088:59be875ca6dc48c59fd6e8ba1d60a759:attempt-1c8ef39cce3841f0b6c4076f5b611134",
-  "lease_epoch": 1,
-  "acquired_at_ns": 1792024826533815500,
-  "released_at_ns": 1792024827148071300,
-  "status": "released"
-}

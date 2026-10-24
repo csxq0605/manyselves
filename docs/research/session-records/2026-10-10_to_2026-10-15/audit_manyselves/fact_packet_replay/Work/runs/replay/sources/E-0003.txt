@@ -1,1 +1,0 @@
-{"id":"E-0003","subject":"基础图纸与技术参数/主要开关（断路器）技术参数","fact":"具备情况=NG；有效性=NG","source":{"file_id":"file-0e493d3e291ad22b","path":"Inputs/S2-1收资表.xlsx","sheet":"收资表","cell":"G4:H4","page":null,"row":4,"column":"G","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.4","submodule_id":"2.4.1.1","photo_refs":[]}

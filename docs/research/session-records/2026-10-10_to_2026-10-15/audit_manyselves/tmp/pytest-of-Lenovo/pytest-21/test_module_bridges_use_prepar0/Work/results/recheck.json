@@ -1,1 +1,0 @@
-{"task_id":"module-2.4-initial-review-r1","run_id":"module-bridge-terminal-contract","agent_id":"evidence-auditor","session_id":"public-reporting:module-bridge-recheck","status":"completed","payload":{"kind":"module_review_verdict_submission","coverage":{"submodule_ids":["2.4.1.1"]},"verdicts":[],"new_findings":[]},"raw_output":"","reason":null}

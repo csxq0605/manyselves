@@ -1,1 +1,0 @@
-{"id":"E-0005","subject":"基础图纸与技术参数/双电源装置统计表","fact":"具备情况=NG；有效性=NG","source":{"file_id":"file-0e493d3e291ad22b","path":"Inputs/S2-1收资表.xlsx","sheet":"收资表","cell":"G6:H6","page":null,"row":6,"column":"G","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":true,"module_id":"2.1","submodule_id":"2.1.3","photo_refs":[]}

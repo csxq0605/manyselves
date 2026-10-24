@@ -1,1 +1,0 @@
-{"id":"E-0040","subject":"13号楼配电房/进线D1301","fact":"变压器噪声震动=OK","source":{"file_id":"file-25864794bcef574c","path":"Inputs/S4-4诊断工作用表.xlsx","sheet":"低配评估详情","cell":"U7:U7","page":null,"row":7,"column":"U","image_id":null},"value":null,"unit":null,"observed_at":null,"confidence":1.0,"needs_confirmation":false,"module_id":"2.2","submodule_id":"2.2.2.3","photo_refs":[]}
