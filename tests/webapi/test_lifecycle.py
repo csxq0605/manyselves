@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from manyselves.config.schema import AppConfig
 from manyselves.interfaces.types import ApiDebugMessage, ToolCallMessage, ToolResult
+from manyselves.runtime.loops.bus import MessageBus
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import app as exported_app
 from manyselves.webapi.main import create_app
@@ -25,6 +27,8 @@ class FakeRuntimeHost:
         self.start_count = 0
         self.stop_count = 0
         self.is_ready = False
+        self.bus = MessageBus()
+        self.config_manager = SimpleNamespace(config=AppConfig())
         self.start_error = start_error
         self.stop_error = stop_error
         self.workspace: Path | None = None

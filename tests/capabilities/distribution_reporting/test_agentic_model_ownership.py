@@ -70,7 +70,6 @@ def test_agentic_models_are_physically_owned_by_the_capability() -> None:
         "FinalChapterLaneFindingSubmission",
         "FinalChapterLaneVerdictSubmission",
         "EditedReportSubmission",
-        "AgentResult",
     )
     for model_name in ownership_roots:
         assert getattr(agentic, model_name).__module__ == AGENTIC_MODEL_MODULE

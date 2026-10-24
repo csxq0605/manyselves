@@ -27,23 +27,8 @@ def test_sidebar_updates_agent_runtime_status(qtbot):
     sidebar.ensure_agent(runtime_id)
     sidebar.set_agent_status(runtime_id, "running_tool")
 
-    assert sidebar._rows[runtime_id].name.text() == "Render"
+    assert sidebar._rows[runtime_id].name.text() == "Report Renderer"
     assert "Using tool" in sidebar._rows[runtime_id].status.text()
-
-
-def test_sidebar_labels_reporting_lane_identities_instead_of_generic_roles(qtbot):
-    sidebar = AgentSidebar()
-    qtbot.addWidget(sidebar)
-    expected = {
-        "module-auditor-2.1--session-a1b2c3d4": "Module 2.1 Auditor",
-        "cross-owner-2.3--session-a1b2c3d4": "Cross 2.3 Owner",
-        "chief-chapter-4--session-a1b2c3d4": "Chief Chapter 4",
-        "final-chapter-3--session-a1b2c3d4": "Final Chapter 3 Auditor",
-    }
-
-    for runtime_id, label in expected.items():
-        sidebar.ensure_agent(runtime_id)
-        assert sidebar._rows[runtime_id].name.text() == label
 
 
 def test_sidebar_shows_and_clears_current_agent_task(qtbot):

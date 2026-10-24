@@ -1106,15 +1106,11 @@ async def test_history_replacement_discards_partial_response_buffer(resources) -
     await _eventually(lambda: not host.app.state.conversation_service._streams)  # noqa: SLF001
     created = await client.post("/api/v1/conversations", json={"name": "Fresh"})
     await host.bus.publish(AgentResponse(agent_type="main", content="fresh", streaming=False))
-    await _eventually(
-        lambda: (
-            workspace / f".manyselves/conversations/main/{created.json()['sessionId']}.jsonl"
-        ).exists()
-    )
+    history = workspace / f".manyselves/conversations/main/{created.json()['sessionId']}.jsonl"
+    # Creating the conversation already writes its (empty) file; wait for the reply itself.
+    await _eventually(lambda: history.exists() and "fresh" in history.read_text("utf-8"))
 
-    text = (
-        workspace / f".manyselves/conversations/main/{created.json()['sessionId']}.jsonl"
-    ).read_text("utf-8")
+    text = history.read_text("utf-8")
     assert "fresh" in text
     assert "stale-partial" not in text
 
@@ -2575,6 +2571,25 @@ async def test_python_run_is_unsupported_on_windows_before_process_creation(
     assert created is False
 
 
+
+def _process_is_gone(pid: int) -> bool:
+    """A killed process is gone, or a zombie its (non-reaping) new parent never collected.
+
+    In containers whose PID 1 does not reap orphans, a killed grandchild stays a
+    zombie, so ``os.kill(pid, 0)`` still succeeds although nothing is running.
+    """
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    status = Path(f"/proc/{pid}/status")
+    try:
+        lines = status.read_text("utf-8").splitlines()
+    except OSError:
+        return False
+    return any(line.startswith("State:") and "Z" in line.split()[1] for line in lines)
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
 async def test_python_interrupt_kills_descendants_that_hold_output_pipes(resources) -> None:
@@ -2608,8 +2623,7 @@ async def test_python_interrupt_kills_descendants_that_hold_output_pipes(resourc
 
     assert interrupted.status_code == 202
     assert interrupted.json()["status"] == "interrupted"
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    assert _process_is_gone(child_pid)
 
 
 @pytest.mark.asyncio
@@ -2650,8 +2664,7 @@ async def test_python_interrupt_kills_descendants_after_parent_exits(resources) 
 
     assert interrupted.status_code == 202
     assert interrupted.json()["status"] == "interrupted"
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    assert _process_is_gone(child_pid)
 
 
 @pytest.mark.asyncio

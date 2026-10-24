@@ -5,11 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from .input_snapshot import RunInputSnapshotStore
-from .template_skill_paths import template_skill_ref
-
-
-def resolve_template_input(workspace: Path, state: Mapping[str, Any], logical_ref: Path) -> Path:
-    return resolve_template_inputs(workspace, state, [logical_ref])[logical_ref]
 
 
 def resolve_template_inputs(workspace: Path, state: Mapping[str, Any], logical_refs: list[Path]) -> dict[Path, Path]:
@@ -20,15 +15,6 @@ def resolve_template_inputs(workspace: Path, state: Mapping[str, Any], logical_r
         snapshot = RunInputSnapshotStore(workspace).load(run_id)
         return {ref: workspace / snapshot.resolve(ref) for ref in logical_refs}
     return {ref: workspace / ref for ref in logical_refs}
-
-
-def read_template_skill(workspace: Path, state: Mapping[str, Any], skill_id: str) -> str:
-    texts = state.get("template_skill_text", {})
-    content = texts.get(skill_id, "") if isinstance(texts, Mapping) else ""
-    if content:
-        return content
-    path = resolve_template_input(workspace, state, template_skill_ref(skill_id))
-    return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
 def render_template_skill(skill_id: str, content: str) -> str:

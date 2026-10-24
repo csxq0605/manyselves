@@ -30,7 +30,6 @@ import yaml
 from ..domain.calculations import compute, render_calculations, render_statistics, statistics
 from ..domain.copied_text import COPIED_SUGGESTION, CopiedText, copied_problem, skill_parts
 from ..domain.judgment_ledger import (
-    HINT_SUGGESTION,
     PROBLEM_TABLE_MARKER,
     SLOT_SUGGESTION,
     ActionText,
@@ -71,20 +70,26 @@ from ..domain.taxonomy import (
 from ..domain.value_slots import (
     UNRESOLVED,
     fill_slots,
-    slot_repairs,
     format_value,
     object_names,
     slot_lines,
+    slot_repairs,
     slot_table,
     slots_for_evidence,
     strip_slots,
 )
 from .assets import runtime_photo_ids
-from .chief_fact_packets import apply_fact_findings, chief_fact_packets, chief_pieces, place_chief_fix
+from .case_review import cases, field_shape
+from .chief_fact_packets import (
+    apply_fact_findings,
+    chief_fact_packets,
+    chief_pieces,
+    place_chief_fix,
+)
 from .context_packs import (
-    PROJECT_LEVEL,
     GROUP_ROW_SPAN,
     JUDGE_GROUP_RECORDS,
+    PROJECT_LEVEL,
     Sites,
     brief_row,
     compact_row,
@@ -101,16 +106,12 @@ from .cross_module import (
     related_rows,
     relation_names,
     same_observation_findings,
-    same_observation_rows,
-    shared_observation_groups,
     see_also_by_row,
+    shared_observation_groups,
     unlisted_relations,
     unresolved_conflicts,
 )
 from .delivery_tools import DeliveryTools
-from .case_review import cases, field_shape
-from .relation_routes import gap_affects, routed_relations, same_room_issues, still_routed
-from .row_photos import filled_photos, photos_not_shown
 from .gap_entries import (
     chief_gap_entries,
     gap_entries,
@@ -142,9 +143,9 @@ from .observation_ledger import build_observation_ledger, shared_labels
 from .photo_reading import (
     load_photo_readings,
     photo_reading_labels,
-    photo_readings_ref,
     reading_label,
 )
+from .relation_routes import gap_affects, routed_relations, same_room_issues, still_routed
 from .report_revision import (
     SECTION_NOTE,
     base_dir,
@@ -156,6 +157,7 @@ from .report_revision import (
 from .research.fact_context import register_fact_sources, render_fact_packet
 from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex
+from .row_photos import filled_photos, photos_not_shown
 from .rule_standards import (
     knowledge_units,
     section_standards,
@@ -377,16 +379,6 @@ def _filled(value: Any, slots: Mapping[str, Mapping[str, Any]]) -> Any:
     return value
 
 
-def _section_ids() -> list[str]:
-    """Every section number the report has: the run's chapter 2 tree and the chief's."""
-
-    return [
-        *CHIEF_SECTION_TITLES,
-        *REPORT_TAXONOMY,
-        *(sub_id for module in REPORT_TAXONOMY.values() for sub_id in module.submodules),
-    ]
-
-
 def _strings(value: Any) -> list[str]:
     """Every text a structured chief output holds, ids aside."""
 
@@ -423,17 +415,6 @@ def _rows(values: Sequence[Any]) -> list[JudgmentRow]:
 
 def _dump_rows(rows: Sequence[JudgmentRow]) -> list[dict[str, Any]]:
     return [row.model_dump(mode="json", exclude_none=True) for row in rows]
-
-
-def _ledger_text(ledger: Mapping[str, Sequence[Mapping[str, Any]]]) -> str:
-    lines = [
-        "# 判断台账",
-        "每个模块的判断行，每行一个 JSON 对象。审查、汇总和写作都以这张台账为准。",
-    ]
-    for module_id, rows in ledger.items():
-        lines.append(f"\n## 模块 {module_id}")
-        lines.extend(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows)
-    return "\n".join(lines) + "\n"
 
 
 def _supplement_lines(request: ReportRequest) -> list[str]:

@@ -1,7 +1,6 @@
 """Typed carriers owned by the distribution-reporting capability runtime."""
 
 import re
-from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -72,24 +71,6 @@ CHAPTER_STATIC_SECTION_IDS = {
 CHAPTER_IDS = ("1", "3", "4")
 
 
-def chapter_section_ids(
-    chapter_id: str,
-    special_topic_plan: "SpecialTopicPlan | None" = None,
-) -> tuple[str, ...]:
-    """Return the exact active section ids for one Chief/Final lane.
-
-    Chapter 4 is dynamic and exists only when the Inputs-derived special-topic
-    plan is present.  Keeping this check in the shared model layer prevents a
-    workflow reducer from accidentally creating a phantom Chapter 4 lane.
-    """
-
-    if chapter_id in CHAPTER_STATIC_SECTION_IDS:
-        return tuple(CHAPTER_STATIC_SECTION_IDS[chapter_id])
-    if chapter_id == "4":
-        if special_topic_plan is None:
-            raise ValueError("Chapter 4 lane requires an active special_topic_plan")
-        return tuple(section.section_id for section in special_topic_plan.sections)
-    raise ValueError(f"unsupported Chief/Final chapter lane: {chapter_id}")
 ReportOperation = Literal["full_report", "render_existing"]
 # Request fields of the retired module/aggregate/copy-revision operations, and
 # the revision a request once carried (a run now keeps it in its own variable).
@@ -493,81 +474,6 @@ class ReportRequest(ReportingModel):
 
 
 EvidenceDecisionAction = Literal["supplement", "draft", "skip", "stop"]
-
-
-class EvidenceDecisionRequest(ReportingModel):
-    decision_id: str = Field(min_length=1)
-    run_id: str = Field(min_length=1)
-    missing_items: list[str] = Field(min_length=1)
-    affected_modules: list[str] = Field(min_length=1)
-    allowed_actions: list[EvidenceDecisionAction] = Field(
-        default_factory=lambda: ["supplement", "draft", "skip", "stop"]
-    )
-    status: Literal["pending", "resolved"] = "pending"
-    selected_action: EvidenceDecisionAction | None = None
-    decision_note: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    resolved_at: datetime | None = None
-
-    @field_validator("affected_modules")
-    @classmethod
-    def affected_modules_are_fixed(cls, values: list[str]) -> list[str]:
-        unknown = sorted(set(values) - set(REPORT_MODULE_IDS))
-        if unknown:
-            raise ValueError(f"affected module ids must be within 2.1-2.5; got {unknown}")
-        return values
-
-    @model_validator(mode="after")
-    def resolution_fields_match_status(self) -> "EvidenceDecisionRequest":
-        if self.status == "pending" and (self.selected_action is not None or self.resolved_at):
-            raise ValueError("pending evidence decision cannot contain resolution fields")
-        if self.status == "resolved" and (self.selected_action is None or self.resolved_at is None):
-            raise ValueError("resolved evidence decision requires action and resolved_at")
-        return self
-
-
-class RevisionRequest(ReportingModel):
-    baseline_version_id: str = Field(min_length=1)
-    feedback: str = Field(min_length=1)
-    target_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(min_length=1)
-    target_submodule_ids: list[str] = Field(default_factory=list)
-    target_claim_ids: list[str] = Field(default_factory=list)
-    user_supplements: list[UserSupplement] = Field(
-        default_factory=list,
-        description="Scoped, stage-bound additions supplied while this revision run is resumed.",
-    )
-    promote_to_skill: bool = False
-    promote_skill_id: str | None = None
-    cost_control_mode: CostControlMode = "observe"
-    max_provider_attempts: int = Field(default=40, ge=1, le=1000)
-    max_total_tokens: int = Field(default=400_000, ge=1_000)
-
-    @model_validator(mode="after")
-    def targets_stay_in_selected_modules(self) -> "RevisionRequest":
-        supplement_ids = [item.id for item in self.user_supplements]
-        if len(supplement_ids) != len(set(supplement_ids)):
-            raise ValueError("revision user supplement ids must be unique")
-        for submodule_id in self.target_submodule_ids:
-            if resolve_submodule(submodule_id).module_id not in self.target_module_ids:
-                raise ValueError("revision submodule is outside selected modules")
-        if self.promote_to_skill and not (self.promote_skill_id or "").strip():
-            raise ValueError("explicit Skill promotion requires promote_skill_id")
-        if self.promote_to_skill and len(self.target_module_ids) != 1:
-            raise ValueError("one Skill promotion must target exactly one module")
-        return self
-
-
-class ScopeExpansionRequest(ReportingModel):
-    request_id: str = Field(min_length=1)
-    run_id: str = Field(min_length=1)
-    baseline_version_id: str = Field(min_length=1)
-    requested_module_ids: list[str]
-    requested_submodule_ids: list[str]
-    unexpected_module_ids: list[str] = Field(default_factory=list)
-    unexpected_submodule_ids: list[str] = Field(default_factory=list)
-    unexpected_claim_ids: list[str] = Field(default_factory=list)
-    reason: str = Field(min_length=1)
-    status: Literal["pending"] = "pending"
 
 
 class PhotoAsset(ReportingModel):

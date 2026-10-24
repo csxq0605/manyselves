@@ -5,7 +5,6 @@ from pathlib import Path
 from manyselves.config.presets import (
     ProviderPreset,
     _builtin_presets,
-    _extract_ts_number,
     _extract_ts_string,
     _parse_claude_presets,
     _split_ts_objects,
@@ -41,15 +40,6 @@ def test_extract_ts_string_single_quotes():
 
 def test_extract_ts_string_missing():
     assert _extract_ts_string("no key here", "name") is None
-
-
-def test_extract_ts_number():
-    ts = "timeout: 300"
-    assert _extract_ts_number(ts, "timeout") == 300
-
-
-def test_extract_ts_number_missing():
-    assert _extract_ts_number("no number", "timeout") is None
 
 
 def test_split_ts_objects():

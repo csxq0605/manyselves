@@ -20,9 +20,6 @@ from .reporting import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
     REPORT_FINAL_SECTION_IDS,
-    CoverageMatrix,
-    EvidenceItem,
-    PhotoAsset,
     SpecialTopicPlan,
 )
 
@@ -202,13 +199,6 @@ class TaskEnvelope(StrictModel):
             raise ValueError("input contract is embedded and must use inline delivery")
         self.artifact_delivery_modes = modes
         return self
-
-
-class PreparationResult(StrictModel):
-    input_refs: list[str] = Field(min_length=1)
-    evidence_items: list[EvidenceItem]
-    coverage: CoverageMatrix
-    photo_assets: list[PhotoAsset] = Field(default_factory=list)
 
 
 class SourceRecord(StrictModel):
@@ -1872,30 +1862,6 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "edited_report_submission": EditedReportSubmissionInput,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }
-
-
-class AgentRunStatus(StrEnum):
-    COMPLETED = "completed"
-    BLOCKED = "blocked"
-    INCOMPLETE = "incomplete"
-    FAILED = "failed"
-
-
-class AgentResult(StrictModel):
-    task_id: str
-    run_id: str
-    agent_id: str
-    session_id: str
-    status: AgentRunStatus
-    payload: Submission | None = None
-    raw_output: str = ""
-    reason: str | None = None
-
-    @model_validator(mode="after")
-    def completed_has_payload(self) -> "AgentResult":
-        if self.status == AgentRunStatus.COMPLETED and self.payload is None:
-            raise ValueError("completed result requires payload")
-        return self
 
 
 class CitationEntry(StrictModel):

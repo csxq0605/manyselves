@@ -8,6 +8,7 @@ from pathlib import Path, PureWindowsPath
 
 import pandas as pd
 from loguru import logger
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QFileSystemWatcher, QSignalBlocker, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QImage, QPixmap, QTextDocument
 from PyQt6.QtPdf import QPdfDocument
@@ -1555,6 +1556,8 @@ class PreviewWidget(QWidget):
         QTimer.singleShot(50, lambda p=path_text: self._reload_open_file_if_clean(Path(p)))
 
     def _reload_open_file_if_clean(self, path: Path) -> None:
+        if sip.isdeleted(self._file_watcher):
+            return  # the widget was closed before the delayed reload ran
         key = _tab_key(path)
         state = self._find_tab_state(key)
         if state is None:

@@ -267,21 +267,6 @@ def get_theme_colors() -> dict[str, str]:
     }
 
 
-def format_stylesheet(template: str, colors: dict[str, str] | None = None) -> str:
-    """Format a stylesheet template with theme colors.
-
-    Args:
-        template: CSS template string with {color_name} placeholders.
-        colors: Optional color dict (uses get_theme_colors() if None).
-
-    Returns:
-        Formatted stylesheet string.
-    """
-    if colors is None:
-        colors = get_theme_colors()
-    return template.format(**colors)
-
-
 def scrollbar_stylesheet(
     *,
     selector: str = "QScrollBar",

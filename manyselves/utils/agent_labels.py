@@ -71,6 +71,3 @@ def get_agent_title(agent_type: AgentId | AgentType) -> str:
     return f"{name} Agent"
 
 
-def get_agent_badge_with_icon(agent_type: AgentId | AgentType) -> tuple[QIcon, str]:
-    """Get (icon, name) tuple for an agent type."""
-    return get_agent_icon(agent_type), get_agent_name(agent_type)

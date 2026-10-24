@@ -49,12 +49,7 @@ def test_assets_symbols_are_physically_capability_owned() -> None:
         "ReportAssetAssembler",
         "approved_module_marker",
         "expand_approved_module_markers",
-        "validate_editor_protection",
-        "validate_editor_quality",
-        "validate_module_markdown_consistency",
-        "validate_existing_markdown_modules",
         "validate_final_report_markdown",
-        "validate_aggregate_retention",
     ):
         assert getattr(assets, symbol_name).__module__ == ASSETS_MODULE
 

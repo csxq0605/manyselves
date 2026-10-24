@@ -166,6 +166,11 @@ class PythonRunService:
                 operation.return_code = process.returncode
             operation.stdout, operation.stdout_truncated = await stdout_task
             operation.stderr, operation.stderr_truncated = await stderr_task
+            # Since Python 3.13 (gh-119710) ``wait()`` returns as soon as the
+            # parent exits, while descendants may still hold the output pipes.
+            # An interrupt that arrives in that window still ends the operation.
+            if operation.interrupt_requested and terminal_status in {"completed", "failed"}:
+                terminal_status = "interrupted"
             operation.status = terminal_status
         except Exception as exc:
             operation.status = "failed"

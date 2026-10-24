@@ -9,7 +9,6 @@ from fastapi import Request
 from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
-from .settings import WebSettings
 from .tenant_runtime import request_runtime_state
 
 RuntimeHostProvider = Callable[[], RuntimeHost | Awaitable[RuntimeHost]]
@@ -23,11 +22,6 @@ def get_runtime_host(request: Request) -> RuntimeHost | None:
 def get_runtime_facade(request: Request) -> RuntimeFacade | None:
     """Return the facade owned by the active application lifespan."""
     return cast(RuntimeFacade | None, getattr(request_runtime_state(request), "runtime_facade", None))
-
-
-def get_web_settings(request: Request) -> WebSettings | None:
-    """Return settings once startup has validated them."""
-    return cast(WebSettings | None, getattr(request.app.state, "web_settings", None))
 
 
 def get_global_knowledge_service(request: Request) -> GlobalKnowledgeService | None:
