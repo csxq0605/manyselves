@@ -129,7 +129,7 @@ export function TextEditor({ onChange, onSave, onSelectionChange, onViewStateCha
         onMount={mount}
         options={{
           automaticLayout: true,
-          fontFamily: "\"IBM Plex Mono\", ui-monospace, \"SFMono-Regular\", monospace",
+          fontFamily: "ui-monospace, \"SF Mono\", \"SFMono-Regular\", Menlo, Consolas, monospace",
           fontSize: 13,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,

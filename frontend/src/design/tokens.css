@@ -55,9 +55,9 @@
   --size-sidebar: 264px;
   --size-measure: 720px;
 
-  /* Chinese glyphs fall back to the system face; Latin uses self-hosted IBM Plex. */
-  --font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", "PingFang SC", "Microsoft YaHei", ui-monospace, "SFMono-Regular", monospace;
+  /* System faces only; no fonts are bundled. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace;
   --font-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
 }
 

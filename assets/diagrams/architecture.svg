@@ -7,10 +7,10 @@
     .lane { fill: #ebe7de; stroke: #ddd8cc; stroke-width: 1; rx: 6; }
     .mod { fill: #1b2129; }
     .main { fill: #a8441b; }
-    .t { fill: #1b2129; font: 500 14px 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif; }
-    .s { fill: #585e66; font: 400 12px 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif; }
-    .c { fill: #585e66; font: 400 12px 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace; }
-    .h { fill: #1b2129; font: 600 18px 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif; }
+    .t { fill: #1b2129; font: 500 14px -apple-system, 'Segoe UI', sans-serif; }
+    .s { fill: #585e66; font: 400 12px -apple-system, 'Segoe UI', sans-serif; }
+    .c { fill: #585e66; font: 400 12px ui-monospace, 'SFMono-Regular', monospace; }
+    .h { fill: #1b2129; font: 600 18px -apple-system, 'Segoe UI', sans-serif; }
     .arrow { stroke: #8c8578; stroke-width: 1.5; fill: none; marker-end: url(#a); }
   </style>
   <defs>
