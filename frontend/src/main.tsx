@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
+import "./design/fonts";
+import "./design/base.css";
 import { AuthenticatedApp } from "./app/AuthenticatedApp";
 import { getOrCreateBrowserClientId } from "./app/client-config";
 import { resolveWebDeployment } from "./app/deployment-path";

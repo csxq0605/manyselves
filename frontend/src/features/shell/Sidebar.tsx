@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/gateway";
+import { BrandMark } from "../../design/BrandMark";
 import { useConversationStore } from "../../store/conversation-store";
 import type { Project, ProjectCreateInput, ProjectUpdateInput } from "../projects/project-api";
 
@@ -171,6 +172,7 @@ export function Sidebar({ accountUsername = "admin", onCreateProject, onDeletePr
 
   return (
     <aside className="sidebar" aria-label="项目导航">
+      <Link aria-label="Manyselves 首页" className="brand-lockup sidebar__brand" to="/"><BrandMark size={24} /><span>Manyselves</span></Link>
       <nav aria-label="主导航" className="sidebar__top">
         <Link to={routeProjectId ? `/projects/${encodeURIComponent(routeProjectId)}/conversations/new` : "/"}><Icon name="edit" /><span>新对话</span></Link>
         <NavLink to="/knowledge"><Icon name="knowledge" /><span>全局知识库</span></NavLink>
@@ -186,14 +188,15 @@ export function Sidebar({ accountUsername = "admin", onCreateProject, onDeletePr
           {routeProjectId === project.id ? <ul className="project-node__sections">{sections.map(([section, label, icon]) => <li key={section}><NavLink to={`/projects/${encodeURIComponent(project.id)}/${section}`}><Icon name={icon} /><span>{label}</span></NavLink></li>)}</ul> : null}
         </li>)}</ul>
       </section>
-      {mode ? <div aria-labelledby="project-dialog-title" aria-modal="true" className="project-dialog" ref={dialogRef} role="dialog"><form onSubmit={(event) => void submit(event)}>
+      {mode ? <div aria-labelledby="project-dialog-title" aria-modal="true" className={`project-dialog${mode === "delete" ? " project-dialog--danger" : ""}`} ref={dialogRef} role="dialog"><form onSubmit={(event) => void submit(event)}>
         <h3 id="project-dialog-title">{mode === "create" ? "新建项目" : mode === "edit" ? "编辑项目" : "删除项目"}</h3>
         {mode === "delete" ? <label>输入“{selected?.displayName}”确认删除<input autoComplete="off" name="confirmation" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} /></label> : <>
           <label>项目标识<input autoComplete="off" disabled={mode === "edit"} name="projectId" onChange={(event) => setProjectId(event.target.value)} value={projectId} /></label>
           <label>显示名称<input autoComplete="off" name="displayName" onChange={(event) => setDisplayName(event.target.value)} value={displayName} /></label>
           <label>描述（可选）<textarea autoComplete="off" name="description" onChange={(event) => setDescription(event.target.value)} value={description} /></label>
         </>}
-        {error ? <p aria-live="polite" role="alert">{error}</p> : null}<button disabled={pending} type="submit">{mode === "delete" ? "删除项目" : "保存"}</button><button disabled={pending} onClick={close} type="button">取消</button>
+        {error ? <p aria-live="polite" role="alert">{error}</p> : null}
+        <div className="project-dialog__actions"><button disabled={pending} onClick={close} type="button">取消</button><button disabled={pending} type="submit">{mode === "delete" ? "删除项目" : "保存"}</button></div>
       </form></div> : null}
       <div className="sidebar__account">
         <span aria-hidden="true" className="sidebar__avatar">{accountUsername.slice(0, 1).toUpperCase()}</span>

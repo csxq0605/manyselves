@@ -1,0 +1,61 @@
+/* Manyselves design tokens (纸面 light theme).
+   Source of truth: the Manyselves design system (tokens.json). Change values there first, then mirror them here.
+   The dark theme (墨面) is defined in the design system but stays off here until every page reads these tokens. */
+:root {
+  --surface: #f4f2ec;
+  --surface-raised: #fcfbf8;
+  --surface-sunken: #ebe7de;
+  --line: #ddd8cc;
+  --line-strong: #8c8578;
+  --ink: #1b2129;
+  --ink-muted: #585e66;
+  --ink-faint: #767b82;
+  --accent: #a8441b;
+  --accent-strong: #8c3714;
+  --accent-tint: #f5e3d8;
+  --on-accent: #ffffff;
+  --running: #245a96;
+  --running-tint: #e2ebf6;
+  --waiting: #865400;
+  --waiting-tint: #f8ecd0;
+  --done: #1b6b6f;
+  --done-tint: #dcedec;
+  --failed: #b3261e;
+  --failed-tint: #f9e3e0;
+  --self-1: var(--accent);
+  --self-2: #2f5f8f;
+  --self-3: #2a6e5e;
+  --self-4: #7a5a12;
+  --self-5: #6d4a86;
+  --self-6: #55606b;
+  --on-self: #ffffff;
+  --focus: var(--running);
+  --scrim: rgba(27, 33, 41, 0.36);
+  --shadow-pop: 0 8px 24px rgba(27, 33, 41, 0.12), 0 1px 2px rgba(27, 33, 41, 0.08);
+  --shadow-dialog: 0 24px 64px rgba(27, 33, 41, 0.2);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  --size-control: 32px;
+  --size-control-lg: 40px;
+  --size-sidebar: 264px;
+  --size-measure: 720px;
+
+  /* Chinese glyphs fall back to the system face; Latin uses self-hosted IBM Plex. */
+  --font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "PingFang SC", "Microsoft YaHei", ui-monospace, "SFMono-Regular", monospace;
+  --font-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+}
