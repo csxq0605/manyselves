@@ -4,7 +4,8 @@ from PyQt6.QtCore import QByteArray, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
-from .theme import get_theme_colors
+from ..branding import MARK_ON_DARK_PATH, MARK_PATH
+from .theme import get_theme_colors, is_dark_mode
 
 # Tabler Icons SVG data (24x24, stroke-width 1.5)
 _SVG_ICONS: dict[str, str] = {
@@ -81,3 +82,14 @@ def get_agent_icon(agent_type: str, color: str | None = None, size: int = 24) ->
     return _ICON_CACHE[cache_key]
 
 
+def brand_mark_pixmap(size: int, device_pixel_ratio: float = 1.0) -> QPixmap:
+    """The module-M mark sized for a label, in the light or dark variant."""
+    mark = QPixmap(str(MARK_ON_DARK_PATH if is_dark_mode() else MARK_PATH))
+    if mark.isNull():
+        return mark
+    side = int(size * device_pixel_ratio)
+    mark = mark.scaled(
+        side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
+    mark.setDevicePixelRatio(device_pixel_ratio)
+    return mark

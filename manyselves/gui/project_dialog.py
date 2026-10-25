@@ -25,6 +25,7 @@ from ..core.project_structure import (
 )
 from ..core.recent_projects import RecentProjects
 from .dialogs import critical_box, question_box
+from .icons import brand_mark_pixmap
 from .theme import get_theme_colors
 from .widgets.ui_utils import (
     filled_button_qss,
@@ -130,9 +131,18 @@ class ProjectDialog(QDialog):
         header_layout.setContentsMargins(40, 36, 40, 28)
         header_layout.setSpacing(6)
 
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(0, 0, 0, 0)
+        brand_row.setSpacing(12)
+        mark = QLabel()
+        mark.setAccessibleName(PRODUCT_NAME)
+        mark.setPixmap(brand_mark_pixmap(30, mark.devicePixelRatioF()))
+        brand_row.addWidget(mark)
         title = QLabel(PRODUCT_NAME)
         title.setObjectName("title")
-        header_layout.addWidget(title)
+        brand_row.addWidget(title)
+        brand_row.addStretch(1)
+        header_layout.addLayout(brand_row)
 
         subtitle = QLabel(
             f"{DESCRIPTOR_ZH}。\n"

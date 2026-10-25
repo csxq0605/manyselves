@@ -1,7 +1,8 @@
 """Unified theme management for Manyselves GUI.
 
-Provides centralized color definitions for dark/light modes,
-following the Claude Code design language.
+Provides centralized color definitions for dark/light modes. Layout, text,
+action and status colours mirror the Manyselves design tokens (纸面 light /
+墨面 dark); syntax-highlighting colours stay on the VS Code Modern palettes.
 """
 
 from PyQt6.QtCore import Qt
@@ -35,33 +36,41 @@ def get_theme_colors() -> dict[str, str]:
 
     Returns:
         Dictionary of color name -> hex value.
-        Based on VSCode Dark Modern / Light Modern palettes.
+        Layout, text, action and status colours follow the Manyselves design tokens.
     """
     dark = is_dark_mode()
 
-    # === Base Colors ===
-    bg = "#1f1f1f" if dark else "#ffffff"
-    surface = "#181818" if dark else "#f8f8f8"
-    panel_bg = "#181818" if dark else "#f8f8f8"
-    titlebar_bg = "#181818" if dark else surface
+    # === Base Colors (Manyselves design tokens) ===
+    bg = "#1a1f26" if dark else "#fcfbf8"  # surface-raised
+    surface = "#13171c" if dark else "#f4f2ec"  # surface
+    sunken = "#0e1115" if dark else "#ebe7de"  # surface-sunken
+    panel_bg = surface
+    titlebar_bg = surface
     messages_bg = panel_bg
-    border = "#2b2b2b" if dark else "#e5e5e5"
-    fg = "#cccccc" if dark else "#3b3b3b"
-    muted = "#9d9d9d" if dark else "#616161"
+    border = "#2b323b" if dark else "#ddd8cc"  # line
+    border_strong = "#69727e" if dark else "#8c8578"  # line-strong
+    fg = "#ebe7df" if dark else "#1b2129"  # ink
+    muted = "#a5abb3" if dark else "#585e66"  # ink-muted
+    faint = "#868d96" if dark else "#767b82"  # ink-faint
 
-    # Blue system: only two keys should be consumed by UI code.
-    button_blue = "#0078d4" if dark else "#005fb8"
-    selection_blue = "#264f78" if dark else "#add6ff"
-    hover = "#2a2d2e" if dark else "#e8e8e8"
-    danger = "#f44747" if dark else "#d32f2f"
-    success = "#73c991" if dark else "#388a34"
-    input_bg = "#313131" if dark else "#ffffff"
-    input_border = "#3c3c3c" if dark else "#cecece"
-    input_fg = "#cccccc" if dark else "#3b3b3b"
+    # Key names keep their historical "blue" spelling: buttonBlue is the
+    # primary action (accent), selectionBlue the accent tint.
+    button_blue = "#e3804f" if dark else "#a8441b"  # accent
+    on_accent = "#1b120c" if dark else "#ffffff"
+    selection_blue = "#3a2419" if dark else "#f5e3d8"  # accent-tint
+    hover = border
+    danger = "#f08a80" if dark else "#b3261e"  # failed
+    on_danger = "#13171c" if dark else "#ffffff"
+    success = "#6cc3bf" if dark else "#1b6b6f"  # done
+    running = "#7fb0e6" if dark else "#245a96"
+    waiting = "#e0b25a" if dark else "#865400"
+    input_bg = bg
+    input_border = border_strong
+    input_fg = fg
     disabled_fg = muted
-    secondary_bg = "#313131" if dark else "#e5e5e5"
-    secondary_border = "#3c3c3c" if dark else "#cecece"
-    detail_card_bg = "#1f1f1f" if dark else "#ffffff"
+    secondary_bg = sunken
+    secondary_border = border_strong
+    detail_card_bg = bg
     detail_card_border = border
     detail_muted = muted
     detail_fg = fg
@@ -73,7 +82,7 @@ def get_theme_colors() -> dict[str, str]:
         "panel_bg": panel_bg,  # Agent panel background (darker than editor)
         "titlebar_bg": titlebar_bg,  # Custom window title bar background
         "messages_bg": messages_bg,  # Agent conversation area background
-        "card": "#252526" if dark else "#f8f8f8",  # Elevated cards
+        "card": bg,  # Elevated cards
         "border": border,
         "fg": fg,
         "muted": muted,
@@ -101,54 +110,54 @@ def get_theme_colors() -> dict[str, str]:
 
         # === Buttons ===
         "danger": danger,
-        "danger_hover": "#d32f2f" if dark else "#b71c1c",
+        "danger_hover": "#f4a39b" if dark else "#8e1d17",
 
         # === Scrollbar ===
-        "scrollbar": "#6b6b6b" if dark else "#c1c1c1",
-        "scrollbar_hover": "#8a8a8a" if dark else "#a8a8a8",
+        "scrollbar": border_strong,
+        "scrollbar_hover": faint,
 
         # === Chat/Agent Panel ===
-        "bubble_bg": "#2a2a2a" if dark else "#ffffff",
-        "bubble_hover": "#333333" if dark else "#ffffff",
+        "bubble_bg": sunken,
+        "bubble_hover": border if dark else sunken,
         # Neutral gray (R=G=B, no green/blue cast) for user-bubble and
         # context-chip borders — light enough to read as ash-gray, not white.
-        "gray_white": "#a6a6a6" if dark else "#a6a6a6",
-        "edit_bubble_bg": "#3c3c3c" if dark else "#ffffff",
-        "edit_bubble_border": "transparent" if dark else "#cecece",
-        "avatar_bg": "#3c3c3c" if dark else "#e0e0e0",
-        "avatar_fg": "#cccccc" if dark else "#616161",
+        "gray_white": border_strong,
+        "edit_bubble_bg": bg,
+        "edit_bubble_border": border_strong,
+        "avatar_bg": "#9aa4ae" if dark else "#55606b",  # self-6
+        "avatar_fg": "#13171c" if dark else "#ffffff",  # on-self
 
         # === Status Indicators ===
-        "status_tool": "#cca700" if dark else "#bf8900",
-        "status_running": button_blue,
+        "status_tool": waiting,
+        "status_running": running,
         "status_success": success,
         "status_error": danger,
-        "status_debug": "#b180d7" if dark else "#7b1fa2",
+        "status_debug": "#b896d6" if dark else "#6d4a86",  # self-5
         "status_idle": muted,
-        "timeline_dot": "#9ca3af" if dark else "#000000",
+        "timeline_dot": muted,
 
         # === File Tree ===
-        "tree_hover": "#2a2d2e" if dark else "#e8e8e8",
-        "tree_sel_bg": "#094771" if dark else "#e8e8e8",
-        "tree_sel_fg": "#ffffff" if dark else "#202020",
+        "tree_hover": hover,
+        "tree_sel_bg": selection_blue,
+        "tree_sel_fg": fg,
 
         # === Editor/Preview ===
         "editor_bg": bg,
         "editor_fg": fg,
-        "editor_margin": bg if dark else "#ffffff",
-        "editor_caret_fg": "#ffffff" if dark else "#005fb8",
-        "markdown_table_header_bg": "#252526" if dark else "#f8f8f8",
+        "editor_margin": bg,
+        "editor_caret_fg": button_blue,
+        "markdown_table_header_bg": surface,
 
         # === Tabs ===
-        "tab_active_bg": bg if dark else "#ffffff",
-        "tab_active_fg": "#ffffff" if dark else "#3b3b3b",
-        "tab_inactive_fg": "#9d9d9d" if dark else "#868686",
+        "tab_active_bg": bg,
+        "tab_active_fg": fg,
+        "tab_inactive_fg": muted,
 
         # === Context Menu ===
-        "context_bg": bg if dark else "#ffffff",
-        "context_border": "#454545" if dark else "#cecece",
-        "popup_fg": "#cccccc" if dark else "#3b3b3b",
-        "popup_hover": "#2a2d2e" if dark else "#f5f5f5",
+        "context_bg": bg,
+        "context_border": border,
+        "popup_fg": fg,
+        "popup_hover": hover,
 
         # === Tool Calls ===
         "tool_fg": fg,
@@ -157,29 +166,25 @@ def get_theme_colors() -> dict[str, str]:
         "detail_card_border": detail_card_border,
         "detail_muted": detail_muted,
         "detail_fg": detail_fg,
-        "detail_hover_fg": "#e2e8f0" if dark else fg,
+        "detail_hover_fg": fg,
 
         # === Message Controls ===
-        "message_expand_bg": "rgba(32, 33, 36, 0.92)" if dark else "rgba(245, 245, 245, 0.96)",
-        "message_expand_fg": "#f3f4f6" if dark else "#333333",
-        "message_expand_border": (
-            "rgba(255, 255, 255, 0.08)" if dark else "rgba(0, 0, 0, 0.10)"
-        ),
-        "message_expand_hover_bg": (
-            "rgba(48, 50, 56, 0.96)" if dark else "rgba(232, 232, 232, 0.98)"
-        ),
+        "message_expand_bg": bg,
+        "message_expand_fg": fg,
+        "message_expand_border": border,
+        "message_expand_hover_bg": hover,
 
         # === Icon Semantic Colors ===
-        "icon_default": "#cccccc" if dark else "#3b3b3b",
+        "icon_default": fg,
         "icon_run": success,
         "icon_preview": success,
-        "icon_context_eye": "#a6a6a6" if dark else muted,
+        "icon_context_eye": muted,
         "agent_main": button_blue,
         # Compatibility colors for historical task/message records.
-        "agent_data_analysis": "#73c991" if dark else "#388a34",
-        "agent_plotting": "#8e44ad" if dark else "#7b1fa2",
-        "agent_theory": "#e67e22" if dark else "#bf8900",
-        "agent_report": "#5dade2" if dark else "#267f99",
+        "agent_data_analysis": "#6dbba5" if dark else "#2a6e5e",  # self-3
+        "agent_plotting": "#b896d6" if dark else "#6d4a86",  # self-5
+        "agent_theory": "#d3ad5b" if dark else "#7a5a12",  # self-4
+        "agent_report": "#7fa9d9" if dark else "#2f5f8f",  # self-2
 
         # === Syntax Highlighting ===
         "syntax_keyword": "#C586C0" if dark else "#AF00DB",
@@ -224,45 +229,45 @@ def get_theme_colors() -> dict[str, str]:
         "tex_math": "#CE9178" if dark else "#A31515",
 
         # === Dialog/Config Specific ===
-        "activeFg": "#ffffff" if dark else "#202020",
+        "activeFg": fg,
         "checkFg": success,
 
         # === Input Variations ===
         "inputBg": input_bg,
         "inputBorder": input_border,
         "inputFg": input_fg,
-        "inputDisabledBg": "#1f1f1f" if dark else "#f3f3f3",
+        "inputDisabledBg": sunken,
         "inputDisabledFg": disabled_fg,
 
         # === Primary Button Variations ===
-        "primaryBtnFg": "#ffffff",
+        "primaryBtnFg": on_accent,
 
         # === Secondary Button ===
         "secondaryBtnBg": secondary_bg,
         "secondaryBtnBorder": secondary_border,
         "secondaryBtnFg": fg,
         "secondaryBtnHoverBg": hover,
-        "secondaryBtnHoverBorder": "#4c4c4c" if dark else "#b5b5b5",
+        "secondaryBtnHoverBorder": muted,
 
         # === Action Buttons ===
         "addBtnBorder": secondary_border,
         "addBtnFg": fg,
         "deleteFg": danger,
         "deleteHoverBg": danger,
-        "deleteHoverFg": "#ffffff",
+        "deleteHoverFg": on_danger,
         "resetFg": fg,
-        "resetHoverFg": "#ffffff" if dark else "#202020",
+        "resetHoverFg": fg,
 
         # === Test/Connection Buttons ===
-        "cancelHoverFg": "#ffffff" if dark else "#202020",
+        "cancelHoverFg": fg,
 
         # === Path/Link ===
         "pathFg": fg,
 
         # === Warning/Error ===
-        "warningBg": "#4a1d1d" if dark else "#ffe5e5",
-        "warningBorder": "#d94545" if dark else "#e55555",
-        "warningFg": "#ff6b6b" if dark else "#c53030",
+        "warningBg": "#3a1a18" if dark else "#f9e3e0",  # failed-tint
+        "warningBorder": danger,
+        "warningFg": danger,
         "successFg": success,
     }
 
