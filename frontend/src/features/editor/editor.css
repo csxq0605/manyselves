@@ -1,0 +1,18 @@
+/* File editor: tabs, toolbar and the Monaco frame. Values come from src/design/tokens.css. */
+.editor-workspace { display: grid; gap: var(--space-3); min-width: 0; }
+.editor-tabs { border-bottom: 1px solid var(--line); display: flex; gap: var(--space-1); overflow-x: auto; }
+.editor-tab { align-items: center; display: inline-flex; flex: 0 0 auto; }
+.editor-tab button { background: transparent; border: 0; border-radius: 0; color: var(--ink-muted); cursor: pointer; font-weight: 500; padding: 8px 6px 7px 10px; }
+.editor-tab button[role="tab"] { border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.editor-tab button[role="tab"]:hover { color: var(--ink); }
+.editor-tab button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--ink); }
+.editor-tab button[aria-label^="关闭"] { border-radius: var(--radius-sm); color: var(--ink-faint); font-size: 16px; line-height: 1; padding: 4px 6px; }
+.editor-tab button[aria-label^="关闭"]:hover { background: var(--surface-sunken); color: var(--ink); }
+.editor-toolbar { align-items: center; display: flex; gap: var(--space-3); }
+.editor-toolbar > span:first-child { color: var(--ink-muted); flex: 1; font-family: var(--font-mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-toolbar > span[role="status"] { background: var(--waiting-tint); border-radius: var(--radius-xs); color: var(--waiting); font-size: 12px; padding: 0 6px; }
+.editor-toolbar button { background: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--on-accent); cursor: pointer; font-weight: 500; height: var(--size-control); padding: 0 var(--space-3); }
+.editor-toolbar button:hover:not(:disabled) { background: var(--accent-strong); }
+.editor-toolbar button:disabled { cursor: default; opacity: .45; }
+.text-editor { border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+.draft-badge { background: var(--accent-tint); border-radius: var(--radius-xs); color: var(--accent); font-size: 12px; padding: 0 6px; }

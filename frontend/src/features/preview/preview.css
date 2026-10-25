@@ -1,0 +1,33 @@
+/* File preview. Deliverables (Markdown, Word) read in the document serif; data stays in mono. */
+.preview-workspace { display: grid; gap: var(--space-4); min-width: 0; }
+.workspace-heading { align-items: flex-start; border-bottom: 1px solid var(--line); display: flex; gap: var(--space-4); justify-content: space-between; padding-bottom: var(--space-3); }
+.workspace-heading h2 { font-family: var(--font-mono); font-size: 14px; font-weight: 500; line-height: 20px; margin: 2px 0 0; overflow-wrap: anywhere; }
+.pane-label { color: var(--ink-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .06em; line-height: 16px; margin: 0; }
+.preview-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.preview-workspace [role="status"], .preview-workspace [role="alert"] { font-size: 12px; margin: 0; }
+.preview-workspace [role="status"] { color: var(--ink-muted); }
+.preview-workspace [role="alert"] { color: var(--failed); }
+
+.markdown-preview { color: var(--ink); font-family: var(--font-serif); font-size: 15px; line-height: 28px; max-width: var(--size-measure); }
+.markdown-preview h1 { font-size: 22px; font-weight: 600; line-height: 34px; margin: 0 0 var(--space-4); }
+.markdown-preview h2, .markdown-preview h3 { font-size: 17px; font-weight: 600; line-height: 30px; margin: var(--space-5) 0 var(--space-2); }
+.markdown-preview p, .markdown-preview ul, .markdown-preview ol { margin: 0 0 var(--space-3); }
+.markdown-preview code, .preview-workspace pre { background: var(--surface-sunken); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 13px; }
+.markdown-preview code { padding: 1px 4px; }
+.preview-workspace pre { line-height: 20px; margin: 0; max-height: 60vh; overflow: auto; padding: var(--space-3) var(--space-4); white-space: pre-wrap; }
+.markdown-preview table { border-collapse: collapse; font-family: var(--font-sans); font-size: 13px; margin: 0 0 var(--space-4); }
+.markdown-preview th, .markdown-preview td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.markdown-preview th { background: var(--surface); font-weight: 600; }
+
+.preview-workspace [role="tablist"] { border-bottom: 1px solid var(--line); display: flex; gap: var(--space-1); overflow-x: auto; }
+.preview-workspace [role="tab"] { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--ink-muted); cursor: pointer; font-weight: 500; margin-bottom: -1px; padding: 8px 10px 7px; }
+.preview-workspace [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--ink); }
+.spreadsheet-scroll { border: 1px solid var(--line); border-radius: var(--radius-md); margin-top: var(--space-3); max-height: 60vh; overflow: auto; }
+.spreadsheet-scroll table { border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; min-width: 100%; }
+.spreadsheet-scroll td { border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 4px 8px; white-space: nowrap; }
+.spreadsheet-scroll tr:first-child td { background: var(--surface); font-weight: 500; position: sticky; top: 0; }
+.preview-workspace dl { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
+.preview-workspace dl div { display: flex; gap: var(--space-3); }
+.preview-workspace dt { color: var(--ink-muted); min-width: 48px; }
+.preview-workspace dd { font-family: var(--font-mono); margin: 0; }
+.pdf-preview canvas, .preview-workspace img { border: 1px solid var(--line); border-radius: var(--radius-sm); max-width: 100%; }

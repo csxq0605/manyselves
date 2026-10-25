@@ -1,7 +1,8 @@
-/* Manyselves design tokens (纸面 light theme).
+/* Manyselves design tokens: 纸面 (light, default) and 墨面 (dark).
    Source of truth: the Manyselves design system (tokens.json). Change values there first, then mirror them here.
-   The dark theme (墨面) is defined in the design system but stays off here until every page reads these tokens. */
+   <html data-theme> comes from the client theme setting: "light", "dark", or "system" (follow the OS). */
 :root {
+  color-scheme: light;
   --surface: #f4f2ec;
   --surface-raised: #fcfbf8;
   --surface-sunken: #ebe7de;
@@ -58,4 +59,76 @@
   --font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "PingFang SC", "Microsoft YaHei", ui-monospace, "SFMono-Regular", monospace;
   --font-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #13171c;
+  --surface-raised: #1a1f26;
+  --surface-sunken: #0e1115;
+  --line: #2b323b;
+  --line-strong: #69727e;
+  --ink: #ebe7df;
+  --ink-muted: #a5abb3;
+  --ink-faint: #868d96;
+  --accent: #e3804f;
+  --accent-strong: #ec956a;
+  --accent-tint: #3a2419;
+  --on-accent: #1b120c;
+  --running: #7fb0e6;
+  --running-tint: #18283b;
+  --waiting: #e0b25a;
+  --waiting-tint: #33280f;
+  --done: #6cc3bf;
+  --done-tint: #12302f;
+  --failed: #f08a80;
+  --failed-tint: #3a1a18;
+  --self-1: var(--accent);
+  --self-2: #7fa9d9;
+  --self-3: #6dbba5;
+  --self-4: #d3ad5b;
+  --self-5: #b896d6;
+  --self-6: #9aa4ae;
+  --on-self: #13171c;
+  --focus: var(--running);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #13171c;
+    --surface-raised: #1a1f26;
+    --surface-sunken: #0e1115;
+    --line: #2b323b;
+    --line-strong: #69727e;
+    --ink: #ebe7df;
+    --ink-muted: #a5abb3;
+    --ink-faint: #868d96;
+    --accent: #e3804f;
+    --accent-strong: #ec956a;
+    --accent-tint: #3a2419;
+    --on-accent: #1b120c;
+    --running: #7fb0e6;
+    --running-tint: #18283b;
+    --waiting: #e0b25a;
+    --waiting-tint: #33280f;
+    --done: #6cc3bf;
+    --done-tint: #12302f;
+    --failed: #f08a80;
+    --failed-tint: #3a1a18;
+    --self-1: var(--accent);
+    --self-2: #7fa9d9;
+    --self-3: #6dbba5;
+    --self-4: #d3ad5b;
+    --self-5: #b896d6;
+    --self-6: #9aa4ae;
+    --on-self: #13171c;
+    --focus: var(--running);
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
+  }
 }
