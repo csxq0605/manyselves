@@ -5,7 +5,6 @@ import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ApiGateway } from "../../api/gateway";
-import { useRunStore } from "../../store/run-store";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
 describe("ConversationWorkspace", () => {
@@ -448,7 +447,6 @@ describe("ConversationWorkspace", () => {
   });
 
   it("does not inject a remembered project run into an unrelated Main conversation", async () => {
-    useRunStore.getState().setCurrentRun("project-1", "full-report-current");
     const requestJson = vi.fn(async (path: string) => {
       if (path.startsWith("/api/v1/conversations/messages")) {
         return { messages: [], projectId: "project-1", sessionId: "s1" };
@@ -476,6 +474,5 @@ describe("ConversationWorkspace", () => {
     ));
     expect(screen.queryByText("运行中")).not.toBeInTheDocument();
     expect(requestJson).not.toHaveBeenCalledWith("/api/v1/runs/full-report-current");
-    useRunStore.getState().setCurrentRun("project-1", null);
   });
 });

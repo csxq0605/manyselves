@@ -3,7 +3,6 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 
 import { createUuid } from "../../app/uuid";
-import { useRunStore } from "../../store/run-store";
 import {
   reportingActionLabel,
   reportingRunStage,
@@ -305,7 +304,6 @@ export interface RunInteractionFeedProps {
 
 export function RunInteractionFeed({ api, conversationId, projectId }: RunInteractionFeedProps) {
   const client = useQueryClient();
-  const setCurrentRun = useRunStore((state) => state.setCurrentRun);
   const [panel, setPanel] = useState<"latest" | "attention" | null>(null);
   const closePanel = useCallback(() => setPanel(null), []);
   const runs = useQuery({
@@ -315,8 +313,7 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
   });
   const resume = useMutation({
     mutationFn: (runId: string) => api.resume(runId, createUuid()),
-    onSuccess: (accepted) => {
-      setCurrentRun(projectId, accepted.runId);
+    onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
     },
   });
