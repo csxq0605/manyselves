@@ -1,0 +1,16 @@
+/* Global base: every page inherits the brand type and colours from here. */
+@import "./tokens.css";
+
+html { background: var(--surface); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 22px; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body { margin: 0; }
+button, input, textarea, select { font: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+::selection { background: var(--accent-tint); color: var(--ink); }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-strong); }
+input[type="checkbox"], input[type="radio"], progress { accent-color: var(--accent); }
+
+.brand-mark { display: block; flex: 0 0 auto; }
+.brand-mark__cell { fill: var(--ink); }
+.brand-mark__main { fill: var(--accent); }
+.brand-lockup { align-items: center; color: var(--ink); display: inline-flex; font-weight: 600; gap: 10px; letter-spacing: -0.015em; line-height: 1; text-decoration: none; }

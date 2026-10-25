@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ApiGateway } from "../../api/gateway";
+import { BrandMark } from "../../design/BrandMark";
 import { useConversationStore } from "../../store/conversation-store";
 import type { RuntimeMessageView } from "../agents/event-reducer";
 import { MessageComposer } from "../chat/MessageComposer";
@@ -184,7 +185,7 @@ export function ConversationWorkspace({
         {sessionReady && activeSessionId && messages.isPending ? <p role="status">正在加载会话历史…</p> : null}
         {sessionReady && messages.isError ? <p role="alert">会话历史加载失败</p> : null}
         {sessionReady && messages.data && !hasMessages ? <div className="conversation-empty">
-          <span aria-hidden="true" className="conversation-empty__spark">✦</span>
+          <span aria-hidden="true" className="conversation-empty__mark"><BrandMark size={40} /></span>
           <h1>今天要处理什么？</h1>
           <p>当前对话属于“{projectName ?? projectId}”项目。Agent 会自动使用项目输入、知识库与输出模板。</p>
         </div> : null}

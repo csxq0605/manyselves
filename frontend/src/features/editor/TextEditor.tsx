@@ -1,6 +1,8 @@
 import Editor, { loader, type OnMount } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { useEffect, useRef } from "react";
+
+import { useColorScheme } from "../../design/use-color-scheme";
 import cssWorker from "./workers/css.worker?worker";
 import editorWorker from "./workers/editor.worker?worker";
 import htmlWorker from "./workers/html.worker?worker";
@@ -50,8 +52,43 @@ globalThis.MonacoEnvironment = {
 };
 loader.config({ monaco });
 
+// Editor themes mirror the design tokens (Monaco needs literal colours, not CSS variables).
+monaco.editor.defineTheme("manyselves-light", {
+  base: "vs",
+  colors: {
+    "editor.background": "#fcfbf8",
+    "editor.foreground": "#1b2129",
+    "editor.lineHighlightBackground": "#f4f2ec",
+    "editor.selectionBackground": "#f5e3d8",
+    "editorCursor.foreground": "#a8441b",
+    "editorLineNumber.activeForeground": "#1b2129",
+    "editorLineNumber.foreground": "#767b82",
+    "editorWidget.background": "#fcfbf8",
+    "editorWidget.border": "#ddd8cc",
+  },
+  inherit: true,
+  rules: [],
+});
+monaco.editor.defineTheme("manyselves-dark", {
+  base: "vs-dark",
+  colors: {
+    "editor.background": "#1a1f26",
+    "editor.foreground": "#ebe7df",
+    "editor.lineHighlightBackground": "#13171c",
+    "editor.selectionBackground": "#3a2419",
+    "editorCursor.foreground": "#e3804f",
+    "editorLineNumber.activeForeground": "#ebe7df",
+    "editorLineNumber.foreground": "#868d96",
+    "editorWidget.background": "#1a1f26",
+    "editorWidget.border": "#2b323b",
+  },
+  inherit: true,
+  rules: [],
+});
+
 export function TextEditor({ onChange, onSave, onSelectionChange, onViewStateChange, tab }: TextEditorProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const colorScheme = useColorScheme();
   const selectionCallback = useRef(onSelectionChange);
   const viewStateCallback = useRef(onViewStateChange);
 
@@ -92,12 +129,14 @@ export function TextEditor({ onChange, onSave, onSelectionChange, onViewStateCha
         onMount={mount}
         options={{
           automaticLayout: true,
+          fontFamily: "ui-monospace, \"SF Mono\", \"SFMono-Regular\", Menlo, Consolas, monospace",
+          fontSize: 13,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
           wordWrap: "on",
         }}
         path={`${tab.projectId}:${tab.path}`}
-        theme="vs"
+        theme={colorScheme === "dark" ? "manyselves-dark" : "manyselves-light"}
         value={tab.draftContent}
       />
     </div>

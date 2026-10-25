@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from ..branding import DESCRIPTOR_ZH, PRODUCT_NAME, TAGLINE
 from ..core.user_settings import UserSettings
+from .icons import brand_mark_pixmap
 from .theme import get_theme_colors
 from .widgets.ui_utils import filled_button_qss, ghost_button_qss
 
@@ -202,8 +203,9 @@ class PreProjectGuide(QDialog):
         content_layout.setSpacing(12)
 
         # Logo
-        logo = QLabel("◈")
-        logo.setStyleSheet("font-size: 48px;")
+        logo = QLabel()
+        logo.setAccessibleName(PRODUCT_NAME)
+        logo.setPixmap(brand_mark_pixmap(48, logo.devicePixelRatioF()))
         content_layout.addWidget(logo)
 
         # Title

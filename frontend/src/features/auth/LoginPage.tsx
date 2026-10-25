@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 
+import { BrandMark } from "../../design/BrandMark";
 import "./login.css";
 
 export interface LoginPageProps {
@@ -28,10 +29,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   return (
     <main className="login-page">
       <section aria-labelledby="login-title" className="login-card">
-        <div className="login-mark" aria-hidden="true"><i /><i /><i /></div>
-        <p className="login-label">MANYSELVES / ACCOUNT</p>
-        <h1 id="login-title">登录 manyselves</h1>
-        <p className="login-summary">账户访问</p>
+        <div className="brand-lockup login-brand" aria-hidden="true"><BrandMark size={28} /><span>Manyselves</span></div>
+        <h1 id="login-title">登录 Manyselves</h1>
+        <p className="login-summary">一个运行时，许多个自己。</p>
         <form onSubmit={(event) => void submit(event)}>
           <label htmlFor="login-username">用户名</label>
           <input

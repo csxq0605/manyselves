@@ -1,33 +1,19 @@
 import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
 
-export type CapabilityListResponse = components["schemas"]["CapabilityListResponse"];
 export type WorkflowCostResponse = components["schemas"]["WorkflowCostResponse"];
-export type WorkflowInputSchemaResponse = components["schemas"]["WorkflowInputSchemaResponse"];
-export type WorkflowListResponse = components["schemas"]["WorkflowListResponse"];
 export type WorkflowOutputListResponse = components["schemas"]["WorkflowOutputListResponse"];
 export type WorkflowRunAcceptedResponse = components["schemas"]["WorkflowRunAcceptedResponse"];
 export type WorkflowRunListResponse = components["schemas"]["WorkflowRunListResponse"];
-export type WorkflowEvent = components["schemas"]["WorkflowEvent"];
-export type WorkflowEventsResponse = components["schemas"]["WorkflowEventListResponse"];
 type GeneratedWorkflowRunInputRequest = components["schemas"]["WorkflowRunInputRequest"];
-type GeneratedWorkflowRunStartRequest = components["schemas"]["WorkflowRunStartRequest"];
 export type WorkflowRunInputRequest = Omit<GeneratedWorkflowRunInputRequest, "values"> & {
   readonly values?: unknown;
 };
 export type WorkflowRunResponse = components["schemas"]["WorkflowRunResponse"];
-export type WorkflowRunStartRequest = Omit<GeneratedWorkflowRunStartRequest, "input"> & {
-  readonly input: unknown;
-};
 
 export interface WorkflowApi {
   cancel(runId: string): Promise<WorkflowRunResponse>;
   cost(runId: string): Promise<WorkflowCostResponse>;
-  events?(runId: string): Promise<WorkflowEventsResponse>;
-  get(runId: string): Promise<WorkflowRunResponse>;
-  inputSchema(workflowId: string): Promise<WorkflowInputSchemaResponse>;
-  listCapabilities(): Promise<CapabilityListResponse>;
-  listWorkflows(): Promise<WorkflowListResponse>;
   outputs(runId: string): Promise<WorkflowOutputListResponse>;
   provideInput(
     runId: string,
@@ -35,10 +21,6 @@ export interface WorkflowApi {
     idempotencyKey: string,
   ): Promise<WorkflowRunAcceptedResponse>;
   resume(runId: string, idempotencyKey: string): Promise<WorkflowRunAcceptedResponse>;
-  start(
-    input: WorkflowRunStartRequest,
-    idempotencyKey: string,
-  ): Promise<WorkflowRunAcceptedResponse>;
 }
 
 export interface WorkflowRunFeedApi {
@@ -63,20 +45,11 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRu
     cost: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/cost`,
     ),
-    events: (runId) => gateway.requestJson(
-      `/api/v1/runs/${encodeURIComponent(runId)}/events`,
-    ),
-    get: (runId) => gateway.requestJson(`/api/v1/runs/${encodeURIComponent(runId)}`),
-    inputSchema: (workflowId) => gateway.requestJson(
-      `/api/v1/workflows/${encodeURIComponent(workflowId)}/input-schema`,
-    ),
-    listCapabilities: () => gateway.requestJson("/api/v1/capabilities"),
     listRuns: (conversationId) => gateway.requestJson(
       conversationId
         ? `/api/v1/runs?conversationId=${encodeURIComponent(conversationId)}`
         : "/api/v1/runs",
     ),
-    listWorkflows: () => gateway.requestJson("/api/v1/workflows"),
     outputs: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/outputs`,
     ),
@@ -87,10 +60,6 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRu
     resume: (runId, idempotencyKey) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/resume`,
       { headers: { "Idempotency-Key": idempotencyKey }, method: "POST", requireLease: true },
-    ),
-    start: (input, idempotencyKey) => gateway.requestJson(
-      "/api/v1/runs",
-      mutationOptions(idempotencyKey, input),
     ),
   };
 }

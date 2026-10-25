@@ -16,7 +16,7 @@ describe("AuthGate", () => {
 
     render(<MemoryRouter initialEntries={["/app"]}><AppProviders><AuthGate api={api}><div>Application content</div></AuthGate></AppProviders></MemoryRouter>);
 
-    expect(await screen.findByRole("heading", { name: "登录 manyselves" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "登录 Manyselves" })).toBeVisible();
     expect(screen.queryByText("Application content")).not.toBeInTheDocument();
   });
 

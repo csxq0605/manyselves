@@ -74,8 +74,8 @@ test("shows live runtime and filterable sanitized project logs", async ({ page }
   await page.goto("/projects/project-1/runtime");
 
   await expect(page.getByRole("heading", { name: "运行态" })).toBeVisible();
-  await expect(page.getByText("Review evidence")).toBeVisible();
-  await expect(page.getByText("read_file")).toBeVisible();
+  await page.getByText("内部步骤与运行明细").click();
+  await expect(page.getByRole("region", { name: "工具调用（最新在上）" }).getByText("read_file")).toBeVisible();
   await expect(page.locator("#main-outlet").getByRole("button", { name: /上传|编辑|删除/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: "日志" }).click();
@@ -89,114 +89,11 @@ test("shows live runtime and filterable sanitized project logs", async ({ page }
   await expect((await download).suggestedFilename()).toBe("project-1-events.json");
 });
 
-test("starts and projects a file-defined workflow in the generic Run workspace", async ({ page }) => {
-  let startedInput: unknown;
-  await installBaseServer(page, async (route: Route, path: string) => {
-    const request = route.request();
-    if (path === "/api/v1/capabilities") {
-      await json(route, { capabilities: [{
-        description: "Declarative distribution reporting capability",
-        id: "distribution-reporting",
-        version: "1.0.0",
-        workflowIds: ["full-report"],
-      }] });
-      return true;
-    }
-    if (path === "/api/v1/workflows") {
-      await json(route, { workflows: [{
-        capabilityId: "distribution-reporting",
-        description: "Public full report",
-        id: "full-report",
-        inputContract: "public_full_report_input",
-        outputContract: "distribution_reporting_output",
-        runnable: true,
-        version: "1.0.0",
-      }] });
-      return true;
-    }
-    if (path === "/api/v1/workflows/full-report/input-schema") {
-      await json(route, {
-        contractId: "public_full_report_input",
-        schema: {
-          properties: { instruction: { type: "string" } },
-          required: ["instruction"],
-          type: "object",
-        },
-        workflowId: "full-report",
-      });
-      return true;
-    }
-    if (path === "/api/v1/runs" && request.method() === "POST") {
-      startedInput = (await request.postDataJSON()).input;
-      await json(route, {
-        capabilityId: "distribution-reporting",
-        commandId: "command-1",
-        runId: "run-1",
-        status: "accepted",
-        taskId: "task-1",
-        workflowId: "full-report",
-      }, 202);
-      return true;
-    }
-    if (path === "/api/v1/runs/run-1") {
-      await json(route, {
-        run: {
-          active: false,
-          capabilityId: "distribution-reporting",
-          runId: "run-1",
-          status: "completed",
-          taskId: "task-1",
-          workflowId: "full-report",
-        },
-        state: {},
-        waitingInput: [],
-      });
-      return true;
-    }
-    if (path === "/api/v1/runs/run-1/outputs") {
-      await json(route, {
-        outputs: [{
-          exists: true,
-          id: "Outputs/Reports/report.docx",
-          kind: "artifact",
-          path: "Outputs/Reports/report.docx",
-          size: 4,
-        }],
-        runId: "run-1",
-      });
-      return true;
-    }
-    if (path === "/api/v1/runs/run-1/cost") {
-      await json(route, {
-        runId: "run-1",
-        usage: { totals: { estimated_cost: 1.25, pricing_status: "configured", total_tokens: 15 } },
-      });
-      return true;
-    }
-    if (path === "/api/v1/runs/run-1/events") {
-      await json(route, {
-        events: [{
-          actionId: null,
-          data: {},
-          error: null,
-          kind: "workflow.completed",
-          runId: "run-1",
-          workflowId: "full-report",
-        }],
-        runId: "run-1",
-      });
-      return true;
-    }
-    return false;
-  });
+test("redirects the removed project workflows route to the project", async ({ page }) => {
+  await installBaseServer(page);
 
   await page.goto("/projects/project-1/workflows");
-  await page.getByRole("textbox", { name: "instruction" }).fill("Generate report");
-  await page.getByRole("button", { name: "启动工作流" }).click();
 
-  await expect.poll(() => startedInput).toEqual({ instruction: "Generate report" });
-  await expect(page.getByRole("heading", { name: "run-1" })).toBeVisible();
-  await expect(page.getByText("Outputs/Reports/report.docx")).toBeVisible();
-  await expect(page.getByText("workflow.completed")).toBeVisible();
-  await expect(page.getByText("15 tokens")).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/project-1(\/conversations\/[^/]+)?$/);
+  await expect(page.getByRole("textbox", { name: "instruction" })).toHaveCount(0);
 });

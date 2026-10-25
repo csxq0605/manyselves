@@ -63,11 +63,12 @@ export async function installBaseServer(
       return json(route, { projects: [{ active: true, description: "", displayName: "能源管理", id: "project-1", revision: "a".repeat(64) }] });
     }
     if (path.endsWith("/files/tree")) return json(route, { entries: [] });
+    if (path === "/api/v1/runs" && request.method() === "GET") return json(route, { runs: [] });
     if (path === "/api/v1/conversations") {
       return json(route, { activeSessionId: "session-1", conversations: [{
-        active: true, agentId: "main", messageCount: 2, name: "需求梳理",
-        sessionId: "session-1", updatedAt: "2026-08-03T08:00:00Z",
-      }] });
+        active: true, name: "需求梳理", preview: "整理需求", projectId: "project-1",
+        sessionId: "session-1", timestamp: "2026-08-03T08:00:00Z",
+      }], projectId: "project-1" });
     }
     if (path === "/api/v1/conversations/messages") {
       return json(route, { messages: [], sessionId: "session-1" });

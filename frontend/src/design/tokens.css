@@ -1,0 +1,134 @@
+/* Manyselves design tokens: 纸面 (light, default) and 墨面 (dark).
+   Source of truth: the Manyselves design system (tokens.json). Change values there first, then mirror them here.
+   <html data-theme> comes from the client theme setting: "light", "dark", or "system" (follow the OS). */
+:root {
+  color-scheme: light;
+  --surface: #f4f2ec;
+  --surface-raised: #fcfbf8;
+  --surface-sunken: #ebe7de;
+  --line: #ddd8cc;
+  --line-strong: #8c8578;
+  --ink: #1b2129;
+  --ink-muted: #585e66;
+  --ink-faint: #767b82;
+  --accent: #a8441b;
+  --accent-strong: #8c3714;
+  --accent-tint: #f5e3d8;
+  --on-accent: #ffffff;
+  --running: #245a96;
+  --running-tint: #e2ebf6;
+  --waiting: #865400;
+  --waiting-tint: #f8ecd0;
+  --done: #1b6b6f;
+  --done-tint: #dcedec;
+  --failed: #b3261e;
+  --failed-tint: #f9e3e0;
+  --self-1: var(--accent);
+  --self-2: #2f5f8f;
+  --self-3: #2a6e5e;
+  --self-4: #7a5a12;
+  --self-5: #6d4a86;
+  --self-6: #55606b;
+  --on-self: #ffffff;
+  --focus: var(--running);
+  --scrim: rgba(27, 33, 41, 0.36);
+  --shadow-pop: 0 8px 24px rgba(27, 33, 41, 0.12), 0 1px 2px rgba(27, 33, 41, 0.08);
+  --shadow-dialog: 0 24px 64px rgba(27, 33, 41, 0.2);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  --size-control: 32px;
+  --size-control-lg: 40px;
+  --size-sidebar: 264px;
+  --size-measure: 720px;
+
+  /* System faces only; no fonts are bundled. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace;
+  --font-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #13171c;
+  --surface-raised: #1a1f26;
+  --surface-sunken: #0e1115;
+  --line: #2b323b;
+  --line-strong: #69727e;
+  --ink: #ebe7df;
+  --ink-muted: #a5abb3;
+  --ink-faint: #868d96;
+  --accent: #e3804f;
+  --accent-strong: #ec956a;
+  --accent-tint: #3a2419;
+  --on-accent: #1b120c;
+  --running: #7fb0e6;
+  --running-tint: #18283b;
+  --waiting: #e0b25a;
+  --waiting-tint: #33280f;
+  --done: #6cc3bf;
+  --done-tint: #12302f;
+  --failed: #f08a80;
+  --failed-tint: #3a1a18;
+  --self-1: var(--accent);
+  --self-2: #7fa9d9;
+  --self-3: #6dbba5;
+  --self-4: #d3ad5b;
+  --self-5: #b896d6;
+  --self-6: #9aa4ae;
+  --on-self: #13171c;
+  --focus: var(--running);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #13171c;
+    --surface-raised: #1a1f26;
+    --surface-sunken: #0e1115;
+    --line: #2b323b;
+    --line-strong: #69727e;
+    --ink: #ebe7df;
+    --ink-muted: #a5abb3;
+    --ink-faint: #868d96;
+    --accent: #e3804f;
+    --accent-strong: #ec956a;
+    --accent-tint: #3a2419;
+    --on-accent: #1b120c;
+    --running: #7fb0e6;
+    --running-tint: #18283b;
+    --waiting: #e0b25a;
+    --waiting-tint: #33280f;
+    --done: #6cc3bf;
+    --done-tint: #12302f;
+    --failed: #f08a80;
+    --failed-tint: #3a1a18;
+    --self-1: var(--accent);
+    --self-2: #7fa9d9;
+    --self-3: #6dbba5;
+    --self-4: #d3ad5b;
+    --self-5: #b896d6;
+    --self-6: #9aa4ae;
+    --on-self: #13171c;
+    --focus: var(--running);
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
+  }
+}

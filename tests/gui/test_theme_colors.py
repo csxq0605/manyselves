@@ -25,29 +25,33 @@ def test_gui_components_do_not_define_local_color_palettes():
     assert offenders == []
 
 
-def test_dark_theme_editor_palette_matches_vscode_modern(monkeypatch):
+def test_dark_theme_palette_matches_design_tokens(monkeypatch):
     monkeypatch.setattr(theme, "is_dark_mode", lambda: True)
 
     colors = theme.get_theme_colors()
 
-    assert colors["editor_bg"] == "#1f1f1f"
-    assert colors["editor_fg"] == "#cccccc"
-    assert colors["editor_margin"] == "#1f1f1f"
-    assert colors["input_bg"] == "#313131"
-    assert colors["input_border"] == "#3c3c3c"
-    assert colors["tab_active_bg"] == "#1f1f1f"
-    assert colors["status_success"] == "#73c991"
+    assert colors["editor_bg"] == "#1a1f26"
+    assert colors["editor_fg"] == "#ebe7df"
+    assert colors["editor_margin"] == "#1a1f26"
+    assert colors["input_bg"] == "#1a1f26"
+    assert colors["input_border"] == "#69727e"
+    assert colors["tab_active_bg"] == "#1a1f26"
+    assert colors["status_success"] == "#6cc3bf"
+    assert colors["buttonBlue"] == "#e3804f"
+    assert colors["primaryBtnFg"] == "#1b120c"
 
 
-def test_light_theme_editor_palette_matches_vscode_modern(monkeypatch):
+def test_light_theme_palette_matches_design_tokens(monkeypatch):
     monkeypatch.setattr(theme, "is_dark_mode", lambda: False)
 
     colors = theme.get_theme_colors()
 
-    assert colors["editor_bg"] == "#ffffff"
-    assert colors["editor_fg"] == "#3b3b3b"
-    assert colors["editor_margin"] == "#ffffff"
-    assert colors["input_bg"] == "#ffffff"
-    assert colors["input_border"] == "#cecece"
-    assert colors["tab_active_bg"] == "#ffffff"
-    assert colors["status_success"] == "#388a34"
+    assert colors["editor_bg"] == "#fcfbf8"
+    assert colors["editor_fg"] == "#1b2129"
+    assert colors["editor_margin"] == "#fcfbf8"
+    assert colors["input_bg"] == "#fcfbf8"
+    assert colors["input_border"] == "#8c8578"
+    assert colors["tab_active_bg"] == "#fcfbf8"
+    assert colors["status_success"] == "#1b6b6f"
+    assert colors["buttonBlue"] == "#a8441b"
+    assert colors["primaryBtnFg"] == "#ffffff"

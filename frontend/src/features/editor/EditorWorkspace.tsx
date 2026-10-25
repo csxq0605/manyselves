@@ -14,6 +14,7 @@ import { EditorTabs } from "./EditorTabs";
 import { SaveConflictDialog } from "./SaveConflictDialog";
 import type { TextEditorProps } from "./TextEditor";
 import type { SelectionInput } from "./selection-context";
+import "./editor.css";
 
 const DefaultTextEditor = lazy(async () => {
   const module = await import("./TextEditor");

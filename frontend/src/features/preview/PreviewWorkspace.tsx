@@ -4,6 +4,7 @@ import { ApiError } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
 import type { PreviewApi, PreviewResponse } from "./preview-api";
 import { PreviewPane } from "./PreviewPane";
+import "./preview.css";
 
 export interface PreviewWorkspaceProps {
   readonly api: PreviewApi;

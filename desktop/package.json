@@ -54,6 +54,7 @@
         "dir"
       ],
       "category": "Development"
-    }
+    },
+    "icon": "../assets/brand/manyselves-app-icon.png"
   }
 }

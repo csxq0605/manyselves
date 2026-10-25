@@ -6,7 +6,7 @@
 
 .history-page__header {
   align-items: end;
-  border-bottom: 1px solid #dcddd9;
+  border-bottom: 1px solid var(--line);
   display: flex;
   gap: 24px;
   justify-content: space-between;
@@ -15,38 +15,41 @@
 }
 
 .history-page__header h1 {
-  font-size: clamp(26px, 4vw, 38px);
-  letter-spacing: -0.04em;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  line-height: 32px;
   margin: 3px 0 0;
 }
 
 .history-page__eyebrow {
-  color: #6b6f76;
-  font-family: "SFMono-Regular", Cascadia Mono, monospace;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.06em;
   margin: 0;
 }
 
 .history-page__new-button {
-  background: #2563eb;
-  border: 1px solid #2563eb;
-  border-radius: 5px;
-  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--on-accent);
   cursor: pointer;
-  padding: 10px 16px;
   font-weight: 500;
+  height: var(--size-control);
+  padding: 0 var(--space-3);
 }
 
 .history-page__new-button:hover {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
 }
 
 .history-page__empty {
-  border: 1px dashed #cfd0cc;
-  border-radius: 7px;
-  color: #6b6f76;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
   padding: 60px 34px;
   text-align: center;
 }
@@ -56,9 +59,9 @@
 }
 
 .history-page__panel {
-  background: #fff;
-  border: 1px solid #dcddd9;
-  border-radius: 9px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -83,24 +86,24 @@
 }
 
 .history-page__item-button {
-  background: #fff;
-  border: 1px solid #dcddd9;
-  border-radius: 7px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   padding: 15px 18px;
   text-align: left;
   width: 100%;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 120ms, background-color 120ms;
 }
 
 .history-page__item-button:hover {
-  border-color: #c8c9c5;
-  box-shadow: 0 2px 8px rgb(32 33 35 / 10%);
+  border-color: var(--line-strong);
+  background: var(--surface);
 }
 
 .history-page__item-button--active {
-  border-color: #2563eb;
-  background: #f0f7ff;
+  border-color: var(--accent);
+  background: var(--accent-tint);
 }
 
 .history-page__item-content {
@@ -114,7 +117,7 @@
 }
 
 .history-page__item-preview {
-  color: #6b6f76;
+  color: var(--ink-muted);
   font-size: 14px;
   margin: 0 0 8px;
   overflow: hidden;
@@ -123,14 +126,14 @@
 }
 
 .history-page__item-time {
-  color: #9ca3af;
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
 .history-page__item-badge {
-  background: #2563eb;
-  border-radius: 4px;
-  color: #fff;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--on-accent);
   font-size: 11px;
   font-weight: 500;
   padding: 4px 8px;
@@ -139,8 +142,8 @@
 
 .history-page__pagination {
   align-items: center;
-  border-top: 1px solid #ecece9;
-  color: #6b6f76;
+  border-top: 1px solid var(--line);
+  color: var(--ink-muted);
   display: flex;
   font-size: 13px;
   gap: 12px;
@@ -154,17 +157,17 @@
 }
 
 .history-page__pagination button {
-  background: #fff;
-  border: 1px solid #c8c9c5;
-  border-radius: 5px;
-  color: #242526;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
   cursor: pointer;
   font-size: 12px;
   padding: 7px 10px;
 }
 
 .history-page__pagination button:disabled {
-  color: #a0a2a0;
+  color: var(--ink-muted);
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -178,10 +181,10 @@
 }
 
 .history-page__read-only {
-  background: #f4f6fb;
-  border: 1px solid #dde3ef;
-  border-radius: 6px;
-  color: #4a5160;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
   font-size: 13px;
   margin: 0 0 16px;
   padding: 10px 14px;
