@@ -6,6 +6,9 @@ body { margin: 0; }
 button, input, textarea, select { font: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 ::selection { background: var(--accent-tint); color: var(--ink); }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-strong); }
+input[type="checkbox"], input[type="radio"], progress { accent-color: var(--accent); }
 
 .brand-mark { display: block; flex: 0 0 auto; }
 .brand-mark__cell { fill: var(--ink); }
