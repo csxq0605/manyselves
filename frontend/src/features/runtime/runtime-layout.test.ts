@@ -19,7 +19,7 @@ describe("runtime layout CSS", () => {
 
     expect(page).toContain("margin: 0 auto");
     expect(page).toContain("max-width: min(1600px, calc(100vw - 96px))");
-    expect(hero).toContain("background: #fff");
+    expect(hero).toContain("background: var(--surface-raised)");
     expect(hero).not.toContain("radial-gradient");
     expect(card).toContain("display: flex");
     expect(card).toContain("flex-direction: column");
