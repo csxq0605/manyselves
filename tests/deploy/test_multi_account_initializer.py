@@ -25,6 +25,7 @@ def test_initializer_creates_isolated_accounts_with_mimo_defaults(tmp_path: Path
                 "id": "admin",
                 "username": "admin",
                 "passwordEnv": "MANYSELVES_ACCOUNT_ADMIN_PASSWORD",
+                "admin": True,
             },
             {
                 "id": "yuanxi_001",

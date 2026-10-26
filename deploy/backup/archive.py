@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import shutil
 import tarfile
@@ -30,6 +31,19 @@ def _files(root: Path) -> list[Path]:
     return result
 
 
+class _HashingReader:
+    """Read a file for the archive and hash exactly the bytes archived."""
+
+    def __init__(self, handle) -> None:
+        self._handle = handle
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._handle.read(size)
+        self.digest.update(chunk)
+        return chunk
+
+
 def backup(source: Path, output_directory: Path) -> Path:
     source = source.resolve(strict=True)
     if not source.is_dir():
@@ -38,20 +52,65 @@ def backup(source: Path, output_directory: Path) -> Path:
     output_directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     archive = output_directory / f"manyselves-{stamp}.tar.gz"
-    files = _files(source)
-    manifest = {
-        "createdAt": datetime.now(UTC).isoformat(),
-        "files": {path.relative_to(source).as_posix(): _hash(path) for path in files},
-        "formatVersion": 1,
-    }
-    with tempfile.TemporaryDirectory(prefix="manyselves-backup-") as temporary:
-        manifest_path = Path(temporary) / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        with tarfile.open(archive, "w:gz") as bundle:
-            bundle.add(manifest_path, arcname="manifest.json", recursive=False)
-            for path in files:
-                bundle.add(path, arcname=f"snapshot/{path.relative_to(source).as_posix()}", recursive=False)
+    hashes: dict[str, str] = {}
+    created = datetime.now(UTC).isoformat()
+    # Each file is hashed while it is archived, so the manifest always
+    # describes the archived bytes even if a file changes during the backup.
+    with tarfile.open(archive, "w:gz") as bundle:
+        for path in _files(source):
+            name = path.relative_to(source).as_posix()
+            info = bundle.gettarinfo(path, arcname=f"snapshot/{name}")
+            with path.open("rb") as handle:
+                reader = _HashingReader(handle)
+                bundle.addfile(info, reader)
+            hashes[name] = reader.digest.hexdigest()
+        manifest = json.dumps(
+            {"createdAt": created, "files": hashes, "formatVersion": 1},
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8") + b"\n"
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        info.mtime = int(datetime.now(UTC).timestamp())
+        info.mode = 0o600
+        bundle.addfile(info, io.BytesIO(manifest))
     return archive
+
+
+def accounts(path: Path) -> list[tuple[str, str]]:
+    """(username, password environment variable) of each account in an accounts file."""
+
+    text = path.read_text(encoding="utf-8")
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        payload = yaml.safe_load(text) or {}
+        entries = payload.get("accounts") or []
+    else:
+        # The file's fixed shape: a list of flat "key: value" entries.
+        entries, current = [], None
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].rstrip()
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                current = {}
+                entries.append(current)
+                stripped = stripped[2:].strip()
+            if current is not None and ":" in stripped:
+                key, value = stripped.split(":", 1)
+                current[key.strip()] = value.strip().strip("'\"")
+    result = []
+    for entry in entries:
+        username = str(entry.get("username", "")).strip()
+        password_env = str(entry.get("passwordEnv", "")).strip()
+        if not username or not password_env:
+            raise ValueError("each account needs username and passwordEnv")
+        result.append((username, password_env))
+    if not result:
+        raise ValueError(f"no accounts in {path}")
+    return result
 
 
 def _safe_members(bundle: tarfile.TarFile) -> list[tarfile.TarInfo]:
@@ -106,9 +165,14 @@ def main() -> int:
     restore_parser.add_argument("--archive", required=True, type=Path)
     restore_parser.add_argument("--target", required=True, type=Path)
     restore_parser.add_argument("--force", action="store_true")
+    accounts_parser = subparsers.add_parser("accounts")
+    accounts_parser.add_argument("--file", required=True, type=Path)
     args = parser.parse_args()
     if args.command == "backup":
         print(backup(args.source, args.output))
+    elif args.command == "accounts":
+        for username, password_env in accounts(args.file):
+            print(f"{username}\t{password_env}")
     else:
         previous = restore(args.archive, args.target, force=args.force)
         print(json.dumps({"restored": str(args.target.resolve()), "previous": str(previous) if previous else None}))

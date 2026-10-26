@@ -79,6 +79,8 @@ class TenantRuntime:
         )
         await previous.close()
         self.workflow_projection = replacement
+        # Maintenance must see the new project's Runs when it checks for work.
+        self.maintenance_service.workflow_runs = replacement
         attach_main_reporting_tool(
             self.runtime_host,
             projection_resolver=lambda: self.workflow_projection,

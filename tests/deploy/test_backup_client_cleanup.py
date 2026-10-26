@@ -105,6 +105,79 @@ def test_backup_sh_continues_cleanup_after_maintenance_release_failure(tmp_path:
     ]
 
 
+@pytest.mark.skipif(_posix_shell() is None, reason="requires a POSIX shell; Linux CI exercises this test")
+def test_backup_sh_pauses_every_account_of_the_accounts_file(tmp_path: Path) -> None:
+    """The archive covers the whole data root, so every account is paused."""
+
+    shell = _posix_shell()
+    assert shell is not None
+    data_root = tmp_path / "data"
+    (data_root / ".manyselves").mkdir(parents=True)
+    (data_root / ".manyselves" / "accounts.yaml").write_text(
+        "version: 1\naccounts:\n"
+        "  - id: account-a\n    username: alice\n    passwordEnv: PW_A\n"
+        "  - id: account-b\n    username: bob\n    passwordEnv: PW_B\n",
+        encoding="utf-8",
+    )
+    events = tmp_path / "events.log"
+    bash_env = tmp_path / "fake-commands.sh"
+    bash_env.write_text(
+        textwrap.dedent(
+            """\
+            curl() {
+              local method=GET url= cookie_jar= body=
+              while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                  -X) method=$2; shift 2 ;;
+                  --cookie-jar) cookie_jar=$2; shift 2 ;;
+                  --data-binary|-H|--cookie|-d) shift 2 ;;
+                  --fail|--silent|--show-error) shift ;;
+                  http://*|https://*) url=$1; shift ;;
+                  *) shift ;;
+                esac
+              done
+              body=$(cat || true)
+              case "$url" in
+                */auth/login) : > "$cookie_jar"; printf 'login %s\n' "$body" >> "$FAKE_EVENTS" ;;
+                */control/lease)
+                  if [[ "$method" == POST ]]; then printf '%s' '{"leaseToken":"lease"}'; fi ;;
+                */maintenance/quiesce)
+                  printf 'quiesce\n' >> "$FAKE_EVENTS"; printf '%s' '{"maintenanceToken":"m"}' ;;
+                */maintenance/release) printf 'release\n' >> "$FAKE_EVENTS" ;;
+              esac
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+    environment = os.environ | {
+        "FAKE_EVENTS": str(events),
+        "BASH_ENV": str(bash_env),
+        "MANYSELVES_DATA_DIR": str(data_root),
+        "MANYSELVES_API_URL": "http://fake.example",
+        "PW_A": "alice-password",
+        "PW_B": "bob-password",
+    }
+    result = subprocess.run(
+        [shell, str(ROOT / "deploy" / "backup" / "backup.sh"), str(tmp_path / "backups")],
+        cwd=ROOT,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = _events(events)
+    assert lines[:4] == [
+        'login {"username": "alice", "password": "alice-password"}',
+        "quiesce",
+        'login {"username": "bob", "password": "bob-password"}',
+        "quiesce",
+    ]
+    assert lines[4:] == ["release", "release"]
+    assert list((tmp_path / "backups").glob("manyselves-*.tar.gz"))
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell paths")
 def test_backup_ps1_continues_cleanup_after_maintenance_release_failure(tmp_path: Path) -> None:
     events = tmp_path / "events.log"

@@ -20,6 +20,7 @@ accounts:
   - id: account-a
     username: alice
     passwordEnv: TEST_ACCOUNT_A_PASSWORD
+    admin: true
   - id: account-b
     username: bob
     passwordEnv: TEST_ACCOUNT_B_PASSWORD
@@ -134,7 +135,32 @@ async def test_web_settings_keys_workers_and_project_writes_are_account_scoped(
             assert alice_project.status_code == 201
             assert bob_project.status_code == 201
 
+            # Python runs as the server process, so only an administrator may.
+            python_request = {"path": "missing.py", "arguments": []}
+            bob_python = await bob.post(
+                "/api/v1/operations/python",
+                headers={"X-Control-Lease-Token": bob_lease},
+                json=python_request,
+            )
+            alice_python = await alice.post(
+                "/api/v1/operations/python",
+                headers={"X-Control-Lease-Token": alice_lease},
+                json=python_request,
+            )
+            assert bob_python.status_code == 403
+            assert bob_python.json()["error"]["code"] == "ADMIN_REQUIRED"
+            assert alice_python.status_code != 403
+
+            activated = await alice.post(
+                "/api/v1/projects/same-project-id/activate",
+                headers={"X-Control-Lease-Token": alice_lease},
+            )
+            assert activated.status_code == 200, activated.text
+
             runtimes = app.state.tenant_runtime_manager._runtimes  # noqa: SLF001
+            # After a project switch, maintenance checks the new project's Runs.
+            alice_runtime = runtimes["account-a"]
+            assert alice_runtime.maintenance_service.workflow_runs is alice_runtime.workflow_projection
             assert runtimes["account-a"].runtime_host is not runtimes["account-b"].runtime_host
             assert runtimes["account-a"].runtime_host.bus is not runtimes["account-b"].runtime_host.bus
             assert runtimes["account-a"].event_broker is not runtimes["account-b"].event_broker

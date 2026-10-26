@@ -306,6 +306,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             await previous.close()
             app.state.workflow_projection = replacement
+            # Maintenance must see the new project's Runs when it checks for work.
+            app.state.maintenance_service.workflow_runs = replacement
             attach_main_reporting_tool(
                 app.state.runtime_host,
                 projection_resolver=lambda: app.state.workflow_projection,

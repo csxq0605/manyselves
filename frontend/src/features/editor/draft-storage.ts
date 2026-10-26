@@ -21,6 +21,16 @@ export function draftKey(serverUrl: string, projectId: string, path: string): st
   return JSON.stringify([serverUrl.replace(/\/$/, ""), projectId, path]);
 }
 
+/**
+ * The storage scope of one signed-in account on one server.  Drafts and open
+ * tabs live in the browser, which several accounts may share; each account
+ * sees only its own.
+ */
+export function accountScope(serverUrl: string, username: string | null | undefined): string {
+  const server = serverUrl.replace(/\/$/, "");
+  return username ? `${server}#account=${encodeURIComponent(username)}` : server;
+}
+
 export function pruneDrafts(drafts: readonly StoredDraft[], maximum: number): StoredDraft[] {
   return [...drafts].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, maximum);
 }

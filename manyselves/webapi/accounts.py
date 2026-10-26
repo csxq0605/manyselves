@@ -21,6 +21,8 @@ class AccountIdentity:
     account_id: str
     username: str
     password: str
+    # Only an administrator may run Python on the server; see operations.py.
+    admin: bool = False
 
 
 class AccountCatalog:
@@ -49,6 +51,7 @@ class AccountCatalog:
                         account_id="default",
                         username=settings.admin_username,
                         password=settings.admin_password.get_secret_value(),
+                        admin=True,
                     )
                 ]
             )
@@ -79,7 +82,10 @@ class AccountCatalog:
                     f"password environment variable is missing for account {account_id}: "
                     f"{password_env}"
                 )
-            accounts.append(AccountIdentity(account_id, username, password))
+            admin = raw.get("admin", False)
+            if not isinstance(admin, bool):
+                raise ValueError(f"account {account_id} admin must be true or false")
+            accounts.append(AccountIdentity(account_id, username, password, admin))
         return cls(accounts)
 
     @property
@@ -89,6 +95,10 @@ class AccountCatalog:
     @property
     def account_ids(self) -> tuple[str, ...]:
         return tuple(self._by_id)
+
+    def is_admin(self, account_id: str) -> bool:
+        account = self._by_id.get(account_id)
+        return account is not None and account.admin
 
     def contains(self, account_id: str) -> bool:
         return account_id in self._by_id

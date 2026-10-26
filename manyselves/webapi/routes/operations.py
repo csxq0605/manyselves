@@ -21,10 +21,19 @@ from ..schemas.operations import (
     PythonOperationResponse,
     PythonRunRequest,
 )
-from ..security import require_authenticated_session, require_control_lease_header
+from ..security import (
+    require_admin_account,
+    require_authenticated_session,
+    require_control_lease_header,
+)
 from ..tenant_runtime import request_runtime_state
 
-router = APIRouter(prefix="/operations", dependencies=[Depends(require_authenticated_session)])
+# Python runs as the server process with no file isolation between accounts,
+# so only administrator accounts may use these routes.
+router = APIRouter(
+    prefix="/operations",
+    dependencies=[Depends(require_authenticated_session), Depends(require_admin_account)],
+)
 
 
 def _response(operation) -> PythonOperationResponse:

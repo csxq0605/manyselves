@@ -1,6 +1,6 @@
 """Session and runtime-control dependencies for business routes."""
 
-from fastapi import Request, Security, status
+from fastapi import Depends, Request, Security, status
 from fastapi.security import APIKeyHeader
 
 from .errors import ApiError
@@ -49,3 +49,22 @@ def require_control_lease_header(
             retryable=False,
         )
     return lease_token
+
+
+async def require_admin_account(
+    request: Request,
+    principal: SessionPrincipal = Depends(require_authenticated_session),
+) -> SessionPrincipal:
+    """Require the session's account to be marked ``admin: true``.
+
+    FastAPI resolves the session dependency once per request, so a router
+    that also declares it does not verify the session twice.
+    """
+    if not request.app.state.account_catalog.is_admin(principal.account_id):
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="ADMIN_REQUIRED",
+            message="Only an administrator account may run Python on the server",
+            retryable=False,
+        )
+    return principal
