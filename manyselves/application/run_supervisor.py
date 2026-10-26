@@ -97,7 +97,7 @@ class RunSupervisor:
             self.max_auto_resumes,
         )
         try:
-            await self._projection.resume(uuid4(), run_id)
+            await self._projection.resume(uuid4(), run_id, automatic=True)
         except Exception as exc:  # noqa: BLE001 - reported to Main instead
             await self._send(
                 _notice(run_id, {}, "自动续跑失败", f"自动续跑没有启动：{exc}")
