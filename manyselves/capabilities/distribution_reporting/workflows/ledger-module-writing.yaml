@@ -1,6 +1,6 @@
 id: ledger-module-writing
-version: 1.1.0
-description: A writer writes one group of sections in a conversation of its own, from the group's material
+version: 1.2.0
+description: A writer writes one group of sections in a conversation of its own, from the group's material; in a revision the sections the program carried over from the base version come first as they were and are not written again
 tasks:
 - write-section
 recovery:
@@ -17,6 +17,12 @@ actions:
   key_variable: item_key
   mode: run
   output_variable: writer_conversation
+# A revision's carried-over sections, with the base version's final text.
+- id: kept
+  kind: set_variable
+  variable: written
+  value_variable: item
+  field: kept_sections
 - id: sections
   kind: set_variable
   variable: sections

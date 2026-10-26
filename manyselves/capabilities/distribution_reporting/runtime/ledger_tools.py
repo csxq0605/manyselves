@@ -640,7 +640,7 @@ _TASKS_DIR = Path(__file__).resolve().parents[1] / "tasks"
 _WRITING_TASKS = (
     "judge-module", "revise-judgments", "write-section", "revise-sections",
     "chief-chapter-1", "chief-chapter-3", "revise-chief-actions", "revise-chief-overview",
-    "revise-chief-facts", "chief-chapter-4",
+    "revise-chief-facts", "chief-chapter-4", "chief-chapter-1-alone",
 )
 
 
@@ -781,6 +781,23 @@ def _merged_routes(*lists: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         for entry in routes:
             found.setdefault(tuple(entry["rows"]), dict(entry))
     return [found[key] for key in sorted(found)]
+
+
+def _kept_sections(final: Mapping[str, Any]) -> dict[str, str]:
+    """The sections a revision carried over from its base version, with their text."""
+
+    return {
+        str(section["submodule_id"]): str(section["text"])
+        for group in final.get("writing_items") or []
+        for section in group.get("kept_sections") or []
+    }
+
+
+def _kept_chapters(final: Mapping[str, Any]) -> set[str]:
+    """The chapters ("1", "3", "4") a revision carried over from its base version."""
+
+    kept = final.get("kept") or {}
+    return {chapter for chapter in ("1", "3", "4") if kept.get(f"chapter{chapter}")}
 
 
 def _with_instruction(brief: dict[str, Any], instructions: Sequence[str] | None) -> dict[str, Any]:
@@ -1941,6 +1958,19 @@ class LedgerTools(LedgerStageTools):
             "writing_items": writing_items,
             "action_groups": groups,
             "story_input": story_input,
+            "special_topic_input": context.get("special_topic_input"),
+            # What the writing step needs to carry units over from the base version.
+            **(
+                {"revision_plan": {
+                    key: revision.get(key)
+                    for key in (
+                        "base_version", "instruction", "text_instructions",
+                        "chief_instructions", "chapter_instructions",
+                    )
+                }}
+                if revision
+                else {}
+            ),
             "chief_input": {
                 # The chief starts a conversation of its own: the map, the
                 # expert method for chapters 1 and 3, the assignment and the
@@ -2332,6 +2362,9 @@ class LedgerTools(LedgerStageTools):
 
     def check_chief(self, value: dict[str, Any]) -> dict[str, Any]:
         final = value["ledger"]
+        if value.get("chapter1") and "1" in _kept_chapters(final):
+            # A carried-over chapter 1 is the base version's, checked there.
+            return {"findings": {}, "blocking": False}
         ledger = {m: _rows(rows) for m, rows in final["ledger"].items()}
         groups = final.get("action_groups") or []
         chapter3 = ChiefChapter3.model_validate(value["chapter3"])
@@ -2403,9 +2436,11 @@ class LedgerTools(LedgerStageTools):
         chapter = str(value.get("chapter") or "")
         if chapter not in {"", "1", "3"}:
             raise ValueError(f"plan-chief-facts: unknown chapter {chapter!r}")
+        # A carried-over chapter was checked in the base version.
+        kept = _kept_chapters(final)
         packets = chief_fact_packets(
-            chapter1=None if chapter == "3" else _plain(value.get("chapter1")),
-            chapter3=None if chapter == "1" else _plain(value.get("chapter3")),
+            chapter1=None if chapter == "3" or "1" in kept else _plain(value.get("chapter1")),
+            chapter3=None if chapter == "1" or "3" in kept else _plain(value.get("chapter3")),
             ledger=ledger,
             groups=final.get("action_groups") or [],
             slots=self._slots(run_id),
@@ -2528,6 +2563,36 @@ class LedgerTools(LedgerStageTools):
             found.update({row.id: row for row in rows if row.id != row_id})
         return list(found.values())
 
+    def _base_row_fixes(
+        self, run_id: str, final: Mapping[str, Any], before: Mapping[str, JudgmentRow]
+    ) -> dict[str, JudgmentRow]:
+        """The base version's row fixes that still apply in a revision.
+
+        A row that reads exactly as the base version's did before its fixes
+        (``judgments.json``) takes the base version's fixed row
+        (``judgments-settled.json``): the fix was found for that same row.
+        """
+
+        plan = final.get("revision_plan")
+        if not plan:
+            return {}
+        base = base_dir(self.workspace, run_id, int(plan["base_version"]))
+
+        def rows(name: str) -> dict[str, dict[str, Any]]:
+            path = base / "ledger" / name
+            if not path.is_file():
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {str(row.get("id")): row for module in data.values() for row in module}
+
+        settled, fixed = rows("judgments.json"), rows("judgments-settled.json")
+        return {
+            row_id: _rows([fixed[row_id]])[0]
+            for row_id, row in before.items()
+            if row_id in settled and row_id in fixed and fixed[row_id] != settled[row_id]
+            and _dump_rows([row])[0] == settled[row_id]
+        }
+
     def apply_row_fixes(self, value: dict[str, Any]) -> dict[str, Any]:
         """The row fixes on the final ledger, carried to every place that shows the rows.
 
@@ -2557,9 +2622,20 @@ class LedgerTools(LedgerStageTools):
             row_id: row for row_id, row in changed.items()
             if row_id in before and row != before[row_id]
         }
+        run_id = final["run_id"]
+        # A revision carries the base version's row fixes over to the rows
+        # that came out as the base version had them before its fixes.
+        # A fix found again in this version, to the same row, is still the
+        # base version's.
+        carried = {
+            row_id: row
+            for row_id, row in self._base_row_fixes(run_id, final, before).items()
+            if changed.get(row_id, row) == row
+        }
+        changed.update(carried)
+        kept = _kept_sections(final)
         edits = {owner: dict(_plain(edit) or {}) for owner, edit in (value.get("edits") or {}).items()}
         per_owner: dict[str, dict[str, Any]] = {}
-        run_id = final["run_id"]
         if changed:
             ledger = {
                 m: [changed.get(row.id, row) for row in rows] for m, rows in ledger.items()
@@ -2568,13 +2644,30 @@ class LedgerTools(LedgerStageTools):
             owners = {
                 section["submodule_id"]: group["group_id"]
                 for group in final.get("writing_items") or []
-                for section in group.get("sections") or []
+                for section in [*(group.get("sections") or []), *(group.get("kept_sections") or [])]
+            }
+            modules = {
+                group["group_id"]: group["module_id"] for group in final.get("writing_items") or []
             }
             written = {owner: set(edit.get("sections") or {}) for owner, edit in edits.items()}
 
             def send(section_id: str, row: JudgmentRow) -> None:
                 owner = owners.get(section_id)
-                if owner is None or section_id not in written.get(owner, set()):
+                if owner is None:
+                    return
+                if section_id in kept and section_id not in written.get(owner, set()):
+                    # A carried-over section already says what the base
+                    # version's fix says; a row fixed in this version sends
+                    # it back to its writer like any other.
+                    if row.id in carried:
+                        return
+                    edit = edits.setdefault(owner, {
+                        "owner": owner, "module_id": modules.get(owner, owner),
+                        "run_id": run_id, "sections": {}, "findings": {},
+                    })
+                    edit["sections"] = {**dict(edit.get("sections") or {}), section_id: kept[section_id]}
+                    written.setdefault(owner, set()).add(section_id)
+                if section_id not in written.get(owner, set()):
                     return
                 old = before[row.id]
                 fields = [
@@ -2636,7 +2729,29 @@ class LedgerTools(LedgerStageTools):
         if chief and changed:
             check = dict(chief.get("fact_check") or {})
             findings = dict(check.get("findings") or {})
-            for unit_id, row_ids in (chief.get("unit_rows") or {}).items():
+            unit_rows = dict(chief.get("unit_rows") or {})
+            # A carried-over chapter goes back to the chief only for a row
+            # fixed in this version.
+            fixed_now = {row_id for row_id in changed if row_id not in carried}
+            kept_chapters = _kept_chapters(final)
+            if fixed_now and kept_chapters & {"1", "3"}:
+                for packet in chief_fact_packets(
+                    chapter1=_plain(chief.get("chapter1")) if "1" in kept_chapters else None,
+                    chapter3=_plain(chief.get("chapter3")) if "3" in kept_chapters else None,
+                    ledger={m: _rows(r) for m, r in final["ledger"].items()},
+                    groups=final.get("action_groups") or [],
+                    slots=self._slots(run_id),
+                    fact_texts=self._reference(run_id).get("fact_texts") or {},
+                    run_id=run_id,
+                    max_units=1,
+                    prefix="K-",
+                    gap_labels=gap_labels(self._gap_entries(run_id)),
+                ):
+                    for unit in packet["units"]:
+                        rows_now = [r for r in unit.get("row_ids") or () if r in fixed_now]
+                        if rows_now:
+                            unit_rows.setdefault(unit["unit_id"], rows_now)
+            for unit_id, row_ids in unit_rows.items():
                 notes = [
                     f"判断行 {row_id}（{changed[row_id].object}｜{changed[row_id].checkpoint}）改了。"
                     f"原来的发现：{before[row_id].finding}；现在：{changed[row_id].finding}。"
@@ -2759,9 +2874,17 @@ class LedgerTools(LedgerStageTools):
         skills = reference.get("author_skills") or {}
         copied = self._copied(run_id)
         edit_hints: dict[str, list[str]] = {}
+        # A carried-over section is the base version's, edited there.
+        kept = _kept_sections(value["ledger"])
         for owner, sections in value["written"].items():
             module_id = group_modules.get(owner, owner)
-            texts = {section["submodule_id"]: section["text"] for section in sections}
+            texts = {
+                section["submodule_id"]: section["text"]
+                for section in sections
+                if section["submodule_id"] not in kept
+            }
+            if not texts:
+                continue
             layout = layout_findings(
                 sections=texts,
                 rows_by_submodule=by_submodule,
@@ -2852,9 +2975,10 @@ class LedgerTools(LedgerStageTools):
         index = {row.id: row for rows in ledger.values() for row in rows}
         row_section = {row.id: row.submodule_id for row in index.values()}
         fact_texts = self._reference(run_id).get("fact_texts") or {}
+        kept = _kept_chapters(final)
         unit_packets = chief_fact_packets(
-            chapter1=_plain(value.get("chapter1")),
-            chapter3=_plain(value.get("chapter3")),
+            chapter1=None if "1" in kept else _plain(value.get("chapter1")),
+            chapter3=None if "3" in kept else _plain(value.get("chapter3")),
             ledger=ledger,
             groups=final.get("action_groups") or [],
             slots=self._slots(run_id),
@@ -3460,6 +3584,22 @@ class LedgerTools(LedgerStageTools):
         self.store.write_json(
             f"Work/runs/{run_id}/ledger/chief-outputs.json", _plain(value["chief"])
         )
+        # The sections a revision carried over join the ones written now.
+        written = {key for edit in value["edits"].values() for key in edit["sections"]}
+        carried: dict[str, dict[str, Any]] = {}
+        for group in value["ledger"].get("writing_items") or []:
+            for section in group.get("kept_sections") or []:
+                if section["submodule_id"] in written:
+                    continue
+                carried.setdefault(group["group_id"], {
+                    "owner": group["group_id"], "module_id": group["module_id"], "sections": {},
+                })["sections"][section["submodule_id"]] = section["text"]
+        edit_values = [*value["edits"].values(), *carried.values()]
+        # And a later revision carries sections over from these.
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/section-texts.json",
+            {key: text for edit in edit_values for key, text in edit["sections"].items()},
+        )
         # The program writes every value slot now, in the prose and in the
         # chief's structured fields alike.
         slots = self._slots(run_id)
@@ -3472,7 +3612,7 @@ class LedgerTools(LedgerStageTools):
             if found := slot_repairs(str(text), slots):
                 repairs.setdefault(f"{owner} {key}", []).extend(found)
 
-        for edit in value["edits"].values():
+        for edit in edit_values:
             for key, text in edit["sections"].items():
                 note_repairs(edit.get("module_id") or edit["owner"], key, text)
         for key, text in (value["chief"].get("texts") or {}).items():
@@ -3488,7 +3628,7 @@ class LedgerTools(LedgerStageTools):
         self.store.write_json(f"Work/runs/{run_id}/ledger/delivery-hints.json", delivery_hints)
         # A module written in several groups is put back together here.
         edits: dict[str, dict[str, str]] = {}
-        for edit in value["edits"].values():
+        for edit in edit_values:
             edits.setdefault(edit.get("module_id") or edit["owner"], {}).update(
                 {
                     key: fill_slots(text, slots, unresolved=UNRESOLVED)

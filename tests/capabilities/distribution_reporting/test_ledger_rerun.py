@@ -312,7 +312,7 @@ async def _revise(tmp_path: Path, values: dict[str, Any], answer) -> tuple[list[
 
 
 @pytest.mark.asyncio
-async def test_wording_change_rewrites_only_that_module_from_that_section(
+async def test_wording_change_reaches_only_the_writing_of_that_section(
     tmp_path: Path,
 ) -> None:
     await run_ledger_report(tmp_path, run_id=RUN_ID)
@@ -326,8 +326,9 @@ async def test_wording_change_rewrites_only_that_module_from_that_section(
         _answer,
     )
 
-    # No judgment, relation, review or chief turn is redone.
-    assert set(tasks) <= {"write-section", "edit-sections", "revise-sections"}
+    # No judgment, relation or chief turn is redone; the rewritten section is
+    # checked again.
+    assert set(tasks) <= {"write-section", "edit-sections", "revise-sections", "review-joint"}
     assert "write-section" in tasks
     first = next(m for m in messages if _task(m.content) == "write-section")
     assert "语气更客观。" in first.content and '"submodule_id":"2.1.1"' in first.content
@@ -367,8 +368,10 @@ async def test_judgment_change_reopens_only_its_module_and_the_changed_chief_ent
     # Only 2.3's author redoes relations and review.
     assert tasks.count("relate-judgments") == 1
     assert tasks.count("review-judgments") == 1
-    # The ledger changed, so the chief revises from the base version's chapters.
-    assert "chief-chapter-3" in tasks and "chief-chapter-1" in tasks
+    # The rewritten row has no problem: the chief's input reads as before, so
+    # chapters 1 and 3 are carried over; only the section on the row is written again.
+    assert not {"chief-chapter-3", "chief-chapter-1", "chief-chapter-1-alone"} & set(tasks)
+    assert tasks.count("write-section") == 1
     run_dir = tmp_path / "Work/runs" / RUN_ID
     plan = json.loads((run_dir / "ledger/revision-plan.json").read_text(encoding="utf-8"))
     assert plan["affected_modules"] == ["2.3"]
@@ -468,6 +471,8 @@ def _split_answer(message):
     """``_answer``, with each group of a module judged in groups writing its own rows."""
 
     value = _input_of(message.content)
+    if _task(message.content) == "revise-chief-facts":
+        return _any_fix(message)
     if _task(message.content) != "judge-module" or not (
         value.get("group_note") or len(value["evidence_ids"]) > 1
     ):
@@ -524,7 +529,7 @@ async def test_chapter_change_reuses_every_judge_of_a_module_judged_in_groups(
     )
 
     assert not JUDGE_STAGE & set(tasks), tasks
-    assert "chief-chapter-1" in tasks
+    assert "chief-chapter-1-alone" in tasks
 
 
 @pytest.mark.asyncio
@@ -563,3 +568,116 @@ async def test_judgment_change_in_one_group_rejudges_only_that_group(
     brief = judges[0]["revision"]
     assert {row["submodule_id"] for row in brief["previous_rows"]} == {second}
     assert brief["section_instructions"] == [{"section": second, "instruction": "再看一遍。"}]
+
+
+def _any_fix(message):
+    """``_answer``; a chief fix it was not written for changes nothing."""
+
+    try:
+        return _answer(message)
+    except (KeyError, AssertionError):
+        if _task(message.content) != "revise-chief-facts":
+            raise
+        return ("submit", [{}])
+
+
+def _version_files(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Each section's text and the chief's chapters, in the base version and now."""
+
+    run_dir = tmp_path / "Work/runs" / RUN_ID
+    read = lambda path: json.loads(path.read_text(encoding="utf-8"))  # noqa: E731
+    return (
+        read(run_dir / "versions/v1/ledger/section-texts.json"),
+        read(run_dir / "ledger/section-texts.json"),
+        read(run_dir / "versions/v1/ledger/chief-outputs.json"),
+        read(run_dir / "ledger/chief-outputs.json"),
+    )
+
+
+WRITING_AND_REVIEW = {
+    "write-section", "revise-sections", "edit-sections",
+    "judge-module", "relate-judgments", "review-judgments", "revise-judgments",
+    "review-cross-module",
+}
+
+
+@pytest.mark.asyncio
+async def test_chapter_1_change_keeps_chapter_3_and_every_section(tmp_path: Path) -> None:
+    """Only chapter 1 is written again; chapter 3 and chapter 2 are carried over as delivered."""
+
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    tasks, messages = await _revise(
+        tmp_path,
+        {"instruction": "改第一章。", "changes": [{"target": "1", "instruction": "概述更简洁。"}]},
+        _any_fix,
+    )
+
+    assert "chief-chapter-1-alone" in tasks
+    assert "chief-chapter-3" not in tasks and "chief-chapter-1" not in tasks
+    assert not WRITING_AND_REVIEW & set(tasks), tasks
+    # The checks look at chapter 1 only.
+    for message in messages:
+        if _task(message.content) == "review-joint":
+            value = _input_of(message.content)
+            assert "sections" not in value
+            assert all(unit["unit_id"].startswith("1") for unit in value.get("units") or [])
+    texts_before, texts_now, chief_before, chief_now = _version_files(tmp_path)
+    assert texts_now == texts_before
+    assert chief_now["chapter3"] == chief_before["chapter3"]
+    alone = next(m for m in messages if _task(m.content) == "chief-chapter-1-alone")
+    assert "概述更简洁。" in alone.content
+
+
+@pytest.mark.asyncio
+async def test_chapter_3_change_keeps_chapter_1_and_every_section(tmp_path: Path) -> None:
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    tasks, messages = await _revise(
+        tmp_path,
+        {"instruction": "改第三章。", "changes": [{"target": "3", "instruction": "汇总更简洁。"}]},
+        _any_fix,
+    )
+
+    assert "chief-chapter-3" in tasks
+    assert "chief-chapter-1" not in tasks and "chief-chapter-1-alone" not in tasks
+    assert not WRITING_AND_REVIEW & set(tasks), tasks
+    for message in messages:
+        if _task(message.content) == "review-joint":
+            value = _input_of(message.content)
+            assert "sections" not in value
+            assert all(unit["unit_id"].startswith("3") for unit in value.get("units") or [])
+    texts_before, texts_now, chief_before, chief_now = _version_files(tmp_path)
+    assert texts_now == texts_before
+    assert chief_now["chapter1"] == chief_before["chapter1"]
+
+
+@pytest.mark.asyncio
+async def test_section_wording_change_writes_only_that_section(tmp_path: Path) -> None:
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    first, second = list(REPORT_TAXONOMY["2.1"].submodules)[:2]
+    tasks, messages = await _revise(
+        tmp_path,
+        {
+            "instruction": f"改写 {second} 的措辞。",
+            "changes": [{"target": second, "instruction": "语气更客观。", "scope": "text"}],
+        },
+        _any_fix,
+    )
+
+    written = [_input_of(m.content) for m in messages if _task(m.content) == "write-section"]
+    assert [section["submodule_id"] for section in written] == [second]
+    # The writer starts from the section as delivered, with the group's material.
+    assert written[0]["revision_instruction"] == "语气更客观。"
+    assert written[0]["previous_text"]
+    assert "chief-chapter-1" not in tasks and "chief-chapter-3" not in tasks
+    assert "chief-chapter-1-alone" not in tasks
+    for message in messages:
+        if _task(message.content) == "review-joint":
+            value = _input_of(message.content)
+            assert set(value.get("sections") or {}) <= {second} and not value.get("units")
+    texts_before, texts_now, chief_before, chief_now = _version_files(tmp_path)
+    assert {k: v for k, v in texts_now.items() if k != second} == {
+        k: v for k, v in texts_before.items() if k != second
+    }
+    assert texts_now[first] == texts_before[first]
+    assert chief_now["chapter1"] == chief_before["chapter1"]
+    assert chief_now["chapter3"] == chief_before["chapter3"]

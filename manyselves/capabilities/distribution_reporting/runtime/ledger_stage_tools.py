@@ -44,6 +44,14 @@ from .cross_module import relation_names, same_observation_rows
 from .gap_entries import chief_gap_entries, gap_ids, gap_labels
 from .observation_ledger import shared_labels
 from .photo_reading import load_photo_readings, photo_reading_labels
+from .report_revision import (
+    SECTION_ROWS_NOTE,
+    base_dir,
+    chief_reading,
+    chief_revision,
+    kept_units,
+    section_input,
+)
 from .research.fact_context import render_fact_packet
 from .research.project_evidence import ProjectEvidenceIndex
 from .review_packets import ReviewPackets
@@ -621,7 +629,97 @@ class LedgerStageTools:
             {key: line[key] for key in ("line_id", "title", "conclusion", "row_ids", "sections")}
             for line in lines
         ]
-        return {**final, "writing_items": groups, "chief_input": chief_input}
+        topic_input = final.get("special_topic_input")
+        # What the writers are given, for a later revision to compare with.
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/writing-inputs.json",
+            {
+                "sections": {
+                    section["submodule_id"]: section_input(section)
+                    for group in groups for section in group["sections"]
+                },
+                "chief_input": chief_reading(chief_input),
+                "topic_input": topic_input,
+            },
+        )
+        groups, chief_input, kept = self._carry_over(
+            run_id, final, groups, chief_input, topic_input
+        )
+        return {**final, "writing_items": groups, "chief_input": chief_input, "kept": kept}
+
+    def _carry_over(
+        self,
+        run_id: str,
+        final: Mapping[str, Any],
+        groups: list[dict[str, Any]],
+        chief_input: dict[str, Any],
+        topic_input: Any,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+        """In a revision, take out of the writing what the base version already wrote.
+
+        Each group's kept sections move to ``kept_sections`` with the base
+        version's final text, so its writer writes only the rest (the group's
+        shared material moves to the first section it still writes); a kept
+        chapter comes back in ``kept`` for the chief's workflow to use as it
+        is.  A section that is written again sees its previous text.  Outside
+        a revision nothing is kept.
+        """
+
+        plan = final.get("revision_plan")
+        none = {"chapter1": None, "chapter3": None, "chapter4": None}
+        if not plan:
+            return [{**group, "kept_sections": []} for group in groups], chief_input, none
+        base = base_dir(self.workspace, run_id, int(plan["base_version"]))
+        kept = kept_units(
+            plan,
+            base=base,
+            sections={s["submodule_id"]: s for group in groups for s in group["sections"]},
+            chief_input=chief_input,
+            topic_input=topic_input,
+        )
+        previous = kept.pop("previous_texts")
+        carried: list[dict[str, Any]] = []
+        for group in groups:
+            pack = next((s["pack"] for s in group["sections"] if s.get("pack")), "")
+            kept_sections, to_write = [], []
+            for section in group["sections"]:
+                section_id = section["submodule_id"]
+                if section_id in kept["sections"]:
+                    kept_sections.append(
+                        {"submodule_id": section_id, "text": kept["sections"][section_id]}
+                    )
+                    continue
+                section = {k: v for k, v in section.items() if k != "pack"}
+                if section_id in previous:
+                    section = {
+                        **section,
+                        "revision_note": section.get("revision_note") or SECTION_ROWS_NOTE,
+                        "previous_text": previous[section_id],
+                    }
+                to_write.append(section)
+            if to_write and pack:
+                to_write[0] = {"pack": pack, **to_write[0]}
+            carried.append({**group, "sections": to_write, "kept_sections": kept_sections})
+        rewritten = [c for c in ("1", "3") if kept[f"chapter{c}"] is None]
+        chief_input = {k: v for k, v in chief_input.items() if k != "revision"}
+        if rewritten:
+            revision = chief_revision(
+                plan,
+                base=base,
+                final_ledger=final["ledger"],
+                chapters=rewritten,
+            )
+            if revision is not None:
+                chief_input["revision"] = revision
+        self.store.write_json(
+            f"Work/runs/{run_id}/ledger/revision-keep.json",
+            {
+                "sections": sorted(kept["sections"]),
+                "chapters": [c for c in ("1", "3", "4") if kept[f"chapter{c}"] is not None],
+            },
+        )
+        chapters = {key: kept[key] for key in ("chapter1", "chapter3", "chapter4")}
+        return carried, chief_input, chapters
 
     def _photos_to_check(self, rows, reference, readings):
         from .ledger_tools import photos_to_check
