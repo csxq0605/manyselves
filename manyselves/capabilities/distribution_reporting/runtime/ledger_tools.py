@@ -149,7 +149,10 @@ from .relation_routes import gap_affects, routed_relations, same_room_issues, st
 from .report_revision import (
     SECTION_NOTE,
     base_dir,
+    base_groups,
+    base_partition,
     chief_revision,
+    group_revision_brief,
     module_revision_brief,
     plan_revision,
     splice_kept_rows,
@@ -676,12 +679,31 @@ def _groups(context: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _judge_item(
-    module: Mapping[str, Any], group: Mapping[str, Any], materials: str
-) -> dict[str, Any]:
-    """One judge's brief: the whole module, or one group of its sections."""
+_UNSET: Any = object()
 
-    item = {**module, "group_id": group["group_id"], "materials": materials}
+
+def _judge_item(
+    module: Mapping[str, Any],
+    group: Mapping[str, Any],
+    materials: str,
+    *,
+    revision: Any = _UNSET,
+) -> dict[str, Any]:
+    """One judge's brief: the whole module, or one group of its sections.
+
+    In a revision ``revision`` is the group's own part of the module's brief,
+    left out when the group has nothing to redo.
+    """
+
+    item = {
+        **{k: v for k, v in module.items() if k != "revision"},
+        "group_id": group["group_id"],
+        "materials": materials,
+    }
+    if revision is _UNSET:
+        revision = module.get("revision")
+    if revision is not None:
+        item["revision"] = revision
     if not group["split"]:
         return item
     first = f"J-{module['module_id']}-{group['row_start']:02d}"
@@ -810,25 +832,28 @@ class LedgerTools(LedgerStageTools):
             modules: list[dict[str, Any]] = []
             # A large module is judged in groups of its sections, each in a
             # conversation of its own, so no one judge writes the whole module
-            # at once.  A revision keeps each module whole.
+            # at once.  A revision judges in the base version's groups, so an
+            # unchanged group reads as before and is replayed.
             judge_groups: list[dict[str, Any]] = []
+            base = (
+                base_dir(self.workspace, run_id, revision.base_version)
+                if revision is not None
+                else None
+            )
+            previous_groups = base_groups(base) if base is not None else {}
             for module_id in module_ids:
                 module = REPORT_TAXONOMY[module_id]
                 module_items = [
                     item for item in index.module_items(module_id) if item.module_id == module_id
                 ]
                 section_ids = list(module.submodules)
-                parts = (
-                    [section_ids]
-                    if revision is not None
-                    else section_groups(
-                        section_ids,
-                        {
-                            sid: sum(1 for item in module_items if item.submodule_id == sid)
-                            for sid in section_ids
-                        },
-                        budget_records=JUDGE_GROUP_RECORDS,
-                    )
+                parts = base_partition(previous_groups, module_id, section_ids) or section_groups(
+                    section_ids,
+                    {
+                        sid: sum(1 for item in module_items if item.submodule_id == sid)
+                        for sid in section_ids
+                    },
+                    budget_records=JUDGE_GROUP_RECORDS,
                 )
                 for number, part in enumerate(parts):
                     group_id = module_id if len(parts) == 1 else f"{module_id}#{number + 1}"
@@ -998,8 +1023,9 @@ class LedgerTools(LedgerStageTools):
                 if skills.get(skill_id) and skills[skill_id] not in module_skills.values()
             )
         revision_plan = None
+        group_briefs: dict[str, Any] = {}
         if revision is not None:
-            base = base_dir(self.workspace, run_id, revision.base_version)
+            assert base is not None
             with _taxonomy(state):
                 revision_plan = plan_revision(
                     revision,
@@ -1027,19 +1053,45 @@ class LedgerTools(LedgerStageTools):
                     )
                     if brief is not None:
                         module["revision"] = brief
-            for module_id in module_ids:
-                if module_id not in judge_materials:
+                    # A group of a split module redoes only what changed on
+                    # its own sections and records.
+                    for group in judge_groups:
+                        if group["module_id"] != module_id:
+                            continue
+                        if not group["split"]:
+                            group_briefs[group["group_id"]] = brief
+                            continue
+                        mine = set(group["evidence_ids"])
+                        group_own = [
+                            item for item in own if item.id in mine or item.module_id is None
+                        ]
+                        group_briefs[group["group_id"]] = group_revision_brief(
+                            brief,
+                            submodule_ids=group["submodule_ids"],
+                            module_sections=[sub["id"] for sub in module["submodules"]],
+                            first=group["first"],
+                            changed_facts=render_fact_packet(
+                                group_own, module_id, shared=shared, photo_readings=readings,
+                                column_headers=headers,
+                            ) if group_own else "",
+                        )
+            for group in judge_groups:
+                group_id = group["group_id"]
+                previous = previous_groups.get(group_id)
+                if previous is not None and (
+                    previous.get("submodule_ids") != group["submodule_ids"]
+                ):
                     continue
-                base_materials = base / "ledger" / f"judge-materials-{module_id}.md"
+                base_materials = base / "ledger" / f"judge-materials-{group_id}.md"
                 if base_materials.is_file():
                     # Keeping the base version's text lets unchanged steps be
-                    # reused.  What changed reaches the reopened modules in
+                    # reused.  What changed reaches the reopened groups in
                     # their briefs.
-                    judge_materials[module_id] = base_materials.read_text(encoding="utf-8")
+                    judge_materials[group_id] = base_materials.read_text(encoding="utf-8")
             revision_plan = {k: v for k, v in revision_plan.items() if k != "base_rows"}
             self.store.write_json(f"Work/runs/{run_id}/ledger/revision-plan.json", revision_plan)
-        for module_id, text in judge_materials.items():
-            self.store.write_text(f"Work/runs/{run_id}/ledger/judge-materials-{module_id}.md", text)
+        for group_id, text in judge_materials.items():
+            self.store.write_text(f"Work/runs/{run_id}/ledger/judge-materials-{group_id}.md", text)
         self.store.write_text(f"Work/runs/{run_id}/ledger/project-map-facts.md", fact_map)
         transcribed = [
             str(entry.get("text", ""))
@@ -1139,6 +1191,11 @@ class LedgerTools(LedgerStageTools):
                         next(m for m in modules if m["module_id"] == group["module_id"]),
                         group,
                         judge_materials[group["group_id"]],
+                        **(
+                            {"revision": group_briefs.get(group["group_id"])}
+                            if revision_plan is not None
+                            else {}
+                        ),
                     )
                     for group in judge_groups
                 ),

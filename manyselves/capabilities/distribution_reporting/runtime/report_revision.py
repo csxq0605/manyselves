@@ -181,6 +181,79 @@ def module_revision_brief(
     }
 
 
+def base_groups(base: Path) -> dict[str, dict[str, Any]]:
+    """The groups the base version judged in, by group id (empty for older versions)."""
+
+    groups = _read_json(base / "ledger" / "groups.json", {}).get("groups")
+    return dict(groups) if isinstance(groups, dict) else {}
+
+
+def base_partition(
+    groups: Mapping[str, Mapping[str, Any]], module_id: str, section_ids: Sequence[str]
+) -> list[list[str]] | None:
+    """How the base version split a module into groups, when it still fits its sections.
+
+    A revision judges a module in the same groups as its base version, so
+    each group's materials and brief read as before and an unchanged group is
+    replayed; None when the base version has no record of the module or its
+    groups no longer cover exactly its sections.
+    """
+
+    own = [
+        (group_id, list(group.get("submodule_ids") or ()))
+        for group_id, group in groups.items()
+        if group.get("module_id") == module_id
+    ]
+    if not own:
+        return None
+    own.sort(key=lambda entry: int(entry[0].partition("#")[2] or 0))
+    parts = [part for _group_id, part in own]
+    if [sid for part in parts for sid in part] != list(section_ids):
+        return None
+    return parts
+
+
+def group_revision_brief(
+    brief: Mapping[str, Any] | None,
+    *,
+    submodule_ids: Sequence[str],
+    module_sections: Sequence[str],
+    first: bool,
+    changed_facts: str,
+) -> dict[str, Any] | None:
+    """The part of a module's revision brief that one group of its sections redoes.
+
+    A group sees only its own sections' previous rows (the first group also
+    takes rows on sections outside the module's tree) and the changes on
+    them.  A group none of whose rows, records or sections changed gets no
+    brief: its judge reads as in the base version and is replayed, and its
+    rows are kept as they were.
+    """
+
+    if brief is None:
+        return None
+    mine = set(submodule_ids)
+
+    def own(section: Any) -> bool:
+        return section in mine or (first and section not in module_sections)
+
+    previous = [row for row in brief["previous_rows"] if own(row.get("submodule_id"))]
+    previous_ids = {row.get("id") for row in previous}
+    keep = [row_id for row_id in brief["keep_row_ids"] if row_id in previous_ids]
+    instructions = [i for i in brief["section_instructions"] if own(i.get("section"))]
+    if not instructions and not changed_facts and len(keep) == len(previous):
+        return None
+    cited = {e for row in previous for e in row.get("evidence_ids") or ()}
+    return {
+        **brief,
+        "section_instructions": instructions,
+        "previous_rows": previous,
+        "keep_row_ids": keep,
+        "removed_evidence_ids": [e for e in brief["removed_evidence_ids"] if e in cited],
+        "changed_facts": changed_facts,
+    }
+
+
 def splice_kept_rows(
     module_id: str, rows: Sequence[Mapping[str, Any]], plan: Mapping[str, Any] | None
 ) -> list[dict[str, Any]]:

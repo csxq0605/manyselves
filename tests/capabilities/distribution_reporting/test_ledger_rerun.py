@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -21,6 +22,9 @@ from manyselves.capabilities.distribution_reporting.runtime.ledger_report import
     ledger_report_tool_implementations,
 )
 from manyselves.capabilities.distribution_reporting.runtime.ledger_tools import LedgerTools
+from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+    REPORT_MODULE_IDS,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.runtime import generic_binding
@@ -29,6 +33,7 @@ from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 from tests.capabilities.distribution_reporting.test_ledger_report import (
     _answer,
+    _evidence,
     _input_of,
     _row,
     _task,
@@ -43,7 +48,7 @@ RUN_ID = "report-ledger-60000000000040008000000000000001"
 
 
 async def _rerun(
-    tmp_path: Path, operation, frozen_inputs: tuple[str, ...] = ()
+    tmp_path: Path, operation, frozen_inputs: tuple[str, ...] = (), answer=_answer
 ) -> tuple[GenericCapabilityRuntimeBinding, list[str]]:
     """Run ``operation(binding)`` on a fresh process; return the tasks the model saw."""
 
@@ -51,7 +56,7 @@ async def _rerun(
     loops: list[ScriptedLoop] = []
 
     def build(**kwargs: Any) -> ScriptedLoop:
-        loop = ScriptedLoop(bus, _answer, kwargs)
+        loop = ScriptedLoop(bus, answer, kwargs)
         loops.append(loop)
         return loop
 
@@ -443,3 +448,118 @@ async def test_recompute_redoes_the_turns_another_model_answered(tmp_path: Path)
 
     memo.set_current_model_only(False)
     assert not memo.current_model_only()
+
+
+def _split_evidence() -> list[Any]:
+    """The test facts, with 2.1's second section holding a record of its own."""
+
+    items = _evidence()
+    sections = list(REPORT_TAXONOMY["2.1"].submodules)
+    first = next(item for item in items if item.module_id == "2.1")
+    items.append(first.model_copy(update={
+        "id": "E-0101", "subject": "设备101", "fact": "设备101现场检查记录完整",
+        "submodule_id": sections[1],
+        "source": first.source.model_copy(update={"row": 101}),
+    }))
+    return items
+
+
+def _split_answer(message):
+    """``_answer``, with each group of a module judged in groups writing its own rows."""
+
+    value = _input_of(message.content)
+    if _task(message.content) != "judge-module" or not (
+        value.get("group_note") or len(value["evidence_ids"]) > 1
+    ):
+        return _answer(message)
+    module_id = value["module_id"]
+    start = re.search(r"J-[\d.]+-(\d+)", value.get("group_note") or "J-0-1").group(1)
+    sections = {item.id: item.submodule_id for item in _split_evidence()}
+    rows = []
+    for number, evidence_id in enumerate(value["evidence_ids"]):
+        row = _row(module_id, REPORT_MODULE_IDS.index(module_id) + 1)
+        rows.append({
+            **row,
+            "id": f"J-{module_id}-{int(start) + number:02d}",
+            "submodule_id": sections.get(evidence_id, row["submodule_id"]),
+            "evidence_ids": [evidence_id],
+        })
+    return ("submit", [{"module_id": module_id, "rows": rows}])
+
+
+async def _split_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from manyselves.capabilities.distribution_reporting.runtime import ledger_tools
+
+    # One record per group, so 2.1 is judged in two groups as large modules are.
+    monkeypatch.setattr(ledger_tools, "JUDGE_GROUP_RECORDS", 1)
+    await run_ledger_report(
+        tmp_path, answer=_split_answer, evidence=_split_evidence(), run_id=RUN_ID
+    )
+    ledger = tmp_path / "Work/runs" / RUN_ID / "ledger"
+    assert (ledger / "judge-materials-2.1#2.md").is_file(), "2.1 was not judged in groups"
+
+
+JUDGE_STAGE = {"judge-module", "relate-judgments", "review-judgments", "revise-judgments"}
+
+
+@pytest.mark.asyncio
+async def test_chapter_change_reuses_every_judge_of_a_module_judged_in_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A module judged in groups is judged in the same groups by a revision.
+
+    Its judges then see the same materials as in the base version and are
+    replayed; changing only chapter 1 redoes no judgment, relation or review.
+    """
+
+    await _split_report(tmp_path, monkeypatch)
+
+    tasks, _messages = await _revise(
+        tmp_path,
+        {
+            "instruction": "改第一章的写法。",
+            "changes": [{"target": "1", "instruction": "概述更简洁。"}],
+        },
+        _split_answer,
+    )
+
+    assert not JUDGE_STAGE & set(tasks), tasks
+    assert "chief-chapter-1" in tasks
+
+
+@pytest.mark.asyncio
+async def test_rerun_of_a_module_judged_in_groups_calls_no_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _split_report(tmp_path, monkeypatch)
+
+    _binding, tasks = await _rerun(
+        tmp_path, lambda binding: binding.rerun(COMMAND, RUN_ID), answer=_split_answer
+    )
+
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_judgment_change_in_one_group_rejudges_only_that_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking to rejudge one section of a module judged in groups reopens only its group."""
+
+    await _split_report(tmp_path, monkeypatch)
+    second = list(REPORT_TAXONOMY["2.1"].submodules)[1]
+
+    tasks, messages = await _revise(
+        tmp_path,
+        {
+            "instruction": f"重新判断 {second}。",
+            "changes": [{"target": second, "instruction": "再看一遍。", "scope": "judgment"}],
+        },
+        _split_answer,
+    )
+
+    judges = [_input_of(m.content) for m in messages if _task(m.content) == "judge-module"]
+    assert [judge["group_id"] for judge in judges] == ["2.1#2"]
+    brief = judges[0]["revision"]
+    assert {row["submodule_id"] for row in brief["previous_rows"]} == {second}
+    assert brief["section_instructions"] == [{"section": second, "instruction": "再看一遍。"}]
