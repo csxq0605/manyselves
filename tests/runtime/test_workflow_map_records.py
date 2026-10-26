@@ -1,5 +1,6 @@
 """Map, keyed record and conversation fork primitives on the generic Runtime."""
 
+import asyncio
 import time
 from pathlib import Path
 from typing import Any
@@ -292,6 +293,44 @@ async def test_map_same_run_resume_reuses_completed_items(tmp_path: Path) -> Non
     assert failed.map_states["score-all"]["c"]["status"] == "failed"
 
     completed = await host.execute(plan, failed, context)
+
+    assert completed.outputs["result"] == {"a": {"total": 1}, "c": {"total": 3}}
+    assert calls == {"a": 1, "c": 2}
+
+
+@pytest.mark.asyncio
+async def test_map_user_cancel_keeps_completed_items_for_resume(tmp_path: Path) -> None:
+    from manyselves.runtime.workflow_host import RUN_CANCEL_REQUESTED
+
+    registry, contracts = _registry()
+    registry.register(_item_workflow())
+    plan = _compile(registry, _map_parent(max_concurrency=1))
+    calls: dict[str, int] = {"a": 0, "c": 0}
+    entered = asyncio.Event()
+
+    async def score(arguments: dict[str, Any]) -> dict[str, Any]:
+        key = arguments["key"]
+        calls[key] += 1
+        if key == "c" and calls[key] == 1:
+            entered.set()
+            await asyncio.Event().wait()
+        return {"total": arguments["item"]["n"]}
+
+    host, store = _host(tmp_path)
+    context = RuntimeContext(tools={"score": score}, contracts=contracts, definitions=registry)
+    task = asyncio.create_task(
+        host.execute(plan, WorkflowState.for_plan("map-cancel", plan), context)
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    task.cancel(RUN_CANCEL_REQUESTED)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    cancelled = store.load("map-cancel")
+    assert cancelled.status is WorkflowStatus.FAILED
+    assert cancelled.map_states["score-all"]["a"]["status"] == "completed"
+
+    completed = await host.execute(plan, cancelled, context)
 
     assert completed.outputs["result"] == {"a": {"total": 1}, "c": {"total": 3}}
     assert calls == {"a": 1, "c": 2}
