@@ -1,10 +1,11 @@
 id: ledger-chief
-version: 5.3.0
+version: 5.4.0
 description: The chief merges actions and writes chapters 3 and 1 from the ledger; chapters 1 and 3 are fact-checked in small packets while the program checks their tables and text, chapter 3 while the chief writes chapter 1. The one fix and chapter 4 follow in ledger-chief-finish, while the authors fix the rows that carry the same errors
 tasks:
 - chief-chapter-3
 - revise-chief-actions
 - chief-chapter-1
+- chief-chapter-1-alone
 recovery:
 - typed-turn-recovery
 output_contract: ledger_chief_checked
@@ -31,6 +32,31 @@ actions:
   variable: chief_input
   value_variable: final
   field: chief_input
+# A revision's carried-over chapters (null when written again).
+- id: kept-3
+  kind: set_variable
+  variable: kept3
+  value_variable: final
+  field: kept.chapter3
+- id: kept-1
+  kind: set_variable
+  variable: kept1
+  value_variable: final
+  field: kept.chapter1
+- id: route-kept-3
+  kind: if
+  condition:
+    variable: kept3
+    operator: truthy
+  then: use-kept-3
+  otherwise: chapter-3
+- id: use-kept-3
+  kind: set_variable
+  variable: chapter3
+  value_variable: kept3
+- id: kept-3-done
+  kind: goto
+  target: chapter-1-and-facts-3
 - id: chapter-3
   kind: invoke_agent
   agent: report-consultant
@@ -71,10 +97,41 @@ actions:
 - id: chapter-1-and-facts-3
   kind: parallel
   branches:
-    chapter1: chapter-1
+    chapter1: route-1
     facts3: plan-facts-3
   join: join-chapter-1
   max_concurrency: 2
+# Chapter 1 carried over; or written on its own when chapter 3 was carried
+# over and is not in the conversation; or written on from chapter 3.
+- id: route-1
+  kind: condition_group
+  branches:
+  - condition:
+      variable: kept1
+      operator: truthy
+    target: use-kept-1
+  - condition:
+      variable: kept3
+      operator: truthy
+    target: chapter-1-alone
+  default: chapter-1
+- id: use-kept-1
+  kind: set_variable
+  variable: chapter1
+  value_variable: kept1
+- id: kept-1-done
+  kind: goto
+  target: check-1
+- id: chapter-1-alone
+  kind: invoke_agent
+  agent: report-consultant
+  task: chief-chapter-1-alone
+  conversation_variable: chief_conversation
+  input_variable: chief_input
+  output_variable: chapter1
+- id: alone-done
+  kind: goto
+  target: check-1
 - id: chapter-1
   kind: invoke_agent
   agent: report-consultant

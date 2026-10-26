@@ -116,6 +116,25 @@ class FileAgentTurnMemo:
     def path(self, key: str) -> Path:
         return self.root / f"{key}.json"
 
+    # Whether a turn is replayed only when the model now configured is the
+    # one that answered it.  By default a resumed Run keeps every turn it
+    # already has, whichever model gave it; recomputing with the current
+    # model sets this until the user next resumes the Run plainly.
+    def current_model_only(self) -> bool:
+        try:
+            payload = json.loads((self.root / "model-reuse.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(payload, Mapping) and payload.get("current_model_only") is True
+
+    def set_current_model_only(self, value: bool) -> None:
+        path = self.root / "model-reuse.json"
+        if not value:
+            path.unlink(missing_ok=True)
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"current_model_only": True}), encoding="utf-8")
+
     def load(self, key: str) -> dict[str, Any] | None:
         path = self.path(key)
         if not path.is_file():

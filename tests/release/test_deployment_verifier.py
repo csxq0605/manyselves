@@ -218,15 +218,15 @@ def test_posix_backup_encodes_credentials_without_putting_password_in_curl_argum
 
 def test_posix_backup_login_json_preserves_special_character_credentials() -> None:
     script = Path("deploy/backup/backup.sh").read_text("utf-8")
-    match = re.search(r"login_json\(\).*?python -c '([^']+)'", script, re.DOTALL)
+    match = re.search(r"json_of\(\).*?python -c '([^']+)'", script, re.DOTALL)
     assert match is not None
 
     environment = os.environ | {
-        "ADMIN_USERNAME": 'admin"\\\noperator',
-        "ADMIN_PASSWORD": 'quoted"\\\npassword',
+        "BACKUP_USER": 'admin"\\\noperator',
+        "BACKUP_PASSWORD": 'quoted"\\\npassword',
     }
     output = subprocess.run(
-        [sys.executable, "-c", match.group(1)],
+        [sys.executable, "-c", match.group(1), "username=BACKUP_USER", "password=BACKUP_PASSWORD"],
         check=True,
         capture_output=True,
         env=environment,
@@ -243,7 +243,8 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
     shell = Path("deploy/backup/backup.sh").read_text("utf-8")
     powershell = Path("deploy/backup/backup.ps1").read_text("utf-8")
 
-    shell_login_flow = shell.split('if [ -n "$API_URL" ]; then', 1)[1]
+    # Each account is paused by pause_account and resumed by resume_account.
+    shell_login_flow = shell.split("pause_account() {", 1)[1].split("\n}\n", 1)[0]
     assert [shell_login_flow.index(endpoint) for endpoint in (
         "/api/v1/auth/login",
         "/api/v1/control/lease",
@@ -253,7 +254,7 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
         "/api/v1/control/lease",
         "/api/v1/maintenance/quiesce",
     ))
-    shell_cleanup = shell.split("cleanup() {", 1)[1].split("}\ntrap cleanup", 1)[0]
+    shell_cleanup = shell.split("resume_account() {", 1)[1].split("\n}\n", 1)[0]
     assert [shell_cleanup.index(endpoint) for endpoint in (
         "/api/v1/maintenance/release",
         "/api/v1/control/lease",
@@ -264,7 +265,7 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
         "/api/v1/auth/logout",
     ))
 
-    powershell_login_flow = powershell.split("try {", 1)[1].split("} finally {", 1)[0]
+    powershell_login_flow = powershell.split("function Suspend-Account", 1)[1].split("\n}\n", 1)[0]
     assert [powershell_login_flow.index(endpoint) for endpoint in (
         "/api/v1/auth/login",
         "/api/v1/control/lease",
@@ -285,9 +286,10 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
         "/api/v1/auth/logout",
     ))
 
-    assert "--cookie-jar \"$COOKIE_JAR\"" in shell
-    assert "--cookie \"$COOKIE_JAR\"" in shell
-    assert "-WebSession $session" in powershell
+    # One cookie session per paused account.
+    assert '--cookie-jar "$session/cookie"' in shell
+    assert '--cookie "$session/cookie"' in shell
+    assert "-WebSession $entry.Session" in powershell
 
 
 def test_smoke_environment_is_loopback_and_phase1_scoped() -> None:

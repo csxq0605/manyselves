@@ -1308,6 +1308,78 @@ async def test_cancel_during_tool_result_stops_before_next_llm_call(
 
 
 @pytest.mark.asyncio
+async def test_cancel_mid_batch_gives_every_call_of_the_round_a_result(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    """A provider rejects a tool call without a result in the next request."""
+    bus = MessageBus()
+    loop_ref = {}
+    ran: list[str] = []
+
+    class CancellingTool:
+        side_effect = "write"
+        parallel_safe = False
+
+        async def __call__(self, **kwargs):
+            ran.append(kwargs["path"])
+            loop_ref["loop"].cancel_current()
+            return {"status": "ok"}
+
+    tools = MagicMock()
+    tools.get.return_value = CancellingTool()
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.PLOTTING,
+        workspace=workspace,
+        tools=tools,
+        bus=bus,
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+    loop_ref["loop"] = loop
+    calls = [
+        LLMToolCall(id=f"call-{index}", name="write_tool", arguments={"path": f"out-{index}.txt"})
+        for index in (1, 2)
+    ]
+    response = SimpleNamespace(content="", thinking=None, tool_calls=calls)
+
+    await loop._handle_tool_calls(response, "msg-1")
+
+    assert ran == ["out-1.txt"]
+    answered = [m.tool_call_id for m in loop._conversation_history if m.is_tool_result]
+    assert answered == ["call-1", "call-2"]
+    mock_provider.chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_ends_a_silent_stream_at_once(agent_loop):
+    """Stop must not wait for the next chunk of a request that has gone quiet."""
+    closed = asyncio.Event()
+
+    async def silent_after_first():
+        try:
+            yield "first"
+            await asyncio.Event().wait()
+            yield "never"
+        finally:
+            closed.set()
+
+    received = []
+
+    async def consume():
+        async for chunk in agent_loop._until_cancelled(silent_after_first()):
+            received.append(chunk)
+            agent_loop.cancel_current()
+
+    await asyncio.wait_for(consume(), timeout=2)
+
+    assert received == ["first"]
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
 async def test_tool_followup_streams_thinking_chunks(
     workspace, config, mock_provider, mock_prompt_loader
 ):

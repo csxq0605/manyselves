@@ -14,8 +14,13 @@ is decided here, from the run's fixed structure only:
 - chief: chapters 1 and 3 are revised from the base version's, only where
   rows changed or a change names them.
 
-Everything else is left to the run's turn memo: a step whose input is the
-same as in the base version is replayed, not redone.
+After the ledger is settled the program decides, unit by unit, what is
+carried over (``kept_units``): a chapter 2 section, chapter 1, chapter 3 or
+chapter 4 whose input reads exactly as in the base version and that no change
+names keeps the base version's final text.  No model writes, reviews or fixes
+it again; it goes back to its writer only when a row it rests on is fixed in
+this version.  Everything before the writing is left to the run's turn memo:
+a step whose input is the same as in the base version is replayed.
 """
 
 from __future__ import annotations
@@ -42,7 +47,18 @@ CHIEF_NOTE = (
     "只改动引用了 changed_row_ids 里任一行的条目，以及 instructions 点名的内容；其他条目照上一版原样抄写，"
     "不改措辞。综述类的段落只在它说到的内容变了时才改。"
 )
-SECTION_NOTE = "这是修改已有报告：按 revision_instruction 修改这一节，其余照判断行写。"
+SECTION_NOTE = (
+    "这是修改已有报告。previous_text 是上一版这一节的正文：revision_instruction 要求改的、"
+    "判断行和上一版不一致的地方照现在的要求和判断行改，其余照上一版原样保留，不改措辞。"
+)
+# A section the program rewrites without a wording change: its rows changed.
+SECTION_ROWS_NOTE = (
+    "这是修改已有报告。previous_text 是上一版这一节的正文：和现在的判断行不一致的地方照判断行改，"
+    "其余照上一版原样保留，不改措辞。"
+)
+# What a section's brief holds besides its input: the writers' shared
+# material (carried by the group's first section) and a revision's notes.
+_NOT_INPUT = ("pack", "revision_note", "revision_instruction", "previous_text")
 
 
 def base_dir(workspace: Path, run_id: str, version: int) -> Path:
@@ -82,21 +98,27 @@ def plan_revision(
     )
     removed = sorted(set(base_texts) - set(current))
     touched = set(changed) | set(removed)
+    # The base version's rows as it delivered them, after review; versions
+    # saved before the final ledger was kept only have the first draft.
     base_rows: dict[str, list[dict[str, Any]]] = _read_json(
-        base / "ledger" / "judgments-r0.json", {}
-    )
+        base / "ledger" / "judgments.json", None
+    ) or _read_json(base / "ledger" / "judgments-r0.json", {})
 
     judgment_sections: dict[str, list[str]] = {}
     text_instructions: dict[str, list[str]] = {}
     chief_instructions: list[str] = []
+    chapter_instructions: dict[str, list[str]] = {chapter: [] for chapter in sorted(CHIEF_TARGETS)}
     module_instructions: dict[str, list[dict[str, str]]] = {}
     for change in revision.changes:
         target = change.target.strip()
         if target == WHOLE_REPORT:
             targets = [s for ids in sections.values() for s in ids]
             chief_instructions.append(change.instruction)
+            for chapter in chapter_instructions.values():
+                chapter.append(change.instruction)
         elif target in CHIEF_TARGETS:
             chief_instructions.append(f"第{target}章：{change.instruction}")
+            chapter_instructions[target].append(change.instruction)
             continue
         elif target in sections:
             targets = list(sections[target])
@@ -150,6 +172,7 @@ def plan_revision(
         "keep_rows": keep_rows,
         "text_instructions": text_instructions,
         "chief_instructions": chief_instructions,
+        "chapter_instructions": chapter_instructions,
     }
 
 
@@ -175,6 +198,79 @@ def module_revision_brief(
                 for row in plan["base_rows"].get(module_id, [])
             )
         ],
+        "changed_facts": changed_facts,
+    }
+
+
+def base_groups(base: Path) -> dict[str, dict[str, Any]]:
+    """The groups the base version judged in, by group id (empty for older versions)."""
+
+    groups = _read_json(base / "ledger" / "groups.json", {}).get("groups")
+    return dict(groups) if isinstance(groups, dict) else {}
+
+
+def base_partition(
+    groups: Mapping[str, Mapping[str, Any]], module_id: str, section_ids: Sequence[str]
+) -> list[list[str]] | None:
+    """How the base version split a module into groups, when it still fits its sections.
+
+    A revision judges a module in the same groups as its base version, so
+    each group's materials and brief read as before and an unchanged group is
+    replayed; None when the base version has no record of the module or its
+    groups no longer cover exactly its sections.
+    """
+
+    own = [
+        (group_id, list(group.get("submodule_ids") or ()))
+        for group_id, group in groups.items()
+        if group.get("module_id") == module_id
+    ]
+    if not own:
+        return None
+    own.sort(key=lambda entry: int(entry[0].partition("#")[2] or 0))
+    parts = [part for _group_id, part in own]
+    if [sid for part in parts for sid in part] != list(section_ids):
+        return None
+    return parts
+
+
+def group_revision_brief(
+    brief: Mapping[str, Any] | None,
+    *,
+    submodule_ids: Sequence[str],
+    module_sections: Sequence[str],
+    first: bool,
+    changed_facts: str,
+) -> dict[str, Any] | None:
+    """The part of a module's revision brief that one group of its sections redoes.
+
+    A group sees only its own sections' previous rows (the first group also
+    takes rows on sections outside the module's tree) and the changes on
+    them.  A group none of whose rows, records or sections changed gets no
+    brief: its judge reads as in the base version and is replayed, and its
+    rows are kept as they were.
+    """
+
+    if brief is None:
+        return None
+    mine = set(submodule_ids)
+
+    def own(section: Any) -> bool:
+        return section in mine or (first and section not in module_sections)
+
+    previous = [row for row in brief["previous_rows"] if own(row.get("submodule_id"))]
+    previous_ids = {row.get("id") for row in previous}
+    keep = [row_id for row_id in brief["keep_row_ids"] if row_id in previous_ids]
+    instructions = [i for i in brief["section_instructions"] if own(i.get("section"))]
+    if not instructions and not changed_facts and len(keep) == len(previous):
+        return None
+    cited = {e for row in previous for e in row.get("evidence_ids") or ()}
+    return {
+        **brief,
+        "section_instructions": instructions,
+        "previous_rows": previous,
+        "keep_row_ids": keep,
+        "removed_evidence_ids": [e for e in brief["removed_evidence_ids"] if e in cited],
         "changed_facts": changed_facts,
     }
 
@@ -233,8 +329,13 @@ def chief_revision(
     *,
     base: Path,
     final_ledger: Mapping[str, Sequence[Mapping[str, Any]]],
+    chapters: Sequence[str] = ("1", "3"),
 ) -> dict[str, Any] | None:
-    """What the chief redoes, or None when chapters 1 and 3 can stay as they were."""
+    """What the chief redoes, or None when chapters 1 and 3 can stay as they were.
+
+    ``chapters`` are the chapters the chief writes again; a change naming
+    only a chapter that is kept is not passed on.
+    """
 
     base_final = _read_json(base / "ledger" / "judgments.json", {})
     before = {row["id"]: row for rows in base_final.values() for row in rows}
@@ -242,13 +343,19 @@ def chief_revision(
     changed_rows = sorted(
         row_id for row_id in set(before) | set(after) if before.get(row_id) != after.get(row_id)
     )
-    if not changed_rows and not plan.get("chief_instructions"):
+    by_chapter = plan.get("chapter_instructions")
+    instructions = (
+        list(dict.fromkeys(i for chapter in chapters for i in by_chapter.get(chapter) or ()))
+        if isinstance(by_chapter, Mapping)
+        else list(plan.get("chief_instructions") or ())
+    )
+    if not changed_rows and not instructions:
         return None
     previous = base_chief_outputs(base)
     return {
         "note": CHIEF_NOTE,
         "instruction": plan["instruction"],
-        "instructions": list(plan.get("chief_instructions") or ()),
+        "instructions": instructions,
         "changed_row_ids": changed_rows,
         "removed_row_ids": sorted(set(before) - set(after)),
         "previous_chapter3": previous.get("chapter3"),
@@ -268,3 +375,107 @@ __all__ = [
     "plan_revision",
     "splice_kept_rows",
 ]
+
+
+# -- carrying units over --------------------------------------------------
+
+def section_input(brief: Mapping[str, Any]) -> dict[str, Any]:
+    """What a section's writer is given, without the shared material and the revision's notes."""
+
+    return {key: value for key, value in brief.items() if key not in _NOT_INPUT}
+
+
+def chief_reading(chief_input: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What the chief is given for chapters 1 and 3, without a revision's brief."""
+
+    return {key: value for key, value in (chief_input or {}).items() if key != "revision"}
+
+
+def base_written(base: Path) -> dict[str, Any]:
+    """What the base version wrote from and what it delivered, unit by unit.
+
+    ``inputs`` are each section's brief, the chief's input and the special
+    topic's input as the writers were given them; ``texts`` each section's
+    final text and ``chief`` the chief's final chapters.  Versions saved
+    before these files were kept are read from their workflow state.
+    """
+
+    inputs = _read_json(base / "ledger" / "writing-inputs.json", None)
+    texts = _read_json(base / "ledger" / "section-texts.json", None)
+    chief = _read_json(base / "ledger" / "chief-outputs.json", None)
+    if inputs is None or texts is None:
+        variables = _read_json(base / "runtime-state.json", {}).get("variables") or {}
+        if inputs is None:
+            inputs = {
+                "sections": {
+                    str(brief.get("submodule_id")): section_input(brief)
+                    for group in variables.get("writing_items") or []
+                    for brief in group.get("sections") or []
+                    if isinstance(brief, Mapping)
+                },
+                "chief_input": chief_reading((variables.get("final") or {}).get("chief_input")),
+                "topic_input": (variables.get("context") or {}).get("special_topic_input"),
+            }
+        if texts is None:
+            texts = {
+                str(key): text
+                for edit in (variables.get("edits") or {}).values()
+                if isinstance(edit, Mapping)
+                for key, text in (edit.get("sections") or {}).items()
+            }
+        if chief is None:
+            chief = variables.get("chief_outputs")
+    return {
+        "inputs": inputs if isinstance(inputs, Mapping) else {},
+        "texts": texts if isinstance(texts, Mapping) else {},
+        "chief": chief if isinstance(chief, Mapping) else {},
+    }
+
+
+def kept_units(
+    plan: Mapping[str, Any],
+    *,
+    base: Path,
+    sections: Mapping[str, Mapping[str, Any]],
+    chief_input: Mapping[str, Any] | None,
+    topic_input: Any,
+) -> dict[str, Any]:
+    """The units a revision carries over from its base version.
+
+    A section is kept when no change names its wording and its brief reads
+    exactly as the base version's; chapter 1 or 3 when no change names it and
+    the chief's input reads exactly as before; chapter 4 when the special
+    topic's input does.  A kept unit keeps the base version's final text.
+    Everything here is decided from the run's own files; nothing is asked of a
+    model.
+    """
+
+    written = base_written(base)
+    base_inputs = written["inputs"].get("sections") or {}
+    texts = written["texts"]
+    named = set((plan.get("text_instructions") or {}).keys())
+    kept_sections = {
+        section_id: texts[section_id]
+        for section_id, brief in sections.items()
+        if section_id not in named
+        and section_id in texts
+        and section_id in base_inputs
+        and section_input(brief) == base_inputs[section_id]
+    }
+    chief = written["chief"]
+    same_chief = chief_reading(chief_input) == chief_reading(written["inputs"].get("chief_input"))
+    by_chapter = plan.get("chapter_instructions") or {}
+    chapters: dict[str, Any] = {}
+    for chapter in ("1", "3"):
+        previous = chief.get(f"chapter{chapter}")
+        chapters[f"chapter{chapter}"] = (
+            previous if same_chief and previous and not by_chapter.get(chapter) else None
+        )
+    previous4 = chief.get("chapter4")
+    chapters["chapter4"] = (
+        previous4
+        if previous4 and topic_input is not None
+        and topic_input == written["inputs"].get("topic_input")
+        else None
+    )
+    return {"sections": kept_sections, **chapters, "previous_texts": dict(texts)}

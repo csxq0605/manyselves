@@ -376,6 +376,8 @@ export MANYSELVES_API_URL=http://127.0.0.1:9090
 deploy/backup/backup.sh /srv/manyselves/backups
 ```
 
+The archive covers the whole data root, so the script pauses every account before it copies anything and resumes them afterwards. With an accounts file (`MANYSELVES_DATA_DIR/.manyselves/accounts.yaml`, or `MANYSELVES_BACKUP_ACCOUNTS_FILE`), each account signs in with the password in the environment variable its `passwordEnv` names, so those variables must be set; `deploy/.env` already holds them. Without an accounts file the script uses `MANYSELVES_ADMIN_USERNAME` and `MANYSELVES_ADMIN_PASSWORD`.
+
 Keep backup files outside the active `MANYSELVES_DATA_DIR`.
 
 ### Restore

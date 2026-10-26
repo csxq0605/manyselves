@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import inspect
@@ -12,7 +13,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 if TYPE_CHECKING:
     from .manager import LoopManager
@@ -2686,11 +2687,13 @@ class AgentLoop:
                 reasoning_kwargs: dict[str, Any] = {}
                 if reasoning_enabled is not None:
                     reasoning_kwargs["reasoning_enabled"] = reasoning_enabled
-                stream = self._admitted_chat_stream(
-                    messages,
-                    tool_definitions,
-                    stream_idle_timeout_seconds,
-                    **reasoning_kwargs,
+                stream = self._until_cancelled(
+                    self._admitted_chat_stream(
+                        messages,
+                        tool_definitions,
+                        stream_idle_timeout_seconds,
+                        **reasoning_kwargs,
+                    )
                 )
                 async for chunk in stream:
                     if ttft_ms is None and (
@@ -2754,6 +2757,8 @@ class AgentLoop:
                     if chunk.done or self._cancel_event.is_set():
                         break
 
+                # Release the request now, not when the generator is collected.
+                await stream.aclose()
                 return _LoopLLMResponse(
                     content=accumulated_content,
                     tool_calls=accumulated_tool_calls,
@@ -2796,6 +2801,41 @@ class AgentLoop:
                 accumulated_content or accumulated_tool_calls or accumulated_thinking
             )
             raise _ProviderAttemptError(exc, partial_output=partial_output) from exc
+
+    async def _until_cancelled(self, stream: Any) -> AsyncIterator[Any]:
+        """Yield a stream's chunks until it ends or the user interrupts.
+
+        The cancel flag is otherwise only seen when the next chunk arrives; a
+        silent request would keep running until its idle timeout.
+        """
+
+        iterator = stream.__aiter__()
+        cancel_wait = asyncio.ensure_future(self._cancel_event.wait())
+        next_chunk: asyncio.Future[Any] | None = None
+        try:
+            while True:
+                next_chunk = asyncio.ensure_future(iterator.__anext__())
+                await asyncio.wait(
+                    {next_chunk, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not next_chunk.done():
+                    return
+                try:
+                    chunk = next_chunk.result()
+                except StopAsyncIteration:
+                    return
+                next_chunk = None
+                yield chunk
+        finally:
+            cancel_wait.cancel()
+            if next_chunk is not None and not next_chunk.done():
+                next_chunk.cancel()
+                with contextlib.suppress(BaseException):
+                    await next_chunk
+            aclose = getattr(iterator, "aclose", None)
+            if aclose is not None:
+                with contextlib.suppress(Exception):
+                    await aclose()
 
     async def _wait_before_retry(self, delay_seconds: float) -> bool:
         """Wait for a retry delay; return True when the user interrupts it."""
@@ -3641,6 +3681,17 @@ class AgentLoop:
                         self.agent_type,
                         tool_call.name,
                     )
+                    # Every call of the round needs a result, or the next
+                    # request in this conversation is rejected by the provider.
+                    for skipped_call in response.tool_calls[tool_index + 1 :]:
+                        current_messages.append(
+                            LLMMessage(
+                                role=tool_result_role,
+                                content="Tool call not run: the turn was interrupted.",
+                                tool_call_id=skipped_call.id,
+                                is_tool_result=True,
+                            )
+                        )
                     self._conversation_history = [
                         m for m in current_messages if m.role != "system"
                     ]

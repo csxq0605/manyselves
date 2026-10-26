@@ -50,8 +50,10 @@ class RuntimeBusyError(RuntimeError):
 
     code = "RUNTIME_BUSY"
 
-    def __init__(self) -> None:
-        super().__init__("Runtime agents must be idle before activating a project")
+    def __init__(
+        self, message: str = "Runtime agents must be idle before activating a project"
+    ) -> None:
+        super().__init__(message)
 
 
 class MaintenanceQuiescedError(RuntimeError):

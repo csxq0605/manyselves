@@ -3,6 +3,7 @@ accounts:
   - id: admin
     username: admin
     passwordEnv: MANYSELVES_ACCOUNT_ADMIN_PASSWORD
+    admin: true
   - id: yuanxi_001
     username: yuanxi_001
     passwordEnv: MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ..runtime.providers.base import Message
 from ..runtime.providers.factory import ProviderFactory
 from .async_ownership import await_owned
-from .errors import RuntimeConsistencyFailedError
+from .errors import RuntimeBusyError, RuntimeConsistencyFailedError
 
 if TYPE_CHECKING:
     from .runtime_host import RuntimeHost
@@ -42,6 +42,12 @@ class SettingsService:
         *,
         restart_reason: str | None,
     ) -> None:
+        if restart_reason is not None and self._agents_busy():
+            # Rebuilding the provider loops would cut off the turn in flight
+            # and drop queued messages.
+            raise RuntimeBusyError(
+                "Wait until the conversation agents are idle before changing the model"
+            )
         before = self.manager.config.model_copy(deep=True)
         persisted = self._capture_persisted()
         try:
@@ -83,6 +89,20 @@ class SettingsService:
             )
             raise RuntimeConsistencyFailedError() from replacement_error
         raise replacement_error
+
+    def _agents_busy(self) -> bool:
+        manager = getattr(self.host, "loop_manager", None)
+        if manager is None:
+            return False
+        get_statuses = getattr(manager, "get_all_agent_statuses", None)
+        statuses = get_statuses().values() if callable(get_statuses) else ()
+        loops = getattr(manager, "_loops", {})  # noqa: SLF001 - queue state only
+        queued = any(
+            not queue.empty()
+            for loop in loops.values()
+            if (queue := getattr(loop, "_message_queue", None)) is not None
+        )
+        return queued or any(status != "idle" for status in statuses)
 
     def validate(self) -> tuple[bool, list[str], list[str]]:
         config = self.manager.config

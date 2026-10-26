@@ -1,9 +1,11 @@
-import { type ComponentType, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { type ComponentType, lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 
 import { ApiError } from "../../api/gateway";
+import { AuthenticatedSessionContext } from "../auth/auth-context";
 import type { DraftRepository } from "./draft-storage";
 import {
+  accountScope,
   createIndexedDbDraftRepository,
   loadOpenTabPaths,
   saveOpenTabPaths,
@@ -37,9 +39,13 @@ export function EditorWorkspace({
   onSelectionChange,
   projectId,
   repository,
-  serverUrl,
+  serverUrl: server,
   store,
 }: EditorWorkspaceProps) {
+  // Drafts and tabs are kept per account: another account signing in on this
+  // browser must not get them back.
+  const signedIn = useContext(AuthenticatedSessionContext);
+  const serverUrl = accountScope(server, signedIn?.session.username);
   const [draftRepository] = useState(() => repository ?? createIndexedDbDraftRepository());
   const activePath = useStore(store, (state) => state.activePath);
   const activeTab = useStore(

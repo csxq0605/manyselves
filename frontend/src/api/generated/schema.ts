@@ -5339,7 +5339,10 @@ export interface operations {
     };
     post_api_v1_runs_run_id_resume: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Run again in place and redo every model turn the model configured now did not answer. Without it the Run continues and keeps the turns it already has. */
+                recompute?: boolean;
+            };
             header: {
                 "Idempotency-Key": string;
             };

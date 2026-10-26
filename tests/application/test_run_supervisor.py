@@ -10,7 +10,13 @@ import pytest
 from manyselves.application.main_run_tools import GetRunStatusTool, ResumeRunTool
 from manyselves.application.run_supervisor import RunSupervisor
 from manyselves.kernel.workflow import ResolvedPlan
-from manyselves.kernel.workflow.models import InvokeAgentAction, InvokeToolAction, SubworkflowAction
+from manyselves.kernel.workflow.models import (
+    InvokeAgentAction,
+    InvokeToolAction,
+    JoinAction,
+    ParallelAction,
+    SubworkflowAction,
+)
 from manyselves.runtime.run_failure import describe_failure
 
 
@@ -68,6 +74,36 @@ def test_failure_is_located_and_classified_from_structure_and_text() -> None:
     assert describe_failure(plan, {"status": "completed"}) is None
 
 
+def test_failure_inside_a_parallel_branch_is_located_in_the_branch() -> None:
+    agent = dict(agent="a", task="t", conversation_variable="c", input_variable="a")
+    plan = ResolvedPlan(
+        workflow_id="root",
+        workflow_version="1",
+        actions=[
+            ParallelAction(id="fan", branches={"x": "read-x", "y": "read-y"}, join="gather"),
+            InvokeAgentAction(id="read-x", output_variable="bx", **agent),
+            InvokeAgentAction(id="read-y", output_variable="by", **agent),
+            JoinAction(id="gather", parallel="fan", inputs={"x": "bx", "y": "by"}, output_variable="all"),
+        ],
+    )
+    error = "no progress after correction"
+    state = {
+        "status": "failed",
+        "actions": {"fan": {"status": "failed", "error": error}},
+        "parallel_states": {
+            "fan": {
+                "x": {"status": "completed", "actions": {"read-x": {"status": "completed"}}},
+                "y": {"status": "failed", "actions": {"read-y": {"status": "failed", "error": error}}},
+            }
+        },
+    }
+
+    failure = describe_failure(plan, state)
+
+    assert failure is not None and failure.path == ["fan[y]", "read-y"]
+    assert (failure.category, failure.retryable) == ("model", True)
+
+
 class _Projection:
     def __init__(self, failure_state: dict[str, Any]) -> None:
         self.status = "failed"
@@ -85,6 +121,10 @@ class _Projection:
         return [{"version": 1}]
 
     async def resume(self, command_id, run_id: str, *, automatic: bool = False):
+        # Same rule as WorkflowProjectionFacade.resume: a manual resume
+        # starts the automatic count again.
+        if not automatic and self.supervisor is not None:
+            self.supervisor.reset(run_id)
         self.resumed.append(run_id)
         return {"status": "accepted", "run_id": run_id}
 
@@ -98,6 +138,7 @@ async def test_model_failure_resumes_twice_then_tells_main() -> None:
         notices.append(text)
 
     supervisor = RunSupervisor(projection, notify, resume_delay_seconds=0)
+    projection.supervisor = supervisor
 
     for _ in range(3):
         await supervisor.on_settled("run-1")

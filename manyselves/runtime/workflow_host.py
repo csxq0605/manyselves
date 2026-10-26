@@ -192,9 +192,12 @@ class WorkflowRuntimeHost:
                 if RUN_CANCEL_REQUESTED not in exc.args:
                     save.flush()
                     raise
+                # Nested steps checkpoint views of the parent that carry their
+                # children's progress; the local state never sees them.  Fail
+                # from the newest one so completed children are kept.
                 failed = self._kernel.transition(
                     plan,
-                    state,
+                    save.latest or state,
                     ActionFailed(action.id, RUN_CANCEL_REQUESTED, None),
                 )
                 self._state_store.save(failed.state)
@@ -1006,8 +1009,11 @@ class _ThrottledSave:
         self._interval = interval
         self._last = float("-inf")
         self._pending: WorkflowState | None = None
+        # The newest state handed in, saved or not.
+        self.latest: WorkflowState | None = None
 
     def __call__(self, state: WorkflowState, *, now: bool = False) -> None:
+        self.latest = state
         moment = time.monotonic()
         if (
             now

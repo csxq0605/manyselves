@@ -249,11 +249,21 @@ async def resume_run(
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
     lease_token: str = Depends(require_control_lease_header),
+    recompute: bool = Query(
+        default=False,
+        description=(
+            "Run again in place and redo every model turn the model configured "
+            "now did not answer. Without it the Run continues and keeps the turns "
+            "it already has."
+        ),
+    ),
 ):
     state = request_runtime_state(request)
     try:
         async with state.runtime_facade.mutation_transaction(lease_token):
-            payload = await _projection(request).resume(command_id, run_id)
+            payload = await _projection(request).resume(
+                command_id, run_id, recompute=recompute
+            )
             return WorkflowRunAcceptedResponse(commandId=command_id, **payload)
     except Exception as error:
         raise _error(error) from error

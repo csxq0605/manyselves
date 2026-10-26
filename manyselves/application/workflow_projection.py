@@ -17,6 +17,7 @@ from manyselves.kernel.definitions import (
     LoadedCapability,
     WorkflowDefinition,
 )
+from manyselves.runtime.agent_memo import FileAgentTurnMemo
 from manyselves.runtime.capability_binding import (
     CapabilityRunNotFoundError,
     RuntimeBindingCatalog,
@@ -227,15 +228,34 @@ class WorkflowProjectionFacade:
         run_id: str,
         *,
         automatic: bool = False,
+        recompute: bool = False,
     ) -> dict[str, Any]:
         """Resume one persisted Run through its Capability-owned runtime.
 
         The Run keeps its id.  When its definitions changed since it was
         compiled, the runtime executes it again in place and reuses every
         unchanged model turn.
+
+        A plain resume continues: finished steps and model turns are kept,
+        whichever model gave them, and only what is left runs on the model
+        configured now.  ``recompute`` instead runs the Run again in place
+        and redoes every model turn the current model did not answer.
         """
 
+        memo = FileAgentTurnMemo(self.workspace, run_id)
+        if recompute:
+            self._locate_run(run_id)
+            memo.set_current_model_only(True)
+            try:
+                return await self.rerun(command_id, run_id)
+            except BaseException:
+                memo.set_current_model_only(False)
+                raise
         binding, projection = self._locate_run(run_id)
+        if not automatic:
+            # The user chose to continue; an automatic resume keeps the
+            # choice the user made last.
+            memo.set_current_model_only(False)
         if not automatic and self.supervisor is not None:
             self.supervisor.reset(run_id)
         accepted = await binding.resume(command_id, run_id)

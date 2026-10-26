@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../api/gateway";
+import { AuthenticatedSessionContext } from "../auth/auth-context";
 import { createEditorStore } from "./editor-store";
 import type { EditorFileApi } from "./editor-api";
 import { EditorWorkspace } from "./EditorWorkspace";
@@ -121,5 +122,42 @@ describe("EditorWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "选择代码" }));
 
     expect(onSelectionChange).toHaveBeenCalledWith({ endLine: 7, path: "Inputs/a.md", startLine: 3 });
+  });
+  it("asks for the signed-in account's drafts only", async () => {
+    const asked: string[] = [];
+    const repository = {
+      list: async (serverUrl: string) => {
+        asked.push(serverUrl);
+        return [];
+      },
+      remove: async () => undefined,
+      save: async () => undefined,
+    };
+    const signedIn = (username: string) => ({
+      logout: async () => undefined,
+      returnToLogin: () => undefined,
+      session: { authenticated: true as const, expiresAt: "2026-10-27T00:00:00Z", username },
+    });
+    const workspace = (username: string) => (
+      <AuthenticatedSessionContext.Provider value={signedIn(username)}>
+        <EditorWorkspace
+          api={{ read: async () => first, save: async () => first }}
+          editorComponent={TestEditor}
+          projectId="default"
+          repository={repository}
+          serverUrl="https://server/"
+          store={createEditorStore()}
+        />
+      </AuthenticatedSessionContext.Provider>
+    );
+
+    const { unmount } = render(workspace("alice"));
+    await vi.waitFor(() => expect(asked).toHaveLength(1));
+    unmount();
+    render(workspace("bob"));
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+
+    expect(asked[0]).not.toEqual(asked[1]);
+    expect(asked.every((scope) => scope.startsWith("https://server#account="))).toBe(true);
   });
 });

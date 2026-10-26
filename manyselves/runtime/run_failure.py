@@ -108,6 +108,15 @@ def _deepest(
                 deeper = _deepest(child_plan, child, [*here[:-1], action_id + suffix])
                 if deeper is not None:
                     return deeper
+        if kind == "parallel":
+            # Branches run actions of this same plan from their own start.
+            branches = (state.get("parallel_states") or {}).get(action_id) or {}
+            for branch_id, branch in branches.items():
+                if not isinstance(branch, Mapping) or branch.get("status") != "failed":
+                    continue
+                deeper = _deepest(plan, branch, [*path, f"{action_id}[{branch_id}]"])
+                if deeper is not None:
+                    return deeper
         return here, kind, str(record.get("error") or "")
     return None
 

@@ -304,7 +304,7 @@ def _answer(message):
         # reconciliation does not send it back.
         declined = {"3.2-G-01": "本组没有沿用原来的说法"} if "3.2-G-01" in value["findings"] else {}
         return ("submit", [{"key_risks": {"1.2-重点风险-1": risk}, "declined": declined}])
-    if task in {"chief-chapter-1", "revise-chief-overview"}:
+    if task in {"chief-chapter-1", "chief-chapter-1-alone", "revise-chief-overview"}:
         return (
             "submit",
             [
@@ -945,8 +945,12 @@ def test_chapter_1_is_checked_in_its_own_branch_without_waiting_for_chapter_3() 
     parallel = next(a for a in chief.actions if a["id"] == "chapter-1-and-facts-3")
     chapter_1 = ids[ids.index(parallel["branches"]["chapter1"]):ids.index("chapter-1-done")]
     chapter_3 = ids[ids.index(parallel["branches"]["facts3"]):ids.index("facts-3-done")]
-    # Chapter 1 is written, then checked, in one branch; chapter 3's packets in the other.
-    assert chapter_1[:3] == ["chapter-1", "check-1", "plan-facts"] and "fact-check" in chapter_1
+    # Chapter 1 is written (or carried over by a revision), then checked, in
+    # one branch; chapter 3's packets in the other.
+    assert chapter_1[0] == "route-1"
+    start = chapter_1.index("chapter-1")
+    assert chapter_1[start:start + 3] == ["chapter-1", "check-1", "plan-facts"]
+    assert "fact-check" in chapter_1
     assert "fact-check-3" in chapter_3 and "chapter-1" not in chapter_3
     assert ids.index("apply-facts") > ids.index(parallel["join"])
 

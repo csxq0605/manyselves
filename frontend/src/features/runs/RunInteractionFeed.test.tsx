@@ -70,7 +70,7 @@ it("offers recovery for the current failed run and reports a failed resume", asy
   expect(screen.getByText("原始失败原因")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "恢复原报告" }));
   await waitFor(() => expect(screen.getByText("恢复失败：服务暂时不可用")).toBeVisible());
-  expect(api.resume).toHaveBeenCalledWith("interrupted", expect.any(String));
+  expect(api.resume).toHaveBeenCalledWith("interrupted", expect.any(String), false);
 });
 
 it("stops the active run from the chat status bar after confirmation", async () => {

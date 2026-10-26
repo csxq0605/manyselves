@@ -15,6 +15,7 @@ describe("WorkflowApi", () => {
     await api.listRuns();
     await api.cancel("run 1");
     await api.resume("run 1", "command-resume");
+    await api.resume("run 1", "command-recompute", true);
 
     expect(requestJson).toHaveBeenNthCalledWith(1, "/api/v1/runs/run%201/input", {
       headers: { "Idempotency-Key": "command-input" },
@@ -35,6 +36,11 @@ describe("WorkflowApi", () => {
     });
     expect(requestJson).toHaveBeenNthCalledWith(7, "/api/v1/runs/run%201/resume", {
       headers: { "Idempotency-Key": "command-resume" },
+      method: "POST",
+      requireLease: true,
+    });
+    expect(requestJson).toHaveBeenNthCalledWith(8, "/api/v1/runs/run%201/resume?recompute=true", {
+      headers: { "Idempotency-Key": "command-recompute" },
       method: "POST",
       requireLease: true,
     });
