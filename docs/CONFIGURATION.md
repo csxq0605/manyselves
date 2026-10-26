@@ -138,6 +138,7 @@ accounts:
   - id: admin
     username: admin
     passwordEnv: MANYSELVES_ACCOUNT_ADMIN_PASSWORD
+    admin: true
   - id: yuanxi_001
     username: yuanxi_001
     passwordEnv: MANYSELVES_ACCOUNT_YUANXI_001_PASSWORD
@@ -156,7 +157,7 @@ export MANYSELVES_ACCOUNTS_FILE=/absolute/path/to/accounts.yaml
 chmod 600 /absolute/path/to/accounts.yaml
 ```
 
-The manifest contains IDs, usernames, and password environment-variable names only. It must not contain provider API keys. On non-Windows systems it must be mode `0600`; multi-account mode requires one worker.
+The manifest contains IDs, usernames, and password environment-variable names only. It must not contain provider API keys. `admin: true` marks an administrator; only administrators may run Python on the server (`/api/v1/operations/python`), because a script runs as the server process and can reach every account's files. A manifest written before this flag existed has no administrator until you add it. The single default account is an administrator. On non-Windows systems it must be mode `0600`; multi-account mode requires one worker.
 
 Each account receives an independent root:
 
