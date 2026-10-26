@@ -382,3 +382,35 @@ def test_kept_and_resubmitted_rows_keep_the_base_order() -> None:
     assert splice_kept_rows("2.3", rows, plan) == [
         {"id": "J-1"}, {"id": "J-2", "x": 1}, {"id": "J-3"}, {"id": "J-9"}
     ]
+
+
+def test_revision_keeps_the_rows_as_the_base_version_delivered_them(tmp_path: Path) -> None:
+    """Kept rows come from the reviewed ledger, not the first draft."""
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        ReportRevision,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.report_revision import (
+        plan_revision,
+    )
+
+    ledger = tmp_path / "ledger"
+    ledger.mkdir()
+    draft = {"2.3": [{"id": "J-1", "submodule_id": "2.3.1", "basis": "初稿"},
+                     {"id": "J-2", "submodule_id": "2.3.2", "basis": "初稿"}]}
+    reviewed = {"2.3": [{"id": "J-1", "submodule_id": "2.3.1", "basis": "审定"},
+                        {"id": "J-2", "submodule_id": "2.3.2", "basis": "审定"}]}
+    (ledger / "judgments-r0.json").write_text(json.dumps(draft), encoding="utf-8")
+    (ledger / "judgments.json").write_text(json.dumps(reviewed), encoding="utf-8")
+    revision = ReportRevision(
+        base_version=1,
+        instruction="重新判断 2.3.2。",
+        changes=[{"target": "2.3.2", "instruction": "重新判断。"}],
+    )
+
+    plan = plan_revision(
+        revision, base=tmp_path, items=[], sections={"2.3": ["2.3.1", "2.3.2"]}
+    )
+
+    assert plan["keep_rows"]["2.3"] == [reviewed["2.3"][0]]
+    assert plan["base_rows"]["2.3"] == reviewed["2.3"]

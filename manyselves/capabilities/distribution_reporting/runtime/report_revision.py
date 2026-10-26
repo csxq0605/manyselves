@@ -82,9 +82,11 @@ def plan_revision(
     )
     removed = sorted(set(base_texts) - set(current))
     touched = set(changed) | set(removed)
+    # The base version's rows as it delivered them, after review; versions
+    # saved before the final ledger was kept only have the first draft.
     base_rows: dict[str, list[dict[str, Any]]] = _read_json(
-        base / "ledger" / "judgments-r0.json", {}
-    )
+        base / "ledger" / "judgments.json", None
+    ) or _read_json(base / "ledger" / "judgments-r0.json", {})
 
     judgment_sections: dict[str, list[str]] = {}
     text_instructions: dict[str, list[str]] = {}
