@@ -7,6 +7,7 @@ from ...application.control import ControlLeaseRequired
 from ...application.errors import (
     CredentialManagedByEnvironmentError,
     MaintenanceQuiescedError,
+    RuntimeBusyError,
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
@@ -84,6 +85,8 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
     if isinstance(error, MaintenanceQuiescedError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
+    if isinstance(error, RuntimeBusyError):
+        return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
     raise error
 
 
@@ -159,14 +162,25 @@ async def update_defaults(
                         selected.default_model = body.model
                 if body.model is not None:
                     config.agents.defaults.model = body.model
+                    if selected is None:
+                        # The live provider sends its configuration's model.
+                        selected = next(
+                            (
+                                item
+                                for item in config.providers.configurations
+                                if item.id == config.providers.active
+                            ),
+                            None,
+                        )
+                        if selected is not None:
+                            selected.default_model = body.model
                 if body.provider is not None:
                     config.agents.defaults.provider = body.provider
 
             provider_fields = {"active_provider_id", "api_base", "api_key", "provider"}
-            provider_model_changed = (
-                body.active_provider_id is not None
-                and "model" in body.model_fields_set
-            )
+            # The default model is what the live provider sends; changing it
+            # alone must rebuild the provider too, or it keeps the old model.
+            provider_model_changed = "model" in body.model_fields_set
             restart = (
                 "provider_defaults_changed"
                 if body.model_fields_set & provider_fields or provider_model_changed

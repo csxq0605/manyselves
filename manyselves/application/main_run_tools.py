@@ -50,18 +50,24 @@ class ResumeRunTool(Tool):
     name = "resume_run"
     description = (
         "Resume a failed or interrupted Run under the same run id. Completed steps "
-        "and unchanged model turns are reused, not redone. Do not use it for a "
-        "program failure that has not been fixed; it would fail the same way."
+        "and unchanged model turns are reused, not redone, whichever model gave "
+        "them. Do not use it for a program failure that has not been fixed; it "
+        "would fail the same way. Pass recompute=true only when the user asks to "
+        "redo the Run with the model configured now: it runs again in place and "
+        "redoes every model turn that model did not answer."
     )
     side_effect = "ordered_state"
 
     def __init__(self, *, projection_resolver: Callable[[], Any]) -> None:
         self._projection_resolver = projection_resolver
 
-    async def __call__(self, run_id: str) -> dict[str, Any]:
+    async def __call__(self, run_id: str, recompute: bool = False) -> dict[str, Any]:
         """Resume the Run and return the accepted command."""
 
-        return await self._projection_resolver().resume(uuid4(), run_id)
+        projection = self._projection_resolver()
+        if recompute:
+            return await projection.resume(uuid4(), run_id, recompute=True)
+        return await projection.resume(uuid4(), run_id)
 
 
 def attach_main_run_tools(

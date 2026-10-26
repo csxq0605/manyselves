@@ -2679,7 +2679,7 @@ async def test_maintenance_quiesce_rejects_active_runtime(resources) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_mutations_apply_to_live_runtime_and_model_only_does_not_restart(
+async def test_settings_mutations_apply_to_live_runtime_including_a_model_only_change(
     resources,
 ) -> None:
     client, host, _, secret = resources
@@ -2696,18 +2696,34 @@ async def test_settings_mutations_apply_to_live_runtime_and_model_only_does_not_
 
     assert provider.status_code == 200
     assert model.status_code == 200
-    assert host.replace_calls == [False]
+    # The default model is what the live provider sends, so changing it alone
+    # rebuilds the provider too.
+    assert host.replace_calls == [False, False]
     assert host.backend.restart_calls == []
     assert replacement is not previous
     assert replacement.provider_registry is not previous_registry
-    assert host.loop_manager is replacement
-    assert host.manager_factory_calls == 2
+    assert host.loop_manager is not replacement
+    assert host.manager_factory_calls == 3
+    assert host.config_manager.config.providers.configurations[0].default_model == "next-model"
     assert host._bus_task is bus_task  # noqa: SLF001
     assert bus_task is not None and bus_task.done() is False
     assert "replacement-secret" not in provider.text
     assert secret not in provider.text
     assert provider.json()["providers"][0]["configured"] is True
     assert model.json()["defaults"]["model"] == "next-model"
+
+
+@pytest.mark.asyncio
+async def test_model_change_waits_until_the_conversation_agents_are_idle(resources) -> None:
+    client, host, _, _ = resources
+    host.statuses = {"main": "thinking"}
+
+    response = await client.patch("/api/v1/settings", json={"model": "busy-model"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+    assert host.replace_calls == []
+    assert host.config_manager.config.agents.defaults.model != "busy-model"
 
 
 @pytest.mark.asyncio

@@ -386,6 +386,7 @@ class DefinitionAgentInvoker:
                     "task_id": task.id,
                     "store_key": store_key,
                     "conversation_id": conversation_id,
+                    "model": self._model_identity(),
                 },
             )
         if mapped.status != "ok":
@@ -393,6 +394,12 @@ class DefinitionAgentInvoker:
             if reason:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
+
+    def _model_identity(self) -> str:
+        """Which provider and model answer this Run's turns now."""
+
+        provider = self.services.active_provider
+        return f"{type(provider).__name__}:{getattr(provider, 'model', '') or ''}"
 
     async def _replay(
         self,
@@ -415,6 +422,8 @@ class DefinitionAgentInvoker:
             return None
         record = self.memo.load(memo_key)
         if record is None:
+            return None
+        if self.memo.current_model_only() and record.get("model") != self._model_identity():
             return None
         try:
             result = _json_value(output_contract.validate(record.get("result")))

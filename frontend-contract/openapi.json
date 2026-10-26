@@ -7691,6 +7691,18 @@
             }
           },
           {
+            "description": "Run again in place and redo every model turn the model configured now did not answer. Without it the Run continues and keeps the turns it already has.",
+            "in": "query",
+            "name": "recompute",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Run again in place and redo every model turn the model configured now did not answer. Without it the Run continues and keeps the turns it already has.",
+              "title": "Recompute",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,

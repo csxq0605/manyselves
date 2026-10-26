@@ -414,3 +414,32 @@ def test_revision_keeps_the_rows_as_the_base_version_delivered_them(tmp_path: Pa
 
     assert plan["keep_rows"]["2.3"] == [reviewed["2.3"][0]]
     assert plan["base_rows"]["2.3"] == reviewed["2.3"]
+
+
+@pytest.mark.asyncio
+async def test_recompute_redoes_the_turns_another_model_answered(tmp_path: Path) -> None:
+    """Continue keeps every turn; recompute redoes those of another model."""
+
+    from manyselves.runtime.agent_memo import FileAgentTurnMemo
+
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    memo = FileAgentTurnMemo(tmp_path, RUN_ID)
+    records = [path for path in memo.root.glob("*.json") if path.name != "model-reuse.json"]
+    assert records and all(
+        json.loads(path.read_text(encoding="utf-8"))["model"] == "object:" for path in records
+    )
+    # As if an earlier model had answered every turn.
+    for path in records:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["model"] = "EarlierProvider:old-model"
+        path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+
+    _binding, kept = await _rerun(tmp_path, lambda binding: binding.rerun(COMMAND, RUN_ID))
+    assert kept == []
+
+    memo.set_current_model_only(True)
+    _binding, redone = await _rerun(tmp_path, lambda binding: binding.rerun(COMMAND, RUN_ID))
+    assert "judge-module" in redone
+
+    memo.set_current_model_only(False)
+    assert not memo.current_model_only()

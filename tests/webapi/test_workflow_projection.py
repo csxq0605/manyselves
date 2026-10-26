@@ -199,6 +199,10 @@ class _ReportingAdapter:
         self.calls.append(("resume_persisted", {"run_id": run_id}))
         return {"run_id": run_id, "task_id": None}
 
+    async def rerun(self, command_id: UUID, run_id: str, values: object = None) -> dict:
+        self.calls.append(("rerun", {"run_id": run_id}))
+        return {"run_id": run_id, "task_id": None}
+
     def resume_workflow_input(
         self,
         command_id: UUID,
@@ -865,6 +869,29 @@ async def test_resume_run_delegates_to_generic_binding_boundary(
         "workflow_id": "distribution-reporting",
     }
     assert adapter.calls == [("resume_persisted", {"run_id": "report-1"})]
+
+
+@pytest.mark.asyncio
+async def test_recompute_reruns_with_the_current_model_and_continue_clears_it(
+    tmp_path: Path,
+) -> None:
+    from manyselves.runtime.agent_memo import FileAgentTurnMemo
+
+    adapter = _ReportingAdapter()
+    facade = _facade(tmp_path, adapter)
+    memo = FileAgentTurnMemo(tmp_path, "report-1")
+    command = UUID("30000000-0000-4000-8000-000000000006")
+
+    await facade.resume(command, "report-1", recompute=True)
+    assert adapter.calls[-1] == ("rerun", {"run_id": "report-1"})
+    assert memo.current_model_only()
+
+    await facade.resume(command, "report-1", automatic=True)
+    assert memo.current_model_only()
+
+    await facade.resume(command, "report-1")
+    assert adapter.calls[-1] == ("resume_persisted", {"run_id": "report-1"})
+    assert not memo.current_model_only()
 
 
 def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -> None:

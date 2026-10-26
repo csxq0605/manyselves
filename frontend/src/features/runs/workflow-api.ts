@@ -20,7 +20,12 @@ export interface WorkflowApi {
     input: WorkflowRunInputRequest,
     idempotencyKey: string,
   ): Promise<WorkflowRunAcceptedResponse>;
-  resume(runId: string, idempotencyKey: string): Promise<WorkflowRunAcceptedResponse>;
+  /**
+   * Continue a Run, keeping the steps and model turns it already has.  With
+   * ``recompute`` it runs again in place and redoes every model turn the model
+   * configured now did not answer.
+   */
+  resume(runId: string, idempotencyKey: string, recompute?: boolean): Promise<WorkflowRunAcceptedResponse>;
 }
 
 export interface WorkflowRunFeedApi {
@@ -57,8 +62,8 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi & WorkflowRu
       `/api/v1/runs/${encodeURIComponent(runId)}/input`,
       mutationOptions(idempotencyKey, input),
     ),
-    resume: (runId, idempotencyKey) => gateway.requestJson(
-      `/api/v1/runs/${encodeURIComponent(runId)}/resume`,
+    resume: (runId, idempotencyKey, recompute = false) => gateway.requestJson(
+      `/api/v1/runs/${encodeURIComponent(runId)}/resume${recompute ? "?recompute=true" : ""}`,
       { headers: { "Idempotency-Key": idempotencyKey }, method: "POST", requireLease: true },
     ),
   };

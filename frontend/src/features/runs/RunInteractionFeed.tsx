@@ -312,7 +312,8 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
     refetchInterval: 5_000,
   });
   const resume = useMutation({
-    mutationFn: (runId: string) => api.resume(runId, createUuid()),
+    mutationFn: ({ recompute = false, runId }: { readonly recompute?: boolean; readonly runId: string }) =>
+      api.resume(runId, createUuid(), recompute),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["runs", "interaction-feed"] });
     },
@@ -379,7 +380,17 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
         </div>
         <div className="run-interaction-card__actions">
           <a aria-label="查看运行态" href={`/projects/${encodeURIComponent(projectId)}/runtime`}>详情</a>
-          <button disabled={resume.isPending} onClick={() => resume.mutate(run.run.runId)} type="button">恢复原报告</button>
+          <button disabled={resume.isPending} onClick={() => resume.mutate({ runId: run.run.runId })} type="button">恢复原报告</button>
+          <button
+            disabled={resume.isPending}
+            onClick={() => {
+              if (window.confirm("用当前设置的模型重新运行这份报告？已完成的步骤会由当前模型重做，会重新产生费用。")) {
+                resume.mutate({ recompute: true, runId: run.run.runId });
+              }
+            }}
+            title="已完成的模型步骤也由当前模型重做"
+            type="button"
+          >用当前模型重算</button>
         </div>
         </article>)}
         {resume.isError ? <p role="alert">恢复失败：{resume.error.message}</p> : null}
