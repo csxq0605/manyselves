@@ -434,7 +434,8 @@ async def test_recompute_redoes_the_turns_another_model_answered(tmp_path: Path)
     memo = FileAgentTurnMemo(tmp_path, RUN_ID)
     records = [path for path in memo.root.glob("*.json") if path.name != "model-reuse.json"]
     assert records and all(
-        json.loads(path.read_text(encoding="utf-8"))["model"] == "object:" for path in records
+        json.loads(path.read_text(encoding="utf-8"))["model"].startswith("object:@")
+        for path in records
     )
     # As if an earlier model had answered every turn.
     for path in records:

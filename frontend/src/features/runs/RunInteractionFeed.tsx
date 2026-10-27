@@ -384,11 +384,11 @@ export function RunInteractionFeed({ api, conversationId, projectId }: RunIntera
           <button
             disabled={resume.isPending}
             onClick={() => {
-              if (window.confirm("用当前设置的模型重新运行这份报告？已完成的步骤会由当前模型重做，会重新产生费用。")) {
+              if (window.confirm("用当前设置的模型重新运行这份报告？之前由别的模型或别的模型设置完成的步骤会重做，并重新产生费用；当前模型已经做过的步骤直接沿用。")) {
                 resume.mutate({ recompute: true, runId: run.run.runId });
               }
             }}
-            title="已完成的模型步骤也由当前模型重做"
+            title="别的模型做过的步骤由当前模型重做，当前模型做过的步骤沿用"
             type="button"
           >用当前模型重算</button>
         </div>

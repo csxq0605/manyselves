@@ -19,6 +19,7 @@ Nothing here knows a Capability, a role, or a domain field.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -396,10 +397,30 @@ class DefinitionAgentInvoker:
         return mapped
 
     def _model_identity(self) -> str:
-        """Which provider and model answer this Run's turns now."""
+        """Which provider configuration and model answer this Run's turns now.
+
+        Two answers count as the same model only when the Provider settings
+        entry, service address, model and generation parameters all match.
+        The readable part names the class and model; the hash covers the rest
+        so the service address is not written into Run records in plain text.
+        """
 
         provider = self.services.active_provider
-        return f"{type(provider).__name__}:{getattr(provider, 'model', '') or ''}"
+        defaults = self.services.agent_defaults
+        model = getattr(provider, "model", "") or ""
+        settings = {
+            "config_id": getattr(provider, "config_id", None),
+            "provider_type": getattr(provider, "provider_type", None),
+            "api_base": getattr(provider, "api_base", None),
+            "model": model,
+            "temperature": getattr(defaults, "temperature", None),
+            "max_tokens": getattr(defaults, "max_tokens", None),
+            "max_output_tokens": getattr(provider, "max_output_tokens", None),
+        }
+        digest = hashlib.sha256(
+            json.dumps(settings, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        return f"{type(provider).__name__}:{model}@{digest}"
 
     async def _replay(
         self,

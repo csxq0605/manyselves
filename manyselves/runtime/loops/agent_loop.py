@@ -1720,6 +1720,40 @@ class AgentLoop:
             else 0
         )
 
+    def export_conversation_state(self) -> dict[str, Any]:
+        """Snapshot everything the next model request needs to continue this identity.
+
+        Used when the runtime replaces its loops (for example after a model or
+        Provider change) so the replacement continues the same conversation.
+        """
+
+        return {
+            "messages": list(self._conversation_history),
+            "task_boundaries": [dict(item) for item in self._task_boundaries],
+            "active_task_identity": self.active_task_identity,
+            "handoff_summary": self.handoff_summary,
+            "compaction_sequence": self._compaction_sequence,
+            "session_id": self._current_session_id,
+        }
+
+    def adopt_conversation_state(self, state: Mapping[str, Any]) -> None:
+        """Continue a conversation exported by :meth:`export_conversation_state`."""
+
+        self.restore_conversation(
+            list(state.get("messages") or ()),
+            task_boundaries=list(state.get("task_boundaries") or ()),
+            handoff_summary=state.get("handoff_summary"),
+        )
+        identity = state.get("active_task_identity")
+        if isinstance(identity, Mapping):
+            self._active_task_identity = dict(identity)
+        self._compaction_sequence = max(
+            self._compaction_sequence,
+            int(state.get("compaction_sequence") or 0),
+        )
+        session_id = state.get("session_id")
+        self._current_session_id = str(session_id) if session_id else None
+
     def set_context_rebuilder(self, rebuilder: Any | None) -> None:
         """Install or remove a typed Provider-context rebaser.
 
@@ -2642,20 +2676,43 @@ class AgentLoop:
         tool_definitions: list[dict] | None,
         reasoning_enabled: bool | None = None,
     ) -> Any:
-        """Fallback non-streaming adapter call with its own request lease."""
+        """Fallback non-streaming adapter call with its own request lease.
+
+        Returns ``None`` when the user interrupts before the reply arrives; the
+        request itself is cancelled so it stops instead of running to the end.
+        """
 
         lease = await self._acquire_provider_request_lease(messages, tool_definitions)
         try:
             chat_kwargs: dict[str, Any] = {}
             if reasoning_enabled is not None:
                 chat_kwargs["reasoning_enabled"] = reasoning_enabled
-            return await self.llm_provider.chat(
-                messages=messages,
-                tools=tool_definitions,
-                temperature=self.config.temperature,
-                max_tokens=self._output_limit_for_request(),
-                **chat_kwargs,
+            request = asyncio.ensure_future(
+                self.llm_provider.chat(
+                    messages=messages,
+                    tools=tool_definitions,
+                    temperature=self.config.temperature,
+                    max_tokens=self._output_limit_for_request(),
+                    **chat_kwargs,
+                )
             )
+            cancel_wait = asyncio.ensure_future(self._cancel_event.wait())
+            try:
+                await asyncio.wait(
+                    {request, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                cancel_wait.cancel()
+                if not request.done():
+                    request.cancel()
+                    with contextlib.suppress(BaseException):
+                        await request
+            if request.cancelled():
+                if lease is not None:
+                    await lease.release(error=asyncio.CancelledError())
+                    lease = None
+                return None
+            return request.result()
         except BaseException as exc:
             if lease is not None:
                 await lease.release(error=exc)
@@ -2778,6 +2835,16 @@ class AgentLoop:
                     tool_definitions,
                     **reasoning_kwargs,
                 )
+                if response is None:
+                    # Interrupted: same shape as a stream stopped before output.
+                    return _LoopLLMResponse(
+                        content="",
+                        tool_calls=[],
+                        streamed=False,
+                        provider_active_ms=int(
+                            (time.perf_counter() - provider_started) * 1000
+                        ),
+                    )
                 notify_first_response()
                 return _LoopLLMResponse(
                     content=response.content or "",

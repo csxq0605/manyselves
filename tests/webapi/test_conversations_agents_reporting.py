@@ -283,6 +283,7 @@ async def resources(tmp_path: Path):
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
+            python_operations_enabled=True,
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -2452,6 +2453,36 @@ async def test_python_run_is_project_scoped_bounded_and_queryable(resources) -> 
     assert str(workspace) in result.json()["stdout"]
     assert result.json()["stdoutTruncated"] is True
     assert len(result.json()["stdout"].encode("utf-8")) <= 64 * 1024
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
+async def test_python_run_does_not_see_service_secrets(resources, monkeypatch) -> None:
+    client, host, workspace, _ = resources
+    monkeypatch.setenv("MIMO_API_KEY", "service-key-must-not-leak")
+    monkeypatch.setenv("MANYSELVES_ADMIN_PASSWORD", "service-password-must-not-leak")
+    script = workspace / "Work/env.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "import os\nprint(sorted(os.environ))\n"
+        "print(os.environ.get('MIMO_API_KEY'), os.environ.get('MANYSELVES_ADMIN_PASSWORD'))\n",
+        encoding="utf-8",
+    )
+
+    accepted = await client.post(
+        "/api/v1/operations/python",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-0000000000e1"},
+        json={"path": "Work/env.py", "arguments": []},
+    )
+    assert accepted.status_code == 202
+    operation_id = accepted.json()["operationId"]
+    await _eventually(
+        lambda: host.app.state.python_run_service.get(operation_id).status != "running"
+    )
+    result = (await client.get(f"/api/v1/operations/{operation_id}")).json()
+
+    assert result["status"] == "completed", result
+    assert "must-not-leak" not in result["stdout"]
+    assert "None None" in result["stdout"]
 
 
 @pytest.mark.asyncio

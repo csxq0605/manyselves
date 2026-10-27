@@ -851,3 +851,37 @@ async def test_only_a_request_over_the_model_window_fails(tmp_path: Path) -> Non
     assert outcome.status == "failed"
     assert "model's window" in (outcome.error or "")
     assert not harness.loops or not harness.loops[0].received
+
+
+def test_model_identity_tells_service_address_and_parameters_apart() -> None:
+    """Same class and model name on another service or settings is another model."""
+
+    from types import SimpleNamespace
+
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.runtime.definition_agent import DefinitionAgentInvoker
+
+    class Provider:
+        def __init__(self, api_base, config_id="p1", max_output_tokens=None):
+            self.model = "same-model"
+            self.api_base = api_base
+            self.config_id = config_id
+            self.max_output_tokens = max_output_tokens
+            self.api_key = "never-part-of-identity"
+
+    def identity(provider, defaults=None):
+        services = SimpleNamespace(
+            active_provider=provider, agent_defaults=defaults or AgentDefaults()
+        )
+        return DefinitionAgentInvoker._model_identity(SimpleNamespace(services=services))
+
+    base = identity(Provider("https://a.example/v1"))
+    assert base == identity(Provider("https://a.example/v1"))
+    assert base.startswith("Provider:same-model@")
+    assert "a.example" not in base
+    assert base != identity(Provider("https://b.example/v1"))
+    assert base != identity(Provider("https://a.example/v1", config_id="p2"))
+    assert base != identity(Provider("https://a.example/v1", max_output_tokens=4096))
+    assert base != identity(
+        Provider("https://a.example/v1"), AgentDefaults(temperature=0.7)
+    )

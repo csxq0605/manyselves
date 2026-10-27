@@ -259,3 +259,19 @@ def test_lease_tokens_are_excluded_from_schema_representations() -> None:
     assert secret not in repr(acquire)
     assert secret not in repr(token_request)
     assert secret not in repr(response)
+
+
+@pytest.mark.asyncio
+async def test_server_python_is_off_unless_the_deployment_enables_it(
+    authed_client: httpx.AsyncClient,
+) -> None:
+    """Server Python is not a sandbox, so a default deployment must refuse it."""
+    lease = await authed_client.post("/api/v1/control/lease", json={"clientId": "c-1"})
+    response = await authed_client.post(
+        "/api/v1/operations/python",
+        headers={"X-Control-Lease-Token": lease.json()["leaseToken"]},
+        json={"path": "Work/example.py", "arguments": []},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PYTHON_OPERATIONS_DISABLED"

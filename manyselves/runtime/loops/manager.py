@@ -60,6 +60,10 @@ class LoopManager:
 
         self._loops: dict[str, AgentLoop] = {}
         self._running = False
+        # Conversations to continue in the next loops this manager creates.
+        # Filled by adopt_conversation_states() or by stop(), so a restart or
+        # a replacement manager keeps Main's history and session.
+        self._carried_conversations: dict[str, dict[str, Any]] = {}
         self._provider_manager = ProviderManager()
         self.checkpoint_manager = CheckpointManager(self.workspace)
         self._task_board = TaskBoard()
@@ -129,6 +133,8 @@ class LoopManager:
                     context_window=cfg.context_window,
                     max_output_tokens=cfg.max_output_tokens,
                 )
+                # Lets a Run tell two settings entries with the same model apart.
+                provider.config_id = cfg.id
                 self._provider_manager.register_provider(cfg.id, provider)
                 logger.info("Initialized {} provider: {}", cfg.provider, cfg.name)
             except Exception as e:
@@ -162,8 +168,28 @@ class LoopManager:
             await loop.stop()
             logger.info("Stopped loop for agent: {}", agent_type)
 
+        if self._loops:
+            self._carried_conversations = {
+                agent_id: loop.export_conversation_state()
+                for agent_id, loop in self._loops.items()
+            }
         self._loops.clear()
         self._running = False
+
+    def conversation_states(self) -> dict[str, dict[str, Any]]:
+        """Return the conversations a replacement manager should continue."""
+
+        if self._loops:
+            return {
+                agent_id: loop.export_conversation_state()
+                for agent_id, loop in self._loops.items()
+            }
+        return dict(self._carried_conversations)
+
+    def adopt_conversation_states(self, states: dict[str, dict[str, Any]]) -> None:
+        """Continue these conversations in the loops created by the next start()."""
+
+        self._carried_conversations = dict(states or {})
 
     def cancel_current_operation(self, agent_type: str) -> None:
         """Cancel the currently processing message for an agent.
@@ -228,6 +254,9 @@ class LoopManager:
         self._loops["main"] = loop
         for tool in self._application_tools.get("main", {}).values():
             loop.tools.register(tool)
+        carried = self._carried_conversations.get("main")
+        if carried:
+            loop.adopt_conversation_state(carried)
 
     def get_loop(self, agent_id: AgentId | AgentType) -> "AgentLoop | None":
         """Get an agent loop by registry identifier.

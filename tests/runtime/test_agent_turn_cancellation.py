@@ -210,3 +210,45 @@ async def test_one_run_cancel_stops_parallel_agent_turns_through_the_host(tmp_pa
         await service.close_workflow("wf")
         bus.shutdown()
         await bus_task
+
+
+class BlockingNonStreamingProvider(LLMProvider):
+    """No streaming support; the plain request never answers on its own."""
+
+    def __init__(self) -> None:
+        super().__init__("key", model="blocking-model")
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def chat_stream(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+@pytest.mark.asyncio
+async def test_interrupt_stops_a_non_streaming_request(tmp_path) -> None:
+    from manyselves.runtime.providers.base import Message
+
+    provider = BlockingNonStreamingProvider()
+    loop = AgentLoop(
+        agent_type="agent-a", workspace=tmp_path, tools=ToolRegistry(), bus=MessageBus(),
+        config=AgentDefaults(), llm_provider=provider,
+    )
+    request = asyncio.create_task(
+        loop._chat_followup([Message(role="user", content="hi")], None, None)  # noqa: SLF001
+    )
+    await asyncio.wait_for(provider.started.wait(), timeout=2)
+
+    loop.cancel_current()
+    response = await asyncio.wait_for(request, timeout=2)
+
+    assert response.content == ""
+    assert response.tool_calls == []
+    assert provider.cancelled is True
