@@ -83,13 +83,7 @@ async def test_web_settings_keys_workers_and_project_writes_are_account_scoped(
     monkeypatch.setenv("MIMO_API_KEY", "process-key-must-not-leak")
 
     data_root = tmp_path / "server-data"
-    app = create_app(
-        WebSettings(
-            data_root=data_root,
-            accounts_file=accounts_file,
-            python_operations_enabled=True,
-        )
-    )
+    app = create_app(WebSettings(data_root=data_root, accounts_file=accounts_file))
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with (

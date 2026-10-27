@@ -23,7 +23,6 @@ services:
       # 配置文件路径（源码配置）
       CONFIG_PATH: ${MANYSELVES_CONFIG_PATH:-/app/deploy/config/manyselves.config.yaml}
       MANYSELVES_DATA_ROOT: /data/manyselves
-      MANYSELVES_PYTHON_OPERATIONS_ENABLED: ${MANYSELVES_PYTHON_OPERATIONS_ENABLED:-false}
 
       # 其他配置
       MANYSELVES_INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}

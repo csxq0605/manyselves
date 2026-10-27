@@ -51,21 +51,6 @@ def require_control_lease_header(
     return lease_token
 
 
-async def require_python_operations_enabled(request: Request) -> None:
-    """Refuse server Python unless the deployment explicitly turned it on."""
-    settings = getattr(request.app.state, "web_settings", None)
-    if not getattr(settings, "python_operations_enabled", False):
-        raise ApiError(
-            status_code=status.HTTP_403_FORBIDDEN,
-            code="PYTHON_OPERATIONS_DISABLED",
-            message=(
-                "Running Python on the server is turned off for this deployment "
-                "(set MANYSELVES_PYTHON_OPERATIONS_ENABLED=true to allow it)"
-            ),
-            retryable=False,
-        )
-
-
 async def require_admin_account(
     request: Request,
     principal: SessionPrincipal = Depends(require_authenticated_session),

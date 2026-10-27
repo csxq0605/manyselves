@@ -126,8 +126,6 @@ For Compose, `MANYSELVES_DATA_DIR` is the host directory mounted at `/data/manys
 
 Use the exact browser origin. Do not use `*` with authenticated browser sessions. Replace development credentials before any shared or networked deployment.
 
-`MANYSELVES_PYTHON_OPERATIONS_ENABLED` (default `false`) turns on `POST /api/v1/operations/python`, which lets administrator accounts run a project's `.py` file on the server. It is not a sandbox: the script runs as the service user, can read and write the whole data directory and reach the network. It receives only a minimal environment (`PATH`, `HOME`, locale and similar), never Provider API keys or account passwords. Leave it off unless every administrator is trusted.
-
 ## Single-account and multi-account modes
 
 Without `MANYSELVES_ACCOUNTS_FILE`, the server creates one `default` account from `MANYSELVES_ADMIN_USERNAME` and `MANYSELVES_ADMIN_PASSWORD`.

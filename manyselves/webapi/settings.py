@@ -36,9 +36,6 @@ class WebSettings(BaseSettings):
     preview_csv_record_byte_limit: int = 256 * 1024
     preview_csv_field_limit: int = 10_000
     file_tree_entry_limit: int = 20_000
-    # Running project Python on the server is off unless the deployment sets
-    # MANYSELVES_PYTHON_OPERATIONS_ENABLED=true; it is not a sandbox.
-    python_operations_enabled: bool = False
     python_timeout_seconds: float = 30.0
     python_output_limit_bytes: int = 64 * 1024
 

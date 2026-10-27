@@ -25,19 +25,14 @@ from ..security import (
     require_admin_account,
     require_authenticated_session,
     require_control_lease_header,
-    require_python_operations_enabled,
 )
 from ..tenant_runtime import request_runtime_state
 
 # Python runs as the server process with no file isolation between accounts,
-# so the deployment must turn these routes on and only administrators may use them.
+# so only administrator accounts may use these routes.
 router = APIRouter(
     prefix="/operations",
-    dependencies=[
-        Depends(require_authenticated_session),
-        Depends(require_python_operations_enabled),
-        Depends(require_admin_account),
-    ],
+    dependencies=[Depends(require_authenticated_session), Depends(require_admin_account)],
 )
 
 

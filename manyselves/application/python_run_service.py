@@ -2,8 +2,6 @@
 
 This service is intentionally not a security sandbox. Deployment must remain on
 a trusted network and callers must already hold deployment access and control.
-It is off unless the deployment enables it, and the child process receives only
-a minimal environment without service secrets.
 """
 
 import asyncio
@@ -17,7 +15,7 @@ from uuid import UUID
 
 from ..interfaces.types import AgentStatus, StatusChange
 from ..runtime.loops.bus import MessageBus
-from ..runtime.subprocesses import safe_child_env, terminate_process_tree
+from ..runtime.subprocesses import terminate_process_tree
 from .errors import CommandIdConflictError
 
 
@@ -140,8 +138,6 @@ class PythonRunService:
                 str(target),
                 *operation.arguments,
                 cwd=self.workspace,
-                # Only the variables a script needs; never Provider keys or passwords.
-                env=safe_child_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
