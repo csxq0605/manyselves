@@ -22,6 +22,7 @@ from ..interfaces.types import (
     ToolCallMessage,
     ToolResult,
     UserMessage,
+    agent_is_working,
 )
 from ..runtime.loops.bus import MessageBus
 from .async_ownership import await_owned
@@ -603,7 +604,7 @@ class ConversationService:
     def require_agent_idle(self, agent_id: str) -> None:
         """Require no active, queued, streaming, or persistence work for an agent."""
         status = self.facade.snapshot().agent_statuses.get(agent_id)
-        if status is not None and status != "idle":
+        if agent_is_working(status):
             raise RuntimeBusyError()
         if self._pending_writes > 0:
             raise RuntimeBusyError()
@@ -634,7 +635,7 @@ class ConversationService:
         """Reject session switches while a turn or persistence callback owns state."""
         statuses = self.facade.snapshot().agent_statuses.values()
         if (
-            any(status != "idle" for status in statuses)
+            any(agent_is_working(status) for status in statuses)
             or self.pending_persistence
             or bool(self._streams)
         ):

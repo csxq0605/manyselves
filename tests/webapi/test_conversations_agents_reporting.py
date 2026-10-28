@@ -699,6 +699,24 @@ async def test_conversation_activation_rejects_active_agent(resources) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_failed_turn_does_not_block_conversations_or_backup(resources) -> None:
+    """A turn that failed has ended; "error" must not count as busy anywhere."""
+    client, host, _, _ = resources
+    first = await client.post("/api/v1/conversations", json={"name": "First"})
+    host.statuses = {"main": "error"}
+
+    created = await client.post("/api/v1/conversations", json={"name": "Second"})
+    activated = await client.post(
+        f"/api/v1/conversations/{first.json()['sessionId']}/activate"
+    )
+    quiesced = await client.post("/api/v1/maintenance/quiesce")
+
+    assert created.status_code == 201, created.text
+    assert activated.status_code == 200, activated.text
+    assert quiesced.status_code == 200, quiesced.text
+
+
+@pytest.mark.asyncio
 async def test_agent_response_is_persisted_to_captured_turn_session(resources) -> None:
     _, host, _, _ = resources
     service = host.app.state.conversation_service

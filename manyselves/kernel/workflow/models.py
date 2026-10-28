@@ -448,6 +448,8 @@ class ActionExecutionState(BaseModel):
     status: ActionExecutionStatus = ActionExecutionStatus.PENDING
     output: Any = None
     error: str | None = None
+    # {"category": str, "retryable": bool} when the executor knew how it failed.
+    failure: dict[str, Any] | None = None
 
 
 class WorkflowState(BaseModel):

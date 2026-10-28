@@ -317,6 +317,9 @@ class WorkflowProjectionFacade:
         """Request a stop of one Run's live execution; None when it is idle."""
 
         binding, _projection = self._locate_run(run_id)
+        if self.supervisor is not None:
+            # A stop also covers an automatic resume scheduled after a failure.
+            self.supervisor.stopped(run_id)
         return binding.cancel(run_id)
 
     def get_run(self, run_id: str) -> dict[str, Any]:

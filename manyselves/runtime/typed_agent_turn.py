@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -159,6 +159,7 @@ class TypedAgentTurn:
                 status="failed",
                 session_id=session_id,
                 error=str(message),
+                failure=turn_failure(message),
             )
         if outcome.kind == "response" and isinstance(outcome.message, AgentResponse):
             return AgentInvocationOutcome(
@@ -173,4 +174,21 @@ class TypedAgentTurn:
         )
 
 
-__all__ = ["TypedAgentTurn", "TypedResultDecoder"]
+def turn_failure(message: Any) -> dict[str, Any] | None:
+    """The runtime's own verdict on a failed turn, from its Error message.
+
+    The Agent loop classifies every failure once (for example an
+    authentication error is not retryable).  Passing that verdict on keeps the
+    Run layer from guessing it again from the error text.
+    """
+
+    details = getattr(message, "details", None)
+    if not isinstance(details, Mapping) or "retryable" not in details:
+        return None
+    return {
+        "category": str(details.get("category") or "unknown"),
+        "retryable": bool(details.get("retryable")),
+    }
+
+
+__all__ = ["TypedAgentTurn", "TypedResultDecoder", "turn_failure"]

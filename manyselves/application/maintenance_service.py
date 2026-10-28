@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..interfaces.types import agent_is_working
 from .conversation_service import ConversationService
 from .python_run_service import PythonRunService
 from .runtime_facade import RuntimeFacade
@@ -53,7 +54,7 @@ class MaintenanceService:
     def _busy(self) -> bool:
         statuses = self.facade.snapshot().agent_statuses.values()
         return (
-            any(status != "idle" for status in statuses)
+            any(agent_is_working(status) for status in statuses)
             or self.pending_work
             or self.workflow_runs.active
             or self.python_runs.active

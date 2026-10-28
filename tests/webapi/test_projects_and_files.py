@@ -238,6 +238,21 @@ async def test_project_activation_requires_idle_runtime(api) -> None:
 
 
 @pytest.mark.asyncio
+async def test_project_activation_is_allowed_after_a_failed_turn(api) -> None:
+    """A failed turn has ended; switching projects must not report busy."""
+    client, host, _ = api
+    headers = await acquire_controller(client)
+    assert (
+        await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
+    ).status_code == 201
+    host.statuses = {"main": "error"}
+
+    response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
 async def test_project_activation_keeps_active_generic_run_in_original_workspace(api) -> None:
     """A detached Generic Host run must not be orphaned by project activation."""
 

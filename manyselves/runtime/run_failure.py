@@ -12,6 +12,13 @@ The classification only uses the plan's structure and the error text:
   resuming it continues from that step.
 - ``program``: a Tool or a workflow step failed.  Running again would fail
   the same way; it needs a code or input fix.
+- ``provider``: the model service refused the request in a way retrying
+  does not change (authentication, an invalid request).  It needs the model
+  settings fixed first.
+
+When the failed action recorded how it failed (the runtime's own verdict,
+for example ``authentication`` and not retryable), that verdict decides; the
+error text is only read for Runs recorded without one.
 
 Nothing here knows a Capability.
 """
@@ -61,13 +68,28 @@ def describe_failure(plan: ResolvedPlan, state: Mapping[str, Any]) -> RunFailure
     if found is None:
         error = str(state.get("error") or "运行失败，未记录原因")
         return RunFailure([], None, error, *_classify(None, error))
-    path, kind, error = found
-    return RunFailure(path, kind, error, *_classify(kind, error))
+    path, kind, error, failure = found
+    return RunFailure(path, kind, error, *_classify(kind, error, failure))
 
 
-def _classify(kind: str | None, error: str) -> tuple[str, bool]:
+# Runtime failure categories that a fresh model sample may fix.
+_MODEL_OUTPUT_CATEGORIES = {"malformed_output"}
+
+
+def _classify(
+    kind: str | None, error: str, failure: Mapping[str, Any] | None = None
+) -> tuple[str, bool]:
     if _CANCELLED.search(error):
         return "cancelled", False
+    if isinstance(failure, Mapping) and isinstance(failure.get("retryable"), bool):
+        category = str(failure.get("category") or "")
+        if category == "cancelled":
+            return "cancelled", False
+        if not failure["retryable"]:
+            return "provider", False
+        if category in _MODEL_OUTPUT_CATEGORIES:
+            return "model", True
+        return "temporary", True
     if _STOPPED.search(error):
         return "stopped", False
     if _OVER_BUDGET.search(error):
@@ -81,7 +103,7 @@ def _classify(kind: str | None, error: str) -> tuple[str, bool]:
 
 def _deepest(
     plan: ResolvedPlan, state: Mapping[str, Any], path: list[str]
-) -> tuple[list[str], str | None, str] | None:
+) -> tuple[list[str], str | None, str, Mapping[str, Any] | None] | None:
     actions = {action.id: action for action in plan.actions}
     for action_id, record in (state.get("actions") or {}).items():
         if not isinstance(record, Mapping) or record.get("status") != "failed":
@@ -117,7 +139,13 @@ def _deepest(
                 deeper = _deepest(plan, branch, [*path, f"{action_id}[{branch_id}]"])
                 if deeper is not None:
                     return deeper
-        return here, kind, str(record.get("error") or "")
+        failure = record.get("failure")
+        return (
+            here,
+            kind,
+            str(record.get("error") or ""),
+            failure if isinstance(failure, Mapping) else None,
+        )
     return None
 
 

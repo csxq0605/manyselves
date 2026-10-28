@@ -195,3 +195,50 @@ async def test_main_tools_read_status_and_resume() -> None:
     assert status["failure"]["category"] == "program"
     assert status["versions"] == [{"version": 1}]
     assert resumed["run_id"] == "run-1" and projection.resumed == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_stop_withdraws_a_scheduled_automatic_resume() -> None:
+    """Stopping a failed Run that waits to be resumed must not resume it later."""
+
+    from manyselves.application.workflow_projection import WorkflowProjectionFacade
+
+    projection = _Projection(_state("judge", "timeout"))
+    notices: list[str] = []
+
+    async def notify(text: str) -> None:
+        notices.append(text)
+
+    supervisor = RunSupervisor(projection, notify, resume_delay_seconds=0.2)
+    projection.supervisor = supervisor
+
+    class _Binding:
+        def cancel(self, run_id: str):
+            return None  # no live task: the Run already failed
+
+    facade = type("Facade", (), {})()
+    facade.supervisor = supervisor
+    facade._locate_run = lambda run_id: (_Binding(), {})  # noqa: SLF001
+
+    await supervisor.on_settled("run-1")
+    assert supervisor.pending("run-1")
+    assert WorkflowProjectionFacade.request_cancel(facade, "run-1") is None
+    await asyncio.sleep(0.4)
+
+    assert projection.resumed == []
+    assert not supervisor.pending("run-1")
+    assert any('status="已停止"' in notice for notice in notices)
+
+
+@pytest.mark.asyncio
+async def test_a_manual_resume_replaces_the_scheduled_automatic_one() -> None:
+    projection = _Projection(_state("judge", "timeout"))
+    supervisor = RunSupervisor(projection, None, resume_delay_seconds=0.2)
+    projection.supervisor = supervisor
+
+    await supervisor.on_settled("run-1")
+    await projection.resume(None, "run-1")
+    await asyncio.sleep(0.4)
+
+    # Only the person's resume ran; the automatic one was withdrawn.
+    assert projection.resumed == ["run-1"]

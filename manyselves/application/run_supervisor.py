@@ -29,6 +29,7 @@ _CATEGORY_TITLES = {
     "temporary": "模型服务或网络临时故障",
     "model": "模型没有给出可用结果",
     "program": "程序步骤出错",
+    "provider": "模型服务拒绝了请求（鉴权失败或请求无效）",
     "cancelled": "运行被停止",
 }
 
@@ -50,6 +51,9 @@ class RunSupervisor:
         self.resume_delay_seconds = resume_delay_seconds
         self._auto_resumes: dict[str, int] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
+        # Automatic resumes scheduled but not started yet, by Run id.  Part of
+        # the Run's lifecycle: a stop or a person's own resume withdraws them.
+        self._pending: dict[str, asyncio.Task[Any]] = {}
 
     def auto_resumes(self, run_id: str) -> int:
         return self._auto_resumes.get(run_id, 0)
@@ -57,7 +61,41 @@ class RunSupervisor:
     def reset(self, run_id: str) -> None:
         """A person resumed or revised the Run: count automatic tries afresh."""
 
+        self.withdraw(run_id)
         self._auto_resumes.pop(run_id, None)
+
+    def pending(self, run_id: str) -> bool:
+        """Whether an automatic resume of this Run is scheduled."""
+
+        task = self._pending.get(run_id)
+        return task is not None and not task.done()
+
+    def withdraw(self, run_id: str) -> bool:
+        """Cancel a scheduled automatic resume; True when one was waiting."""
+
+        task = self._pending.pop(run_id, None)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    def stopped(self, run_id: str) -> None:
+        """The user stopped a Run that was waiting to be resumed automatically."""
+
+        if not self.withdraw(run_id):
+            return
+        used = self._auto_resumes.pop(run_id, 0)
+        extra = f"之前已自动续跑 {used} 次。" if used else ""
+        self._spawn(
+            self._send(
+                _notice(
+                    run_id,
+                    {},
+                    "已停止",
+                    "用户停止了运行，等待中的自动续跑已取消。" + extra,
+                )
+            )
+        )
 
     async def on_settled(self, run_id: str) -> None:
         try:
@@ -70,7 +108,8 @@ class RunSupervisor:
             used = self._auto_resumes.get(run_id, 0)
             if failure is not None and failure.retryable and used < self.max_auto_resumes:
                 self._auto_resumes[run_id] = used + 1
-                self._spawn(self._resume_later(run_id))
+                self.withdraw(run_id)
+                self._pending[run_id] = self._spawn(self._resume_later(run_id))
                 return
             await self._send(_failure_notice(run_id, run, failure, used))
             return
@@ -83,6 +122,7 @@ class RunSupervisor:
             await self._send(_notice(run_id, run, "已完成", "运行已完成。" + extra))
 
     async def close(self) -> None:
+        self._pending.clear()
         for task in tuple(self._tasks):
             task.cancel()
         if self._tasks:
@@ -90,6 +130,9 @@ class RunSupervisor:
 
     async def _resume_later(self, run_id: str) -> None:
         await asyncio.sleep(self.resume_delay_seconds)
+        if self._pending.get(run_id) is not asyncio.current_task():
+            return  # withdrawn while waiting
+        self._pending.pop(run_id, None)
         logger.info(
             "auto-resuming run {} ({}/{})",
             run_id,
@@ -111,10 +154,11 @@ class RunSupervisor:
         except Exception:  # noqa: BLE001 - a notice never fails the Run
             logger.exception("could not notify Main about a run")
 
-    def _spawn(self, coroutine: Awaitable[None]) -> None:
+    def _spawn(self, coroutine: Awaitable[None]) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
 
 def _notice(run_id: str, run: dict[str, Any], status: str, body: str) -> str:
@@ -141,6 +185,11 @@ def _failure_notice(
         lines.append(f"已自动续跑 {used} 次，仍然失败，不再自动续跑。")
     if failure.category == "program":
         lines.append("程序错误续跑会以同样方式失败，需要先修代码或输入。")
+    elif failure.category == "provider":
+        lines.append(
+            "重试不会改变结果，需要先检查模型设置（密钥、服务地址、模型名），"
+            "改好后再用 resume_run 续跑。"
+        )
     else:
         lines.append(
             "可以用 resume_run 续跑：沿用同一运行编号，已完成的步骤和模型回合不会重做。"

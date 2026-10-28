@@ -1,5 +1,6 @@
 """Pure workflow state transitions and external effect requests."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,8 @@ class ActionFailed:
     action_id: str
     error: str
     result: Any = None
+    # Business-neutral verdict of where the failure came from, if known.
+    failure: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +130,7 @@ class StatelessWorkflowKernel:
             action_state = next_state.actions[event.action_id]
             action_state.status = ActionExecutionStatus.FAILED
             action_state.error = event.error
+            action_state.failure = dict(event.failure) if event.failure else None
             next_state.status = WorkflowStatus.FAILED
             return WorkflowTransition(next_state)
 
@@ -135,6 +139,7 @@ class StatelessWorkflowKernel:
         action_state = next_state.actions[event.action_id]
         action_state.output = deepcopy(result.output)
         action_state.error = None
+        action_state.failure = None
         if next_state.status is WorkflowStatus.WAITING:
             action_state.status = ActionExecutionStatus.WAITING
             return WorkflowTransition(next_state)

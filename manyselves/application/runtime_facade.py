@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
 
+from ..interfaces.types import agent_is_working
 from .control import ControlLeaseService
 from .errors import (
     AgentNotFoundError,
@@ -208,7 +209,7 @@ class RuntimeFacade:
             self._require_mutable()
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
-            if any(status != "idle" for status in self.snapshot().agent_statuses.values()):
+            if any(agent_is_working(status) for status in self.snapshot().agent_statuses.values()):
                 raise RuntimeBusyError()
             workspace = resolve_workspace()
             previous_workspace = self._host.workspace

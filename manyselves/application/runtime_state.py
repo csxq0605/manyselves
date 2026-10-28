@@ -15,6 +15,7 @@ from ..interfaces.types import (
     StatusChange,
     ToolCallMessage,
     ToolResult,
+    agent_is_working,
 )
 from .models import (
     RuntimeCheckpointSnapshot,
@@ -193,7 +194,7 @@ class RuntimeStateProjection:
         known = set(known)
         with self._lock:
             for agent_id, (status, changed) in list(self._statuses.items()):
-                if status == "idle" or now - changed > stale_after_seconds:
+                if not agent_is_working(status) or now - changed > stale_after_seconds:
                     del self._statuses[agent_id]
             rows = sorted(self._statuses.items(), key=lambda item: item[1][1])
         return {agent_id: status for agent_id, (status, _) in rows if agent_id not in known}
