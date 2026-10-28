@@ -67,18 +67,105 @@ def test_manifest_matches_the_archived_bytes_of_a_file_that_changes(
 
     source = _fixture(tmp_path / "source")
     brief = source / "default" / "Inputs" / "brief.md"
-    listed = archive_module._files
+    listed = archive_module._entries
 
-    def files_then_write(root: Path) -> list[Path]:
+    def files_then_write(root: Path):
         found = listed(root)
         # A write between listing and archiving, as an active account would do.
         brief.write_text("energy baseline, edited", encoding="utf-8")
         return found
 
-    monkeypatch.setattr(archive_module, "_files", files_then_write)
+    monkeypatch.setattr(archive_module, "_entries", files_then_write)
     archive = backup(source, tmp_path / "backups")
-    monkeypatch.setattr(archive_module, "_files", listed)
+    monkeypatch.setattr(archive_module, "_entries", listed)
     target = tmp_path / "restored"
     target.mkdir()
 
     restore(archive, target, force=False)
+
+
+def test_a_report_input_snapshot_is_backed_up_and_restored(tmp_path: Path) -> None:
+    """A normal report run links input views to the content store; backups keep them."""
+    import os
+
+    from manyselves.capabilities.distribution_reporting.runtime.input_snapshot import (
+        RunInputSnapshotStore,
+    )
+
+    source = _fixture(tmp_path / "source")
+    project = source / "default"
+    (project / "Inputs" / "assessment.xlsx").write_bytes(b"workbook bytes")
+    RunInputSnapshotStore(project).freeze("run-1")
+    links = [path for path in source.rglob("*") if path.is_symlink()]
+    if not links:
+        pytest.skip("this filesystem made copies instead of links")
+
+    archive = backup(source, tmp_path / "backups")
+    target = tmp_path / "restored"
+    restore(archive, target, force=False)
+
+    for link in links:
+        restored = target / link.relative_to(source)
+        assert restored.is_symlink()
+        assert os.readlink(restored) == os.readlink(link)
+        assert restored.read_bytes() == link.read_bytes()
+    assert _manifest(target) == _manifest(source)
+
+
+def test_backup_still_refuses_links_that_leave_the_data(tmp_path: Path) -> None:
+    source = _fixture(tmp_path / "source")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    import os
+
+    (source / "default" / "escape").symlink_to(os.path.relpath(outside, source / "default"))
+    with pytest.raises(ValueError, match="outside the data"):
+        backup(source, tmp_path / "backups")
+    (source / "default" / "escape").unlink()
+    (source / "default" / "absolute").symlink_to(source / "manyselves.config.yaml")
+    with pytest.raises(ValueError, match="absolute"):
+        backup(source, tmp_path / "backups")
+
+
+def test_restore_refuses_a_link_the_manifest_does_not_list(tmp_path: Path) -> None:
+    import io
+    import json
+    import tarfile
+
+    archive = tmp_path / "forged.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        link = tarfile.TarInfo("snapshot/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../outside"
+        bundle.addfile(link)
+        manifest = json.dumps({"files": {}, "formatVersion": 2, "links": {}}).encode()
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        bundle.addfile(info, io.BytesIO(manifest))
+
+    with pytest.raises(ValueError, match="Unsafe archive member"):
+        restore(archive, tmp_path / "restored", force=False)
+
+
+def test_restore_reads_archives_made_before_links_were_kept(tmp_path: Path) -> None:
+    import io
+    import json
+    import tarfile
+
+    archive = tmp_path / "old.tar.gz"
+    content = b"energy baseline"
+    with tarfile.open(archive, "w:gz") as bundle:
+        info = tarfile.TarInfo("snapshot/default/brief.md")
+        info.size = len(content)
+        bundle.addfile(info, io.BytesIO(content))
+        import hashlib
+
+        manifest = json.dumps(
+            {"files": {"default/brief.md": hashlib.sha256(content).hexdigest()}, "formatVersion": 1}
+        ).encode()
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        bundle.addfile(info, io.BytesIO(manifest))
+
+    restore(archive, tmp_path / "restored", force=False)
+    assert (tmp_path / "restored" / "default" / "brief.md").read_bytes() == content

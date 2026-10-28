@@ -70,11 +70,15 @@ export function GlobalKnowledgePage({ api, gateway, platform }: GlobalKnowledgeP
     queryKey: ["global-knowledge", "files"],
   });
 
-  useEffect(() => () => {
-    disposed.current = true;
-    uploadController.current?.abort();
-    conflictResolver.current?.("cancel");
-    conflictResolver.current = null;
+  useEffect(() => {
+    // StrictMode runs setup, cleanup, setup in development: mark alive again.
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      uploadController.current?.abort();
+      conflictResolver.current?.("cancel");
+      conflictResolver.current = null;
+    };
   }, []);
 
   async function sendUpload(file: File, mode: UploadConflict, path: string, signal: AbortSignal, baseRevision?: string) {

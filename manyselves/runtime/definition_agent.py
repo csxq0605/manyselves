@@ -325,6 +325,13 @@ class DefinitionAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        # The model that answers this turn, fixed now: the session's own
+        # Provider and settings, not whatever is configured when the reply
+        # arrives (the model may be changed while the request is running).
+        answering_model = self._model_identity(
+            getattr(session.loop, "llm_provider", None),
+            getattr(session.loop, "config", None),
+        )
         request = AgentTurnRequest(
             content=prompt,
             images=images,
@@ -387,7 +394,7 @@ class DefinitionAgentInvoker:
                     "task_id": task.id,
                     "store_key": store_key,
                     "conversation_id": conversation_id,
-                    "model": self._model_identity(),
+                    "model": answering_model,
                 },
             )
         if mapped.status != "ok":
@@ -396,8 +403,11 @@ class DefinitionAgentInvoker:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
 
-    def _model_identity(self) -> str:
-        """Which provider configuration and model answer this Run's turns now.
+    def _model_identity(self, provider: Any = None, defaults: Any = None) -> str:
+        """Which provider configuration and model answer (or answered) a turn.
+
+        Without arguments it describes the current settings; with a session's
+        Provider and defaults it describes the model that session used.
 
         Two answers count as the same model only when the Provider settings
         entry, service address, model and generation parameters all match.
@@ -405,8 +415,10 @@ class DefinitionAgentInvoker:
         so the service address is not written into Run records in plain text.
         """
 
-        provider = self.services.active_provider
-        defaults = self.services.agent_defaults
+        if provider is None:
+            provider = self.services.active_provider
+        if defaults is None:
+            defaults = self.services.agent_defaults
         model = getattr(provider, "model", "") or ""
         settings = {
             "config_id": getattr(provider, "config_id", None),

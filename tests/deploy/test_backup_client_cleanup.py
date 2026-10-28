@@ -93,11 +93,16 @@ def test_backup_sh_continues_cleanup_after_maintenance_release_failure(tmp_path:
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
+    # Cleanup still finishes, but a release that keeps failing (even with a
+    # fresh lease) is reported: the script fails and keeps the token.
+    assert result.returncode != 0
+    assert "still paused for maintenance" in result.stderr
     assert _events(events) == [
         "POST http://fake.example/api/v1/auth/login",
         "POST http://fake.example/api/v1/control/lease",
         "POST http://fake.example/api/v1/maintenance/quiesce",
+        "POST http://fake.example/api/v1/maintenance/release",
+        "POST http://fake.example/api/v1/control/lease",
         "POST http://fake.example/api/v1/maintenance/release",
         "DELETE http://fake.example/api/v1/control/lease",
         "POST http://fake.example/api/v1/auth/logout",
@@ -178,6 +183,79 @@ def test_backup_sh_pauses_every_account_of_the_accounts_file(tmp_path: Path) -> 
     assert list((tmp_path / "backups").glob("manyselves-*.tar.gz"))
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="requires bash")
+def test_backup_sh_renews_leases_and_releases_with_a_fresh_lease(tmp_path: Path) -> None:
+    """A long archive keeps the leases alive; an expired one is replaced before release."""
+
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    events = tmp_path / "events.log"
+    bash_env = tmp_path / "fake-commands.sh"
+    bash_env.write_text(
+        textwrap.dedent(
+            """\
+            curl() {
+              local method=GET url= cookie_jar= header=
+              while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                  -X) method=$2; shift 2 ;;
+                  --cookie-jar) cookie_jar=$2; shift 2 ;;
+                  -H) header="$header $2"; shift 2 ;;
+                  --data-binary|--cookie|-d) shift 2 ;;
+                  --fail|--silent|--show-error) shift ;;
+                  http://*|https://*) url=$1; shift ;;
+                  *) shift ;;
+                esac
+              done
+              cat >/dev/null || true
+              case "$url" in
+                */auth/login) : > "$cookie_jar" ;;
+                */control/lease/heartbeat) printf 'heartbeat\n' >> "$FAKE_EVENTS" ;;
+                */control/lease)
+                  if [[ "$method" == POST ]]; then
+                    if [[ -f "$FAKE_EVENTS.first" ]]; then
+                      printf 'new lease\n' >> "$FAKE_EVENTS"; printf '%s' '{"leaseToken":"lease-2"}'
+                    else
+                      : > "$FAKE_EVENTS.first"; printf '%s' '{"leaseToken":"lease-1"}'
+                    fi
+                  fi ;;
+                */maintenance/quiesce) printf '%s' '{"maintenanceToken":"m"}' ;;
+                */maintenance/release)
+                  # The first lease expired during the archive.
+                  if [[ "$header" == *lease-2* ]]; then printf 'released\n' >> "$FAKE_EVENTS"; else return 22; fi ;;
+              esac
+            }
+            python() {
+              if [[ "$2" == backup ]]; then sleep 1.5; fi
+              command python "$@"
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+    environment = os.environ | {
+        "FAKE_EVENTS": str(events),
+        "BASH_ENV": str(bash_env),
+        "MANYSELVES_DATA_DIR": str(data_root),
+        "MANYSELVES_API_URL": "http://fake.example",
+        "MANYSELVES_ADMIN_PASSWORD": "password",
+        "MANYSELVES_BACKUP_HEARTBEAT_SECONDS": "0.3",
+    }
+    result = subprocess.run(
+        ["bash", str(ROOT / "deploy" / "backup" / "backup.sh"), str(tmp_path / "backups")],
+        cwd=ROOT,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = _events(events)
+    assert "heartbeat" in lines
+    assert lines[-2:] == ["new lease", "released"]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell paths")
 def test_backup_ps1_continues_cleanup_after_maintenance_release_failure(tmp_path: Path) -> None:
     events = tmp_path / "events.log"
@@ -233,6 +311,8 @@ def test_backup_ps1_continues_cleanup_after_maintenance_release_failure(tmp_path
         "Post http://fake.example/api/v1/auth/login",
         "Post http://fake.example/api/v1/control/lease",
         "Post http://fake.example/api/v1/maintenance/quiesce",
+        "Post http://fake.example/api/v1/maintenance/release",
+        "Post http://fake.example/api/v1/control/lease",
         "Post http://fake.example/api/v1/maintenance/release",
         "Delete http://fake.example/api/v1/control/lease",
         "Post http://fake.example/api/v1/auth/logout",

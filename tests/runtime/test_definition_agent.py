@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -885,3 +886,70 @@ def test_model_identity_tells_service_address_and_parameters_apart() -> None:
     assert base != identity(
         Provider("https://a.example/v1"), AgentDefaults(temperature=0.7)
     )
+
+
+@pytest.mark.asyncio
+async def test_a_reply_is_recorded_for_the_model_that_answered_it(tmp_path: Path) -> None:
+    """Changing the model while a request runs must not relabel its reply."""
+
+    from types import SimpleNamespace
+
+    from manyselves.runtime.agent_memo import FileAgentTurnMemo
+
+    first = SimpleNamespace(model="model-a", api_base="https://a.example/v1")
+    second = SimpleNamespace(model="model-b", api_base="https://b.example/v1")
+    current = {"provider": first}
+
+    def answer(message):
+        # The user switches to B while A's request is still running.
+        current["provider"] = second
+        return ("submit", [{"answer": "from A"}])
+
+    def redo(message):
+        return ("submit", [{"answer": "from B"}])
+
+    script: list[Any] = []
+    harness = Harness(tmp_path, lambda message: script[0](message), [])
+    harness.services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=harness.bus,
+        active_provider=None,
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+        resolve_provider=lambda: current["provider"],
+    )
+
+    async def ask():
+        invoker = harness.invoker()
+        try:
+            return await invoker.invoke(
+                harness.agent, _task(), {"text": "q"}, _conversation("a"), task_id="ask"
+            )
+        finally:
+            await invoker.close()
+
+    def recorded_models() -> list[str]:
+        memo = FileAgentTurnMemo(tmp_path, RUN_ID)
+        return [
+            json.loads(path.read_text(encoding="utf-8"))["model"]
+            for path in memo.root.glob("*.json")
+            if path.name != "model-reuse.json"
+        ]
+
+    async def steps():
+        script.append(answer)
+        answered = await ask()
+        models.extend(recorded_models())
+        _archive(tmp_path, "v1")
+        FileAgentTurnMemo(tmp_path, RUN_ID).set_current_model_only(True)
+        script[0] = redo
+        recomputed = await ask()
+        return answered, recomputed
+
+    models: list[str] = []
+    answered, recomputed = await _run(harness, steps)
+
+    assert answered.result == {"answer": "from A"}
+    assert models and all(":model-a@" in model for model in models)
+    # Recomputing with B redoes the turn A answered.
+    assert recomputed.result == {"answer": "from B"}

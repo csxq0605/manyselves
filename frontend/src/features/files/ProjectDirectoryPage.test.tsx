@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { Fragment, StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
@@ -174,11 +175,13 @@ function renderDirectory(
   section: "inputs" | "knowledge" | "templates" | "outputs",
   api: FileApi,
   bridge = platform(),
+  strict = false,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const gateway = { baseUrl: "https://api.example" } as unknown as ApiGateway;
+  const Wrapper = strict ? StrictMode : Fragment;
   return render(
-    <AppProviders queryClient={queryClient}>
+    <Wrapper><AppProviders queryClient={queryClient}>
       <MemoryRouter initialEntries={[`/projects/project-1/${section}`]}>
         <Routes>
           <Route
@@ -187,7 +190,7 @@ function renderDirectory(
           />
         </Routes>
       </MemoryRouter>
-    </AppProviders>,
+    </AppProviders></Wrapper>,
   );
 }
 
@@ -301,6 +304,23 @@ describe("ProjectDirectoryPage", () => {
       expect.any(AbortSignal),
     ));
     expect(screen.getByLabelText("选择本地文件")).toHaveAttribute("multiple");
+  });
+
+  it("uploads under StrictMode, which runs effects twice in development", async () => {
+    const upload = vi.fn().mockResolvedValue({
+      ...entries[1]!,
+      name: "brief.txt",
+      path: "Inputs/brief.txt",
+    });
+    const user = userEvent.setup();
+    renderDirectory("inputs", fileApi({ upload }), platform(), true);
+    const file = new File(["brief"], "brief.txt", { type: "text/plain" });
+
+    await user.click(await screen.findByRole("button", { name: "上传本地文件" }));
+    await user.upload(screen.getByLabelText("选择本地文件"), file);
+
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "上传本地文件" })).toBeEnabled());
   });
 
   it("uploads a selected directory while preserving its browser relative paths", async () => {

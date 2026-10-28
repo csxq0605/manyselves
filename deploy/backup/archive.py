@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -21,14 +22,34 @@ def _hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _files(root: Path) -> list[Path]:
-    result = []
+def _internal_link(root: Path, path: Path) -> str:
+    """Return a symlink's target when it is relative and stays inside ``root``.
+
+    The product links run input views to its own content store with relative
+    links; anything else (absolute, leaving the data root, dangling) is refused.
+    """
+
+    target = os.readlink(path)
+    if os.path.isabs(target):
+        raise ValueError(f"Backup refuses absolute symbolic links: {path}")
+    resolved = (path.parent / target).resolve()
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        raise ValueError(f"Backup refuses symbolic links outside the data: {path}")
+    return Path(target).as_posix()
+
+
+def _entries(root: Path) -> tuple[list[Path], dict[str, str]]:
+    """Regular files and internal symbolic links (name -> target) under ``root``."""
+
+    root = root.resolve()
+    files: list[Path] = []
+    links: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
-            raise ValueError(f"Backup refuses symbolic links: {path}")
-        if path.is_file():
-            result.append(path)
-    return result
+            links[path.relative_to(root).as_posix()] = _internal_link(root, path)
+        elif path.is_file():
+            files.append(path)
+    return files, links
 
 
 class _HashingReader:
@@ -56,16 +77,26 @@ def backup(source: Path, output_directory: Path) -> Path:
     created = datetime.now(UTC).isoformat()
     # Each file is hashed while it is archived, so the manifest always
     # describes the archived bytes even if a file changes during the backup.
+    files, links = _entries(source)
     with tarfile.open(archive, "w:gz") as bundle:
-        for path in _files(source):
+        for path in files:
             name = path.relative_to(source).as_posix()
             info = bundle.gettarinfo(path, arcname=f"snapshot/{name}")
             with path.open("rb") as handle:
                 reader = _HashingReader(handle)
                 bundle.addfile(info, reader)
             hashes[name] = reader.digest.hexdigest()
+        # Internal links are stored as links, so content-store views keep
+        # pointing at their blobs after a restore and nothing is stored twice.
+        for name, target in links.items():
+            info = tarfile.TarInfo(f"snapshot/{name}")
+            info.type = tarfile.SYMTYPE
+            info.linkname = target
+            info.mtime = int(datetime.now(UTC).timestamp())
+            info.mode = 0o777
+            bundle.addfile(info)
         manifest = json.dumps(
-            {"createdAt": created, "files": hashes, "formatVersion": 1},
+            {"createdAt": created, "files": hashes, "formatVersion": 2, "links": links},
             indent=2,
             sort_keys=True,
         ).encode("utf-8") + b"\n"
@@ -113,12 +144,38 @@ def accounts(path: Path) -> list[tuple[str, str]]:
     return result
 
 
-def _safe_members(bundle: tarfile.TarFile) -> list[tarfile.TarInfo]:
+def _manifest(bundle: tarfile.TarFile) -> dict:
+    member = bundle.getmember("manifest.json")
+    if not member.isfile():
+        raise ValueError("Backup manifest is not a regular file")
+    handle = bundle.extractfile(member)
+    if handle is None:
+        raise ValueError("Backup manifest is unreadable")
+    manifest = json.loads(handle.read().decode("utf-8"))
+    if manifest.get("formatVersion") not in {1, 2}:
+        raise ValueError("Unsupported backup format")
+    return manifest
+
+
+def _safe_members(bundle: tarfile.TarFile, links: dict[str, str]) -> list[tarfile.TarInfo]:
+    """Plain files and directories, plus exactly the internal links the manifest lists."""
+
     members = bundle.getmembers()
     for member in members:
         path = PurePosixPath(member.name)
-        if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
+        if path.is_absolute() or ".." in path.parts or member.islnk():
             raise ValueError(f"Unsafe archive member: {member.name}")
+        if member.issym():
+            name = path.relative_to("snapshot").as_posix() if path.parts[:1] == ("snapshot",) else None
+            target = PurePosixPath(member.linkname)
+            if name is None or links.get(name) != member.linkname or target.is_absolute():
+                raise ValueError(f"Unsafe archive member: {member.name}")
+            # The target must stay inside the snapshot.
+            depth = len(path.parent.parts) - 1
+            for part in target.parts:
+                depth = depth - 1 if part == ".." else depth + (part != ".")
+                if depth < 0:
+                    raise ValueError(f"Unsafe archive member: {member.name}")
     return members
 
 
@@ -137,12 +194,15 @@ def restore(archive: Path, target: Path, *, force: bool) -> Path | None:
     staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.restore-", dir=target.parent))
     try:
         with tarfile.open(archive, "r:gz") as bundle:
-            members = _safe_members(bundle)
+            manifest = _manifest(bundle)
+            expected_links = dict(manifest.get("links") or {})
+            members = _safe_members(bundle, expected_links)
             bundle.extractall(staging, members=members, filter="data")
-        manifest = json.loads((staging / "manifest.json").read_text("utf-8"))
         snapshot = staging / "snapshot"
-        actual = {path.relative_to(snapshot).as_posix(): _hash(path) for path in _files(snapshot)}
-        if manifest.get("formatVersion") != 1 or actual != manifest.get("files"):
+        snapshot.mkdir(exist_ok=True)
+        files, links = _entries(snapshot)
+        actual = {path.relative_to(snapshot).as_posix(): _hash(path) for path in files}
+        if actual != manifest.get("files") or links != expected_links:
             raise ValueError("Backup manifest verification failed")
         if target.exists():
             if previous is not None:

@@ -13,6 +13,7 @@ ACCOUNTS_FILE=${MANYSELVES_BACKUP_ACCOUNTS_FILE:-$DATA_ROOT/.manyselves/accounts
 ARCHIVE="$(dirname "$0")/archive.py"
 SESSIONS=""
 PAUSED=0
+HEARTBEAT_PID=""
 
 json_of() {
   # json_of KEY=ENVNAME ... prints {"KEY": $ENVNAME, ...}
@@ -40,17 +41,35 @@ pause_account() {
     python -c 'import json,sys; print(json.load(sys.stdin)["maintenanceToken"])' > "$session/maintenance"
 }
 
-resume_account() {
+release_maintenance() {
+  # release_maintenance SESSION: leave maintenance with the session's lease.
   session=$1
   LEASE_TOKEN=$(cat "$session/lease" 2>/dev/null || true)
-  MAINTENANCE_TOKEN=$(cat "$session/maintenance" 2>/dev/null || true)
+  MAINTENANCE_TOKEN=$(cat "$session/maintenance")
   export LEASE_TOKEN MAINTENANCE_TOKEN
-  if [ -n "$MAINTENANCE_TOKEN" ]; then
-    json_of maintenanceToken=MAINTENANCE_TOKEN | curl --fail --silent --show-error --cookie "$session/cookie" -X POST \
-      "$API_URL/api/v1/maintenance/release" \
-      -H "X-Control-Lease-Token: $LEASE_TOKEN" -H "Content-Type: application/json" \
-      --data-binary @- >/dev/null
+  json_of maintenanceToken=MAINTENANCE_TOKEN | curl --fail --silent --show-error --cookie "$session/cookie" -X POST \
+    "$API_URL/api/v1/maintenance/release" \
+    -H "X-Control-Lease-Token: $LEASE_TOKEN" -H "Content-Type: application/json" \
+    --data-binary @- >/dev/null
+}
+
+resume_account() {
+  session=$1
+  released=1
+  if [ -s "$session/maintenance" ]; then
+    if ! release_maintenance "$session"; then
+      # The lease may have expired during a long archive: take a fresh one
+      # (nobody else can hold it while the account is paused) and retry.
+      curl --fail --silent --show-error --cookie "$session/cookie" -X POST \
+        "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
+        -d '{"clientId":"phase1-backup","actorId":"operator-backup"}' | \
+        python -c 'import json,sys; print(json.load(sys.stdin)["leaseToken"])' > "$session/lease.new" \
+        && mv "$session/lease.new" "$session/lease"
+      release_maintenance "$session" || released=0
+    fi
   fi
+  LEASE_TOKEN=$(cat "$session/lease" 2>/dev/null || true)
+  export LEASE_TOKEN
   if [ -n "$LEASE_TOKEN" ]; then
     json_of leaseToken=LEASE_TOKEN | curl --fail --silent --show-error --cookie "$session/cookie" -X DELETE \
       "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
@@ -59,17 +78,56 @@ resume_account() {
   curl --silent --show-error --cookie "$session/cookie" -X POST \
     "$API_URL/api/v1/auth/logout" >/dev/null
   rm -f "$session/cookie"
+  if [ "$released" -eq 0 ]; then
+    echo "An account is still paused for maintenance. Its maintenance token is kept in $session/maintenance; release it with POST /api/v1/maintenance/release, or restart the service." >&2
+    return 1
+  fi
+  rm -rf "$session"
+}
+
+# Renew every paused account's lease while the archive runs, so the release
+# at the end is still allowed however long the archive takes.
+keep_leases() {
+  sleeper=""
+  trap '[ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null; exit 0' TERM
+  while :; do
+    sleep "${MANYSELVES_BACKUP_HEARTBEAT_SECONDS:-20}" &
+    sleeper=$!
+    wait "$sleeper"
+    sleeper=""
+    for session in "$SESSIONS"/*/; do
+      [ -f "$session/lease" ] || continue
+      LEASE_TOKEN=$(cat "$session/lease")
+      export LEASE_TOKEN
+      json_of leaseToken=LEASE_TOKEN | curl --fail --silent --show-error --cookie "$session/cookie" -X POST \
+        "$API_URL/api/v1/control/lease/heartbeat" -H "Content-Type: application/json" \
+        --data-binary @- >/dev/null || true
+    done
+  done
 }
 
 cleanup() {
+  status=$?
   trap - EXIT INT TERM
   set +e
-  if [ -n "$SESSIONS" ]; then
-    for session in "$SESSIONS"/*; do
-      [ -d "$session" ] && resume_account "$session"
-    done
-    rm -rf "$SESSIONS"
+  if [ -n "$HEARTBEAT_PID" ]; then
+    kill "$HEARTBEAT_PID" 2>/dev/null
+    wait "$HEARTBEAT_PID" 2>/dev/null
   fi
+  if [ -n "$SESSIONS" ]; then
+    still_paused=0
+    for session in "$SESSIONS"/*/; do
+      [ -d "$session" ] || continue
+      resume_account "${session%/}" || still_paused=1
+    done
+    if [ "$still_paused" -eq 0 ]; then
+      rm -rf "$SESSIONS"
+    else
+      rm -f "$SESSIONS/accounts.tsv"
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
+  exit "$status"
 }
 trap cleanup EXIT INT TERM
 
@@ -92,6 +150,11 @@ if [ -n "$API_URL" ]; then
     }
     pause_account "$ADMIN_USERNAME" "$ADMIN_PASSWORD"
   fi
+fi
+
+if [ -n "$SESSIONS" ]; then
+  keep_leases >/dev/null 2>&1 &
+  HEARTBEAT_PID=$!
 fi
 
 python "$ARCHIVE" backup --source "$DATA_ROOT" --output "$OUTPUT_DIR"
