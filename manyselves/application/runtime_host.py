@@ -53,6 +53,7 @@ class RuntimeHost:
 
         self._loop_manager: LoopManager | None = None
         self._workspace: Path | None = None
+        self._carried_conversations: dict[str, dict[str, Any]] = {}
         self._global_knowledge_root: Path | None = None
         self._bus_task: asyncio.Task[None] | None = None
         self._bus_shutdown = False
@@ -295,6 +296,11 @@ class RuntimeHost:
                 except BaseException:
                     self._state = _LifecycleState.FAILED
                     raise
+                # Keep Main's history and session for the replacement loops,
+                # and across a failed replacement until recovery succeeds.
+                export = getattr(previous_manager, "conversation_states", None)
+                if callable(export):
+                    self._carried_conversations = export()
             self._bind_manager(None, workspace)
 
             try:
@@ -303,6 +309,9 @@ class RuntimeHost:
                     self.config_manager,
                     self.bus,
                 )
+                adopt = getattr(replacement, "adopt_conversation_states", None)
+                if callable(adopt) and self._carried_conversations:
+                    adopt(self._carried_conversations)
                 self._bind_manager(replacement, workspace)
                 self._producers_stopped = False
                 await replacement.start()
@@ -317,6 +326,7 @@ class RuntimeHost:
                 raise
 
             self._producers_stopped = False
+            self._carried_conversations = {}
             self._state = _LifecycleState.READY
 
     async def _discard_provider_candidate(

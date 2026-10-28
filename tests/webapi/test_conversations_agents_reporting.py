@@ -2727,6 +2727,19 @@ async def test_model_change_waits_until_the_conversation_agents_are_idle(resourc
 
 
 @pytest.mark.asyncio
+async def test_model_change_is_allowed_after_a_failed_turn(resources) -> None:
+    """A Provider error ends the turn; fixing the model or key must not be refused."""
+    client, host, _, _ = resources
+    host.statuses = {"main": "error"}
+
+    response = await client.patch("/api/v1/settings", json={"model": "fixed-model"})
+
+    assert response.status_code == 200
+    assert host.replace_calls == [False]
+    assert host.config_manager.config.agents.defaults.model == "fixed-model"
+
+
+@pytest.mark.asyncio
 async def test_combined_model_settings_update_is_atomic_and_restarts_once(resources) -> None:
     client, host, _, secret = resources
     provider = host.config_manager.config.providers.configurations[0]

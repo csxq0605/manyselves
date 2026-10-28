@@ -6,7 +6,6 @@ a trusted network and callers must already hold deployment access and control.
 
 import asyncio
 import os
-import signal
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,6 +15,7 @@ from uuid import UUID
 
 from ..interfaces.types import AgentStatus, StatusChange
 from ..runtime.loops.bus import MessageBus
+from ..runtime.subprocesses import terminate_process_tree
 from .errors import CommandIdConflictError
 
 
@@ -195,29 +195,9 @@ class PythonRunService:
         return bytes(output), truncated
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
-        if process.returncode is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            return
-        if self._platform != "posix":
+        if self._platform != "posix" and process.returncode is None:
             raise PythonRunUnsupportedError()
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        try:
-            async with asyncio.timeout(0.5):
-                await process.wait()
-        except TimeoutError:
-            pass
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        if process.returncode is None:
-            await process.wait()
+        await terminate_process_tree(process)
 
     def _resolve(self, raw: str) -> tuple[Path, str]:
         relative = Path(raw)

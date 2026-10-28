@@ -102,7 +102,9 @@ class SettingsService:
             for loop in loops.values()
             if (queue := getattr(loop, "_message_queue", None)) is not None
         )
-        return queued or any(status != "idle" for status in statuses)
+        # A turn that failed has ended: its loop rests in "error" until the
+        # next message, and changing the model or key is how users fix it.
+        return queued or any(status not in {"idle", "error"} for status in statuses)
 
     def validate(self) -> tuple[bool, list[str], list[str]]:
         config = self.manager.config

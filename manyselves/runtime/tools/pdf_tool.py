@@ -7,7 +7,6 @@ Auth:    mineru-open-api auth
 Supported formats: PDF, images, DOCX, PPTX, XLSX (up to 200MB, 600 pages)
 """
 
-import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 
 from loguru import logger
 
+from ..subprocesses import run_captured
 from ..tools.registry import Tool
 from .path_utils import resolve_and_validate_path, is_internal_metadata_path
 
@@ -142,20 +142,17 @@ class PDFParseTool(Tool):
                 "--timeout", str(self.timeout),
             ]
 
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self.timeout + 30,
-            )
+            run = await run_captured(cmd, timeout=self.timeout + 30)
+            if run.timed_out:
+                raise TimeoutError(
+                    f"mineru-open-api did not finish within {self.timeout + 30} seconds"
+                )
+            stderr = run.stderr
 
-            if proc.returncode != 0:
+            if run.returncode != 0:
                 err_msg = stderr.decode(errors="replace").strip()
                 raise RuntimeError(
-                    f"mineru-open-api exited with code {proc.returncode}: {err_msg}"
+                    f"mineru-open-api exited with code {run.returncode}: {err_msg}"
                 )
 
             # Locate generated .md file in temp output
@@ -206,14 +203,9 @@ class PDFParseTool(Tool):
             return
 
         # Verify auth by running extract --help (lightweight check)
-        proc = await asyncio.create_subprocess_exec(
-            self._cli_name, "auth", "--verify",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
+        run = await run_captured([self._cli_name, "auth", "--verify"], timeout=60)
 
-        if proc.returncode != 0:
+        if run.timed_out or run.returncode != 0:
             logger.warning(
                 "mineru-open-api is installed but not authenticated. "
                 "Run: mineru-open-api auth"

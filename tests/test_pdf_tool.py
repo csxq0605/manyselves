@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from manyselves.runtime.subprocesses import CapturedRun
 from manyselves.runtime.tools.pdf_tool import PDFParseTool
 
 
@@ -66,13 +67,11 @@ async def test_parse_single_success(workspace):
     src_file = workspace / "References" / "test.pdf"
     src_file.write_bytes(b"%PDF-1.4 fake")
 
-    mock_proc = AsyncMock()
-    mock_proc.communicate.return_value = (b"", b"")
-    mock_proc.returncode = 0
+    mock_run = AsyncMock(return_value=CapturedRun(b"", b"", 0))
 
     with (
         patch.object(PDFParseTool, "is_available", return_value=True),
-        patch("manyselves.runtime.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch("manyselves.runtime.tools.pdf_tool.run_captured", mock_run),
         patch("pathlib.Path.rglob", return_value=[workspace / "References" / "test.md"]),
     ):
         # Create the expected output
@@ -98,16 +97,15 @@ async def test_parse_surfaces_auth_failure_as_tool_error(workspace):
     src_file = workspace / "References" / "auth.pdf"
     src_file.write_bytes(b"%PDF-1.4 fake")
 
-    mock_proc = AsyncMock()
-    mock_proc.communicate.return_value = (
-        b"",
-        b'HTTP 401, body: {"detail":"user authenticate failed"}',
+    mock_run = AsyncMock(
+        return_value=CapturedRun(
+            b"", b'HTTP 401, body: {"detail":"user authenticate failed"}', 1
+        )
     )
-    mock_proc.returncode = 1
 
     with (
         patch.object(PDFParseTool, "is_available", return_value=True),
-        patch("manyselves.runtime.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch("manyselves.runtime.tools.pdf_tool.run_captured", mock_run),
     ):
         with pytest.raises(RuntimeError, match="user authenticate failed"):
             await tool(file_paths="References/auth.pdf")

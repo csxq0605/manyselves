@@ -19,6 +19,7 @@ Nothing here knows a Capability, a role, or a domain field.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -324,6 +325,13 @@ class DefinitionAgentInvoker:
                     "output_contract": task.output_contract,
                 }
             )
+        # The model that answers this turn, fixed now: the session's own
+        # Provider and settings, not whatever is configured when the reply
+        # arrives (the model may be changed while the request is running).
+        answering_model = self._model_identity(
+            getattr(session.loop, "llm_provider", None),
+            getattr(session.loop, "config", None),
+        )
         request = AgentTurnRequest(
             content=prompt,
             images=images,
@@ -386,7 +394,7 @@ class DefinitionAgentInvoker:
                     "task_id": task.id,
                     "store_key": store_key,
                     "conversation_id": conversation_id,
-                    "model": self._model_identity(),
+                    "model": answering_model,
                 },
             )
         if mapped.status != "ok":
@@ -395,11 +403,36 @@ class DefinitionAgentInvoker:
                 mapped = mapped.model_copy(update={"error": reason})
         return mapped
 
-    def _model_identity(self) -> str:
-        """Which provider and model answer this Run's turns now."""
+    def _model_identity(self, provider: Any = None, defaults: Any = None) -> str:
+        """Which provider configuration and model answer (or answered) a turn.
 
-        provider = self.services.active_provider
-        return f"{type(provider).__name__}:{getattr(provider, 'model', '') or ''}"
+        Without arguments it describes the current settings; with a session's
+        Provider and defaults it describes the model that session used.
+
+        Two answers count as the same model only when the Provider settings
+        entry, service address, model and generation parameters all match.
+        The readable part names the class and model; the hash covers the rest
+        so the service address is not written into Run records in plain text.
+        """
+
+        if provider is None:
+            provider = self.services.active_provider
+        if defaults is None:
+            defaults = self.services.agent_defaults
+        model = getattr(provider, "model", "") or ""
+        settings = {
+            "config_id": getattr(provider, "config_id", None),
+            "provider_type": getattr(provider, "provider_type", None),
+            "api_base": getattr(provider, "api_base", None),
+            "model": model,
+            "temperature": getattr(defaults, "temperature", None),
+            "max_tokens": getattr(defaults, "max_tokens", None),
+            "max_output_tokens": getattr(provider, "max_output_tokens", None),
+        }
+        digest = hashlib.sha256(
+            json.dumps(settings, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        return f"{type(provider).__name__}:{model}@{digest}"
 
     async def _replay(
         self,

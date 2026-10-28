@@ -1,6 +1,5 @@
 """Execution tool for shell commands."""
 
-import asyncio
 import os
 import platform
 import shlex
@@ -9,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from ..subprocesses import run_captured, safe_child_env
 from ..tools.registry import Tool
 from .path_utils import is_internal_metadata_path, is_internal_metadata_rel
 
@@ -56,7 +56,10 @@ def get_shell_info() -> str:
         _DETECTED_SHELL = _get_default_shell_name()
     return _DETECTED_SHELL
 
-# Allowed commands for ExecTool (allowlist approach)
+# Allowed commands for ExecTool.  Only the first word is checked and the command
+# runs through a shell, so ``python -c ...``, ``;`` or ``&&`` can still run
+# anything.  This list keeps an honest model on track; it is NOT a security
+# boundary and must not be relied on to contain untrusted input.
 ALLOWED_COMMANDS = {
     "python", "python3", "pip", "pip3",
     "ls", "dir", "cd", "pwd",
@@ -164,28 +167,19 @@ class ExecTool(Tool):
 
         logger.debug("Executing shell command: {} (in {})", command, self.working_dir)
 
-        env = {}
-        for key in self.allowed_env_keys:
-            if key in os.environ:
-                env[key] = os.environ[key]
+        # Only the basic variables plus the configured extra keys; an empty
+        # list must never fall back to inheriting the service's secrets.
+        env = safe_child_env(self.allowed_env_keys)
 
         try:
-            process = await asyncio.create_subprocess_shell(
+            run = await run_captured(
                 command,
                 cwd=self.working_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env or None,
+                env=env,
+                timeout=self.timeout,
+                shell=True,
             )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout,
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+            if run.timed_out:
                 return {
                     "command": command,
                     "command_description": command_description,
@@ -194,6 +188,7 @@ class ExecTool(Tool):
                     "returncode": -1,
                     "timed_out": True,
                 }
+            stdout, stderr = run.stdout, run.stderr
 
             stdout_str = stdout.decode("utf-8", errors="replace")
             stderr_str = stderr.decode("utf-8", errors="replace")
@@ -209,7 +204,7 @@ class ExecTool(Tool):
                 "command_description": command_description,
                 "stdout": stdout_str,
                 "stderr": stderr_str,
-                "returncode": process.returncode,
+                "returncode": run.returncode,
                 "timed_out": False,
             }
         except Exception as e:

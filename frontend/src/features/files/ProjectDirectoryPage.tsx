@@ -85,12 +85,16 @@ function ScopedProjectDirectoryPage({
     queryFn: () => resolvedApi.listTree(projectId, capabilities.root),
     queryKey: ["files", projectId, capabilities.root],
   });
-  useEffect(() => () => {
-    disposedRef.current = true;
-    uploadControllerRef.current?.abort();
-    uploadControllerRef.current = null;
-    conflictResolver.current?.("cancel");
-    conflictResolver.current = null;
+  useEffect(() => {
+    // StrictMode runs setup, cleanup, setup in development: mark alive again.
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      uploadControllerRef.current?.abort();
+      uploadControllerRef.current = null;
+      conflictResolver.current?.("cancel");
+      conflictResolver.current = null;
+    };
   }, []);
 
   const activeProjectId = projectId;

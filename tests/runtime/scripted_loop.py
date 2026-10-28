@@ -32,6 +32,9 @@ class ScriptedLoop:
         self.script = script
         self.kwargs = kwargs
         self.tools = kwargs["tools"]
+        # Like AgentLoop: the Provider and settings this session answers with.
+        self.llm_provider = kwargs.get("llm_provider")
+        self.config = kwargs.get("config")
         self.history: list[LLMMessage] = []
         self.restored: list[list[Any]] = []
         self.received: list[UserMessage] = []

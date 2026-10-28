@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -851,3 +852,104 @@ async def test_only_a_request_over_the_model_window_fails(tmp_path: Path) -> Non
     assert outcome.status == "failed"
     assert "model's window" in (outcome.error or "")
     assert not harness.loops or not harness.loops[0].received
+
+
+def test_model_identity_tells_service_address_and_parameters_apart() -> None:
+    """Same class and model name on another service or settings is another model."""
+
+    from types import SimpleNamespace
+
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.runtime.definition_agent import DefinitionAgentInvoker
+
+    class Provider:
+        def __init__(self, api_base, config_id="p1", max_output_tokens=None):
+            self.model = "same-model"
+            self.api_base = api_base
+            self.config_id = config_id
+            self.max_output_tokens = max_output_tokens
+            self.api_key = "never-part-of-identity"
+
+    def identity(provider, defaults=None):
+        services = SimpleNamespace(
+            active_provider=provider, agent_defaults=defaults or AgentDefaults()
+        )
+        return DefinitionAgentInvoker._model_identity(SimpleNamespace(services=services))
+
+    base = identity(Provider("https://a.example/v1"))
+    assert base == identity(Provider("https://a.example/v1"))
+    assert base.startswith("Provider:same-model@")
+    assert "a.example" not in base
+    assert base != identity(Provider("https://b.example/v1"))
+    assert base != identity(Provider("https://a.example/v1", config_id="p2"))
+    assert base != identity(Provider("https://a.example/v1", max_output_tokens=4096))
+    assert base != identity(
+        Provider("https://a.example/v1"), AgentDefaults(temperature=0.7)
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_reply_is_recorded_for_the_model_that_answered_it(tmp_path: Path) -> None:
+    """Changing the model while a request runs must not relabel its reply."""
+
+    from types import SimpleNamespace
+
+    from manyselves.runtime.agent_memo import FileAgentTurnMemo
+
+    first = SimpleNamespace(model="model-a", api_base="https://a.example/v1")
+    second = SimpleNamespace(model="model-b", api_base="https://b.example/v1")
+    current = {"provider": first}
+
+    def answer(message):
+        # The user switches to B while A's request is still running.
+        current["provider"] = second
+        return ("submit", [{"answer": "from A"}])
+
+    def redo(message):
+        return ("submit", [{"answer": "from B"}])
+
+    script: list[Any] = []
+    harness = Harness(tmp_path, lambda message: script[0](message), [])
+    harness.services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=harness.bus,
+        active_provider=None,
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+        resolve_provider=lambda: current["provider"],
+    )
+
+    async def ask():
+        invoker = harness.invoker()
+        try:
+            return await invoker.invoke(
+                harness.agent, _task(), {"text": "q"}, _conversation("a"), task_id="ask"
+            )
+        finally:
+            await invoker.close()
+
+    def recorded_models() -> list[str]:
+        memo = FileAgentTurnMemo(tmp_path, RUN_ID)
+        return [
+            json.loads(path.read_text(encoding="utf-8"))["model"]
+            for path in memo.root.glob("*.json")
+            if path.name != "model-reuse.json"
+        ]
+
+    async def steps():
+        script.append(answer)
+        answered = await ask()
+        models.extend(recorded_models())
+        _archive(tmp_path, "v1")
+        FileAgentTurnMemo(tmp_path, RUN_ID).set_current_model_only(True)
+        script[0] = redo
+        recomputed = await ask()
+        return answered, recomputed
+
+    models: list[str] = []
+    answered, recomputed = await _run(harness, steps)
+
+    assert answered.result == {"answer": "from A"}
+    assert models and all(":model-a@" in model for model in models)
+    # Recomputing with B redoes the turn A answered.
+    assert recomputed.result == {"answer": "from B"}

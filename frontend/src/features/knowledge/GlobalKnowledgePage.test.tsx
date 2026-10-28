@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -47,14 +48,15 @@ function platform(): PlatformBridge {
   };
 }
 
-function renderPage(resolvedApi = api(), bridge = platform()) {
+function renderPage(resolvedApi = api(), bridge = platform(), strict = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const gateway = { baseUrl: "https://api.example" } as ApiGateway;
-  return render(
+  const page = (
     <AppProviders queryClient={queryClient}>
       <GlobalKnowledgePage api={resolvedApi} gateway={gateway} platform={bridge} />
-    </AppProviders>,
+    </AppProviders>
   );
+  return render(strict ? <StrictMode>{page}</StrictMode> : page);
 }
 
 describe("GlobalKnowledgePage", () => {
@@ -82,6 +84,17 @@ describe("GlobalKnowledgePage", () => {
       undefined,
       expect.any(AbortSignal),
     ));
+  });
+
+  it("uploads under StrictMode, which runs effects twice in development", async () => {
+    const upload = vi.fn().mockResolvedValue(entry);
+    const user = userEvent.setup();
+    renderPage(api({ listTree: async () => [], upload }), platform(), true);
+    const file = new File(["shared"], "shared.md", { type: "text/markdown" });
+
+    await user.upload(await screen.findByLabelText("选择本地文件"), file);
+
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
   });
 
   it("uses the latest logical entry revision when replacing a duplicate", async () => {
