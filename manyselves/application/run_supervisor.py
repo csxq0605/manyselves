@@ -15,6 +15,7 @@ It knows no Capability; the failure classes come from ``run_failure``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
@@ -69,6 +70,12 @@ class RunSupervisor:
 
         task = self._pending.get(run_id)
         return task is not None and not task.done()
+
+    @property
+    def has_pending(self) -> bool:
+        """Whether any automatic resume is scheduled; such a Run is still in progress."""
+
+        return any(not task.done() for task in self._pending.values())
 
     def withdraw(self, run_id: str) -> bool:
         """Cancel a scheduled automatic resume; True when one was waiting."""
@@ -130,21 +137,34 @@ class RunSupervisor:
 
     async def _resume_later(self, run_id: str) -> None:
         await asyncio.sleep(self.resume_delay_seconds)
-        if self._pending.get(run_id) is not asyncio.current_task():
-            return  # withdrawn while waiting
-        self._pending.pop(run_id, None)
-        logger.info(
-            "auto-resuming run {} ({}/{})",
-            run_id,
-            self._auto_resumes.get(run_id, 0),
-            self.max_auto_resumes,
-        )
+        # The resume leaves the schedule and starts under one admission, so
+        # nothing (maintenance, a project switch) sees the Run as idle between.
         try:
-            await self._projection.resume(uuid4(), run_id, automatic=True)
-        except Exception as exc:  # noqa: BLE001 - reported to Main instead
-            await self._send(
-                _notice(run_id, {}, "自动续跑失败", f"自动续跑没有启动：{exc}")
+            await self._resume_admitted(run_id)
+        except Exception:  # noqa: BLE001 - the runtime is closing or not ready
+            logger.exception("automatic resume of run {} was not admitted", run_id)
+
+    async def _resume_admitted(self, run_id: str) -> None:
+        async with self._admission():
+            if self._pending.get(run_id) is not asyncio.current_task():
+                return  # withdrawn while waiting
+            self._pending.pop(run_id, None)
+            logger.info(
+                "auto-resuming run {} ({}/{})",
+                run_id,
+                self._auto_resumes.get(run_id, 0),
+                self.max_auto_resumes,
             )
+            try:
+                await self._projection.resume(uuid4(), run_id, automatic=True)
+            except Exception as exc:  # noqa: BLE001 - reported to Main instead
+                await self._send(
+                    _notice(run_id, {}, "自动续跑失败", f"自动续跑没有启动：{exc}")
+                )
+
+    def _admission(self) -> Any:
+        admission = getattr(self._projection, "admission", None)
+        return admission(wait=True) if callable(admission) else contextlib.nullcontext()
 
     async def _send(self, text: str) -> None:
         if self._notify is None:

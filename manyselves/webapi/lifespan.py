@@ -272,6 +272,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         workflow_projection = WorkflowProjectionFacade(
             active_workspace,
             build_runtime_services_view(host),
+            admission=facade.run_admission,
         )
         python_runs = PythonRunService(
             active_workspace,
@@ -303,6 +304,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             replacement = WorkflowProjectionFacade(
                 workspace,
                 build_runtime_services_view(app.state.runtime_host),
+                admission=app.state.runtime_facade.run_admission,
             )
             await previous.close()
             app.state.workflow_projection = replacement

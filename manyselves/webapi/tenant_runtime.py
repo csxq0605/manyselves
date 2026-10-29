@@ -76,6 +76,7 @@ class TenantRuntime:
         replacement = WorkflowProjectionFacade(
             workspace,
             build_runtime_services_view(self.runtime_host),
+            admission=self.runtime_facade.run_admission,
         )
         await previous.close()
         self.workflow_projection = replacement
@@ -159,6 +160,7 @@ async def start_tenant_runtime(
     workflow_projection = WorkflowProjectionFacade(
         workspace,
         build_runtime_services_view(host),
+        admission=facade.run_admission,
     )
     python_runs = PythonRunService(
         workspace,

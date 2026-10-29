@@ -1,6 +1,7 @@
 """Stable serialized command and query boundary for runtime clients."""
 
 import asyncio
+import contextvars
 import secrets
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -42,6 +43,9 @@ CommandResponse = AcceptedCommand | RollbackResult
 ResponseT = TypeVar("ResponseT", bound=CommandResponse)
 ActivationResponseT = TypeVar("ActivationResponseT")
 SemanticPayload = tuple[str | None, ...]
+_LOCK_HOLDER: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "runtime_mutation_lock_holder", default=None
+)
 MutationCommand = (
     SendMessageCommand
     | EditResendCommand
@@ -146,7 +150,11 @@ class RuntimeFacade:
         self._command_cache_size = command_cache_size
         self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()
+        # Who holds the lock now; a caller already inside it is not admitted twice.
+        self._lock_holder: object | None = None
         self._maintenance_token: str | None = None
+        self._mutable = asyncio.Event()
+        self._mutable.set()
         self._accepting_mutations = True
 
     def snapshot(self) -> RuntimeSnapshot:
@@ -165,15 +173,61 @@ class RuntimeFacade:
         return self._maintenance_token is not None
 
     @asynccontextmanager
+    async def _locked(self) -> AsyncIterator[None]:
+        """Hold the mutation lock and mark this task's context as its holder."""
+        async with self._mutation_lock:
+            holder = object()
+            self._lock_holder = holder
+            token = _LOCK_HOLDER.set(holder)
+            try:
+                yield
+            finally:
+                _LOCK_HOLDER.reset(token)
+                self._lock_holder = None
+
+    def _holds_lock(self) -> bool:
+        holder = self._lock_holder
+        return holder is not None and _LOCK_HOLDER.get() is holder
+
+    @asynccontextmanager
+    async def run_admission(self, *, wait: bool = False) -> AsyncIterator[None]:
+        """Admit one start of runtime work: a Run start or resume, or a notice to an agent.
+
+        Every start passes here, whether a person, Main or the runtime itself
+        asked for it, so maintenance and project switches see the same rule:
+        no new work while maintenance is quiesced.  The check and the start
+        share the mutation lock, so no quiesce can slip in between.  A caller
+        already inside a mutation transaction was admitted by it.
+
+        ``wait`` is for background starts nobody is waiting on: they wait for
+        maintenance to end instead of failing.
+        """
+        if self._holds_lock():
+            yield
+            return
+        while True:
+            if wait:
+                await self._mutable.wait()
+            async with self._locked():
+                if wait and self._maintenance_token is not None:
+                    continue
+                self._require_accepting()
+                self._require_mutable()
+                if not self._host.is_ready:
+                    raise RuntimeNotReadyError()
+                yield
+                return
+
+    @asynccontextmanager
     async def read_transaction(self) -> AsyncIterator[None]:
         """Serialize one coherent read with every runtime mutation."""
-        async with self._mutation_lock:
+        async with self._locked():
             yield
 
     @asynccontextmanager
     async def mutation_transaction(self, lease_token: str) -> AsyncIterator[None]:
         """Serialize an application mutation and require the current controller."""
-        async with self._mutation_lock:
+        async with self._locked():
             self.leases.require(lease_token)
             self._require_accepting()
             self._require_mutable()
@@ -184,7 +238,7 @@ class RuntimeFacade:
     @asynccontextmanager
     async def persistence_transaction(self) -> AsyncIterator[None]:
         """Serialize one durable event write and reject it after quiescence."""
-        async with self._mutation_lock:
+        async with self._locked():
             self._require_mutable()
             persistence_ready = getattr(
                 self._host, "persistence_ready", self._host.is_ready
@@ -203,7 +257,7 @@ class RuntimeFacade:
         reconcile: Callable[[Path], None | Awaitable[None]],
     ) -> ActivationResponseT:
         """Resolve, switch, and commit project state as one serialized transaction."""
-        async with self._mutation_lock:
+        async with self._locked():
             self.leases.require(lease_token)
             self._require_accepting()
             self._require_mutable()
@@ -417,7 +471,7 @@ class RuntimeFacade:
         response_type: type[ResponseT],
         invoke: Callable[[], Awaitable[ResponseT]],
     ) -> ResponseT:
-        async with self._mutation_lock:
+        async with self._locked():
             self.leases.require(command.lease_token)
             self._require_accepting()
             self._require_mutable()
@@ -527,7 +581,7 @@ class RuntimeFacade:
         flush: Callable[[], None],
     ) -> str:
         """Enter maintenance under the shared mutation lock after a busy check."""
-        async with self._mutation_lock:
+        async with self._locked():
             self.leases.require(lease_token)
             self._require_accepting()
             if not self._host.is_ready:
@@ -538,17 +592,19 @@ class RuntimeFacade:
                 raise RuntimeBusyError()
             flush()
             self._maintenance_token = secrets.token_urlsafe(32)
+            self._mutable.clear()
             return self._maintenance_token
 
     async def release_quiesce(self, *, lease_token: str, maintenance_token: str) -> None:
         """Release maintenance only for the matching opaque token."""
-        async with self._mutation_lock:
+        async with self._locked():
             self.leases.require(lease_token)
             if self._maintenance_token is None or not secrets.compare_digest(
                 self._maintenance_token.encode(), maintenance_token.encode()
             ):
                 raise MaintenanceTokenMismatchError()
             self._maintenance_token = None
+            self._mutable.set()
 
     def _require_mutable(self) -> None:
         if self._maintenance_token is not None:
@@ -560,7 +616,7 @@ class RuntimeFacade:
 
     async def begin_shutdown(self) -> None:
         """Atomically reject new commands while allowing persistence to drain."""
-        async with self._mutation_lock:
+        async with self._locked():
             self._accepting_mutations = False
             begin_drain = getattr(self._host, "begin_orderly_shutdown", None)
             if callable(begin_drain):

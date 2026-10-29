@@ -42,7 +42,7 @@ class MaintenanceService:
     async def quiesce(self, lease_token: str) -> str:
         return await self.facade.quiesce(
             lease_token=lease_token,
-            busy=self._busy,
+            busy=self.busy,
             flush=self._flush,
         )
 
@@ -51,7 +51,12 @@ class MaintenanceService:
             lease_token=lease_token, maintenance_token=maintenance_token
         )
 
-    def _busy(self) -> bool:
+    def busy(self) -> bool:
+        """Whether any runtime work is unfinished; the one check for quiesce and project switches.
+
+        Counts agents mid-turn, queued agent messages, writes not yet durable,
+        running Runs and scheduled automatic resumes, and operations.
+        """
         statuses = self.facade.snapshot().agent_statuses.values()
         return (
             any(agent_is_working(status) for status in statuses)
