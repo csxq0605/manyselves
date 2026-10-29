@@ -17,6 +17,10 @@ class AgentInvocationOutcome(BaseModel):
     result: Any = None
     session_id: str | None = None
     error: str | None = None
+    # How the turn failed, when the runtime knows it: {"category": str,
+    # "retryable": bool}.  Lets the Run layer reuse that verdict instead of
+    # guessing it again from the error text.
+    failure: dict[str, Any] | None = None
 
 
 class AgentInvoker(Protocol):

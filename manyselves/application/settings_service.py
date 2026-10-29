@@ -10,6 +10,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..interfaces.types import agent_is_working
 from ..runtime.providers.base import Message
 from ..runtime.providers.factory import ProviderFactory
 from .async_ownership import await_owned
@@ -102,9 +103,7 @@ class SettingsService:
             for loop in loops.values()
             if (queue := getattr(loop, "_message_queue", None)) is not None
         )
-        # A turn that failed has ended: its loop rests in "error" until the
-        # next message, and changing the model or key is how users fix it.
-        return queued or any(status not in {"idle", "error"} for status in statuses)
+        return queued or any(agent_is_working(status) for status in statuses)
 
     def validate(self) -> tuple[bool, list[str], list[str]]:
         config = self.manager.config

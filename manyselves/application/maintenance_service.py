@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..interfaces.types import agent_is_working
 from .conversation_service import ConversationService
 from .python_run_service import PythonRunService
 from .runtime_facade import RuntimeFacade
@@ -41,7 +42,7 @@ class MaintenanceService:
     async def quiesce(self, lease_token: str) -> str:
         return await self.facade.quiesce(
             lease_token=lease_token,
-            busy=self._busy,
+            busy=self.busy,
             flush=self._flush,
         )
 
@@ -50,10 +51,15 @@ class MaintenanceService:
             lease_token=lease_token, maintenance_token=maintenance_token
         )
 
-    def _busy(self) -> bool:
+    def busy(self) -> bool:
+        """Whether any runtime work is unfinished; the one check for quiesce and project switches.
+
+        Counts agents mid-turn, queued agent messages, writes not yet durable,
+        running Runs and scheduled automatic resumes, and operations.
+        """
         statuses = self.facade.snapshot().agent_statuses.values()
         return (
-            any(status != "idle" for status in statuses)
+            any(agent_is_working(status) for status in statuses)
             or self.pending_work
             or self.workflow_runs.active
             or self.python_runs.active

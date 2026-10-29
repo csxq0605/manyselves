@@ -1,7 +1,8 @@
 """Generic Capability, Workflow, Run, Output, Cost, and Event projections."""
 
 import json
-from collections.abc import Awaitable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -28,6 +29,8 @@ from manyselves.runtime.state_store import FileWorkflowStateStore
 
 from .run_progress import RunProgressReader
 from .run_supervisor import RunSupervisor
+
+Admission = Callable[..., AbstractAsyncContextManager[None]]
 
 
 class WorkflowProjectionNotFoundError(LookupError):
@@ -101,8 +104,11 @@ class WorkflowProjectionFacade:
         catalog: CapabilityCatalog | None = None,
         runtime_bindings: RuntimeBindingCatalog | None = None,
         supervise: bool = True,
+        admission: Admission | None = None,
     ) -> None:
         self.workspace = Path(workspace)
+        # Admits every Run start; the runtime facade's run admission in a server.
+        self._admission = admission
         self.runtime_services = runtime_services
         self._catalog = catalog or load_builtin_capability_catalog()
         self._runtime_bindings = runtime_bindings or load_runtime_bindings(
@@ -113,7 +119,9 @@ class WorkflowProjectionFacade:
         self._progress = RunProgressReader(self.workspace)
         self.supervisor: RunSupervisor | None = None
         if supervise:
-            self.supervisor = RunSupervisor(self, _main_notifier(runtime_services))
+            self.supervisor = RunSupervisor(
+                self, _main_notifier(runtime_services, self.admission)
+            )
             self._runtime_bindings.add_settled_listener(self.supervisor.on_settled)
 
     def list_capabilities(self) -> list[dict[str, Any]]:
@@ -193,12 +201,29 @@ class WorkflowProjectionFacade:
         if workflow_id not in capability.entrypoints:
             raise WorkflowNotRunnableError(workflow_id)
         binding = self._runtime_bindings.require(capability.id)
-        accepted = await binding.start_detached(command_id, workflow_id, values)
+        async with self.admission():
+            accepted = await binding.start_detached(command_id, workflow_id, values)
         return self._accepted(accepted, capability.id, workflow_id)
 
     @property
     def active(self) -> bool:
-        return self._runtime_bindings.active
+        """Whether a Run executes now or an automatic resume is scheduled.
+
+        A scheduled resume is part of a Run still in progress: maintenance and
+        project switches wait for it as they wait for a running Run.
+        """
+        return self._runtime_bindings.active or (
+            self.supervisor is not None and self.supervisor.has_pending
+        )
+
+    @asynccontextmanager
+    async def admission(self, *, wait: bool = False) -> AsyncIterator[None]:
+        """Admit one start of runtime work; see ``RuntimeFacade.run_admission``."""
+        if self._admission is None:
+            yield
+            return
+        async with self._admission(wait=wait):
+            yield
 
     async def provide_input(
         self,
@@ -209,12 +234,13 @@ class WorkflowProjectionFacade:
         values: Any,
     ) -> dict[str, Any]:
         binding, projection = self._locate_run(run_id)
-        accepted = await binding.provide_input(
-            command_id,
-            run_id,
-            input_id=input_id,
-            values=values,
-        )
+        async with self.admission():
+            accepted = await binding.provide_input(
+                command_id,
+                run_id,
+                input_id=input_id,
+                values=values,
+            )
         current = projection["run"]
         return self._accepted(
             accepted,
@@ -242,23 +268,24 @@ class WorkflowProjectionFacade:
         and redoes every model turn the current model did not answer.
         """
 
-        memo = FileAgentTurnMemo(self.workspace, run_id)
-        if recompute:
-            self._locate_run(run_id)
-            memo.set_current_model_only(True)
-            try:
-                return await self.rerun(command_id, run_id)
-            except BaseException:
+        async with self.admission(wait=automatic):
+            memo = FileAgentTurnMemo(self.workspace, run_id)
+            if recompute:
+                self._locate_run(run_id)
+                memo.set_current_model_only(True)
+                try:
+                    return await self.rerun(command_id, run_id)
+                except BaseException:
+                    memo.set_current_model_only(False)
+                    raise
+            binding, projection = self._locate_run(run_id)
+            if not automatic:
+                # The user chose to continue; an automatic resume keeps the
+                # choice the user made last.
                 memo.set_current_model_only(False)
-                raise
-        binding, projection = self._locate_run(run_id)
-        if not automatic:
-            # The user chose to continue; an automatic resume keeps the
-            # choice the user made last.
-            memo.set_current_model_only(False)
-        if not automatic and self.supervisor is not None:
-            self.supervisor.reset(run_id)
-        accepted = await binding.resume(command_id, run_id)
+            if not automatic and self.supervisor is not None:
+                self.supervisor.reset(run_id)
+            accepted = await binding.resume(command_id, run_id)
         current = projection["run"]
         return self._accepted(
             accepted,
@@ -282,9 +309,10 @@ class WorkflowProjectionFacade:
         rerun = getattr(binding, "rerun", None)
         if not callable(rerun):
             raise WorkflowNotRunnableError(run_id)
-        if self.supervisor is not None:
-            self.supervisor.reset(run_id)
-        accepted = await rerun(command_id, run_id, values)
+        async with self.admission():
+            if self.supervisor is not None:
+                self.supervisor.reset(run_id)
+            accepted = await rerun(command_id, run_id, values)
         current = projection["run"]
         return self._accepted(
             accepted,
@@ -317,6 +345,9 @@ class WorkflowProjectionFacade:
         """Request a stop of one Run's live execution; None when it is idle."""
 
         binding, _projection = self._locate_run(run_id)
+        if self.supervisor is not None:
+            # A stop also covers an automatic resume scheduled after a failure.
+            self.supervisor.stopped(run_id)
         return binding.cancel(run_id)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
@@ -428,8 +459,12 @@ class WorkflowProjectionFacade:
         }
 
 
-def _main_notifier(runtime_services: Any):
-    """Send run notices to Main as system messages, when a bus is available."""
+def _main_notifier(runtime_services: Any, admission: Callable[..., Any]):
+    """Send run notices to Main as system messages, when a bus is available.
+
+    A notice starts a Main turn, so it is admitted like a Run start; during
+    maintenance it waits until maintenance ends.
+    """
 
     bus = getattr(runtime_services, "bus", None)
     if bus is None:
@@ -438,6 +473,9 @@ def _main_notifier(runtime_services: Any):
     async def notify(text: str) -> None:
         from manyselves.interfaces.types import UserMessage
 
-        await bus.publish(UserMessage(content=text, agent_type="main", source="system"))
+        async with admission(wait=True):
+            await bus.publish(
+                UserMessage(content=text, agent_type="main", source="system")
+            )
 
     return notify

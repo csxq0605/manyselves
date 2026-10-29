@@ -75,6 +75,24 @@ class AgentStatus(str, Enum):
     DEBUG_MODE = "debug_mode"
 
 
+# A loop in one of these states has no turn in progress.  "error" means the
+# last turn failed and has ended; the loop rests there until the next message.
+_RESTING_STATUSES = frozenset({AgentStatus.IDLE.value, AgentStatus.ERROR.value})
+
+
+def agent_is_working(status: "AgentStatus | str | None") -> bool:
+    """Whether an Agent loop with this status has a turn in progress.
+
+    The single definition every "is the runtime busy" check uses, so a failed
+    turn never keeps blocking settings, conversations, projects or backups.
+    """
+
+    if status is None:
+        return False
+    value = status.value if isinstance(status, AgentStatus) else str(status)
+    return value not in _RESTING_STATUSES
+
+
 class TaskStatus(str, Enum):
     """Task lifecycle status."""
 

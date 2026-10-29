@@ -55,6 +55,11 @@ from manyselves.kernel.workflow import (
 class RuntimeExecutionError(RuntimeError):
     """Raised when a resolved action cannot execute in its runtime context."""
 
+    def __init__(self, *args: object, failure: Mapping[str, Any] | None = None) -> None:
+        super().__init__(*args)
+        # How the action failed, when the adapter reported it.
+        self.failure = dict(failure) if failure else None
+
 
 class PlanToolFactory(Protocol):
     """Build one runtime Tool adapter from a Run-frozen definition."""
@@ -575,7 +580,8 @@ class InvokeAgentExecutor:
             raise RuntimeExecutionError(f"agent adapter returned an invalid outcome: {agent.id}")
         if outcome.status != "ok":
             raise RuntimeExecutionError(
-                outcome.error or f"agent {agent.id} returned {outcome.status}"
+                outcome.error or f"agent {agent.id} returned {outcome.status}",
+                failure=outcome.failure,
             )
         validated_output = output_contract.validate(outcome.result)
         if outcome.session_id is not None:

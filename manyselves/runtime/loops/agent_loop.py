@@ -37,6 +37,7 @@ from ...interfaces.types import (
     TaskUpdateMessage,
     ToolCallMessage,
     UserMessage,
+    agent_is_working,
     normalize_agent_id,
 )
 from ...interfaces.types import (
@@ -1541,7 +1542,7 @@ class AgentLoop:
         :meth:`begin_typed_task` to append a task boundary/delta.
         """
 
-        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+        if agent_is_working(self._status):
             raise RuntimeError("cannot change task context while the Agent is active")
 
     def begin_typed_task(self, context: Mapping[str, Any]) -> bool:
@@ -1552,7 +1553,7 @@ class AgentLoop:
         a delta.  The method returns ``True`` for the first task in a session.
         """
 
-        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+        if agent_is_working(self._status):
             raise RuntimeError("cannot change task context while the Agent is active")
         normalized = {
             str(key): value
@@ -1654,7 +1655,7 @@ class AgentLoop:
     def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
         """Replace the retained conversation between turns (task boundaries stay)."""
 
-        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+        if agent_is_working(self._status):
             raise RuntimeError("cannot replace conversation while the Agent is active")
         self._conversation_history = list(messages)
 
@@ -1667,7 +1668,7 @@ class AgentLoop:
     ) -> None:
         """Restore bounded restart state after a process restart."""
 
-        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+        if agent_is_working(self._status):
             raise RuntimeError("cannot restore conversation while the Agent is active")
 
         restored: list[LLMMessage] = []
@@ -4644,7 +4645,7 @@ class AgentLoop:
             status: New agent status.
         """
         self._status = status
-        if status in {AgentStatus.IDLE, AgentStatus.ERROR}:
+        if not agent_is_working(status):
             self._turn_complete_event.set()
         else:
             self._turn_complete_event.clear()

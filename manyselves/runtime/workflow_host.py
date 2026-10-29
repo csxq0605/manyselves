@@ -229,7 +229,12 @@ class WorkflowRuntimeHost:
                 failed = self._kernel.transition(
                     plan,
                     state,
-                    ActionFailed(action.id, str(exc), failure_result),
+                    ActionFailed(
+                        action.id,
+                        str(exc),
+                        failure_result,
+                        getattr(exc, "failure", None),
+                    ),
                 )
                 self._state_store.save(failed.state)
                 self._emit("action.failed", failed.state, action_id=action.id, error=str(exc))
@@ -797,7 +802,12 @@ class WorkflowRuntimeHost:
                 failed = self._kernel.transition(
                     plan,
                     state,
-                    ActionFailed(action.id, str(exc), failure_result),
+                    ActionFailed(
+                        action.id,
+                        str(exc),
+                        failure_result,
+                        getattr(exc, "failure", None),
+                    ),
                 )
                 self._emit(
                     "action.failed",

@@ -34,6 +34,7 @@ from .loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
     AGENT_TURN_CONTINUATION_REQUIRED,
 )
+from .typed_agent_turn import turn_failure
 
 PromptBuilder = Callable[[RecoveryEventKind], str]
 ResultDecoder = Callable[[str], Any]
@@ -180,6 +181,7 @@ async def execute_typed_recovery(
             status="incomplete",
             session_id=session.session_id,
             error=reason or "Agent turn ended without a typed result",
+            failure=turn_failure(outcome.message) if outcome.kind == "error" else None,
         )
 
     async def reuse_result(

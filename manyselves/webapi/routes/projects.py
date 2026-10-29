@@ -179,11 +179,7 @@ async def activate_project(
     try:
         def resolve_workspace():
             nonlocal previous_state, target_workspace
-            if (
-                state.maintenance_service.pending_work
-                or state.workflow_projection.active
-                or state.python_run_service.active
-            ):
+            if state.maintenance_service.busy():
                 raise RuntimeBusyError()
             workspace = registry.project_root(project_id)
             previous_state = (registry.active_project_id, settings.initial_project_id)
