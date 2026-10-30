@@ -4662,12 +4662,38 @@ class AgentLoop:
             if fitted is not None:
                 return fitted
 
-        # A preview only makes sense where the stored copy can be read back.
-        # A workflow turn has only its task's tools, so it gets the whole
-        # result: cutting it would lose the rest for good, including the
-        # instruction at the end of a correction.
-        if self.tools.get("open_tool_result") is None:
+        # A workflow turn has only its task's tools, so it cannot read back a
+        # stored copy.  A correction is about as long as the rejected call and
+        # ends with what to do next, so such a turn gets it whole; any other
+        # long result is cut to a preview that says the rest is out of reach.
+        readable = self.tools.get("open_tool_result") is not None
+        if (
+            not readable
+            and isinstance(result, dict)
+            and result.get("status") == "correction_required"
+        ):
             return rendered
+        preview_chars = max(0, max_chars - 1024)
+        if not readable:
+            while True:
+                preview = rendered[:preview_chars]
+                encoded = json.dumps(
+                    {
+                        "truncated": True,
+                        "tool": tool_name,
+                        "original_chars": len(rendered),
+                        "preview_chars": len(preview),
+                        "instruction": (
+                            "结果过长，只显示开头部分，其余内容本回合读不到；"
+                            "需要时换用更具体的参数重新调用该工具。"
+                        ),
+                        "preview": preview,
+                    },
+                    ensure_ascii=False,
+                )
+                if len(encoded) <= max_chars or preview_chars == 0:
+                    return encoded
+                preview_chars = max(0, preview_chars - (len(encoded) - max_chars))
 
         safe_agent = "".join(
             char if char.isalnum() or char in "-_." else "_"
@@ -4682,7 +4708,6 @@ class AgentLoop:
                 "tool-result", f"{safe_agent}:{safe_call}", rendered
             )
         )
-        preview_chars = max(0, max_chars - 1024)
         while True:
             preview = rendered[:preview_chars]
             compact = {
