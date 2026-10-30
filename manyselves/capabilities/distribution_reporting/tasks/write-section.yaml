@@ -1,5 +1,5 @@
 id: write-section
-version: 1.15.0
+version: 1.16.0
 description: Write one submodule's prose from the settled judgment rows, in a writer conversation of its own
 agent: report-consultant
 objective: 判断已经定下来。你是这几个小节的撰稿人，现在按专家版的写法写下面这个小节的正文。这组小节的资料（程序统计、篇幅参考、本模块的专家版方法、所引事实）在第一节消息的开头，后面各节沿用。
@@ -38,5 +38,6 @@ constraints:
 - 不写小节编号标题，不写 E-、K-、R-、P- 编号（占位符除外）。
 - submodule_id 填本小节编号。
 tools: []
+needs_history: true
 attention_budget_tokens: 200000
 recovery: typed-turn-recovery

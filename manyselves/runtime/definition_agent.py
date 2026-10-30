@@ -11,8 +11,9 @@ action into one typed turn on a Provider-backed AgentLoop:
   and tool-slice continuations, and no-progress stops;
 - a completed result for the same conversation, task and input is reused on a
   Same-run resume, and Capability Tool results are reused per their definition;
-- each conversation keeps one live session, its full history is saved after
-  every invocation, and a forked conversation starts from its source's history.
+- each conversation keeps one live session, its history (compacted, when the
+  working memory overflowed) is saved after every invocation, and a forked
+  conversation starts from its source's history.
 
 Nothing here knows a Capability, a role, or a domain field.
 """
@@ -52,6 +53,7 @@ from .conversation_history import (
     FileConversationHistoryStore,
     drop_rejected_attempts,
     serialize_message,
+    turn_start,
 )
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
@@ -67,6 +69,8 @@ _CORRECTION_TAG = "submission_correction"
 _MAX_TOKENS_TAG = "max_tokens_continuation"
 _TOOL_SLICE_TAG = "tool_slice_continuation"
 _INTERNAL_TAGS = (_CORRECTION_TAG, _MAX_TOKENS_TAG, _TOOL_SLICE_TAG)
+# The marker AgentLoop puts on the handoff summary that compaction writes.
+_HANDOFF_SUMMARY_MARKER = "<context_handoff_summary>"
 
 
 def _default_loop_builder(**kwargs: Any) -> AgentSessionLoop:
@@ -321,6 +325,11 @@ class DefinitionAgentInvoker:
                 {
                     "task_id": f"{task_id}:{task.id}",
                     "run_id": self.run_id,
+                    # The loop carries the objective and constraints into
+                    # every handoff summary, so they survive a compaction
+                    # that evicts this turn's task message.
+                    "objective": task.objective.strip(),
+                    "constraints": list(task.constraints),
                     "input_contract": task.input_contract,
                     "output_contract": task.output_contract,
                 }
@@ -352,6 +361,7 @@ class DefinitionAgentInvoker:
         def decode(result_ref: str) -> Any:
             return self._decode(result_ref, output_contract)
 
+        observer = _ProgressObserver(session.loop) if recovery_policy is not None else None
         try:
             if recovery_policy is None:
                 outcome = await turn.dispatch(session, request, terminals=(terminal,))
@@ -370,7 +380,7 @@ class DefinitionAgentInvoker:
                     ),
                     result_decoder=decode,
                     recovery=recovery,
-                    progress_observer=_ProgressObserver(session.loop),
+                    progress_observer=observer,
                 )
                 mapped = (
                     recovered
@@ -380,8 +390,10 @@ class DefinitionAgentInvoker:
                     )
                 )
             if mapped.status == "ok":
-                self._settle(session.loop, len(before))
+                self._settle(session.loop, prompt)
         finally:
+            if observer is not None:
+                observer.close()
             self._save_history(conversation_id, session.loop)
         if mapped.status == "ok" and not task.tools:
             self._remember(
@@ -611,7 +623,7 @@ class DefinitionAgentInvoker:
         return None
 
     @staticmethod
-    def _settle(loop: AgentSessionLoop, start: int) -> None:
+    def _settle(loop: AgentSessionLoop, request: str) -> None:
         """Keep only the accepted answer of the turn that just finished."""
 
         messages = getattr(loop, "conversation_messages", None)
@@ -619,6 +631,11 @@ class DefinitionAgentInvoker:
         if not callable(messages) or not callable(replace):
             return
         current = messages()
+        start = turn_start(current, request)
+        if start is None:
+            # Compaction evicted the turn's request.  What is left of the
+            # turn cannot be told from earlier turns, so nothing is dropped.
+            return
         settled = drop_rejected_attempts(current, start)
         if len(settled) != len(current):
             replace(settled)
@@ -779,10 +796,25 @@ def _generic(agent: AgentDefinition, task: TaskDefinition) -> bool:
 
 
 class _ProgressObserver:
-    """Report progress when the conversation gained new model or tool events."""
+    """Report progress when the conversation gained new model or tool events.
+
+    Compaction can evict events made since the last look before the observer
+    sees them, so the loop hands the evicted messages over as they go.
+    """
 
     def __init__(self, loop: AgentSessionLoop) -> None:
+        self._loop = loop
         self._seen = _event_digests(loop)
+        self._evicted: set[str] = set()
+        if hasattr(loop, "on_evicted"):
+            loop.on_evicted = self._note_evicted
+
+    def _note_evicted(self, messages: list[Any]) -> None:
+        self._evicted |= _message_digests(messages)
+
+    def close(self) -> None:
+        if getattr(self._loop, "on_evicted", None) == self._note_evicted:
+            self._loop.on_evicted = None
 
     async def __call__(
         self,
@@ -790,7 +822,8 @@ class _ProgressObserver:
         _event_kind: RecoveryEventKind,
         _detail: dict[str, Any],
     ) -> Literal["progressed", "no_progress"]:
-        current = _event_digests(loop)
+        current = _event_digests(loop) | self._evicted
+        self._evicted = set()
         progressed = bool(current - self._seen)
         self._seen |= current
         return "progressed" if progressed else "no_progress"
@@ -798,11 +831,18 @@ class _ProgressObserver:
 
 def _event_digests(loop: AgentSessionLoop) -> set[str]:
     messages = getattr(loop, "conversation_messages", None)
+    return _message_digests(messages() if callable(messages) else ())
+
+
+def _message_digests(messages: Any) -> set[str]:
     digests: set[str] = set()
-    for message in messages() if callable(messages) else ():
+    for message in messages:
         content = str(getattr(message, "content", "") or "")
-        if getattr(message, "role", "") == "user" and any(
-            f"<{tag}>" in content for tag in _INTERNAL_TAGS
+        if getattr(message, "role", "") == "user" and (
+            any(f"<{tag}>" in content for tag in _INTERNAL_TAGS)
+            # A handoff summary is written by compaction, not by the model or
+            # a tool, so a fresh one does not mean the turn moved forward.
+            or _HANDOFF_SUMMARY_MARKER in content
         ):
             continue
         calls = [

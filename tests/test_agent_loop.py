@@ -721,6 +721,36 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert not (workspace / ".manyselves/tool-results").exists()
 
 
+def test_a_loop_without_a_reader_gets_a_whole_correction(agent_loop):
+    # A workflow turn has only its task's tools; open_tool_result is not one.
+    # A correction ends with what to do next, so it is not cut.
+    agent_loop.tools = ToolRegistry()
+    payload = {
+        "status": "correction_required",
+        "error": "evidence-" + ("x" * 20000),
+        "instruction": "resubmit only the failing part",
+    }
+
+    result = agent_loop._format_tool_result(payload, tool_name="submit_result")
+
+    assert json.loads(result) == payload
+
+
+def test_a_loop_without_a_reader_gets_a_bounded_preview_of_other_results(agent_loop):
+    agent_loop.tools = ToolRegistry()
+    payload = {"status": "ok", "content": "evidence-" + ("x" * 20000)}
+
+    result = agent_loop._format_tool_result(payload, tool_name="search_document")
+
+    compact = json.loads(result)
+    assert len(result) <= agent_loop.config.max_tool_result_chars
+    assert compact["truncated"] is True
+    assert compact["preview"].startswith('{"status": "ok"')
+    assert "本回合读不到" in compact["instruction"]
+    assert "open_tool_result" not in result
+    assert "full_result_ref" not in compact and "next_offset" not in compact
+
+
 def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_loop):
     """Escaping overhead must not create an endless chain of tool-result refs."""
     text = ('数值="11.3"\n' * 1600) + "TAIL"
@@ -917,6 +947,82 @@ async def test_compaction_keeps_task_refs_independent_of_summary_model(agent_loo
     assert payload["source"] == ("model" if strategy == "model_summary" else "structured_handoff")
     restored = agent_loop.durable_handoff_summary()
     assert ref in restored["critical_refs"]
+
+
+@pytest.mark.asyncio
+async def test_structured_handoff_keeps_every_declared_constraint(agent_loop):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy="structured_handoff",
+    )
+    declared = [f"declared {index:02d}" for index in range(24)]
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": declared})
+    earlier = {
+        "progress": [], "decisions": [], "remaining_work": [],
+        "constraints": [f"earlier {index:02d}" for index in range(15)],
+    }
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(
+            role="user",
+            content=f"<context_handoff_summary>\n{json.dumps(earlier)}\n</context_handoff_summary>",
+        ),
+        LLMMessage(role="user", content="old work " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ]
+
+    compacted = await agent_loop._compact_working_memory_async(messages)
+
+    payload = json.loads(compacted[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["constraints"][-24:] == declared
+    assert payload["constraints"][:-24] == earlier["constraints"][-12:]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["model_summary", "structured_handoff"])
+async def test_a_summary_does_not_carry_an_earlier_tasks_constraints(agent_loop, strategy):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy=strategy,
+    )
+    agent_loop._request_model_handoff_summary = AsyncMock(return_value={
+        "progress": [], "decisions": [], "constraints": [], "remaining_work": [],
+        "critical_refs": [], "source": "model",
+    })
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": ["leave relations empty"]})
+    first = await agent_loop._compact_working_memory_async([
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="judge " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ])
+    agent_loop.begin_typed_task({"task_id": "relate", "constraints": ["fill in relations"]})
+    second = await agent_loop._compact_working_memory_async([
+        *first,
+        LLMMessage(role="user", content="relate " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ])
+
+    payload = json.loads(second[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["active_task"]["task_id"] == "relate"
+    assert payload["constraints"] == ["fill in relations"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_compaction_keeps_the_task_constraints_whole(agent_loop):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy="structured_handoff",
+    )
+    declared = [f"declared {index:02d}" for index in range(24)]
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": declared})
+    messages = [LLMMessage(role="system", content="system")]
+    for _ in range(2):
+        messages = await agent_loop._compact_working_memory_async([
+            *messages,
+            LLMMessage(role="user", content="old work " * 4000),
+            LLMMessage(role="user", content="continue"),
+        ])
+
+    payload = json.loads(messages[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["sequence"] == 2
+    assert payload["constraints"] == declared
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,10 @@
 id: distribution-photo-reading-lane-8
-version: 1.0.0
+version: 1.1.0
 description: Photo reading lane 8, one photo per reader turn
 tasks:
 - photo-reading
 recovery:
-- current-reporting-recovery
+- typed-turn-recovery
 input_contract: reporting_tool_input
 output_contract: photo_reading_list
 max_iterations: 5000

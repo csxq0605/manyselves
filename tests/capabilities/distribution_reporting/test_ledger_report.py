@@ -604,6 +604,12 @@ async def test_ledger_report_judges_reviews_writes_once_and_delivers(tmp_path: P
     assert not writers["2.4"].restored
     assert '<context name="pack">' in writers["2.4"].received[0].content
     assert '<context name="pack">' not in writers["2.4"].received[1].content
+    # Later sections read that material from the first section's turn, so a
+    # writer's turn over its budget must not start afresh without it.
+    from manyselves.kernel.definitions import DefinitionKind
+
+    _capability, registry = load_capability(CAPABILITY_FILE)
+    assert registry.require(DefinitionKind.TASK, "write-section").needs_history
     briefs = [_input_of(m.content) for m in writers["2.4"].received if _task(m.content) == "write-section"]
     # No relation is left, so no story line joins the two sections.
     assert [b for b in briefs if b.get("story_lines")] == []
