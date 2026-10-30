@@ -68,7 +68,9 @@ limits the configured model declares. Request sizes come from them:
 - every Agent request may use `max_output_tokens`. For a thinking model,
   thinking and text share this limit;
 - history is compacted only when it would no longer fit `context_window`
-  next to that output;
+  next to that output. Compaction replaces the older complete exchanges with
+  one handoff summary in the conversation itself, so they survive only as
+  that summary;
 - a Capability splits a retained task input into independent parts only when
   that input alone would not fit.
 
