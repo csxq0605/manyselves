@@ -1655,11 +1655,21 @@ class AgentLoop:
         return list(self._conversation_history)
 
     def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
-        """Replace the retained conversation between turns (task boundaries stay)."""
+        """Replace the retained conversation between turns (task boundaries stay).
+
+        The next request sees exactly ``messages``: a handoff summary that is
+        not among them is dropped too, or ``_build_messages`` would put an
+        earlier conversation's summary back in front of them.
+        """
 
         if agent_is_working(self._status):
             raise RuntimeError("cannot replace conversation while the Agent is active")
         self._conversation_history = list(messages)
+        if not any(
+            _HANDOFF_SUMMARY_MARKER in str(message.content or "")
+            for message in self._conversation_history
+        ):
+            self._handoff_summary = None
 
     def restore_conversation(
         self,

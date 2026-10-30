@@ -24,6 +24,7 @@ from manyselves.runtime.providers.base import LLMStreamChunk, LLMToolCall
 from manyselves.runtime.providers.base import Message as LLMMessage
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
+from manyselves.runtime.tools.registry import ToolRegistry
 from tests.runtime.test_definition_agent import (
     POLICY,
     RUN_ID,
@@ -212,6 +213,32 @@ async def test_a_rejected_first_submission_neither_resummarizes_nor_loses_the_ta
     ]
 
 
+@pytest.mark.asyncio
+async def test_a_fresh_conversation_does_not_carry_the_earlier_summary(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(
+        tmp_path, [{"answer": "one"}, {"answer": "two"}, {"answer": "three"}]
+    )
+
+    async def steps():
+        await harness.ask("first", "甲" * 9000)
+        await harness.ask("second", "第二问")
+        return await harness.ask("third", "第三问", budget=50)
+
+    outcome = await harness.run(steps)
+
+    assert outcome.result == {"answer": "three"}
+    notes = (tmp_path / f"Work/runs/{RUN_ID}/budget-notes.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"fresh_conversation"' in notes
+    sent = harness.provider.task_requests[-1]
+    assert not any(SUMMARY in (m.content or "") for m in sent)
+    assert [m.role for m in sent[1:2]] == ["user"]
+    assert "第三问" in sent[1].content
+
+
 def test_the_turn_is_found_by_its_request_after_compaction_moved_it() -> None:
     def call(call_id: str) -> dict[str, Any]:
         return {"id": call_id, "name": "submit_result", "arguments": {}}
@@ -233,3 +260,28 @@ def test_the_turn_is_found_by_its_request_after_compaction_moved_it() -> None:
     assert [m["content"] for m in kept] == [history[0]["content"], task, "", "ok"]
     # A request that compaction evicted is not guessed at.
     assert turn_start(history[2:], task) is None
+
+
+def test_replacing_the_conversation_drops_a_summary_it_does_not_contain(
+    tmp_path: Path,
+) -> None:
+    loop = AgentLoop(
+        agent_type="test",
+        workspace=tmp_path,
+        tools=ToolRegistry(),
+        bus=MessageBus(),
+        config=AgentDefaults(),
+        llm_provider=Provider([]),
+        system_prompt="system",
+    )
+    summary = {"progress": ["earlier work"], "sequence": 1}
+    loop.restore_conversation([], handoff_summary=summary)
+
+    kept = [LLMMessage(role="user", content=f"{SUMMARY}\n{{}}\n</context_handoff_summary>")]
+    loop.replace_conversation(kept)
+    assert loop.handoff_summary == summary
+
+    loop.replace_conversation([])
+    assert loop.handoff_summary is None
+    messages = asyncio.run(loop._build_messages())
+    assert [m.role for m in messages] == ["system"]
