@@ -721,6 +721,21 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert not (workspace / ".manyselves/tool-results").exists()
 
 
+def test_a_large_result_names_no_reader_the_loop_does_not_have(agent_loop):
+    # A workflow turn has only its task's tools; open_tool_result is not one.
+    agent_loop.tools = ToolRegistry()
+    payload = {"status": "ok", "content": "evidence-" + ("x" * 20000)}
+
+    result = agent_loop._format_tool_result(payload, tool_name="search_document")
+
+    compact = json.loads(result)
+    assert len(result) <= agent_loop.config.max_tool_result_chars
+    assert compact["truncated"] is True
+    assert compact["preview"].startswith('{"status": "ok"')
+    assert "open_tool_result" not in result
+    assert "full_result_ref" not in compact and "next_offset" not in compact
+
+
 def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_loop):
     """Escaping overhead must not create an endless chain of tool-result refs."""
     text = ('数值="11.3"\n' * 1600) + "TAIL"
