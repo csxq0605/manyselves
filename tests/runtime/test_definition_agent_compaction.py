@@ -80,10 +80,47 @@ class Provider:
         )
 
 
+class TruncatingProvider(Provider):
+    """Answer every task request with the same output cut off at max_tokens.
+
+    After ``limit`` requests it submits, so a loop that never stops shows up
+    as a wrong result instead of a hang.
+    """
+
+    def __init__(self, partial: str, limit: int = 6) -> None:
+        super().__init__([{"answer": "gave up"}])
+        self.partial = partial
+        self.limit = limit
+
+    async def chat_stream(self, messages, *args, **kwargs):
+        if str(messages[0].content or "").startswith(SUMMARY_WRITER):
+            async for chunk in super().chat_stream(messages, *args, **kwargs):
+                yield chunk
+            return
+        if self.calls >= self.limit:
+            async for chunk in super().chat_stream(messages, *args, **kwargs):
+                yield chunk
+            return
+        self.task_requests.append(list(messages))
+        self.calls += 1
+        yield LLMStreamChunk(delta=self.partial)
+        yield LLMStreamChunk(
+            done=True,
+            usage={"input_tokens": 1, "output_tokens": 1},
+            stop_reason="max_tokens",
+        )
+
+
 class Harness:
-    def __init__(self, tmp_path: Path, answers: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        answers: list[dict[str, Any]],
+        provider: Provider | None = None,
+        strategy: str = "model_summary",
+    ) -> None:
         self.bus = MessageBus()
-        self.provider = Provider(answers)
+        self.provider = provider or Provider(answers)
         self.loops: list[AgentLoop] = []
         self.registry, self.contracts = _definitions()
         tools = CapabilityToolAdapterFactory(
@@ -100,7 +137,10 @@ class Harness:
                 workspace=tmp_path,
                 bus=self.bus,
                 active_provider=self.provider,
-                agent_defaults=AgentDefaults(working_memory_tokens=4096),
+                agent_defaults=AgentDefaults(
+                    working_memory_tokens=4096,
+                    context_compaction_strategy=strategy,
+                ),
                 global_knowledge_root=None,
             ),
             workflow_id="neutral",
@@ -237,6 +277,24 @@ async def test_a_fresh_conversation_does_not_carry_the_earlier_summary(
     assert not any(SUMMARY in (m.content or "") for m in sent)
     assert [m.role for m in sent[1:2]] == ["user"]
     assert "第三问" in sent[1].content
+
+
+@pytest.mark.asyncio
+async def test_a_new_summary_is_not_progress_for_a_repeated_truncated_output(
+    tmp_path: Path,
+) -> None:
+    # Each truncated output pushes the history over the working-memory
+    # threshold, so every continuation request is compacted again.  The
+    # summary is written by the runtime, so it must not count as the model
+    # moving forward.
+    provider = TruncatingProvider("乙" * 5500)
+    harness = Harness(tmp_path, [], provider=provider)
+
+    outcome = await harness.run(lambda: harness.ask("only", "问题"))
+
+    assert outcome.status == "incomplete"
+    assert "no_progress after max_tokens" in (outcome.error or "")
+    assert len(provider.task_requests) == 2
 
 
 def test_the_turn_is_found_by_its_request_after_compaction_moved_it() -> None:

@@ -69,6 +69,8 @@ _CORRECTION_TAG = "submission_correction"
 _MAX_TOKENS_TAG = "max_tokens_continuation"
 _TOOL_SLICE_TAG = "tool_slice_continuation"
 _INTERNAL_TAGS = (_CORRECTION_TAG, _MAX_TOKENS_TAG, _TOOL_SLICE_TAG)
+# The marker AgentLoop puts on the handoff summary that compaction writes.
+_HANDOFF_SUMMARY_MARKER = "<context_handoff_summary>"
 
 
 def _default_loop_builder(**kwargs: Any) -> AgentSessionLoop:
@@ -808,8 +810,11 @@ def _event_digests(loop: AgentSessionLoop) -> set[str]:
     digests: set[str] = set()
     for message in messages() if callable(messages) else ():
         content = str(getattr(message, "content", "") or "")
-        if getattr(message, "role", "") == "user" and any(
-            f"<{tag}>" in content for tag in _INTERNAL_TAGS
+        if getattr(message, "role", "") == "user" and (
+            any(f"<{tag}>" in content for tag in _INTERNAL_TAGS)
+            # A handoff summary is written by compaction, not by the model or
+            # a tool, so a fresh one does not mean the turn moved forward.
+            or _HANDOFF_SUMMARY_MARKER in content
         ):
             continue
         calls = [
