@@ -111,6 +111,31 @@ class TruncatingProvider(Provider):
         )
 
 
+class LookupProvider(Provider):
+    """Call lookup with each scripted page in turn, then submit."""
+
+    def __init__(self, pages: list[str]) -> None:
+        super().__init__([{"answer": "done"}])
+        self.pages = list(pages)
+
+    async def chat_stream(self, messages, *args, **kwargs):
+        if str(messages[0].content or "").startswith(SUMMARY_WRITER) or not self.pages:
+            async for chunk in super().chat_stream(messages, *args, **kwargs):
+                yield chunk
+            return
+        self.task_requests.append(list(messages))
+        self.calls += 1
+        call = LLMToolCall(
+            id=f"call-{self.calls}", name="lookup", arguments={"text": self.pages.pop(0)}
+        )
+        yield LLMStreamChunk(
+            tool_calls=[call],
+            done=True,
+            usage={"input_tokens": 1, "output_tokens": 1},
+            stop_reason="tool_use",
+        )
+
+
 class Harness:
     def __init__(
         self,
@@ -118,14 +143,18 @@ class Harness:
         answers: list[dict[str, Any]],
         provider: Provider | None = None,
         strategy: str = "model_summary",
+        max_tool_iterations: int = 200,
     ) -> None:
         self.bus = MessageBus()
         self.provider = provider or Provider(answers)
         self.loops: list[AgentLoop] = []
         self.registry, self.contracts = _definitions()
-        tools = CapabilityToolAdapterFactory(
-            "neutral", {"lookup": lambda arguments: arguments}, self.contracts
-        )
+
+        def lookup(arguments: dict[str, Any]) -> dict[str, Any]:
+            # Each page is long enough that a few of them fill working memory.
+            return {"answer": f"{arguments['text']}:" + "丙" * 3000}
+
+        tools = CapabilityToolAdapterFactory("neutral", {"lookup": lookup}, self.contracts)
 
         def build(**kwargs: Any) -> AgentLoop:
             loop = AgentLoop(**kwargs)
@@ -140,6 +169,7 @@ class Harness:
                 agent_defaults=AgentDefaults(
                     working_memory_tokens=4096,
                     context_compaction_strategy=strategy,
+                    max_tool_iterations=max_tool_iterations,
                 ),
                 global_knowledge_root=None,
             ),
@@ -153,10 +183,17 @@ class Harness:
         )
         self.conversation = _conversation("a")
 
-    async def ask(self, task_id: str, text: str, *, budget: int | None = None):
+    async def ask(
+        self,
+        task_id: str,
+        text: str,
+        *,
+        budget: int | None = None,
+        tools: list[str] | None = None,
+    ):
         return await self.invoker.invoke_with_recovery(
             self.registry.require("agent", "answerer"),
-            _task(budget=budget),
+            _task(budget=budget, tools=tools),
             {"text": text},
             self.conversation,
             task_id=task_id,
@@ -320,9 +357,41 @@ async def test_a_new_summary_is_not_progress_for_a_repeated_truncated_output(
 
     outcome = await harness.run(lambda: harness.ask("only", "问题"))
 
+    assert provider.summary_requests >= 1
+    assert any(SUMMARY in (m.content or "") for m in provider.task_requests[1])
     assert outcome.status == "incomplete"
     assert "no_progress after max_tokens" in (outcome.error or "")
     assert len(provider.task_requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_new_tool_result_evicted_within_a_slice_is_progress(
+    tmp_path: Path,
+) -> None:
+    # Slices of two tool rounds; the call that hits a slice boundary is not
+    # run.  The second slice reads a new page (p3) and then re-reads p2;
+    # compaction evicts the p3 round before the slice ends, so the history
+    # alone shows only a repeat of the first slice.
+    provider = LookupProvider(["p1", "p2", "p3", "p3", "p2", "p4"])
+    harness = Harness(tmp_path, [], provider=provider, max_tool_iterations=2)
+
+    outcome = await harness.run(lambda: harness.ask("only", "问题", tools=["lookup"]))
+
+    assert harness.provider.summary_requests >= 1
+    assert outcome.status == "ok"
+    assert outcome.result == {"answer": "done"}
+
+
+@pytest.mark.asyncio
+async def test_a_slice_that_only_rereads_the_same_page_stops(tmp_path: Path) -> None:
+    provider = LookupProvider(["p1"] * 10)
+    harness = Harness(tmp_path, [], provider=provider, max_tool_iterations=2)
+
+    outcome = await harness.run(lambda: harness.ask("only", "问题", tools=["lookup"]))
+
+    assert harness.provider.summary_requests >= 1
+    assert outcome.status == "incomplete"
+    assert "no_progress after tool_slice_boundary" in (outcome.error or "")
 
 
 def test_the_turn_is_found_by_its_request_after_compaction_moved_it() -> None:

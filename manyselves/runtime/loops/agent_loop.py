@@ -1493,6 +1493,10 @@ class AgentLoop:
         self._handoff_summary: dict[str, Any] | None = None
         self.persist_handoff_summary = True
         self._compaction_sequence = 0
+        # Called with the messages a compaction drops from the history, so an
+        # observer of the conversation still sees events made and evicted
+        # between two of its looks.
+        self.on_evicted: Callable[[list[LLMMessage]], None] | None = None
         self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
@@ -4193,6 +4197,7 @@ class AgentLoop:
             None,
         )
         if summary_message is None:
+            self._report_evicted(evicted)
             return baseline
         payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
         if self.config.context_compaction_strategy == "structured_handoff":
@@ -4245,7 +4250,12 @@ class AgentLoop:
             self._working_memory_limit(), target_tokens, payload["source"],
         )
         self._persist_handoff_summary(payload)
+        self._report_evicted(evicted)
         return baseline
+
+    def _report_evicted(self, evicted: list[LLMMessage]) -> None:
+        if self.on_evicted is not None and evicted:
+            self.on_evicted(list(evicted))
 
     def _persist_handoff_summary(self, payload: Mapping[str, Any]) -> None:
         """Persist one summary for crash/restart restoration when run-scoped."""

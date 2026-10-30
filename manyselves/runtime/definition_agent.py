@@ -361,6 +361,7 @@ class DefinitionAgentInvoker:
         def decode(result_ref: str) -> Any:
             return self._decode(result_ref, output_contract)
 
+        observer = _ProgressObserver(session.loop) if recovery_policy is not None else None
         try:
             if recovery_policy is None:
                 outcome = await turn.dispatch(session, request, terminals=(terminal,))
@@ -379,7 +380,7 @@ class DefinitionAgentInvoker:
                     ),
                     result_decoder=decode,
                     recovery=recovery,
-                    progress_observer=_ProgressObserver(session.loop),
+                    progress_observer=observer,
                 )
                 mapped = (
                     recovered
@@ -391,6 +392,8 @@ class DefinitionAgentInvoker:
             if mapped.status == "ok":
                 self._settle(session.loop, prompt)
         finally:
+            if observer is not None:
+                observer.close()
             self._save_history(conversation_id, session.loop)
         if mapped.status == "ok" and not task.tools:
             self._remember(
@@ -793,10 +796,25 @@ def _generic(agent: AgentDefinition, task: TaskDefinition) -> bool:
 
 
 class _ProgressObserver:
-    """Report progress when the conversation gained new model or tool events."""
+    """Report progress when the conversation gained new model or tool events.
+
+    Compaction can evict events made since the last look before the observer
+    sees them, so the loop hands the evicted messages over as they go.
+    """
 
     def __init__(self, loop: AgentSessionLoop) -> None:
+        self._loop = loop
         self._seen = _event_digests(loop)
+        self._evicted: set[str] = set()
+        if hasattr(loop, "on_evicted"):
+            loop.on_evicted = self._note_evicted
+
+    def _note_evicted(self, messages: list[Any]) -> None:
+        self._evicted |= _message_digests(messages)
+
+    def close(self) -> None:
+        if getattr(self._loop, "on_evicted", None) == self._note_evicted:
+            self._loop.on_evicted = None
 
     async def __call__(
         self,
@@ -804,7 +822,8 @@ class _ProgressObserver:
         _event_kind: RecoveryEventKind,
         _detail: dict[str, Any],
     ) -> Literal["progressed", "no_progress"]:
-        current = _event_digests(loop)
+        current = _event_digests(loop) | self._evicted
+        self._evicted = set()
         progressed = bool(current - self._seen)
         self._seen |= current
         return "progressed" if progressed else "no_progress"
@@ -812,8 +831,12 @@ class _ProgressObserver:
 
 def _event_digests(loop: AgentSessionLoop) -> set[str]:
     messages = getattr(loop, "conversation_messages", None)
+    return _message_digests(messages() if callable(messages) else ())
+
+
+def _message_digests(messages: Any) -> set[str]:
     digests: set[str] = set()
-    for message in messages() if callable(messages) else ():
+    for message in messages:
         content = str(getattr(message, "content", "") or "")
         if getattr(message, "role", "") == "user" and (
             any(f"<{tag}>" in content for tag in _INTERNAL_TAGS)
