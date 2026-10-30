@@ -11,8 +11,9 @@ action into one typed turn on a Provider-backed AgentLoop:
   and tool-slice continuations, and no-progress stops;
 - a completed result for the same conversation, task and input is reused on a
   Same-run resume, and Capability Tool results are reused per their definition;
-- each conversation keeps one live session, its full history is saved after
-  every invocation, and a forked conversation starts from its source's history.
+- each conversation keeps one live session, its history (compacted, when the
+  working memory overflowed) is saved after every invocation, and a forked
+  conversation starts from its source's history.
 
 Nothing here knows a Capability, a role, or a domain field.
 """
@@ -52,6 +53,7 @@ from .conversation_history import (
     FileConversationHistoryStore,
     drop_rejected_attempts,
     serialize_message,
+    turn_start,
 )
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
@@ -380,7 +382,7 @@ class DefinitionAgentInvoker:
                     )
                 )
             if mapped.status == "ok":
-                self._settle(session.loop, len(before))
+                self._settle(session.loop, prompt)
         finally:
             self._save_history(conversation_id, session.loop)
         if mapped.status == "ok" and not task.tools:
@@ -611,7 +613,7 @@ class DefinitionAgentInvoker:
         return None
 
     @staticmethod
-    def _settle(loop: AgentSessionLoop, start: int) -> None:
+    def _settle(loop: AgentSessionLoop, request: str) -> None:
         """Keep only the accepted answer of the turn that just finished."""
 
         messages = getattr(loop, "conversation_messages", None)
@@ -619,6 +621,11 @@ class DefinitionAgentInvoker:
         if not callable(messages) or not callable(replace):
             return
         current = messages()
+        start = turn_start(current, request)
+        if start is None:
+            # Compaction evicted the turn's request.  What is left of the
+            # turn cannot be told from earlier turns, so nothing is dropped.
+            return
         settled = drop_rejected_attempts(current, start)
         if len(settled) != len(current):
             replace(settled)

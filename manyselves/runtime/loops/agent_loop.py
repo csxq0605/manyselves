@@ -100,7 +100,9 @@ _PERSISTED_RESULT_PART_MARKER = re.compile(
 # ``checkpoint_ref``/``open_tool_result`` escape hatch.  That made compaction
 # depend on incidental prose and encouraged the model to reopen old output.  A
 # bounded structured handoff instead carries the durable decision state and
-# the current task boundary while the lossless transcript remains local.
+# the current task boundary.  Compaction rewrites the retained conversation:
+# the summary replaces the evicted units there too, so the next request
+# starts from the same prefix and the same units are not summarized twice.
 _HANDOFF_SUMMARY_MARKER = "<context_handoff_summary>"
 _HANDOFF_SUMMARY_END = "</context_handoff_summary>"
 
@@ -560,7 +562,7 @@ def _sanitize_provider_visible_text(value: str) -> str:
     """Remove retired history tokens before any payload reaches a Provider.
 
     Old durable transcripts can legitimately contain the token. It remains in
-    the lossless local trace, but showing its spelling back to a model turns an
+    the retained history, but showing its spelling back to a model turns an
     internal storage protocol into an in-context example.
     """
 
@@ -620,8 +622,8 @@ def _provider_working_messages(
 ) -> list[LLMMessage]:
     """Remove rejected tool calls from the Provider-visible repair history.
 
-    The lossless internal transcript keeps the original tool call and paired
-    correction result for forensics.  Replaying that rejected call to the model,
+    The retained history keeps the original tool call and paired correction
+    result (until compaction evicts them).  Replaying that rejected call to the model,
     however, turns its invalid arguments into an in-context example and makes a
     repair turn likely to copy the same shape.  Provider working history therefore
     keeps successful tool protocol pairs but converts rejected pairs into ordinary
@@ -975,8 +977,8 @@ def _compact_messages_for_working_memory(
 ) -> list[LLMMessage]:
     """Replace old working context with one structured model handoff.
 
-    The complete in-process transcript is intentionally left untouched by this
-    helper.  Only the Provider-facing working set is compacted.  Compaction is
+    This helper returns a new list and does not touch its input; the Agent
+    loop keeps the result as its retained conversation.  Compaction is
     atomic around assistant tool calls/results and always retains the newest
     task boundary and protocol unit.  The handoff contains explicit progress,
     decisions, constraints, remaining work, and critical references extracted
@@ -1052,8 +1054,8 @@ def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
         message = history[index]
         calls = list(getattr(message, "tool_calls", None) or [])
         if message.role != "assistant" or not calls:
-            # Never retain an orphan result.  It remains available in the exact
-            # durable transcript written by ``_compact_working_memory``.
+            # Never retain an orphan result: a Provider rejects a result
+            # whose call is not in the request.
             if message.role == "tool" or getattr(message, "is_tool_result", False):
                 index += 1
                 continue
@@ -1094,7 +1096,7 @@ def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
             scan += 1
 
         # An incomplete exchange is never shown back to a Provider as a valid
-        # example.  It is still losslessly present in the persisted checkpoint.
+        # example.
         if calls_are_valid and expected_ids.issubset(seen_ids):
             units.append(unit)
         index = scan
@@ -1119,7 +1121,7 @@ def _bounded_text(value: Any, *, limit: int = 1200) -> str:
         return text
     # Keep both ends: conclusions often land at the end while the beginning
     # names the decision or task.  This is a bounded presentation field, not a
-    # source of truth; the lossless transcript remains local.
+    # source of truth.
     head = max(1, limit // 2)
     tail = max(1, limit - head - 32)
     return f"{text[:head]} … {text[-tail:]}"
@@ -1462,9 +1464,9 @@ class AgentLoop:
         self._report_retries: int = 0
         self._main_block_retries: int = 0
         self._conversation_history: list[LLMMessage] = []
-        # The durable professional identity owns one lossless conversation.
-        # Workflow transitions update the active task metadata and append an
-        # explicit boundary/delta message; they never clear this transcript.
+        # The durable professional identity owns one conversation.  Workflow
+        # transitions update the active task metadata; they never clear it.
+        # Compaction replaces evicted units with a handoff summary here.
         self._active_task_identity: dict[str, Any] | None = None
         self._task_boundaries: list[dict[str, Any]] = []
         self._handoff_summary: dict[str, Any] | None = None
@@ -1988,7 +1990,7 @@ class AgentLoop:
         try:
             messages = await self._build_messages()
             if self.context_rebuilder is None:
-                messages = await self._compact_working_memory_async(messages)
+                messages = await self._compact_and_retain(messages)
             tool_defs = self.tools.get_definitions()
             response = await self._chat_with_retries(
                 messages,
@@ -2310,12 +2312,12 @@ class AgentLoop:
             context_started = time.perf_counter()
             messages = await self._build_messages()
 
-            # Untyped loops compact their local history here. Typed loops
+            # Untyped loops compact their history here. Typed loops
             # defer trimming until after the typed rebase in
             # ``_chat_with_retries`` so the current capsule/latest tool unit
             # cannot be dropped before the typed rebase evaluates them.
             if self.context_rebuilder is None:
-                messages = await self._compact_working_memory_async(messages)
+                messages = await self._compact_and_retain(messages)
 
             # Get tool definitions
             tool_definitions = self.tools.get_definitions()
@@ -3065,9 +3067,8 @@ class AgentLoop:
         """Run one provider round with bounded, cancel-aware automatic retries."""
         rebuild_count = 0
         if self.context_rebuilder is not None and phase != "context_compaction":
-            # Rebase only the Provider-facing copy.  The lossless local
-            # ``_conversation_history`` remains available to the forensic
-            # trace and is never used as a fallback source by the rebaser.
+            # Rebase only the Provider-facing copy; ``_conversation_history``
+            # is never used as a fallback source by the rebaser.
             from .context_rebase import invoke_rebuilder
 
             rebased = await invoke_rebuilder(
@@ -3588,7 +3589,7 @@ class AgentLoop:
                         # an in-context example and can otherwise imitate the malformed
                         # call even when its paired tool result says it succeeded.
                         # The general working-memory compactor bounds cost by evicting
-                        # complete older messages and persists their exact transcript.
+                        # complete older messages into its handoff summary.
                         assistant_tool_message.tool_calls[tool_index] = (
                             visible_tool_call
                             if resolved_historical_marker
@@ -3913,15 +3914,34 @@ class AgentLoop:
         if iteration >= max_iterations:
             logger.warning("Max tool iterations reached for agent: {}", self.agent_type)
 
+    async def _compact_and_retain(
+        self, messages: list[LLMMessage]
+    ) -> list[LLMMessage]:
+        """Compact the request built from the history and keep the result.
+
+        A compacted request becomes the retained conversation at once, as the
+        tool loop does with every later request of the turn.  Otherwise the
+        tool loop would rebuild the uncompacted history and summarize the same
+        units again, and so would every later turn.
+        """
+
+        compacted = await self._compact_working_memory_async(messages)
+        if compacted is not messages:
+            self._conversation_history = [
+                message for message in compacted if message.role != "system"
+            ]
+        return compacted
+
     def _compact_working_memory(
         self, messages: list[LLMMessage]
     ) -> list[LLMMessage]:
         """Compact a Provider working set and persist the handoff summary.
 
-        The local ``_conversation_history`` remains lossless and is persisted by
-        the Capability runner.  Only the structured summary is persisted here;
-        no checkpoint reference or ``open_tool_result`` recovery token is ever
-        placed in model-visible context.
+        Callers keep the compacted list as the retained conversation; the
+        evicted units then survive only in the summary.  Only the structured
+        summary is persisted here; no checkpoint reference or
+        ``open_tool_result`` recovery token is ever placed in model-visible
+        context.
         """
 
         if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
@@ -4791,7 +4811,7 @@ class AgentLoop:
                     content=_render_handoff_summary(self._handoff_summary),
                 ),
             )
-        # This method only assembles the lossless local baseline.  The typed
+        # This method only assembles the retained conversation.  The typed
         # Provider rebaser is invoked exactly once by ``_chat_with_retries``
         # for each logical round, after tool schemas are available and before
         # any budget trim or network admission.
