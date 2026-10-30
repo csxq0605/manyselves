@@ -227,6 +227,8 @@ class WorkflowCompiler:
                 variable_contracts,
                 assignable_pairs=assignable_pairs,
             )
+            if isinstance(action, InvokeAgentAction):
+                self._validate_recovery_scope(action, definitions, workflow)
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
             actions.append(action)
@@ -387,6 +389,27 @@ class WorkflowCompiler:
             raise CompilerError(
                 f"action {action.id} references {kind} outside workflow scope: "
                 f"{definition_id}"
+            )
+
+    @staticmethod
+    def _validate_recovery_scope(
+        action: InvokeAgentAction,
+        definitions: DefinitionRegistry,
+        workflow: WorkflowDefinition,
+    ) -> None:
+        """Keep the policy a turn recovers by inside the workflow's scope.
+
+        A turn recovers by the policy its task references.  The workflow's
+        ``recovery`` list declares these policies; a policy listed there never
+        applies to a task that references another one.
+        """
+
+        task = definitions.require(DefinitionKind.TASK, action.task)
+        recovery = getattr(task, "recovery", None)
+        if recovery is not None and recovery not in workflow.recovery:
+            raise CompilerError(
+                f"action {action.id} references recovery outside workflow scope: "
+                f"{recovery}"
             )
 
     @staticmethod
