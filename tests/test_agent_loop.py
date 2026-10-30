@@ -721,19 +721,20 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert not (workspace / ".manyselves/tool-results").exists()
 
 
-def test_a_large_result_names_no_reader_the_loop_does_not_have(agent_loop):
-    # A workflow turn has only its task's tools; open_tool_result is not one.
+def test_a_loop_without_a_reader_gets_the_whole_large_result(agent_loop):
+    # A workflow turn has only its task's tools; open_tool_result is not one,
+    # so a preview would lose the rest of the result for good.
     agent_loop.tools = ToolRegistry()
-    payload = {"status": "ok", "content": "evidence-" + ("x" * 20000)}
+    payload = {
+        "status": "correction_required",
+        "error": "evidence-" + ("x" * 20000),
+        "instruction": "resubmit only the failing part",
+    }
 
-    result = agent_loop._format_tool_result(payload, tool_name="search_document")
+    result = agent_loop._format_tool_result(payload, tool_name="submit_result")
 
-    compact = json.loads(result)
-    assert len(result) <= agent_loop.config.max_tool_result_chars
-    assert compact["truncated"] is True
-    assert compact["preview"].startswith('{"status": "ok"')
+    assert json.loads(result) == payload
     assert "open_tool_result" not in result
-    assert "full_result_ref" not in compact and "next_offset" not in compact
 
 
 def test_artifact_pages_keep_original_cursor_when_wire_budget_is_smaller(agent_loop):

@@ -4649,6 +4649,13 @@ class AgentLoop:
             if fitted is not None:
                 return fitted
 
+        # A preview only makes sense where the stored copy can be read back.
+        # A workflow turn has only its task's tools, so it gets the whole
+        # result: cutting it would lose the rest for good, including the
+        # instruction at the end of a correction.
+        if self.tools.get("open_tool_result") is None:
+            return rendered
+
         safe_agent = "".join(
             char if char.isalnum() or char in "-_." else "_"
             for char in str(self.agent_type)
@@ -4662,42 +4669,26 @@ class AgentLoop:
                 "tool-result", f"{safe_agent}:{safe_call}", rendered
             )
         )
-        # Point at the stored result only when this loop can read it back; a
-        # workflow turn has only its task's tools.
-        readable = self.tools.get("open_tool_result") is not None
         preview_chars = max(0, max_chars - 1024)
         while True:
             preview = rendered[:preview_chars]
-            if readable:
-                compact = {
-                    "truncated": True,
-                    "tool": tool_name,
-                    "full_result_ref": opaque_ref,
-                    "original_chars": len(rendered),
-                    "preview_offset": 0,
-                    "preview_chars": len(preview),
-                    "preview_end_offset": len(preview),
-                    "next_offset": len(preview),
-                    "recommended_limit": 8000,
-                    "instruction": (
-                        "如需剩余内容，调用 open_tool_result，ref 使用 full_result_ref，"
-                        "offset 使用 next_offset，省略 limit 即按 8000 字符读取；"
-                        "已有内容仍在上下文时无需重读；压缩后遗失内容时可重读原引用。"
-                    ),
-                    "preview": preview,
-                }
-            else:
-                compact = {
-                    "truncated": True,
-                    "tool": tool_name,
-                    "original_chars": len(rendered),
-                    "preview_chars": len(preview),
-                    "instruction": (
-                        "结果过长，只显示开头部分，其余内容本回合读不到；"
-                        "需要时换用更具体的参数重新调用该工具。"
-                    ),
-                    "preview": preview,
-                }
+            compact = {
+                "truncated": True,
+                "tool": tool_name,
+                "full_result_ref": opaque_ref,
+                "original_chars": len(rendered),
+                "preview_offset": 0,
+                "preview_chars": len(preview),
+                "preview_end_offset": len(preview),
+                "next_offset": len(preview),
+                "recommended_limit": 8000,
+                "instruction": (
+                    "如需剩余内容，调用 open_tool_result，ref 使用 full_result_ref，"
+                    "offset 使用 next_offset，省略 limit 即按 8000 字符读取；"
+                    "已有内容仍在上下文时无需重读；压缩后遗失内容时可重读原引用。"
+                ),
+                "preview": preview,
+            }
             encoded = json.dumps(compact, ensure_ascii=False)
             if len(encoded) <= max_chars or preview_chars == 0:
                 return encoded

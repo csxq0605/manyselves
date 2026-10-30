@@ -101,7 +101,7 @@ def select_reference_sections(text: str, terms: tuple[str, ...]) -> str | None:
         "仅按标题、词项和显式条号关联；隐含依赖、其他例外仍须核验。",
     ]
     if unresolved:
-        blocks.append("未解析的条款引用：" + "、".join(sorted(unresolved)) + "；须打开完整来源核实，不能据此下确定结论。")
+        blocks.append("未解析的条款引用：" + "、".join(sorted(unresolved)) + "；本次读不到被引用的条款，不能据此下确定结论。")
     for start, end in ranges:
         blocks.append(f"原文行 {start + 1}–{end}：\n" + "".join(lines[start:end]))
     return "\n\n".join(blocks)
