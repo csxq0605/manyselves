@@ -1203,22 +1203,35 @@ def _build_handoff_summary(
     tool_state: list[dict[str, Any]] = []
     active_task: dict[str, Any] = {}
 
-    def append_unique(target: list[str], value: Any, *, limit: int = 12) -> None:
+    def append_unique(target: list[str], value: Any, *, limit: int | None = 12) -> None:
         rendered = _bounded_text(value)
         if rendered and rendered not in target:
             target.append(rendered)
-            del target[:-limit]
+            if limit is not None:
+                del target[:-limit]
 
+    current_task_id = str((task_context or {}).get("task_id") or "")
     for message in history:
         content = str(message.content or "")
         if content.startswith(_HANDOFF_SUMMARY_MARKER) and content.endswith(_HANDOFF_SUMMARY_END):
             previous = _json_object(content[len(_HANDOFF_SUMMARY_MARKER):-len(_HANDOFF_SUMMARY_END)])
             if previous is None:
                 continue
+            previous_task = previous.get("active_task")
+            previous_task_id = str(
+                (previous_task.get("task_id") if isinstance(previous_task, Mapping) else None) or ""
+            )
+            # A summary written while another task was active carries that
+            # task's constraints; they do not bind the current task.
+            other_task = bool(current_task_id and previous_task_id and previous_task_id != current_task_id)
             for key, target in (("progress", progress), ("decisions", decisions),
                                 ("constraints", constraints), ("remaining_work", remaining)):
+                if key == "constraints" and other_task:
+                    continue
                 for item in previous.get(key) or ():
-                    append_unique(target, item)
+                    # Constraints are capped once, after the task's own
+                    # constraints are set apart below.
+                    append_unique(target, item, limit=None if key == "constraints" else 12)
             references.extend(_flatten_reference_values(previous.get("critical_refs")))
             tool_state.extend(dict(item) for item in previous.get("tool_state", ()) if isinstance(item, Mapping))
             if isinstance(previous.get("active_task"), Mapping):

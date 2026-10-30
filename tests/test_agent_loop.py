@@ -964,6 +964,54 @@ async def test_structured_handoff_keeps_every_declared_constraint(agent_loop):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["model_summary", "structured_handoff"])
+async def test_a_summary_does_not_carry_an_earlier_tasks_constraints(agent_loop, strategy):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy=strategy,
+    )
+    agent_loop._request_model_handoff_summary = AsyncMock(return_value={
+        "progress": [], "decisions": [], "constraints": [], "remaining_work": [],
+        "critical_refs": [], "source": "model",
+    })
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": ["leave relations empty"]})
+    first = await agent_loop._compact_working_memory_async([
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="judge " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ])
+    agent_loop.begin_typed_task({"task_id": "relate", "constraints": ["fill in relations"]})
+    second = await agent_loop._compact_working_memory_async([
+        *first,
+        LLMMessage(role="user", content="relate " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ])
+
+    payload = json.loads(second[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["active_task"]["task_id"] == "relate"
+    assert payload["constraints"] == ["fill in relations"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_compaction_keeps_the_task_constraints_whole(agent_loop):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy="structured_handoff",
+    )
+    declared = [f"declared {index:02d}" for index in range(24)]
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": declared})
+    messages = [LLMMessage(role="system", content="system")]
+    for _ in range(2):
+        messages = await agent_loop._compact_working_memory_async([
+            *messages,
+            LLMMessage(role="user", content="old work " * 4000),
+            LLMMessage(role="user", content="continue"),
+        ])
+
+    payload = json.loads(messages[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["sequence"] == 2
+    assert payload["constraints"] == declared
+
+
+@pytest.mark.asyncio
 async def test_oversized_handoff_keeps_history_instead_of_summarizing_a_subset(agent_loop):
     agent_loop.config = AgentDefaults(
         max_tool_iterations=5,
