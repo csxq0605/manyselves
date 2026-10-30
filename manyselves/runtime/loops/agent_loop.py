@@ -981,10 +981,10 @@ def _compact_messages_for_working_memory(
     loop keeps the result as its retained conversation.  Compaction is
     atomic around assistant tool calls/results and always retains the newest
     task boundary and protocol unit.  The handoff contains explicit progress,
-    decisions, constraints, remaining work, and critical references extracted
-    from structured messages (tool arguments/results and task XML), rather than
-    taking a first-message slice or scraping identifiers with regular
-    expressions.
+    decisions, constraints, remaining work, and critical references taken
+    from structured state (tool arguments/results and the task identity
+    registered with ``begin_typed_task``), rather than taking a first-message
+    slice or scraping identifiers with regular expressions.
     """
 
     if not messages or (handoff_payload is None and _estimate_tokens(messages) <= target_tokens):
@@ -1230,7 +1230,9 @@ def _build_handoff_summary(
                 references.extend(_structured_reference_values(structured))
             # XML task boundaries are explicit structured state.  Keep the
             # current task identity/objective and constraints without copying
-            # the entire contract into the handoff.
+            # the entire contract into the handoff.  Workflow task messages
+            # (``<task id=...>``/``<constraints>``) do not use this format;
+            # their objective and constraints arrive as ``task_context``.
             if content.lstrip().startswith(("<task_context", "<task_boundary")):
                 for field in ("task_id", "revision", "objective"):
                     open_tag = f"<{field}>"
@@ -1307,8 +1309,14 @@ def _build_handoff_summary(
                         "output_contract", "input_refs", "readable_refs")
             if key in task_context
         }
-        for constraint in task_context.get("constraints") or ():
-            append_unique(constraints, constraint)
+        # The task's own constraints are kept whole; only those carried over
+        # from the history are capped.
+        declared = list(dict.fromkeys(
+            value
+            for value in (_bounded_text(item) for item in task_context.get("constraints") or ())
+            if value
+        ))
+        constraints = [item for item in constraints if item not in declared][-12:] + declared
         # Task refs have priority over older incidental tool refs in the bounded tail.
         task_refs = _structured_reference_values(active_task)
         references = [item for item in references if item not in task_refs] + task_refs
@@ -1323,7 +1331,7 @@ def _build_handoff_summary(
         "active_task": active_task,
         "progress": progress[-12:],
         "decisions": decisions[-12:],
-        "constraints": constraints[-12:],
+        "constraints": constraints if task_context else constraints[-12:],
         "remaining_work": remaining[-12:],
         "critical_refs": references,
         "tool_state": tool_state,
@@ -4193,13 +4201,24 @@ class AgentLoop:
                     # decisions from the deterministic extraction in that case.
                     payload[key] = list(model_summary.get(key) or ())
                 payload["source"] = "model"
-        # Explicit task constraints remain authoritative even when prose is summarized.
-        for constraint in (self.active_task_identity or {}).get("constraints") or ():
-            value = str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
-            if value and value not in payload["constraints"]:
-                payload["constraints"].append(value)
+        # Explicit task constraints remain authoritative even when prose is
+        # summarized, and are kept whole: only constraints carried over from
+        # the history are capped.
+        declared = [
+            value
+            for value in (
+                str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
+                for constraint in (self.active_task_identity or {}).get("constraints") or ()
+            )
+            if value
+        ]
         if payload["source"] != "model":
-            payload["constraints"] = payload["constraints"][-12:]
+            payload["constraints"] = [
+                item for item in payload["constraints"] if item not in declared
+            ][-12:]
+        for value in declared:
+            if value not in payload["constraints"]:
+                payload["constraints"].append(value)
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload

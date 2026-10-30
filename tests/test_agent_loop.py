@@ -935,6 +935,34 @@ async def test_compaction_keeps_task_refs_independent_of_summary_model(agent_loo
 
 
 @pytest.mark.asyncio
+async def test_structured_handoff_keeps_every_declared_constraint(agent_loop):
+    agent_loop.config = AgentDefaults(
+        working_memory_tokens=4096, context_compaction_strategy="structured_handoff",
+    )
+    declared = [f"declared {index:02d}" for index in range(24)]
+    agent_loop.begin_typed_task({"task_id": "judge", "constraints": declared})
+    earlier = {
+        "progress": [], "decisions": [], "remaining_work": [],
+        "constraints": [f"earlier {index:02d}" for index in range(15)],
+    }
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(
+            role="user",
+            content=f"<context_handoff_summary>\n{json.dumps(earlier)}\n</context_handoff_summary>",
+        ),
+        LLMMessage(role="user", content="old work " * 4000),
+        LLMMessage(role="user", content="continue"),
+    ]
+
+    compacted = await agent_loop._compact_working_memory_async(messages)
+
+    payload = json.loads(compacted[1].content.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["constraints"][-24:] == declared
+    assert payload["constraints"][:-24] == earlier["constraints"][-12:]
+
+
+@pytest.mark.asyncio
 async def test_oversized_handoff_keeps_history_instead_of_summarizing_a_subset(agent_loop):
     agent_loop.config = AgentDefaults(
         max_tool_iterations=5,

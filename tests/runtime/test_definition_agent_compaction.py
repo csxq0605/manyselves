@@ -280,6 +280,34 @@ async def test_a_fresh_conversation_does_not_carry_the_earlier_summary(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["model_summary", "structured_handoff"])
+async def test_the_summary_keeps_the_task_constraints_after_the_task_is_evicted(
+    tmp_path: Path, strategy: str
+) -> None:
+    # The summary writer returns no constraints, and the second turn's
+    # compaction evicts the first task message; the task's own objective and
+    # constraints must still reach the model through the summary.
+    harness = Harness(
+        tmp_path, [{"answer": "one"}, {"answer": "two"}], strategy=strategy
+    )
+
+    async def steps():
+        await harness.ask("first", "甲" * 9000)
+        return await harness.ask("second", "第二问")
+
+    outcome = await harness.run(steps)
+
+    assert outcome.result == {"answer": "two"}
+    sent = harness.provider.task_requests[-1]
+    summaries = [m.content for m in sent if SUMMARY in (m.content or "")]
+    assert len(summaries) == 1
+    payload = json.loads(summaries[0].split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert "Be brief." in payload["constraints"]
+    assert payload["active_task"]["objective"] == "Answer the question in one word."
+    assert not _requests(sent, "甲" * 100)
+
+
+@pytest.mark.asyncio
 async def test_a_new_summary_is_not_progress_for_a_repeated_truncated_output(
     tmp_path: Path,
 ) -> None:

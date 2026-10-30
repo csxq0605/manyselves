@@ -325,6 +325,11 @@ class DefinitionAgentInvoker:
                 {
                     "task_id": f"{task_id}:{task.id}",
                     "run_id": self.run_id,
+                    # The loop carries the objective and constraints into
+                    # every handoff summary, so they survive a compaction
+                    # that evicts this turn's task message.
+                    "objective": task.objective.strip(),
+                    "constraints": list(task.constraints),
                     "input_contract": task.input_contract,
                     "output_contract": task.output_contract,
                 }

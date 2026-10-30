@@ -207,6 +207,18 @@ async def test_submission_is_validated_and_returned(tmp_path: Path) -> None:
     assert "Answer the question in one word." in prompt
     assert '"text":"q"' in prompt and "Be brief." in prompt
     assert harness.loops[0].kwargs["system_prompt"] == "You answer questions."
+    # The loop also gets the objective and constraints as the task identity,
+    # so a handoff summary keeps them after the task message is evicted.
+    assert harness.loops[0].task_contexts == [
+        {
+            "task_id": "ask:answer-question",
+            "run_id": RUN_ID,
+            "objective": "Answer the question in one word.",
+            "constraints": ["Be brief."],
+            "input_contract": "question",
+            "output_contract": "answer",
+        }
+    ]
 
 
 @pytest.mark.asyncio
