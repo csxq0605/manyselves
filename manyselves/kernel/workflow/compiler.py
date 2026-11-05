@@ -333,7 +333,11 @@ class WorkflowCompiler:
         control_flow_edges: dict[str, list[str]],
         definitions: DefinitionRegistry,
     ) -> dict[str, int]:
-        """Resolve direct Tool scheduling without crossing subworkflow isolation."""
+        """Resolve direct Tool scheduling without crossing subworkflow isolation.
+
+        A subworkflow call does not end its branch: the parent actions after it
+        are still checked, but the child workflow's own actions are not.
+        """
 
         action_by_id = {action.id: action for action in actions}
         resolved: dict[str, int] = {}
@@ -347,9 +351,6 @@ class WorkflowCompiler:
                 if action_id == parallel.join or action_id in branch_action_ids:
                     continue
                 branch_action_ids.add(action_id)
-                branch_action = action_by_id[action_id]
-                if isinstance(branch_action, SubworkflowAction):
-                    continue
                 pending.extend(control_flow_edges[action_id])
 
             direct_tool_ids = {
