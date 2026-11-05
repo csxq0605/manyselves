@@ -9,7 +9,8 @@ Resume continues an unfinished Run from its saved state: completed steps
 are not executed again.
 
 A Run can also be executed again in place, under the same run id: the
-previous version's files move to ``versions/v<n>`` and the current plan is
+previous version's files move to ``versions/v<n>``, with a copy of the start
+input that version was executed from, and the current plan is
 executed from the start, but every step that did not change is skipped, not
 executed: a program step comes back from the step memo with the files it
 wrote (see ``step_memo``), and a model turn from the turn memo.  Resume does
@@ -81,7 +82,9 @@ START_INPUT_FILE = "start-input.json"
 RUN_OPTIONS_FILE = "run-options.json"
 # The code of the steps as the Run last executed them.
 STEP_CODE_FILE = "step-code.json"
-# Run-directory entries that stay in place when a version is archived.
+# Run-directory entries that stay in place when a version is archived.  The
+# start input stays too, for the next version to start from; the archive
+# keeps a copy of it, so each version keeps the start input it ran from.
 _KEPT_ON_RERUN = frozenset({"agent-memo", MEMO_DIR, "versions", START_INPUT_FILE})
 
 
@@ -399,6 +402,10 @@ class GenericCapabilityRuntimeBinding:
             if entry.name in self._kept_on_rerun:
                 continue
             shutil.move(str(entry), str(target / entry.name))
+        start_input = run_dir / START_INPUT_FILE
+        if start_input.is_file():
+            # The new version writes its own start input over this one.
+            shutil.copy2(start_input, target / START_INPUT_FILE)
         (target / "version.json").write_text(
             json.dumps(
                 {
@@ -418,7 +425,9 @@ class GenericCapabilityRuntimeBinding:
     def _restore_version(self, run_id: str, archive: Path) -> None:
         run_dir = self._run_dir(run_id)
         for entry in sorted(archive.iterdir()):
-            if entry.name == "version.json":
+            # The start input never left the run directory: its copy in the
+            # archive goes with the archive.
+            if entry.name in {"version.json", START_INPUT_FILE}:
                 continue
             destination = run_dir / entry.name
             if destination.exists():
