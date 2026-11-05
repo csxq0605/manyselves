@@ -100,7 +100,9 @@ _PERSISTED_RESULT_PART_MARKER = re.compile(
 # ``checkpoint_ref``/``open_tool_result`` escape hatch.  That made compaction
 # depend on incidental prose and encouraged the model to reopen old output.  A
 # bounded structured handoff instead carries the durable decision state and
-# the current task boundary while the lossless transcript remains local.
+# the current task boundary.  Compaction rewrites the retained conversation:
+# the summary replaces the evicted units there too, so the next request
+# starts from the same prefix and the same units are not summarized twice.
 _HANDOFF_SUMMARY_MARKER = "<context_handoff_summary>"
 _HANDOFF_SUMMARY_END = "</context_handoff_summary>"
 
@@ -560,7 +562,7 @@ def _sanitize_provider_visible_text(value: str) -> str:
     """Remove retired history tokens before any payload reaches a Provider.
 
     Old durable transcripts can legitimately contain the token. It remains in
-    the lossless local trace, but showing its spelling back to a model turns an
+    the retained history, but showing its spelling back to a model turns an
     internal storage protocol into an in-context example.
     """
 
@@ -620,8 +622,8 @@ def _provider_working_messages(
 ) -> list[LLMMessage]:
     """Remove rejected tool calls from the Provider-visible repair history.
 
-    The lossless internal transcript keeps the original tool call and paired
-    correction result for forensics.  Replaying that rejected call to the model,
+    The retained history keeps the original tool call and paired correction
+    result (until compaction evicts them).  Replaying that rejected call to the model,
     however, turns its invalid arguments into an in-context example and makes a
     repair turn likely to copy the same shape.  Provider working history therefore
     keeps successful tool protocol pairs but converts rejected pairs into ordinary
@@ -975,14 +977,14 @@ def _compact_messages_for_working_memory(
 ) -> list[LLMMessage]:
     """Replace old working context with one structured model handoff.
 
-    The complete in-process transcript is intentionally left untouched by this
-    helper.  Only the Provider-facing working set is compacted.  Compaction is
+    This helper returns a new list and does not touch its input; the Agent
+    loop keeps the result as its retained conversation.  Compaction is
     atomic around assistant tool calls/results and always retains the newest
     task boundary and protocol unit.  The handoff contains explicit progress,
-    decisions, constraints, remaining work, and critical references extracted
-    from structured messages (tool arguments/results and task XML), rather than
-    taking a first-message slice or scraping identifiers with regular
-    expressions.
+    decisions, constraints, remaining work, and critical references taken
+    from structured state (tool arguments/results and the task identity
+    registered with ``begin_typed_task``), rather than taking a first-message
+    slice or scraping identifiers with regular expressions.
     """
 
     if not messages or (handoff_payload is None and _estimate_tokens(messages) <= target_tokens):
@@ -1052,8 +1054,8 @@ def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
         message = history[index]
         calls = list(getattr(message, "tool_calls", None) or [])
         if message.role != "assistant" or not calls:
-            # Never retain an orphan result.  It remains available in the exact
-            # durable transcript written by ``_compact_working_memory``.
+            # Never retain an orphan result: a Provider rejects a result
+            # whose call is not in the request.
             if message.role == "tool" or getattr(message, "is_tool_result", False):
                 index += 1
                 continue
@@ -1094,7 +1096,7 @@ def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
             scan += 1
 
         # An incomplete exchange is never shown back to a Provider as a valid
-        # example.  It is still losslessly present in the persisted checkpoint.
+        # example.
         if calls_are_valid and expected_ids.issubset(seen_ids):
             units.append(unit)
         index = scan
@@ -1119,7 +1121,7 @@ def _bounded_text(value: Any, *, limit: int = 1200) -> str:
         return text
     # Keep both ends: conclusions often land at the end while the beginning
     # names the decision or task.  This is a bounded presentation field, not a
-    # source of truth; the lossless transcript remains local.
+    # source of truth.
     head = max(1, limit // 2)
     tail = max(1, limit - head - 32)
     return f"{text[:head]} … {text[-tail:]}"
@@ -1201,22 +1203,35 @@ def _build_handoff_summary(
     tool_state: list[dict[str, Any]] = []
     active_task: dict[str, Any] = {}
 
-    def append_unique(target: list[str], value: Any, *, limit: int = 12) -> None:
+    def append_unique(target: list[str], value: Any, *, limit: int | None = 12) -> None:
         rendered = _bounded_text(value)
         if rendered and rendered not in target:
             target.append(rendered)
-            del target[:-limit]
+            if limit is not None:
+                del target[:-limit]
 
+    current_task_id = str((task_context or {}).get("task_id") or "")
     for message in history:
         content = str(message.content or "")
         if content.startswith(_HANDOFF_SUMMARY_MARKER) and content.endswith(_HANDOFF_SUMMARY_END):
             previous = _json_object(content[len(_HANDOFF_SUMMARY_MARKER):-len(_HANDOFF_SUMMARY_END)])
             if previous is None:
                 continue
+            previous_task = previous.get("active_task")
+            previous_task_id = str(
+                (previous_task.get("task_id") if isinstance(previous_task, Mapping) else None) or ""
+            )
+            # A summary written while another task was active carries that
+            # task's constraints; they do not bind the current task.
+            other_task = bool(current_task_id and previous_task_id and previous_task_id != current_task_id)
             for key, target in (("progress", progress), ("decisions", decisions),
                                 ("constraints", constraints), ("remaining_work", remaining)):
+                if key == "constraints" and other_task:
+                    continue
                 for item in previous.get(key) or ():
-                    append_unique(target, item)
+                    # Constraints are capped once, after the task's own
+                    # constraints are set apart below.
+                    append_unique(target, item, limit=None if key == "constraints" else 12)
             references.extend(_flatten_reference_values(previous.get("critical_refs")))
             tool_state.extend(dict(item) for item in previous.get("tool_state", ()) if isinstance(item, Mapping))
             if isinstance(previous.get("active_task"), Mapping):
@@ -1228,7 +1243,9 @@ def _build_handoff_summary(
                 references.extend(_structured_reference_values(structured))
             # XML task boundaries are explicit structured state.  Keep the
             # current task identity/objective and constraints without copying
-            # the entire contract into the handoff.
+            # the entire contract into the handoff.  Workflow task messages
+            # (``<task id=...>``/``<constraints>``) do not use this format;
+            # their objective and constraints arrive as ``task_context``.
             if content.lstrip().startswith(("<task_context", "<task_boundary")):
                 for field in ("task_id", "revision", "objective"):
                     open_tag = f"<{field}>"
@@ -1305,8 +1322,14 @@ def _build_handoff_summary(
                         "output_contract", "input_refs", "readable_refs")
             if key in task_context
         }
-        for constraint in task_context.get("constraints") or ():
-            append_unique(constraints, constraint)
+        # The task's own constraints are kept whole; only those carried over
+        # from the history are capped.
+        declared = list(dict.fromkeys(
+            value
+            for value in (_bounded_text(item) for item in task_context.get("constraints") or ())
+            if value
+        ))
+        constraints = [item for item in constraints if item not in declared][-12:] + declared
         # Task refs have priority over older incidental tool refs in the bounded tail.
         task_refs = _structured_reference_values(active_task)
         references = [item for item in references if item not in task_refs] + task_refs
@@ -1321,7 +1344,7 @@ def _build_handoff_summary(
         "active_task": active_task,
         "progress": progress[-12:],
         "decisions": decisions[-12:],
-        "constraints": constraints[-12:],
+        "constraints": constraints if task_context else constraints[-12:],
         "remaining_work": remaining[-12:],
         "critical_refs": references,
         "tool_state": tool_state,
@@ -1462,14 +1485,18 @@ class AgentLoop:
         self._report_retries: int = 0
         self._main_block_retries: int = 0
         self._conversation_history: list[LLMMessage] = []
-        # The durable professional identity owns one lossless conversation.
-        # Workflow transitions update the active task metadata and append an
-        # explicit boundary/delta message; they never clear this transcript.
+        # The durable professional identity owns one conversation.  Workflow
+        # transitions update the active task metadata; they never clear it.
+        # Compaction replaces evicted units with a handoff summary here.
         self._active_task_identity: dict[str, Any] | None = None
         self._task_boundaries: list[dict[str, Any]] = []
         self._handoff_summary: dict[str, Any] | None = None
         self.persist_handoff_summary = True
         self._compaction_sequence = 0
+        # Called with the messages a compaction drops from the history, so an
+        # observer of the conversation still sees events made and evicted
+        # between two of its looks.
+        self.on_evicted: Callable[[list[LLMMessage]], None] | None = None
         self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
@@ -1653,11 +1680,21 @@ class AgentLoop:
         return list(self._conversation_history)
 
     def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
-        """Replace the retained conversation between turns (task boundaries stay)."""
+        """Replace the retained conversation between turns (task boundaries stay).
+
+        The next request sees exactly ``messages``: a handoff summary that is
+        not among them is dropped too, or ``_build_messages`` would put an
+        earlier conversation's summary back in front of them.
+        """
 
         if agent_is_working(self._status):
             raise RuntimeError("cannot replace conversation while the Agent is active")
         self._conversation_history = list(messages)
+        if not any(
+            _HANDOFF_SUMMARY_MARKER in str(message.content or "")
+            for message in self._conversation_history
+        ):
+            self._handoff_summary = None
 
     def restore_conversation(
         self,
@@ -1988,7 +2025,7 @@ class AgentLoop:
         try:
             messages = await self._build_messages()
             if self.context_rebuilder is None:
-                messages = await self._compact_working_memory_async(messages)
+                messages = await self._compact_and_retain(messages)
             tool_defs = self.tools.get_definitions()
             response = await self._chat_with_retries(
                 messages,
@@ -2310,12 +2347,12 @@ class AgentLoop:
             context_started = time.perf_counter()
             messages = await self._build_messages()
 
-            # Untyped loops compact their local history here. Typed loops
+            # Untyped loops compact their history here. Typed loops
             # defer trimming until after the typed rebase in
             # ``_chat_with_retries`` so the current capsule/latest tool unit
             # cannot be dropped before the typed rebase evaluates them.
             if self.context_rebuilder is None:
-                messages = await self._compact_working_memory_async(messages)
+                messages = await self._compact_and_retain(messages)
 
             # Get tool definitions
             tool_definitions = self.tools.get_definitions()
@@ -3065,9 +3102,8 @@ class AgentLoop:
         """Run one provider round with bounded, cancel-aware automatic retries."""
         rebuild_count = 0
         if self.context_rebuilder is not None and phase != "context_compaction":
-            # Rebase only the Provider-facing copy.  The lossless local
-            # ``_conversation_history`` remains available to the forensic
-            # trace and is never used as a fallback source by the rebaser.
+            # Rebase only the Provider-facing copy; ``_conversation_history``
+            # is never used as a fallback source by the rebaser.
             from .context_rebase import invoke_rebuilder
 
             rebased = await invoke_rebuilder(
@@ -3588,7 +3624,7 @@ class AgentLoop:
                         # an in-context example and can otherwise imitate the malformed
                         # call even when its paired tool result says it succeeded.
                         # The general working-memory compactor bounds cost by evicting
-                        # complete older messages and persists their exact transcript.
+                        # complete older messages into its handoff summary.
                         assistant_tool_message.tool_calls[tool_index] = (
                             visible_tool_call
                             if resolved_historical_marker
@@ -3913,15 +3949,34 @@ class AgentLoop:
         if iteration >= max_iterations:
             logger.warning("Max tool iterations reached for agent: {}", self.agent_type)
 
+    async def _compact_and_retain(
+        self, messages: list[LLMMessage]
+    ) -> list[LLMMessage]:
+        """Compact the request built from the history and keep the result.
+
+        A compacted request becomes the retained conversation at once, as the
+        tool loop does with every later request of the turn.  Otherwise the
+        tool loop would rebuild the uncompacted history and summarize the same
+        units again, and so would every later turn.
+        """
+
+        compacted = await self._compact_working_memory_async(messages)
+        if compacted is not messages:
+            self._conversation_history = [
+                message for message in compacted if message.role != "system"
+            ]
+        return compacted
+
     def _compact_working_memory(
         self, messages: list[LLMMessage]
     ) -> list[LLMMessage]:
         """Compact a Provider working set and persist the handoff summary.
 
-        The local ``_conversation_history`` remains lossless and is persisted by
-        the Capability runner.  Only the structured summary is persisted here;
-        no checkpoint reference or ``open_tool_result`` recovery token is ever
-        placed in model-visible context.
+        Callers keep the compacted list as the retained conversation; the
+        evicted units then survive only in the summary.  Only the structured
+        summary is persisted here; no checkpoint reference or
+        ``open_tool_result`` recovery token is ever placed in model-visible
+        context.
         """
 
         if not messages or _estimate_tokens(messages) <= self._working_memory_limit():
@@ -4142,6 +4197,7 @@ class AgentLoop:
             None,
         )
         if summary_message is None:
+            self._report_evicted(evicted)
             return baseline
         payload = _build_handoff_summary(messages[1:], task_context=self.active_task_identity)
         if self.config.context_compaction_strategy == "structured_handoff":
@@ -4163,13 +4219,24 @@ class AgentLoop:
                     # decisions from the deterministic extraction in that case.
                     payload[key] = list(model_summary.get(key) or ())
                 payload["source"] = "model"
-        # Explicit task constraints remain authoritative even when prose is summarized.
-        for constraint in (self.active_task_identity or {}).get("constraints") or ():
-            value = str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
-            if value and value not in payload["constraints"]:
-                payload["constraints"].append(value)
+        # Explicit task constraints remain authoritative even when prose is
+        # summarized, and are kept whole: only constraints carried over from
+        # the history are capped.
+        declared = [
+            value
+            for value in (
+                str(constraint).strip() if payload["source"] == "model" else _bounded_text(constraint)
+                for constraint in (self.active_task_identity or {}).get("constraints") or ()
+            )
+            if value
+        ]
         if payload["source"] != "model":
-            payload["constraints"] = payload["constraints"][-12:]
+            payload["constraints"] = [
+                item for item in payload["constraints"] if item not in declared
+            ][-12:]
+        for value in declared:
+            if value not in payload["constraints"]:
+                payload["constraints"].append(value)
         self._compaction_sequence += 1
         payload["sequence"] = self._compaction_sequence
         self._handoff_summary = payload
@@ -4183,7 +4250,12 @@ class AgentLoop:
             self._working_memory_limit(), target_tokens, payload["source"],
         )
         self._persist_handoff_summary(payload)
+        self._report_evicted(evicted)
         return baseline
+
+    def _report_evicted(self, evicted: list[LLMMessage]) -> None:
+        if self.on_evicted is not None and evicted:
+            self.on_evicted(list(evicted))
 
     def _persist_handoff_summary(self, payload: Mapping[str, Any]) -> None:
         """Persist one summary for crash/restart restoration when run-scoped."""
@@ -4600,6 +4672,39 @@ class AgentLoop:
             if fitted is not None:
                 return fitted
 
+        # A workflow turn has only its task's tools, so it cannot read back a
+        # stored copy.  A correction is about as long as the rejected call and
+        # ends with what to do next, so such a turn gets it whole; any other
+        # long result is cut to a preview that says the rest is out of reach.
+        readable = self.tools.get("open_tool_result") is not None
+        if (
+            not readable
+            and isinstance(result, dict)
+            and result.get("status") == "correction_required"
+        ):
+            return rendered
+        preview_chars = max(0, max_chars - 1024)
+        if not readable:
+            while True:
+                preview = rendered[:preview_chars]
+                encoded = json.dumps(
+                    {
+                        "truncated": True,
+                        "tool": tool_name,
+                        "original_chars": len(rendered),
+                        "preview_chars": len(preview),
+                        "instruction": (
+                            "结果过长，只显示开头部分，其余内容本回合读不到；"
+                            "需要时换用更具体的参数重新调用该工具。"
+                        ),
+                        "preview": preview,
+                    },
+                    ensure_ascii=False,
+                )
+                if len(encoded) <= max_chars or preview_chars == 0:
+                    return encoded
+                preview_chars = max(0, preview_chars - (len(encoded) - max_chars))
+
         safe_agent = "".join(
             char if char.isalnum() or char in "-_." else "_"
             for char in str(self.agent_type)
@@ -4613,7 +4718,6 @@ class AgentLoop:
                 "tool-result", f"{safe_agent}:{safe_call}", rendered
             )
         )
-        preview_chars = max(0, max_chars - 1024)
         while True:
             preview = rendered[:preview_chars]
             compact = {
@@ -4791,7 +4895,7 @@ class AgentLoop:
                     content=_render_handoff_summary(self._handoff_summary),
                 ),
             )
-        # This method only assembles the lossless local baseline.  The typed
+        # This method only assembles the retained conversation.  The typed
         # Provider rebaser is invoked exactly once by ``_chat_with_retries``
         # for each logical round, after tool schemas are available and before
         # any budget trim or network admission.

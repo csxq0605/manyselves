@@ -1,4 +1,4 @@
-"""Durable full histories for Agent conversations of one Run.
+"""Durable histories for Agent conversations of one Run.
 
 A conversation's history is saved after each Agent invocation.  It lets a
 restarted Run continue the same conversation, and lets a forked conversation
@@ -46,6 +46,28 @@ def _calls(message: Any) -> list[tuple[str, str]]:
         (str(_get(call, "id") or ""), str(_get(call, "name") or ""))
         for call in _get(message, "tool_calls") or ()
     ]
+
+
+def turn_start(messages: Sequence[Any], request: str) -> int | None:
+    """Where the turn that sent ``request`` starts in ``messages``.
+
+    The turn starts at its own request: the last user message, not a tool
+    result, with that text.  The history length when the turn began does not
+    locate it, because compaction during the turn puts a summary in place of
+    the evicted messages and moves everything after them.  ``None`` when the
+    request itself was evicted.
+    """
+
+    text = str(request or "").strip()
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if (
+            _get(message, "role") == "user"
+            and not _get(message, "is_tool_result")
+            and str(_get(message, "content") or "").strip() == text
+        ):
+            return index
+    return None
 
 
 def drop_rejected_attempts(
@@ -132,4 +154,9 @@ class FileConversationHistoryStore:
         os.replace(temporary, path)
 
 
-__all__ = ["FileConversationHistoryStore", "drop_rejected_attempts", "serialize_message"]
+__all__ = [
+    "FileConversationHistoryStore",
+    "drop_rejected_attempts",
+    "serialize_message",
+    "turn_start",
+]

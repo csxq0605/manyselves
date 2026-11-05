@@ -38,6 +38,7 @@ class ScriptedLoop:
         self.history: list[LLMMessage] = []
         self.restored: list[list[Any]] = []
         self.received: list[UserMessage] = []
+        self.task_contexts: list[dict[str, Any]] = []
         self.feedback: list[Any] = []
         self._callback = None
         self.initial_session_restore = None
@@ -71,6 +72,7 @@ class ScriptedLoop:
         return list(self.history)
 
     def begin_typed_task(self, context: dict[str, Any]) -> bool:
+        self.task_contexts.append(dict(context))
         return True
 
     async def start(self) -> None:
