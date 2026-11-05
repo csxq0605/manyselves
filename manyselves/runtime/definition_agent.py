@@ -53,7 +53,6 @@ from .conversation_history import (
     FileConversationHistoryStore,
     drop_rejected_attempts,
     serialize_message,
-    turn_start,
 )
 from .provider_agent_session import ProviderAgentSessionFactory
 from .tools.definition_tool import DefinitionTool
@@ -362,6 +361,9 @@ class DefinitionAgentInvoker:
             return self._decode(result_ref, output_contract)
 
         observer = _ProgressObserver(session.loop) if recovery_policy is not None else None
+        begin_turn = getattr(session.loop, "begin_turn", None)
+        if callable(begin_turn):
+            begin_turn()
         try:
             if recovery_policy is None:
                 outcome = await turn.dispatch(session, request, terminals=(terminal,))
@@ -624,19 +626,23 @@ class DefinitionAgentInvoker:
 
     @staticmethod
     def _settle(loop: AgentSessionLoop, request: str) -> None:
-        """Keep only the accepted answer of the turn that just finished."""
+        """Keep only the accepted answer of the turn that just finished.
+
+        The loop says where the turn starts: compaction during the turn
+        rewrites the history, so neither the length it had when the turn
+        began nor the turn's request (which may have been evicted) locates it.
+        """
 
         messages = getattr(loop, "conversation_messages", None)
         replace = getattr(loop, "replace_conversation", None)
-        if not callable(messages) or not callable(replace):
+        turn_start_index = getattr(loop, "turn_start_index", None)
+        if not callable(messages) or not callable(replace) or not callable(turn_start_index):
+            return
+        start = turn_start_index()
+        if start is None:
             return
         current = messages()
-        start = turn_start(current, request)
-        if start is None:
-            # Compaction evicted the turn's request.  What is left of the
-            # turn cannot be told from earlier turns, so nothing is dropped.
-            return
-        settled = drop_rejected_attempts(current, start)
+        settled = drop_rejected_attempts(current, start, request=request)
         if len(settled) != len(current):
             replace(settled)
 

@@ -1045,6 +1045,10 @@ def _compact_messages_for_working_memory(
     return result
 
 
+def _is_handoff_summary(message: LLMMessage) -> bool:
+    return _HANDOFF_SUMMARY_MARKER in str(message.content or "")
+
+
 def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
     """Group provider history without splitting a tool call from its results."""
 
@@ -1497,6 +1501,10 @@ class AgentLoop:
         # observer of the conversation still sees events made and evicted
         # between two of its looks.
         self.on_evicted: Callable[[list[LLMMessage]], None] | None = None
+        # How many retained messages (handoff summaries aside) came before
+        # the turn marked by ``begin_turn``; compaction lowers it by those it
+        # evicts.  ``None`` when no turn is marked.
+        self._turn_floor: int | None = None
         self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
@@ -1679,6 +1687,38 @@ class AgentLoop:
 
         return list(self._conversation_history)
 
+    def begin_turn(self) -> None:
+        """Mark that the next messages belong to a new turn.
+
+        ``turn_start_index`` then finds where that turn starts, also after
+        compaction rewrote the conversation during the turn.
+        """
+
+        if agent_is_working(self._status):
+            raise RuntimeError("cannot begin a turn while the Agent is active")
+        self._turn_floor = sum(
+            1 for message in self._conversation_history if not _is_handoff_summary(message)
+        )
+
+    def turn_start_index(self) -> int | None:
+        """Where the turn marked by ``begin_turn`` starts in ``conversation_messages()``.
+
+        It starts after the messages that came before it and are still
+        retained.  The turn's own request may have been evicted.  ``None``
+        when no turn is marked.
+        """
+
+        if self._turn_floor is None:
+            return None
+        earlier = 0
+        for index, message in enumerate(self._conversation_history):
+            if _is_handoff_summary(message):
+                continue
+            if earlier == self._turn_floor:
+                return index
+            earlier += 1
+        return len(self._conversation_history)
+
     def replace_conversation(self, messages: Sequence[LLMMessage]) -> None:
         """Replace the retained conversation between turns (task boundaries stay).
 
@@ -1690,6 +1730,7 @@ class AgentLoop:
         if agent_is_working(self._status):
             raise RuntimeError("cannot replace conversation while the Agent is active")
         self._conversation_history = list(messages)
+        self._turn_floor = None
         if not any(
             _HANDOFF_SUMMARY_MARKER in str(message.content or "")
             for message in self._conversation_history
@@ -1745,6 +1786,7 @@ class AgentLoop:
                 )
             )
         self._conversation_history = restored
+        self._turn_floor = None
         self._task_boundaries = [dict(item) for item in task_boundaries if isinstance(item, Mapping)]
         if self._task_boundaries:
             current = self._task_boundaries[-1].get("current")
@@ -3422,10 +3464,13 @@ class AgentLoop:
             for tool_index, tool_call in enumerate(response.tool_calls):
                 overflow_tool = self.tools.get(tool_call.name)
                 if tool_index >= batch_limit and (
-                    overflow_tool is None or overflow_tool.side_effect != "pure_read"
+                    overflow_tool is None
+                    or overflow_tool.side_effect not in {"pure_read", "terminal"}
                 ):
-                    # Read-only calls past the batch run one by one below;
-                    # only calls that change something wait for a new round.
+                    # Read-only calls past the batch run one by one below, and
+                    # so does the result submission, which is checked as
+                    # always; only calls that change something wait for a new
+                    # round.
                     result_str = (
                         "Tool call skipped: this round exceeded the maximum batch of "
                         f"{batch_limit} and this tool is not read-only. Use the results "
@@ -3841,9 +3886,7 @@ class AgentLoop:
 
             try:
                 if self.context_rebuilder is None:
-                    current_messages = await self._compact_working_memory_async(
-                        current_messages
-                    )
+                    current_messages = await self._compact_history(current_messages)
                 response = await self._chat_with_retries(
                     current_messages,
                     tool_definitions,
@@ -3960,11 +4003,27 @@ class AgentLoop:
         units again, and so would every later turn.
         """
 
-        compacted = await self._compact_working_memory_async(messages)
+        compacted = await self._compact_history(messages)
         if compacted is not messages:
             self._conversation_history = [
                 message for message in compacted if message.role != "system"
             ]
+        return compacted
+
+    async def _compact_history(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Compact a request built from the retained conversation.
+
+        A marked turn keeps its start: of the messages before it, only those
+        compaction retains still come before it.
+        """
+
+        compacted = await self._compact_working_memory_async(messages)
+        if compacted is not messages and self._turn_floor is not None:
+            retained = {id(message) for message in compacted}
+            earlier = [
+                message for message in messages[1:] if not _is_handoff_summary(message)
+            ][: self._turn_floor]
+            self._turn_floor = sum(1 for message in earlier if id(message) in retained)
         return compacted
 
     def _compact_working_memory(

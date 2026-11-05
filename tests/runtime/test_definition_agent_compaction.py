@@ -16,7 +16,10 @@ import pytest
 
 from manyselves.config.schema import AgentDefaults
 from manyselves.runtime.agent_execution import AgentExecutionService
-from manyselves.runtime.conversation_history import drop_rejected_attempts, turn_start
+from manyselves.runtime.conversation_history import (
+    FileConversationHistoryStore,
+    drop_rejected_attempts,
+)
 from manyselves.runtime.definition_agent import DefinitionAgentInvoker
 from manyselves.runtime.loops.agent_loop import AgentLoop
 from manyselves.runtime.loops.bus import MessageBus
@@ -136,6 +139,39 @@ class LookupProvider(Provider):
         )
 
 
+class ScriptedProvider(Provider):
+    """Answer each task request with the next scripted step.
+
+    A step is ``("call", [(tool, arguments), ...])`` for one round of tool
+    calls, or ``("say", text)`` for a reply that submits nothing.
+    """
+
+    def __init__(self, steps: list[tuple[str, Any]]) -> None:
+        super().__init__([])
+        self.steps = list(steps)
+
+    async def chat_stream(self, messages, *args, **kwargs):
+        if str(messages[0].content or "").startswith(SUMMARY_WRITER):
+            async for chunk in super().chat_stream(messages, *args, **kwargs):
+                yield chunk
+            return
+        self.task_requests.append(list(messages))
+        self.calls += 1
+        kind, value = self.steps.pop(0)
+        usage = {"input_tokens": 1, "output_tokens": 1}
+        if kind == "say":
+            yield LLMStreamChunk(delta=value)
+            yield LLMStreamChunk(done=True, usage=usage, stop_reason="end_turn")
+            return
+        calls = [
+            LLMToolCall(id=f"call-{self.calls}-{index}", name=name, arguments=arguments)
+            for index, (name, arguments) in enumerate(value)
+        ]
+        yield LLMStreamChunk(
+            tool_calls=calls, done=True, usage=usage, stop_reason="tool_use"
+        )
+
+
 class Harness:
     def __init__(
         self,
@@ -144,15 +180,20 @@ class Harness:
         provider: Provider | None = None,
         strategy: str = "model_summary",
         max_tool_iterations: int = 200,
+        page_chars: int = 3000,
+        max_tool_calls_per_round: int = 4,
+        working_memory_tokens: int = 4096,
     ) -> None:
         self.bus = MessageBus()
         self.provider = provider or Provider(answers)
         self.loops: list[AgentLoop] = []
+        self.lookups: list[str] = []
         self.registry, self.contracts = _definitions()
 
         def lookup(arguments: dict[str, Any]) -> dict[str, Any]:
             # Each page is long enough that a few of them fill working memory.
-            return {"answer": f"{arguments['text']}:" + "丙" * 3000}
+            self.lookups.append(arguments["text"])
+            return {"answer": f"{arguments['text']}:" + "丙" * page_chars}
 
         tools = CapabilityToolAdapterFactory("neutral", {"lookup": lookup}, self.contracts)
 
@@ -167,9 +208,10 @@ class Harness:
                 bus=self.bus,
                 active_provider=self.provider,
                 agent_defaults=AgentDefaults(
-                    working_memory_tokens=4096,
+                    working_memory_tokens=working_memory_tokens,
                     context_compaction_strategy=strategy,
                     max_tool_iterations=max_tool_iterations,
+                    max_tool_calls_per_round=max_tool_calls_per_round,
                 ),
                 global_knowledge_root=None,
             ),
@@ -394,27 +436,27 @@ async def test_a_slice_that_only_rereads_the_same_page_stops(tmp_path: Path) -> 
     assert "no_progress after tool_slice_boundary" in (outcome.error or "")
 
 
-def test_the_turn_is_found_by_its_request_after_compaction_moved_it() -> None:
+def test_a_turn_whose_request_was_evicted_still_drops_its_rejected_attempts() -> None:
     def call(call_id: str) -> dict[str, Any]:
         return {"id": call_id, "name": "submit_result", "arguments": {}}
 
     task = "<task>answer</task>"
-    history = [
-        {"role": "user", "content": f"{SUMMARY}\n{{}}\n</context_handoff_summary>"},
-        {"role": "user", "content": task},
+    summary = {"role": "user", "content": f"{SUMMARY}\n{{}}\n</context_handoff_summary>"}
+    attempts = [
         {"role": "assistant", "content": "", "tool_calls": [call("1")]},
         {"role": "tool", "content": "invalid", "tool_call_id": "1", "is_tool_result": True},
         {"role": "assistant", "content": "", "tool_calls": [call("2")]},
         {"role": "tool", "content": "ok", "tool_call_id": "2", "is_tool_result": True},
     ]
 
-    # Before compaction the history was empty; the request moved to index 1.
-    start = turn_start(history, task + "\n")
-    assert start == 1
-    kept = drop_rejected_attempts(history, start)
-    assert [m["content"] for m in kept] == [history[0]["content"], task, "", "ok"]
-    # A request that compaction evicted is not guessed at.
-    assert turn_start(history[2:], task) is None
+    # The turn starts after the summary; its request is still there.
+    history = [summary, {"role": "user", "content": task}, *attempts]
+    kept = drop_rejected_attempts(history, 1, request=task + "\n")
+    assert [m["content"] for m in kept] == [summary["content"], task, "", "ok"]
+    # Compaction evicted the request: the turn starts with a rejected attempt.
+    kept = drop_rejected_attempts([summary, *attempts], 1, request=task)
+    assert [m["content"] for m in kept] == [summary["content"], "", "ok"]
+    assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["2"]
 
 
 def test_replacing_the_conversation_drops_a_summary_it_does_not_contain(
@@ -440,3 +482,262 @@ def test_replacing_the_conversation_drops_a_summary_it_does_not_contain(
     assert loop.handoff_summary is None
     messages = asyncio.run(loop._build_messages())
     assert [m.role for m in messages] == ["system"]
+
+
+# A turn whose request is too large to keep once its tool results arrive:
+# compaction in the middle of the tool loop evicts the request, while the
+# earlier turn and this turn's lookups still fit.  The model then submits a
+# rejected result, answers in prose, is told to submit, and submits again.
+LARGE_REQUEST = "第二问" + "乙" * 5000
+REJECTED_THEN_ACCEPTED = [
+    ("call", [("lookup", {"text": "p1"})]),
+    ("call", [("lookup", {"text": "p2"})]),
+    ("call", [("lookup", {"text": "p3"})]),
+    ("call", [("submit_result", {"wrong": 1})]),
+    ("say", "答案大概是二"),
+    ("call", [("submit_result", {"answer": "two"})]),
+]
+
+
+def _saved(tmp_path: Path, conversation_id: str) -> list[LLMMessage]:
+    stored = FileConversationHistoryStore(tmp_path, RUN_ID).load(conversation_id)
+    assert stored is not None
+    return [
+        LLMMessage(
+            role=item["role"],
+            content=item["content"],
+            tool_calls=[
+                LLMToolCall(call["id"], call["name"], call["arguments"])
+                for call in item.get("tool_calls") or ()
+            ]
+            or None,
+            tool_call_id=item.get("tool_call_id"),
+            is_tool_result=bool(item.get("is_tool_result")),
+        )
+        for item in stored
+    ]
+
+
+def _looked_up(history: list[LLMMessage]) -> list[str]:
+    return [
+        call.arguments["text"]
+        for message in history
+        for call in message.tool_calls or ()
+        if call.name == "lookup"
+    ]
+
+
+def _superseded(history: list[LLMMessage]) -> list[str]:
+    """What is left of the turn's rejected attempts and correction prompts."""
+
+    markers = (
+        "correction_required",
+        "<submission_correction>",
+        "<tool_input_correction",
+        "答案大概是二",
+    )
+    found = [
+        marker
+        for message in history
+        for marker in markers
+        if marker in (message.content or "")
+    ]
+    return found + ["wrong" for arguments in _submitted(history) if "wrong" in arguments]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compacted", [True, False])
+async def test_an_accepted_resubmission_is_all_that_stays_of_its_attempts(
+    tmp_path: Path, compacted: bool
+) -> None:
+    provider = ScriptedProvider(
+        [
+            ("call", [("submit_result", {"answer": "one"})]),
+            *REJECTED_THEN_ACCEPTED,
+            ("call", [("submit_result", {"answer": "three"})]),
+        ]
+    )
+    harness = Harness(
+        tmp_path,
+        [],
+        provider=provider,
+        page_chars=600,
+        working_memory_tokens=4096 if compacted else 1_000_000,
+    )
+
+    async def steps():
+        await harness.ask("first", "第一问")
+        second = await harness.ask("second", LARGE_REQUEST, tools=["lookup"])
+        saved = _saved(tmp_path, harness.conversation.conversation_id)
+        live = harness.history()
+        summaries = provider.summary_requests
+        third = await harness.ask("third", "第三问")
+        return second, saved, live, summaries, third
+
+    second, saved, live, summaries, third = await harness.run(steps)
+
+    assert second.status == "ok"
+    assert second.result == {"answer": "two"}
+    # The scenario happened as described: within the turn the model was
+    # told why its submission was rejected, and then told to submit.
+    sent_in_turn = provider.task_requests[1:7]
+    assert any("<tool_input_correction" in (m.content or "") for m in sent_in_turn[4])
+    assert any("<submission_correction>" in (m.content or "") for m in sent_in_turn[5])
+    if compacted:
+        assert summaries >= 1
+        # Compaction inside the tool loop evicted the turn's own request.
+        assert not _requests(saved, "第二问")
+        assert sum(SUMMARY in (m.content or "") for m in saved) == 1
+    else:
+        assert summaries == 0
+        assert len(_requests(saved, "第二问")) == 1
+
+    # The saved history keeps the accepted submission once, none of the
+    # superseded attempts or correction prompts, and the rest: the earlier
+    # turn, this turn's lookups and their results.
+    assert [m.content for m in saved] == [m.content for m in live]
+    assert _superseded(saved) == []
+    assert _submitted(saved) == [{"answer": "one"}, {"answer": "two"}]
+    assert len(_requests(saved, "第一问")) == 1
+    assert _looked_up(saved) == ["p1", "p2", "p3"]
+    assert sum("p3:" in (m.content or "") for m in saved if m.is_tool_result) == 1
+
+    # The next step receives that history, then its own request.
+    assert third.result == {"answer": "three"}
+    received = provider.task_requests[-1]
+    assert _superseded(received) == []
+    assert _submitted(received) == [{"answer": "one"}, {"answer": "two"}]
+    assert [m.content for m in received[1:-1]] == [m.content for m in saved]
+    assert "第三问" in received[-1].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compacted", [True, False])
+async def test_a_rejected_submission_beside_the_accepted_one_does_not_stay(
+    tmp_path: Path, compacted: bool
+) -> None:
+    # In the last round the model looks something up, submits a rejected
+    # result, then the correction that is accepted, then once more (skipped).
+    provider = ScriptedProvider(
+        [
+            ("call", [("submit_result", {"answer": "one"})]),
+            ("call", [("lookup", {"text": "p1"})]),
+            ("call", [("lookup", {"text": "p2"})]),
+            ("call", [("lookup", {"text": "p3"})]),
+            (
+                "call",
+                [
+                    ("lookup", {"text": "p4"}),
+                    ("submit_result", {"wrong": 1}),
+                    ("submit_result", {"answer": "two"}),
+                    ("submit_result", {"answer": "four"}),
+                ],
+            ),
+            ("call", [("submit_result", {"answer": "three"})]),
+        ]
+    )
+    harness = Harness(
+        tmp_path,
+        [],
+        provider=provider,
+        page_chars=600,
+        working_memory_tokens=4096 if compacted else 1_000_000,
+    )
+
+    async def steps():
+        await harness.ask("first", "第一问")
+        second = await harness.ask("second", LARGE_REQUEST, tools=["lookup"])
+        saved = _saved(tmp_path, harness.conversation.conversation_id)
+        live = harness.history()
+        summaries = provider.summary_requests
+        third = await harness.ask("third", "第三问")
+        return second, saved, live, summaries, third
+
+    second, saved, live, summaries, third = await harness.run(steps)
+
+    assert second.status == "ok"
+    assert second.result == {"answer": "two"}
+    if compacted:
+        # Compaction inside the tool loop evicted the turn's own request.
+        assert summaries >= 1
+        assert not _requests(saved, "第二问")
+    else:
+        assert summaries == 0
+        assert len(_requests(saved, "第二问")) == 1
+
+    # Of the last round, the lookup and the accepted submission stay; the
+    # rejected submission, its correction and the skipped one do not.
+    skipped = "a terminal result already ended this turn"
+    assert [m.content for m in saved] == [m.content for m in live]
+    assert _superseded(saved) == []
+    assert not any(skipped in (m.content or "") for m in saved)
+    assert _submitted(saved) == [{"answer": "one"}, {"answer": "two"}]
+    assert len(_requests(saved, "第一问")) == 1
+    assert _looked_up(saved) == ["p1", "p2", "p3", "p4"]
+    assert sum("p4:" in (m.content or "") for m in saved if m.is_tool_result) == 1
+
+    # The next step receives that history, then its own request.
+    assert third.result == {"answer": "three"}
+    received = provider.task_requests[-1]
+    assert _superseded(received) == []
+    assert not any(skipped in (m.content or "") for m in received)
+    assert _submitted(received) == [{"answer": "one"}, {"answer": "two"}]
+    assert [m.content for m in received[1:-1]] == [m.content for m in saved]
+    assert "第三问" in received[-1].content
+
+
+# The batch limit is two calls per round; the submission comes after it.
+PAST_THE_BATCH = [
+    ("lookup", {"text": "p1"}),
+    ("lookup", {"text": "p2"}),
+    ("lookup", {"text": "p3"}),
+]
+
+
+@pytest.mark.asyncio
+async def test_a_submission_past_the_batch_is_accepted_in_the_same_round(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider(
+        [("call", [*PAST_THE_BATCH, ("submit_result", {"answer": "two"})])]
+    )
+    harness = Harness(
+        tmp_path, [], provider=provider, page_chars=10, max_tool_calls_per_round=2
+    )
+
+    outcome = await harness.run(lambda: harness.ask("only", "问题", tools=["lookup"]))
+
+    assert outcome.status == "ok"
+    assert outcome.result == {"answer": "two"}
+    assert len(provider.task_requests) == 1
+    # Read-only calls past the batch still run.
+    assert harness.lookups == ["p1", "p2", "p3"]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_submission_past_the_batch_is_corrected(tmp_path: Path) -> None:
+    provider = ScriptedProvider(
+        [
+            ("call", [*PAST_THE_BATCH, ("submit_result", {"wrong": 1})]),
+            ("call", [("submit_result", {"answer": "two"})]),
+        ]
+    )
+    harness = Harness(
+        tmp_path, [], provider=provider, page_chars=10, max_tool_calls_per_round=2
+    )
+
+    outcome = await harness.run(lambda: harness.ask("only", "问题", tools=["lookup"]))
+
+    assert outcome.status == "ok"
+    assert outcome.result == {"answer": "two"}
+    # The submission was checked as usual and the model was told why.
+    correction = [
+        m.content
+        for m in provider.task_requests[1]
+        if "<tool_input_correction" in (m.content or "")
+    ]
+    assert len(correction) == 1
+    assert "'answer' is a required property" in correction[0]
+    history = harness.history()
+    assert _submitted(history) == [{"answer": "two"}]
+    assert _looked_up(history) == ["p1", "p2", "p3"]

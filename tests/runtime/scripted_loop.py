@@ -43,6 +43,7 @@ class ScriptedLoop:
         self._callback = None
         self.initial_session_restore = None
         self.persist_handoff_summary = False
+        self._turn_start: int | None = None
 
     def restore_conversation(self, messages, *, task_boundaries=(), handoff_summary=None):
         del task_boundaries, handoff_summary
@@ -70,6 +71,13 @@ class ScriptedLoop:
 
     def conversation_messages(self) -> list[LLMMessage]:
         return list(self.history)
+
+    def begin_turn(self) -> None:
+        # Nothing is compacted here, so a turn starts where the history ended.
+        self._turn_start = len(self.history)
+
+    def turn_start_index(self) -> int | None:
+        return self._turn_start
 
     def begin_typed_task(self, context: dict[str, Any]) -> bool:
         self.task_contexts.append(dict(context))
