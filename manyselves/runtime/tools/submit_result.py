@@ -58,6 +58,7 @@ class SubmitResultTool(Tool):
         recovery_callback: RecoveryCallback | None = None,
         generic: bool = False,
         store_task_id: str | None = None,
+        reads: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.sender = sender
         self.workflow_id = workflow_id
@@ -75,6 +76,8 @@ class SubmitResultTool(Tool):
         self.recovery_callback = recovery_callback
         self.store_task_id = store_task_id or task_id
         self.generic = generic
+        # What the call read besides its input, saved with an accepted result.
+        self.reads = reads
         if output_contract.json_schema().get("type") != "object":
             raise ValueError(
                 f"submit_result requires an object output contract: {output_contract_id}"
@@ -117,6 +120,7 @@ class SubmitResultTool(Tool):
             input_value=self.input_value,
             status="completed",
             result=result,
+            reads=self.reads() if self.reads is not None else None,
         )
         await self._publish(result_ref, "completed", "")
         return {"status": "ok", "accepted": True, "result_path": result_ref}

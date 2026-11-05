@@ -2,7 +2,9 @@
 
 One file per (conversation, task action).  It records the validated input the
 result was produced for, so a Same-run resume reuses a result only for the
-same input instead of trusting a file name.
+same input instead of trusting a file name.  A completed result also records
+what the call read besides its input (``reads``) and the Run version that
+produced it; the invoker checks the reads before taking the result again.
 """
 
 from __future__ import annotations
@@ -31,9 +33,11 @@ def _json_value(value: Any) -> Any:
 class FileAgentResultStore:
     """Persist and look up typed Agent results under the Run directory."""
 
-    def __init__(self, workspace: Path, run_id: str) -> None:
+    def __init__(self, workspace: Path, run_id: str, *, version: int | None = None) -> None:
         self.workspace = Path(workspace)
         self.run_id = run_id
+        # The version of the Run executing now; written into every record.
+        self.version = version
         self.root = (
             self.workspace / "Work" / "runs" / _safe_component(run_id) / "agent-results"
         )
@@ -58,6 +62,7 @@ class FileAgentResultStore:
         status: AgentResultStatus,
         result: Any = None,
         reason: str | None = None,
+        reads: Mapping[str, Any] | None = None,
     ) -> str:
         path = self.path(conversation_id, task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,6 +71,7 @@ class FileAgentResultStore:
             json.dumps(
                 {
                     "run_id": self.run_id,
+                    "version": self.version,
                     "conversation_id": conversation_id,
                     "task_id": task_id,
                     "agent_id": agent_id,
@@ -73,6 +79,8 @@ class FileAgentResultStore:
                     "input": _json_value(input_value),
                     "result": _json_value(result),
                     "reason": reason,
+                    # None: what the call read is not known.
+                    "reads": _json_value(reads) if reads is not None else None,
                 },
                 ensure_ascii=False,
                 indent=1,

@@ -16,6 +16,11 @@ executed: a program step comes back from the step memo with the files it
 wrote (see ``step_memo``), and a model turn from the turn memo.  Resume does
 this on its own when the definitions or the code of the Run's steps changed
 since they ran; a Capability can also ask for it with revised input.
+
+The version executing now is one more than the last archived version.  Every
+result an execution takes from a record instead of producing it is written to
+the Run's event trace with that version, the version of the record and the
+rule that took it (see ``retrievals``).
 """
 
 from __future__ import annotations
@@ -61,6 +66,7 @@ from .capability_binding import (
 )
 from .conversation_store import FileConversationStore
 from .definition_agent import DefinitionAgentInvoker
+from .retrievals import RetrievalLog
 from .run_failure import describe_failure
 from .run_lifecycle import DetachedRunTaskOwner, StartAwareFileWorkflowStateStore
 from .step_memo import MEMO_DIR, MemoizedTool, RunStepMemo, code_digest, package_data_digest
@@ -361,6 +367,12 @@ class GenericCapabilityRuntimeBinding:
                 continue
         return rows
 
+    def current_version(self, run_id: str) -> int:
+        """The version of the Run executing now: one after the last archived."""
+
+        versions = self._run_dir(run_id) / "versions"
+        return 1 + max((_version_order(path) for path in versions.glob("v*")), default=0)
+
     def _run_dir(self, run_id: str) -> Path:
         if not run_id or Path(run_id).name != run_id:
             raise CapabilityRunNotFoundError(run_id)
@@ -392,11 +404,8 @@ class GenericCapabilityRuntimeBinding:
 
     def _archive_version(self, run_id: str, state: WorkflowState, *, reason: str) -> Path:
         run_dir = self._run_dir(run_id)
-        versions = run_dir / "versions"
-        number = 1 + max(
-            (_version_order(path) for path in versions.glob("v*")), default=0
-        )
-        target = versions / f"v{number}"
+        number = self.current_version(run_id)
+        target = run_dir / "versions" / f"v{number}"
         target.mkdir(parents=True)
         for entry in sorted(run_dir.iterdir()):
             if entry.name in self._kept_on_rerun:
@@ -510,6 +519,11 @@ class GenericCapabilityRuntimeBinding:
     ) -> WorkflowState:
         contracts = _contracts(registry)
         run_id = state.run_id
+        version = self.current_version(run_id)
+        events = FileWorkflowEventSink(self.workspace)
+        retrievals = RetrievalLog(
+            events, run_id=run_id, workflow_id=state.workflow_id, version=version
+        )
         memo = RunStepMemo(
             self.workspace,
             run_id,
@@ -517,6 +531,8 @@ class GenericCapabilityRuntimeBinding:
             kept=self._kept_on_rerun,
             frozen_inputs=self._frozen_inputs,
             source_roots=self._source_roots(),
+            version=version,
+            retrievals=retrievals,
         )
         self._replay.discard(run_id)
         tools = self._tools(plan, contracts, run_id)
@@ -538,6 +554,9 @@ class GenericCapabilityRuntimeBinding:
                 contracts=contracts,
                 tool_factory=factory.build,
                 execution=self._execution,
+                version=version,
+                retrievals=retrievals,
+                read_basis=memo.read_basis,
                 **(
                     {"loop_builder": self._loop_builder}
                     if self._loop_builder is not None
@@ -549,7 +568,7 @@ class GenericCapabilityRuntimeBinding:
                 return await WorkflowRuntimeHost(
                     self._executors,
                     self._store,
-                    FileWorkflowEventSink(self.workspace),
+                    events,
                     save_sparingly=lambda: memo.replaying,
                 ).execute(
                     plan,

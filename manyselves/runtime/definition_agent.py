@@ -9,8 +9,11 @@ action into one typed turn on a Provider-backed AgentLoop:
   for a correction in the same conversation when it does not match;
 - declared recovery covers natural language without a submission, max-token
   and tool-slice continuations, and no-progress stops;
-- a completed result for the same conversation, task and input is reused on a
-  Same-run resume, and Capability Tool results are reused per their definition;
+- a completed result for the same conversation, task and input is reused in
+  the same version while what the call read still holds (see ``_reads_hold``),
+  and Capability Tool results are reused per their definition;
+- every result taken from a record instead of the model is written to the
+  Run's event trace (see ``retrievals``);
 - each conversation keeps one live session, its history (compacted, when the
   working memory overflowed) is saved after every invocation, and a forked
   conversation starts from its source's history.
@@ -55,6 +58,7 @@ from .conversation_history import (
     serialize_message,
 )
 from .provider_agent_session import ProviderAgentSessionFactory
+from .retrievals import MODEL_CALL_REPLAY, SAME_VERSION_RESULT, RetrievalLog
 from .tools.definition_tool import DefinitionTool
 from .tools.registry import ToolRegistry
 from .tools.submit_result import SubmitResultTool
@@ -92,6 +96,9 @@ class DefinitionAgentInvoker:
         tool_factory: ToolAdapterFactory | None = None,
         execution: AgentExecutionService | None = None,
         loop_builder: LoopBuilder = _default_loop_builder,
+        version: int | None = None,
+        retrievals: RetrievalLog | None = None,
+        read_basis: Callable[[], str] | None = None,
     ) -> None:
         if services.workspace is None:
             raise ValueError("the Agent invoker requires a workspace")
@@ -104,7 +111,14 @@ class DefinitionAgentInvoker:
         self.tool_factory = tool_factory
         self.execution = execution or AgentExecutionService(services.bus)
         self.loop_builder = loop_builder
-        self.results = FileAgentResultStore(self.workspace, run_id)
+        # The version of the Run executing now.
+        self.version = version
+        self.retrievals = retrievals
+        # What the files a call's Tools could read are now, as one digest
+        # (``RunStepMemo.read_basis``).  Without it, a result whose call used
+        # a Tool cannot be checked and is not taken again.
+        self.read_basis = read_basis
+        self.results = FileAgentResultStore(self.workspace, run_id, version=version)
         self.histories = FileConversationHistoryStore(self.workspace, run_id)
         self.memo = FileAgentTurnMemo(self.workspace, run_id)
 
@@ -182,15 +196,37 @@ class DefinitionAgentInvoker:
         )
         conversation_id = conversation.conversation_id
         store_key = _store_key(task_id, task)
+        # The images the request carries are read now; their content is part
+        # of what the call read.  A missing one fails the turn below.
+        try:
+            images = self._images(task, input_value)
+            image_reads = self._image_reads(images)
+            image_error = None
+        except (OSError, ValueError) as exc:
+            images, image_reads, image_error = (), [], str(exc)
         completed = self.results.completed_for(
             conversation_id=conversation_id,
             task_id=store_key,
             input_value=input_value,
         )
-        if completed is not None:
-            return await self._reuse(
+        if (
+            completed is not None
+            and image_error is None
+            and self._reads_hold(completed.get("reads"), image_reads)
+        ):
+            reused = await self._reuse(
                 completed, output_contract, task, recovery, conversation
             )
+            if reused.status == "ok" and self.retrievals is not None:
+                version = completed.get("version")
+                self.retrievals.record(
+                    step=task_id,
+                    rule=SAME_VERSION_RESULT,
+                    source_version=version if isinstance(version, int) else self.version,
+                    detail={"conversation_id": conversation_id, "task_id": task.id},
+                )
+            return reused
+        turn_reads = _TurnReads(image_reads, self.read_basis)
 
         runtime_id = f"{self.workflow_id}:{agent.id}:{conversation_id}"
         session_id = conversation.external_session_id or (
@@ -208,6 +244,7 @@ class DefinitionAgentInvoker:
             input_value=input_value,
             output_contract=output_contract,
             recovery=recovery,
+            reads=turn_reads,
         )
         factory = ProviderAgentSessionFactory(
             loop_builder=self.loop_builder,
@@ -226,11 +263,9 @@ class DefinitionAgentInvoker:
         )
         existing = self.execution.session(self.workflow_id, conversation_id)
         restore = None if existing is not None else self._restore(conversation)
-        try:
-            images = self._images(task, input_value)
-        except ValueError as exc:
+        if image_error is not None:
             return AgentInvocationOutcome(
-                status="failed", session_id=conversation.external_session_id, error=str(exc)
+                status="failed", session_id=conversation.external_session_id, error=image_error
             )
         prompt = self._prompt(task, input_value, tools)
         before = _history_of(existing, restore)
@@ -283,7 +318,7 @@ class DefinitionAgentInvoker:
             prompt=prompt,
             tool_schemas=tools.get_definitions(),
             output_schema=output_contract.json_schema(),
-            image_digests=[file_digest(image["path"]) for image in images],
+            image_digests=[read["sha256"] for read in image_reads],
             history=before,
         )
         replayed = await self._replay(
@@ -293,8 +328,10 @@ class DefinitionAgentInvoker:
             conversation=conversation,
             agent=agent,
             task=task,
+            task_id=task_id,
             store_key=store_key,
             input_value=input_value,
+            reads=turn_reads.record(),
             live=existing is not None,
         )
         if replayed is not None:
@@ -409,6 +446,7 @@ class DefinitionAgentInvoker:
                     "store_key": store_key,
                     "conversation_id": conversation_id,
                     "model": answering_model,
+                    "version": self.version,
                 },
             )
         if mapped.status != "ok":
@@ -457,8 +495,10 @@ class DefinitionAgentInvoker:
         conversation: ConversationRecord,
         agent: AgentDefinition,
         task: TaskDefinition,
+        task_id: str,
         store_key: str,
         input_value: Any,
+        reads: Mapping[str, Any],
         live: bool,
     ) -> AgentInvocationOutcome | None:
         """Replay a turn the model already completed for exactly this context."""
@@ -489,15 +529,28 @@ class DefinitionAgentInvoker:
             input_value=input_value,
             status="completed",
             result=result,
+            reads=reads,
         )
+        recorded = record.get("version")
+        source_version = recorded if isinstance(recorded, int) else None
         self.memo.log_hit(
             {
                 "key": memo_key,
                 "conversation_id": conversation_id,
                 "task_id": task.id,
                 "store_key": store_key,
+                # The version replaying the record, and the one that made it.
+                "version": self.version,
+                "source_version": source_version,
             }
         )
+        if self.retrievals is not None:
+            self.retrievals.record(
+                step=task_id,
+                rule=MODEL_CALL_REPLAY,
+                source_version=source_version,
+                detail={"conversation_id": conversation_id, "task_id": task.id},
+            )
         return AgentInvocationOutcome(
             status="ok", result=result, session_id=conversation.external_session_id
         )
@@ -569,6 +622,7 @@ class DefinitionAgentInvoker:
         input_value: Any,
         output_contract: ContractAdapter,
         recovery: AgentRecoveryDriver | None,
+        reads: _TurnReads | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         registry.register(
@@ -587,6 +641,7 @@ class DefinitionAgentInvoker:
                 generic=_generic(agent, task),
                 store_task_id=_store_key(task_id, task),
                 store=self.results,
+                reads=reads.record if reads is not None else None,
                 bus=self.services.bus,
                 recovery_callback=(
                     build_tool_recovery_callback(recovery) if recovery is not None else None
@@ -599,10 +654,15 @@ class DefinitionAgentInvoker:
                 raise TypeError(f"definition is not a tool: {tool_id}")
             if self.tool_factory is None:
                 raise ValueError(f"no tool implementations are bound for {tool_id}")
+            adapter = self.tool_factory(definition)
             registry.register(
                 DefinitionTool(
                     definition,
-                    self.tool_factory(definition),
+                    (
+                        _ReadingAdapter(adapter, definition, reads)
+                        if reads is not None
+                        else adapter
+                    ),
                     task_id=f"{task_id}@{conversation_id}",
                 )
             )
@@ -668,6 +728,55 @@ class DefinitionAgentInvoker:
         if payload.get("status") == "completed":
             return None
         return payload.get("reason")
+
+    def _image_reads(self, images: tuple[dict[str, str], ...]) -> list[dict[str, str]]:
+        """Each image the request carries: workspace path, media type and content digest.
+
+        The digest is the one the turn memo key (formula 4.2) takes for it.
+        """
+
+        return [
+            {
+                "path": Path(image["path"]).relative_to(self.workspace).as_posix(),
+                "media_type": image["media_type"],
+                "sha256": file_digest(image["path"]),
+            }
+            for image in images
+        ]
+
+    def _reads_hold(self, reads: Any, image_reads: list[dict[str, str]]) -> bool:
+        """Whether what a completed call read is still what it was.
+
+        The call's input is compared before this; here, what the call read
+        besides it.  The images its request carried must have the same
+        content now.  When it called Tools, which files those read is not
+        known, so every file they could read must be as it was when the call
+        first used one (``read_basis``).  That basis covers only what a Tool
+        declared ``pure_read`` reads; a call that used any other Tool (one
+        reading external data, writing, or with the default declaration) read
+        something the basis does not cover.  A record that does not say what
+        was read, that names such a Tool, or whose basis cannot be had now,
+        does not hold.
+        """
+
+        if not isinstance(reads, Mapping):
+            return False
+        if reads.get("images") != image_reads:
+            return False
+        tools = reads.get("tools")
+        if not isinstance(tools, list):
+            return False
+        if not tools:
+            return True
+        if reads.get("unverifiable") != []:
+            return False
+        basis = reads.get("tool_basis")
+        if not isinstance(basis, str) or self.read_basis is None:
+            return False
+        try:
+            return self.read_basis() == basis
+        except OSError:
+            return False
 
     def _images(self, task: TaskDefinition, input_value: Any) -> tuple[dict[str, str], ...]:
         if task.image is None:
@@ -868,6 +977,70 @@ def _message_digests(messages: Any) -> set[str]:
 
 
 ATTENTION_BUDGET_EXCEEDED = "attention budget exceeded"
+
+
+# The Tool declaration whose reads the read basis covers: files in the
+# workspace, the sources outside it and the frozen inputs, read without
+# writing.  What any other Tool reads (external data, or files it writes
+# itself) the basis cannot vouch for.
+_BASIS_COVERS = "pure_read"
+
+
+class _TurnReads:
+    """What one call read besides its input: its images and its Tool calls.
+
+    The first Tool call takes the read basis before the Tool runs, so a file
+    changed after that is seen as changed when the result is checked later.
+    A Tool not declared ``pure_read`` is listed as ``unverifiable``: what it
+    read cannot be checked, so the result is not taken again.
+    """
+
+    def __init__(
+        self, images: list[dict[str, str]], read_basis: Callable[[], str] | None
+    ) -> None:
+        self._images = images
+        self._read_basis = read_basis
+        self._tools: list[str] = []
+        self._unverifiable: list[str] = []
+        self._basis: str | None = None
+
+    def tool_called(self, tool_id: str, side_effect: Any) -> None:
+        if not self._tools and self._read_basis is not None:
+            try:
+                self._basis = self._read_basis()
+            except OSError:
+                self._basis = None
+        if tool_id not in self._tools:
+            self._tools.append(tool_id)
+        if side_effect != _BASIS_COVERS and tool_id not in self._unverifiable:
+            self._unverifiable.append(tool_id)
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "images": list(self._images),
+            "tools": list(self._tools),
+            "tool_basis": self._basis if self._tools else None,
+            "unverifiable": list(self._unverifiable),
+        }
+
+
+class _ReadingAdapter:
+    """A Capability Tool adapter that tells the turn's reads when it is called.
+
+    It reports the Tool's id and its declared ``side_effect``.
+    """
+
+    def __init__(self, adapter: Any, definition: ToolDefinition, reads: _TurnReads) -> None:
+        self._adapter = adapter
+        self._definition = definition
+        self._reads = reads
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._adapter, name)
+
+    async def invoke(self, arguments: Any, *, task_id: str) -> Any:
+        self._reads.tool_called(self._definition.id, self._definition.side_effect)
+        return await self._adapter.invoke(arguments, task_id=task_id)
 
 
 def _history_of(

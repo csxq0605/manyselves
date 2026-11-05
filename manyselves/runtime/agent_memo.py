@@ -9,6 +9,11 @@ its conversation continues exactly as it did the first time.
 
 The record does not depend on workflow positions, conversation ids or action
 ids, so it survives plan changes.  It knows nothing about any Capability.
+
+Each record names the Run version whose call produced it, and each line of
+``hits.jsonl`` names the version that replayed it and the record's version, so
+a replay of a record from the version executing now can be told from a replay
+of an earlier version's record.
 """
 
 from __future__ import annotations

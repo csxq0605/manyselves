@@ -21,6 +21,14 @@ affected by this rule: their whole input is in their own memo key.
 
 Tool steps run one at a time while a Run is recorded, so the files each one
 wrote are its own.
+
+Each record names the Run version that executed the step; a replay is written
+to the Run's event trace with that version (see ``retrievals``).
+
+The same scan also gives the basis of a model call that read files through
+its Tools (``read_basis``): which files those Tools read is not known either,
+so the basis covers every file a step may write, the sources outside the Run
+and the content of its frozen inputs.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ from loguru import logger
 
 from manyselves.kernel.ports import ToolInvocationOutcome
 
+from .retrievals import PROGRAM_STEP_REPLAY
 from .tools.result_memory import canonical_tool_arguments
 
 MEMO_DIR = "step-memo"
@@ -60,6 +69,12 @@ RUNTIME_OWNED = frozenset(
         "resolved-plan.json",
         "start-input.json",
     }
+)
+# Run-directory files the runtime keeps for itself while steps and model turns
+# run (step code, run options, budget notes, the Tool result index); a model
+# call's read basis leaves them out.
+_RUN_BOOKKEEPING = frozenset(
+    {"step-code.json", "run-options.json", "budget-notes.jsonl", "tool-result-index.jsonl"}
 )
 # Workspace-level runtime files under ``Work/``.
 _RUNTIME_WORK = frozenset({"leases", "conversations.json"})
@@ -309,6 +324,8 @@ class RunStepMemo:
         kept: Iterable[str] = (),
         frozen_inputs: Iterable[str] = (),
         source_roots: Iterable[Path] = (),
+        version: int | None = None,
+        retrievals: Any = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.run_id = run_id
@@ -317,7 +334,12 @@ class RunStepMemo:
         self.replaying = replay
         self._skip_in_run = RUNTIME_OWNED | frozenset(kept)
         self._lock = asyncio.Lock()
-        self._sources = self._source_digest(source_roots, frozenset(frozen_inputs))
+        self._source_roots = tuple(Path(root) for root in source_roots)
+        self._frozen = frozenset(frozen_inputs)
+        self._sources = self._source_digest(self._source_roots, self._frozen)
+        # The version executing now, and where replays are reported.
+        self.version = version
+        self._retrievals = retrievals
         self._data = package_data_digest()
         self.skipped = 0
         self.executed = 0
@@ -330,6 +352,12 @@ class RunStepMemo:
         digest = hashlib.sha256()
         for row in _listing(self.workspace, skip=_NOT_SOURCES):
             digest.update(repr(row).encode())
+        self._outside_sources(digest, roots, kept)
+        return digest.hexdigest()
+
+    def _outside_sources(self, digest: Any, roots: Iterable[Path], kept: frozenset[str]) -> None:
+        """Add the sources outside the workspace and the frozen inputs to ``digest``."""
+
         for root in roots:
             for row in _listing(Path(root)):
                 digest.update(repr((str(root), *row)).encode())
@@ -348,6 +376,25 @@ class RunStepMemo:
             for relative, path in files:
                 digest.update(relative.encode())
                 digest.update(_sha(path.read_bytes()).encode())
+
+    def read_basis(self) -> str:
+        """What a model call's Tools could read now, as one digest.
+
+        Every file a step may write (size and modification time), the sources
+        outside the workspace and the content of the Run's frozen inputs.  A
+        result whose call read files through Tools holds while this is the
+        same as when the call first used a Tool.
+        """
+
+        digest = hashlib.sha256()
+        for relative, signature in sorted(self._scan().items()):
+            parts = relative.split("/")
+            if parts[:3] == ["Work", "runs", self.run_id] and len(parts) == 4 and (
+                parts[3] in _RUN_BOOKKEEPING
+            ):
+                continue
+            digest.update(repr((relative, *signature)).encode())
+        self._outside_sources(digest, self._source_roots, self._frozen)
         return digest.hexdigest()
 
     def key(
@@ -434,6 +481,7 @@ class RunStepMemo:
             "outcome": outcome.model_dump(mode="json"),
             "writes": writes,
             "removes": sorted(set(before) - set(after)),
+            "version": self.version,
         }
         path = self._record_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -441,7 +489,9 @@ class RunStepMemo:
         temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, path)
 
-    def _restore(self, key: str) -> ToolInvocationOutcome | None:
+    def _restore(self, key: str) -> tuple[ToolInvocationOutcome, int | None] | None:
+        """Write a recorded step's files back; its outcome and the version that ran it."""
+
         try:
             record = json.loads(self._record_path(key).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -457,9 +507,11 @@ class RunStepMemo:
             os.replace(temporary, target)
         for relative in record.get("removes") or ():
             (self.workspace / relative).unlink(missing_ok=True)
-        return ToolInvocationOutcome.model_validate(record["outcome"]).model_copy(
+        outcome = ToolInvocationOutcome.model_validate(record["outcome"]).model_copy(
             update={"reused": True}
         )
+        version = record.get("version")
+        return outcome, version if isinstance(version, int) else None
 
     def report(self) -> None:
         """Say how many steps this execution skipped and executed."""
@@ -488,19 +540,31 @@ class RunStepMemo:
 
     # A step ------------------------------------------------------------------
 
+    @staticmethod
+    def _definition(adapter: Any) -> Any:
+        return getattr(adapter, "definition", None)
+
     async def invoke(self, adapter: Any, arguments: Any, *, task_id: str) -> ToolInvocationOutcome:
         implementation = getattr(getattr(adapter, "tool", None), "_implementation", adapter)
         key = self.key(
             task_id=task_id,
-            definition=getattr(adapter, "definition", None),
+            definition=self._definition(adapter),
             implementation=implementation,
             arguments=arguments,
         )
         async with self._lock:
             if self.replaying:
-                outcome = self._restore(key)
-                if outcome is not None:
+                restored = self._restore(key)
+                if restored is not None:
+                    outcome, source_version = restored
                     self.skipped += 1
+                    if self._retrievals is not None:
+                        self._retrievals.record(
+                            step=task_id,
+                            rule=PROGRAM_STEP_REPLAY,
+                            source_version=source_version,
+                            detail={"tool_id": getattr(self._definition(adapter), "id", None)},
+                        )
                     return outcome
                 logger.info(
                     "run {}: step {} changed; it and every later step run again",

@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -48,6 +49,19 @@ RUN_STOPPED_BEFORE = "run stopped before step"
 LEAD_CACHE_SETTLE_SECONDS = 3.0
 # How often a Map saves its running items (completed or failed ones at once).
 MAP_CHECKPOINT_SECONDS = 1.0
+# The workflow whose action is executing in this task: the Root or the
+# subworkflow, parallel branch or map item the action belongs to.
+_EXECUTING_WORKFLOW: ContextVar[str | None] = ContextVar("executing_workflow", default=None)
+
+
+def executing_workflow_id() -> str | None:
+    """The ``workflow_id`` the host writes for the action executing now, if any.
+
+    An adapter that writes its own events while an action runs uses it so
+    they name the same workflow as the action's ``action.*`` events.
+    """
+
+    return _EXECUTING_WORKFLOW.get()
 
 
 class WorkflowRuntimeEvent(BaseModel):
@@ -243,6 +257,29 @@ class WorkflowRuntimeHost:
             event = ActionSucceeded(action.id, result)
 
     async def _execute_action(
+        self,
+        plan: ResolvedPlan,
+        action,
+        state: WorkflowState,
+        context: RuntimeContext,
+        *,
+        plan_bundle: dict[str, ResolvedPlan],
+        checkpoint: Callable[[WorkflowState], None],
+    ) -> ActionResult:
+        token = _EXECUTING_WORKFLOW.set(state.workflow_id)
+        try:
+            return await self._dispatch_action(
+                plan,
+                action,
+                state,
+                context,
+                plan_bundle=plan_bundle,
+                checkpoint=checkpoint,
+            )
+        finally:
+            _EXECUTING_WORKFLOW.reset(token)
+
+    async def _dispatch_action(
         self,
         plan: ResolvedPlan,
         action,
