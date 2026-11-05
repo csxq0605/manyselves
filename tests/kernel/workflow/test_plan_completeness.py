@@ -77,6 +77,7 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
         implementation="capability:neutral:lookup",
         input_contract=tool_input.id,
         output_contract=tool_output.id,
+        side_effect="pure_read",
     )
     for definition in (contract, tool_input, tool_output, recovery, tool, agent, task):
         registry.register(definition)
