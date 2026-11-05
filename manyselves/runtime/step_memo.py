@@ -71,8 +71,9 @@ RUNTIME_OWNED = frozenset(
     }
 )
 # Run-directory files the runtime keeps for itself while steps and model turns
-# run (step code, run options, budget notes, the Tool result index); a model
-# call's read basis leaves them out.
+# run (step code, run options, budget notes, the Tool result index).  They may
+# change while a step runs, so they are neither a step's files nor part of a
+# model call's read basis.
 _RUN_BOOKKEEPING = frozenset(
     {"step-code.json", "run-options.json", "budget-notes.jsonl", "tool-result-index.jsonl"}
 )
@@ -332,7 +333,7 @@ class RunStepMemo:
         self.run_dir = self.workspace / "Work" / "runs" / run_id
         self.root = self.run_dir / MEMO_DIR
         self.replaying = replay
-        self._skip_in_run = RUNTIME_OWNED | frozenset(kept)
+        self._skip_in_run = RUNTIME_OWNED | _RUN_BOOKKEEPING | frozenset(kept)
         self._lock = asyncio.Lock()
         self._source_roots = tuple(Path(root) for root in source_roots)
         self._frozen = frozenset(frozen_inputs)
@@ -387,12 +388,8 @@ class RunStepMemo:
         """
 
         digest = hashlib.sha256()
+        # The scan already leaves out the Run's bookkeeping files.
         for relative, signature in sorted(self._scan().items()):
-            parts = relative.split("/")
-            if parts[:3] == ["Work", "runs", self.run_id] and len(parts) == 4 and (
-                parts[3] in _RUN_BOOKKEEPING
-            ):
-                continue
             digest.update(repr((relative, *signature)).encode())
         self._outside_sources(digest, self._source_roots, self._frozen)
         return digest.hexdigest()
