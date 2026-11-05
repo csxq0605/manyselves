@@ -526,6 +526,11 @@ async def test_a_submission_past_the_batch_still_runs(tmp_path: Path):
         and "exceeded the maximum batch" in (message.content or "")
     ]
     assert skipped == ["tool-2"]
+    # The prompt tells the model the submission is not held by the batch.
+    assert (
+        "提交最终结果不受这个批次上限限制，但仍要通过结果校验。"
+        in await loop._get_system_prompt()
+    )
 
 
 @pytest.mark.asyncio

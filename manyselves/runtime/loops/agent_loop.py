@@ -4904,6 +4904,7 @@ class AgentLoop:
         return (
             f"{prompt}\n\n[工具调用]\n每轮最多发起 {limit} 个工具调用。超出部分里只读的调用"
             "会依次执行；会改动内容的调用会被跳过，需要在下一轮重新发起。"
+            "提交最终结果不受这个批次上限限制，但仍要通过结果校验。"
         )
 
     def _with_live_task_state(self, messages: list[LLMMessage]) -> list[LLMMessage]:
