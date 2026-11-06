@@ -922,3 +922,61 @@ def test_two_meter_fixes_in_place_stay_two_items() -> None:
 
     assert [item["meter_ids"] for item in result["submission"]["items"]] == [["AC1"], ["LT1"]]
     assert result["check"]["issues"] == []
+
+
+@pytest.mark.parametrize(
+    ("text", "known", "codes", "flagged"),
+    [
+        ("夜间功率在 10-28 kW 之间", [10.0], (), ["28"]),  # a range with a unit is not a date
+        ("可降低 5-30%", [0.05], (), ["30%"]),
+        ("12/13 个夜晚超过阈值", [11.0, 13.0], (), ["12"]),
+        ("03-02 起；3/2（周一）；3/2 22:00；12-25 日", [], (), []),
+        ("3月16-31日夜间平均 35.2 kW", [35.2], (), []),  # spans of days, weeks and hours
+        ("夜间（22-6点）平均 35.2 kW，第 13-15 周", [35.2], (), []),
+        ("占全表电量的 18.7 %", [0.187], (), []),
+        ("约 1.2-1.5 万元", [12000.0, 15000.0], (), []),
+        ("约 1.2-1.6 万元", [12000.0, 15000.0], (), ["1.6万"]),
+        ("Started 2026-03-02. Night base 35.2 kW, 见 2026-03.", [35.2], (), []),
+        ("表 1 夜间平均 1.87 万 kWh", [15234.0], ("1", "2"), ["1.87万"]),  # a meter id never eats into a number
+        ("注塑机 12 夜间平均 35.2 kW", [35.2], ("IM12", "注塑机 12"), []),
+        ("2026-03-02 22:00 至 2026-03-03 06:00 共 48 条 15 分钟记录", [48.0], (), []),
+        ("冷冻水出水温度设定在 7-12℃，无功 10-28 kvar", [7.0, 10.0], (), ["12", "28"]),
+        ("每月夜间电量在 8000-1.2 万 kWh 之间", [12000.0], (), ["8000"]),
+        ("表 12 全期 12,500 kWh，夜间占比 12%", [12500.0], ("表 12", "12#"), ["12%"]),
+        ("16 号机、机台 16 与 16# 夜间仍有约 16 kW", [], ("机台 16", "16#"), ["16"]),
+        ("每日第 10 百分位功率约 12 kW，10% 分位数也是 12 kW", [12.0], (), []),  # a percentile is a label
+        ("下降约 10%", [12.0], (), ["10%"]),
+    ],
+)
+def test_number_hints_tell_dates_times_and_names_from_figures(text, known, codes, flagged) -> None:
+    from manyselves.capabilities.energy_efficiency.domain.quantify import number_hints
+
+    hints = number_hints([text], known, codes)
+
+    assert hints == [f"文字里的 {figure} 在引用的证据和程序计算里没有找到对应的数" for figure in flagged]
+
+
+def test_a_bare_number_is_a_name_only_where_it_is_written_as_one() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.quantify import _written_names
+
+    assert _written_names("16", "机台") == ["机台 16", "机台16", "16#"]
+    assert _written_names("IM-01", "机台") == ["IM-01"]
+
+
+def test_reasoning_may_quote_the_profile_but_the_phenomenon_must_quote_evidence(tmp_path: Path) -> None:
+    tools, _briefs = _prepared(tmp_path)
+    tools["__workspace__"] = tmp_path
+    evidence = tools["try-method"](
+        {"scope": f"{RUN}#P01", "meter_ids": ["AC1"], "method_id": "daily-clock-window", "params": NIGHT["params"]}
+    )
+    item = _item("A1", "AC1", [evidence["evidence_id"]], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
+    item["phenomenon"] = "AC1 全期电量 7392 kWh。"
+    item["reasoning"] = "画像里 AC1 全期电量 7392 kWh、平均功率 22 kW，周末日电量 288 kWh；另有 9999 kWh。"
+
+    hints = _quantified(tools, [item], {"daily-clock-window": ["A1"]})["A1"]["computed"]["number_hints"]
+
+    # 7392 is in the profile the finder read, not in the evidence it cited.
+    assert hints == [
+        "文字里的 7392 在引用的证据和程序计算里没有找到对应的数",
+        "文字里的 9999 在引用的证据和程序计算里没有找到对应的数",
+    ]

@@ -41,6 +41,7 @@ from .methods import (
     run_method,
 )
 from .prepare import meter_totals, method_context
+from .profile import DAILY_ROWS_LIMIT
 from .series import MeterSeries, WindowMeasure
 from .store import SiteData, read_json
 
@@ -326,26 +327,36 @@ def _price_records(
 
 
 # Month-day written with digits only counts as a date when it can be one
-# (03-02, 3/2); 12-95 is a range of two numbers.
+# (03-02, 3/2) and no unit or counter follows; 12-95, 10-28 kW, 5-30% and
+# 12/13 个 are numbers.  A sentence may end right after a date (2026-03-02.).
+_UNIT_AFTER = r"(?!\s*(?:[%％万亿元倍个次台条天度吨℃°A-Za-z]|小时|分钟|千瓦|兆瓦|摄氏))"
 _DATE = re.compile(
-    r"(?<![\d.])(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?![\d.])"
+    r"(?<![\d.])(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d|\.\d)"
     r"|(?<![\d.])(?:19|20)\d{2}\s*年(?:\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?)?"
-    r"|(?<![\d.])(?:19|20)\d{2}[-/]\d{1,2}(?![\d.\-/])"
+    r"|(?<![\d.])(?:19|20)\d{2}[-/]\d{1,2}(?!\d|[.\-/]\d)"
     r"|(?<![\d.])\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?"
-    r"|(?<![\d.])(?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])(?![\d.])"
+    r"|(?<![\d.])(?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])(?!\d|\.\d)" + _UNIT_AFTER
 )
 # Codes such as IM1-40, EV-0123456789 or P01-02 are names, not figures.
 _CODE = re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?:[-.][A-Za-z0-9_]+)+")
-_TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s*[点时](?:\s*\d{1,2}\s*分)?|\d{1,2}\s*(?:号|日|周|月份)")
+# Clock times, days, weeks and minutes, alone or as a span (22-6点, 16-31日, 13至15周).
+_TIME = re.compile(
+    r"\d{1,2}\s*[-~～–—至到]\s*\d{1,2}\s*(?:[点时号日周]|月份)"
+    r"|\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}\s*[点时](?:\s*\d{1,2}\s*分)?|\d{1,2}\s*(?:号|日|周|月份)|\d+\s*(?:分钟|min(?![A-Za-z]))"
+)
+# A percentile names a statistic (第 10 百分位, 10% 分位数); it is not a figure.
+_PERCENTILE = re.compile(r"(?<![\d.])\d{1,2}(?:\.\d+)?\s*(?:百分位|[%％]\s*分位)")
 # A number may stand against its unit (35kW) or end a range (12-95); it may
 # not be part of a code (L001) or a longer number.  1,872 is one grouped
 # number; 1.52万 is 15200.
 _NUMBER = re.compile(
     r"(?<![A-Za-z0-9_.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-    r"(?:(%|％)|\s*(万|亿))?(?![0-9_]|\.\d|,\d{3})"
+    r"(?:\s*(%|％)|\s*(万|亿))?(?![0-9_]|\.\d|,\d{3})"
 )
-# The first number of a range shares the unit written after the second (18.7-25%).
+# The first number of a range shares the unit written after the second
+# (18.7-25%, 1.2-1.5 万; not 8000-1.2 万).
 _RANGE_PERCENT = re.compile(r"\s*[-~～–—至到]\s*\d+(?:\.\d+)?\s*[%％]")
+_RANGE_SCALE = re.compile(r"\s*[-~～–—至到]\s*(\d+(?:\.\d+)?)\s*(万|亿)")
 _SCALE = {"万": 1e4, "亿": 1e8}
 
 
@@ -384,22 +395,38 @@ def _matches(token: str, percent: bool, known: list[float], scale: float = 1.0) 
     return False
 
 
+def _written_names(name: str, word: str) -> list[str]:
+    """How a name shows up in text; a bare number is a name only when written as one.
+
+    ``12`` is skipped in 表 12 or 12# (12 号 is already a time), never as a
+    figure on its own.
+    """
+
+    return [f"{word} {name}", f"{word}{name}", f"{name}#"] if name.isdigit() else [name]
+
+
 def number_hints(texts: list[str], known: list[float], codes: list[str] | tuple[str, ...] = ()) -> list[str]:
     """Numbers in the model's text that match nothing it cited or the program computed.
 
     Dates, clock times and codes (``codes`` lists the site's own names, such
-    as meter ids, which may be in any case) are not figures and are skipped.
+    as meter ids and names, which may be in any case) are not figures and
+    are skipped.  A name never eats into a number (meter 1 in 1.87 万).
     """
 
     hints = []
     names = sorted({code for code in codes if code}, key=len, reverse=True)
     for text in texts:
         for name in names:
-            text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", " ", text)
-        cleaned = _TIME.sub(" ", _DATE.sub(" ", _CODE.sub(" ", text)))
+            text = re.sub(rf"(?<![A-Za-z0-9_.]){re.escape(name)}(?![A-Za-z0-9_]|\.\d|,\d{{3}}(?!\d)|\s*[%％万亿])", " ", text)
+        cleaned = _PERCENTILE.sub(" ", _TIME.sub(" ", _DATE.sub(" ", _CODE.sub(" ", text))))
         for match in _NUMBER.finditer(cleaned):
             written, percent, scale = match.group(1), bool(match.group(2)), _SCALE.get(match.group(3) or "", 1.0)
             percent = percent or bool(_RANGE_PERCENT.match(cleaned, match.end()))
+            suffix = "%" if percent else match.group(3) or ""
+            shared = _RANGE_SCALE.match(cleaned, match.end())
+            if not suffix and shared and float(written.replace(",", "")) <= float(shared.group(1)):
+                suffix = shared.group(2)
+                scale = _SCALE[suffix]
             token = written.replace(",", "")
             if not percent and scale == 1.0 and _small(token):
                 continue
@@ -415,7 +442,7 @@ def number_hints(texts: list[str], known: list[float], codes: list[str] | tuple[
                 continue
             shown = written if len(written) <= 24 else f"{written[:20]}…"
             hints.append(
-                f"文字里的 {shown}{'%' if percent else match.group(3) or ''} 在引用的证据和程序计算里没有找到对应的数"
+                f"文字里的 {shown}{suffix} 在引用的证据和程序计算里没有找到对应的数"
             )
     return list(dict.fromkeys(hints))
 
@@ -597,6 +624,20 @@ def quantify_register(
             per_meter[meter_id] = entry
         item["computed"] = {"per_meter": per_meter, "overlap": [], "number_hints": []}
     _overlaps(site, items, bases)
+    names = [site.manifest.site.name]
+    for meter_id in site.meter_ids():
+        spec = site.spec(meter_id)
+        names.extend([*_written_names(meter_id, "表"), *_written_names(spec.name, "表")])
+        for machine in spec.production_machines:
+            names.extend(_written_names(machine, "机台"))
+    # The figures each finder read in its meters' profiles; the reasoning may quote them.
+    profiles = {
+        profile["meter_id"]: {
+            **{key: profile[key] for key in ("period_energy_kwh", "period_avg_kw", "period_coverage", "hour_of_day_kw", "median_daily_p10_kw", "max_hourly_kw")},
+            "days": profile["days"] if len(profile["days"]) <= DAILY_ROWS_LIMIT else [],
+        }
+        for profile in read_json(site.path("profiles.json"))["profiles"]
+    }
     for item in items:
         known: list[float] = []
         for evidence_id in item["evidence_ids"]:
@@ -605,11 +646,12 @@ def quantify_register(
         _numbers_in(item["computed"]["per_meter"], known)
         _numbers_in(item["finding_method"]["params"], known)
         if item["source"] == "model":
-            item["computed"]["number_hints"] = number_hints(
-                [item["phenomenon"], item["reasoning"]],
-                known,
-                [*site.meter_ids(), *item["meter_ids"], *item["evidence_ids"]],
-            )
+            codes = [*names, *(name for meter_id in item["meter_ids"] for name in _written_names(meter_id, "表")), *item["evidence_ids"]]
+            read = list(known)
+            for meter_id in item["meter_ids"]:
+                _numbers_in(profiles.get(meter_id, {}), read)
+            hints = number_hints([item["phenomenon"]], known, codes) + number_hints([item["reasoning"]], read, codes)
+            item["computed"]["number_hints"] = list(dict.fromkeys(hints))
         item["scalars"] = _scalars(item)
         item["check_code"] = check_code(item)
     meters = [

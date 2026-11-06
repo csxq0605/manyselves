@@ -70,23 +70,25 @@ def _quarter_hours(values: list[float]) -> list[tuple[str, float]]:
 
 
 def test_cumulative_readings_are_not_differenced_across_a_decrease() -> None:
-    rows = _quarter_hours([100, 101, 102, 3, 5, 7, 9])
+    rows = _quarter_hours([99, 100, 101, 102, 3, 5, 7, 9, 11])
     normalized, quality = normalize_meter(_spec("cumulative_energy", "kWh"), _frame(rows), None)
 
     # The interval across the drop and the ones on either side are left out.
     assert normalized["kwh"].tolist() == [1.0, 2.0, 2.0]
     assert normalized["start"].tolist() == [
-        pd.Timestamp("2026-03-02 00:00"),
-        pd.Timestamp("2026-03-02 01:00"),
+        pd.Timestamp("2026-03-02 00:15"),
         pd.Timestamp("2026-03-02 01:15"),
+        pd.Timestamp("2026-03-02 01:30"),
     ]
-    assert quality.reading_decreases == ["2026-03-02 00:45:00"]
+    assert quality.reading_decreases == ["2026-03-02 01:00:00"]
     assert quality.intervals_excluded_at_breaks == 3
+    # The first and last climbs cannot be checked against anything.
+    assert quality.intervals_excluded_at_edges == 2
     assert "不做差分" in quality.notes()[0]
 
 
 def test_one_wrong_low_reading_does_not_become_a_large_interval() -> None:
-    rows = _quarter_hours([100, 101, 102, 3, 4, 103, 104, 105])
+    rows = _quarter_hours([99, 100, 101, 102, 3, 4, 103, 104, 105, 106])
     normalized, quality = normalize_meter(_spec("cumulative_energy", "kWh"), _frame(rows), None)
 
     # Climbing back from 4 to 103 is not counted as 99 kWh.
@@ -160,7 +162,7 @@ def test_times_with_a_time_zone_are_refused() -> None:
 
 
 def test_a_run_of_wrong_high_readings_is_left_out_whole() -> None:
-    rows = _quarter_hours([1000, 1010, 1020, 9999, 9999, 1030, 1040, 1050])
+    rows = _quarter_hours([990, 1000, 1010, 1020, 9999, 9999, 1030, 1040, 1050, 1060])
     normalized, _quality = normalize_meter(_spec("cumulative_energy", "kWh"), _frame(rows), None)
 
     # The climb into 9999 is not kept as 8979 kWh.
@@ -168,7 +170,7 @@ def test_a_run_of_wrong_high_readings_is_left_out_whole() -> None:
 
 
 def test_a_run_of_zero_readings_is_not_read_as_no_use() -> None:
-    rows = _quarter_hours([100, 110, 120, 0, 0, 0, 150, 160, 170])
+    rows = _quarter_hours([90, 100, 110, 120, 0, 0, 0, 150, 160, 170, 180])
     normalized, quality = normalize_meter(_spec("cumulative_energy", "kWh"), _frame(rows), None)
 
     # Neither 0 -> 0 (no use) nor 0 -> 150 (a made-up 150 kWh) is kept.
@@ -263,7 +265,7 @@ def test_a_reset_or_rollover_costs_a_few_intervals_not_the_whole_cycle(readings:
 
 
 def test_wrong_high_readings_that_return_to_the_same_reading_are_left_out() -> None:
-    normalized, _quality = _breaks([102, 9999, 9999, 102, 103, 104])
+    normalized, _quality = _breaks([101, 102, 9999, 9999, 102, 103, 104, 105])
 
     assert normalized["kwh"].tolist() == [1.0]
 
@@ -318,7 +320,7 @@ def test_broken_xml_inside_a_spreadsheet_is_an_input_error(tmp_path) -> None:
 
 
 def test_a_rollover_during_a_link_down_run_is_not_one_large_interval() -> None:
-    normalized, _quality = _breaks([99950, 99960, 99970, 99980, 99990, *[0] * 96, 960, 970, 980])
+    normalized, _quality = _breaks([99940, 99950, 99960, 99970, 99980, 99990, *[0] * 96, 960, 970, 980, 990])
 
     # Neither the zeros (no use) nor 0 -> 960 (a made-up 960 kWh) is kept.
     assert normalized["kwh"].tolist() == [10.0] * 5
@@ -356,9 +358,21 @@ ERROR_VALUE = 65535  # what some gateways log when a read fails
     "readings",
     [
         [5000, 5001, *[ERROR_VALUE] * 6, 5007, 5008, 5009, *[ERROR_VALUE] * 8, 5018, 5019, 5020],  # two outages
-        [5000, 5001, *[ERROR_VALUE] * 6, 5007, *[ERROR_VALUE] * 6, 5014, 5015, 5016],  # a flaky link
+        [4999, 5000, 5001, *[ERROR_VALUE] * 6, 5007, *[ERROR_VALUE] * 6, 5014, 5015, 5016, 5017],  # a flaky link
         [8000, 8001, 8002, *[ERROR_VALUE] * 8, 0, 0.8, 1.6, 2.4],  # meter swapped during the outage
         [5000, 5001, 5002, 5003, 5004, *[0] * 8],  # the export ends while the link is down
+        [5000, 5001, *[0] * 6, 5007, *[0] * 6, 5014, 5015, 5016],  # a flaky link that logs 0
+        [4998, 4999, 5000, 0, 5001, 5002, 5003, 5004, *[ERROR_VALUE] * 4, 0, 0.8, 1.6, 2.4],  # glitch, then a swap
+        [987106, 987107, 0.5, 1.5, 2.5, 3.5, *[ERROR_VALUE] * 4, 3.2, 4.0, 4.8],  # reset, then a swap
+        [5000, 5001, 5002, 5003, 5004, *[ERROR_VALUE] * 8],  # the export ends while the link is down
+        [*[0] * 8, 5000, 5001, 5002, 5003],  # the export starts while the link is down
+        [*[ERROR_VALUE] * 6, 5000, 5001, 5002, 5003],  # the same with an error value above the register
+        [0, 0, 5002, *[0] * 6, 5009, *[0] * 6, 5016, 5017, 5018, 5019],  # a flaky link from the first reading
+        [5000, 5001, 5002, 5003, 5004, ERROR_VALUE],  # one failed read at the end
+        [0, 5000, 5001, 5002],  # one failed read at the start
+        [1234498, 1234499, 1234500, 0, 0, *[ERROR_VALUE] * 4, 1234506, 1234507, 1234508],  # two error values
+        [1234498, 1234499, 1234500, *[ERROR_VALUE] * 2, 0, 0, *[ERROR_VALUE] * 4, 1234508, 1234509, 1234510],
+        [1234498, 1234499, 1234500, 0, *[ERROR_VALUE] * 4, 0, 1234506, 1234507, 1234508],
     ],
 )
 def test_error_values_and_outages_never_read_as_no_use_or_a_jump(readings: list[float]) -> None:
@@ -369,7 +383,45 @@ def test_error_values_and_outages_never_read_as_no_use_or_a_jump(readings: list[
 
 
 def test_one_error_value_on_an_idle_plateau_does_not_cost_the_plateau() -> None:
-    normalized, quality = _breaks([4990, *[5000] * 96, ERROR_VALUE, *[5000] * 96, 5010, 5020])
+    normalized, quality = _breaks([4990, *[5000] * 96, ERROR_VALUE, *[5000] * 96, 5010, 5020, 5030])
 
     assert quality.intervals_excluded_at_breaks <= 4
     assert max(normalized["kwh"]) == 10.0
+
+
+def test_a_flat_run_at_either_end_is_left_out_and_counted_apart() -> None:
+    normalized, quality = _breaks([*[0] * 8, 5000, 5001, 5002, 5003, *[ERROR_VALUE] * 8])
+
+    assert normalized["kwh"].tolist() == [1.0, 1.0, 1.0]
+    assert quality.reading_decreases == []
+    assert quality.intervals_excluded_at_breaks == 0
+    assert quality.intervals_excluded_at_edges == 16
+    assert any("第一次上升" in note and "16 个区间" in note for note in quality.notes())
+
+
+def test_an_idle_start_that_one_wrong_reading_interrupts_is_kept() -> None:
+    normalized, _quality = _breaks([*[5000] * 4, 0, 5000, 5001, 5002, 5003])
+
+    assert normalized["kwh"].tolist() == [0.0, 0.0, 1.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    "readings",
+    [
+        [*[ERROR_VALUE] * 10, *[5000] * 40, *[ERROR_VALUE] * 10],  # an idle meter, link down at both ends
+        [*[0] * 10, *[5000] * 40, *[0] * 10],
+        [ERROR_VALUE, ERROR_VALUE, ERROR_VALUE, 5000, 5000, 5000, ERROR_VALUE, ERROR_VALUE],
+    ],
+)
+def test_readings_left_out_at_the_ends_cannot_vouch_for_what_lies_between(readings: list[float]) -> None:
+    normalized, _quality = _breaks(readings)
+
+    assert normalized.empty
+
+
+def test_a_column_that_never_changes_is_left_out_with_its_own_note() -> None:
+    normalized, quality = _breaks([ERROR_VALUE] * 8)
+
+    assert normalized.empty
+    assert quality.intervals_excluded_at_edges == 7
+    assert any("从头到尾没有变化" in note for note in quality.notes())

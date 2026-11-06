@@ -485,6 +485,8 @@ class MeterQuality(_Strict):
     overlapping_intervals_excluded: int = 0
     reading_decreases: list[str] = Field(default_factory=list)
     intervals_excluded_at_breaks: int = 0
+    intervals_excluded_at_edges: int = 0
+    flat_throughout: bool = False
     long_intervals: int = 0
     outside_period_excluded: int = 0
     records: int = 0
@@ -510,6 +512,16 @@ class MeterQuality(_Strict):
             notes.append(
                 f"累计读数下降 {len(self.reading_decreases)} 次（{shown}）；分不清是换表清零还是个别读数错误，"
                 f"下降处前后、读数停在异常值上的一段、跳入或跳回异常读数的区间，共 {self.intervals_excluded_at_breaks} 个区间不做差分、未纳入"
+            )
+        if self.flat_throughout:
+            notes.append(
+                "累计读数从头到尾没有变化；分不清是一直停机还是通讯中断时记下的异常值，"
+                f"{self.intervals_excluded_at_edges} 个区间都未纳入"
+            )
+        elif self.intervals_excluded_at_edges:
+            notes.append(
+                "数据开头到第一次上升、最后一次上升到结尾的读数无从核对（导出时正好断线也会是这样），"
+                f"这几段共 {self.intervals_excluded_at_edges} 个区间未纳入"
             )
         if self.long_intervals:
             notes.append(f"{self.long_intervals} 个区间跨过缺测时段，只按整段使用，不摊分")
@@ -545,25 +557,39 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
       followed by one made-up jump.  When the drop lands back at or above
       the reading before a flat high stretch (one wrong high reading on an
       idle plateau), that stretch explains the drop and only the rise is
-      left out;
+      left out, unless that reading itself sits on such a left-out run;
     - when the readings later climb back past the reading just before the
-      drop after rising on the way, the interval that climbs past;
+      drop after rising on the way, the interval that climbs past, and when
+      they rose straight out of a left-out run onto the flat stretch they
+      climb past from (a second error value, such as 0 then 65535), that
+      stretch with the step into it;
     - before the drop, the latest climb since the previous break from at or
-      below the reading just after the drop to above it, or, when the drop
-      lands below every reading since that break, the climb into the flat
-      stretch just before the drop.  If the readings stayed flat from that
-      climb to the drop (a run of wrong high readings), the whole stretch,
-      unless the readings after the drop came straight back past the old
-      reading, which shows the drop itself was wrong; if they then fall
-      again before rising, the stretch is left out after all.  If they rose
-      on the way, only that climb.
+      below the reading just after the drop to above it, and the flat
+      stretch just before the drop with the climb into it (or from the start
+      of the data, when the readings were flat from there): it may be a run
+      of wrong high readings.  When the readings after the drop come
+      straight back past the old reading, which shows the drop itself was
+      wrong, only the climb into the stretch is left out; if they then fall
+      again before rising, the stretch is left out after all;
+    - at the ends of the data, where no drop gives the error away, the
+      readings from the start through the first climb and from the last
+      climb to the end (an outage logged as 0 or 65535 when the export
+      starts or stops, or one failed read), and all of it when the readings
+      never change.  These readings cannot vouch for a later drop, and
+      readings that came straight back after a drop cannot either when
+      they are that end.  These are counted apart.
 
     A run that kept rising is cut only at its edges, so a reset or rollover
     loses a few intervals per cycle rather than the whole cycle.  The price
     is that a run of three or more wrong readings that keeps rising keeps
-    its inner intervals, and that a real reset followed by a long idle spell
-    loses the idle spell.  What is left out is counted, never filled or
-    spread.
+    its inner intervals, that a real reset followed by a long idle spell
+    loses the idle spell (and the next idle spell too when the readings
+    climb past the old reading right after it), that a flat stretch before
+    a real reset is lost,
+    that the first and last climb of every export and an idle start or end
+    are lost (with a wrong reading on an idle start, the idle plateau after
+    it too), and that a register that really reaches the error value cannot
+    be told from it.  What is left out is counted, never filled or spread.
     """
 
     readings = raw["value"].to_numpy(dtype=float)
@@ -579,9 +605,30 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
     # A flat high stretch kept because the readings came straight back:
     # (start, drop, rises then).  Falling again before any rise undoes that.
     revisit: tuple[int, int, int] | None = None
+    # The data's own ends: from the start to the first climb, and from the
+    # last climb to the end (when the readings do not fall there).  Nothing
+    # before or after them shows whether those readings were right.
+    last = len(readings) - 1
+    head = 0
+    while head < last and readings[head + 1] == readings[0]:
+        head += 1
+    head_run = head < last and readings[head + 1] > readings[head]
+    tail = last
+    while tail > 0 and readings[tail - 1] == readings[last]:
+        tail -= 1
+    tail_run = tail >= 1 and readings[tail] > readings[tail - 1]
+    # Readings on a flat run left out after a drop or at the start: they
+    # cannot vouch for a later drop.
+    low_readings: set[int] = set(range(0, head + 1)) if head_run else set()
 
     def explained_by_stretch(drop: int, high_start: int | None) -> bool:
-        return high_start is not None and readings[drop] >= readings[high_start - 1]
+        # high_start 0 marks a stretch from the start of the data: nothing before it.
+        return (
+            high_start is not None
+            and high_start > 0
+            and (high_start - 1) not in low_readings
+            and readings[drop] >= readings[high_start - 1]
+        )
 
     def flat_run(end: int, rising: bool) -> None:
         """Leave out the flat run after the latest drops, through interval ``end``.
@@ -599,6 +646,7 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
                     excluded.add(end)
                 continue
             excluded.update(range(drop, end + 1))
+            low_readings.update(range(drop, end if rising else end + 1))
             break
 
     for index in range(1, len(readings)):
@@ -616,6 +664,7 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
                 if readings[start - 1] <= now < readings[start]:
                     if rose:
                         excluded.add(start)
+                        high_start = first_rise
                     else:
                         high_start = start
                     break
@@ -623,13 +672,15 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
                     first_rise = start if not rose else first_rise
                     rose = True
             else:
-                high_start = first_rise
+                # Flat all the way back to the start of the data: the stretch starts there.
+                high_start = 0 if first_rise is None and previous_break == 0 else first_rise
             pending.append([before, index, rises, high_start])
             previous_break = index
             continue
         if now == before:
             continue
         flat_run(index, rising=True)
+        low_flat_done = False
         while pending and pending[-1][0] <= now:
             _level, drop, rises_at_drop, high_start = pending.pop()
             if rises_at_drop == rises:
@@ -641,20 +692,49 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
                 excluded.add(index)
                 if high_start is not None:
                     excluded.update(range(high_start, drop + 1))
+                if not low_flat_done:
+                    low_flat_done = True
+                    # The flat stretch the readings climb past from, when the
+                    # step into it rose out of a left-out run: a second error
+                    # value held below the old reading.
+                    flat_start = index - 1
+                    while flat_start > 0 and readings[flat_start] == readings[flat_start - 1]:
+                        flat_start -= 1
+                    if flat_start < index - 1 and (flat_start - 1) in low_readings:
+                        excluded.update(range(flat_start, index))
+                # A stretch kept because the readings came straight back past
+                # it out of a left-out run, now past an older drop too.
+                if revisit is not None and revisit[1] > drop and (revisit[0] - 1) in low_readings:
+                    excluded.update(range(revisit[0], revisit[1] + 1))
+                    revisit = None
             previous_break = index - 1
         rises += 1
     flat_run(len(readings) - 1, rising=False)
+    if revisit is not None and revisit[2] == rises and tail_run:
+        # The readings that came straight back are the end left out below.
+        excluded.update(range(revisit[0], revisit[1] + 1))
     for _level, drop, _rises, high_start in pending:
         if high_start is not None:
             excluded.update(range(high_start, drop + 1))
+    edges: set[int] = set()
+    if head_run:
+        edges.update(range(1, head + 2))
+    if tail_run:
+        edges.update(range(tail, last + 1))
+    if head == last:
+        # Flat from start to end: nothing tells an idle meter from a dead link.
+        edges.update(range(1, last + 1))
+        quality.flat_throughout = last >= 1
+    edges -= excluded
     starts, ends, energy = [], [], []
     for index in range(1, len(readings)):
-        if index in excluded:
+        if index in excluded or index in edges:
             continue
         starts.append(stamps[index - 1])
         ends.append(stamps[index])
         energy.append(float(readings[index] - readings[index - 1]))
     quality.intervals_excluded_at_breaks = sum(1 for index in excluded if 1 <= index < len(readings))
+    quality.intervals_excluded_at_edges = len(edges)
     return pd.DataFrame(
         {
             "start": pd.Series(starts, dtype=raw["time"].dtype),

@@ -198,8 +198,10 @@ def test_a_record_that_spans_a_gap_weighs_as_long_as_it_lasts() -> None:
         unit="kWh",
         interval_minutes=15,
     )
-    moments = [DAY] + [DAY + timedelta(hours=20, minutes=15 * n) for n in range(17)]
-    readings = [100.0] + [120.0 + 7.5 * n for n in range(17)]
+    # One reading before and after the day: the first and last climbs of an
+    # export are left out.
+    moments = [DAY - timedelta(minutes=15), DAY] + [DAY + timedelta(hours=20, minutes=15 * n) for n in range(18)]
+    readings = [99.75, 100.0] + [120.0 + 7.5 * n for n in range(18)]
     frame = pd.DataFrame({"t": [m.strftime("%Y-%m-%d %H:%M") for m in moments], "v": [str(r) for r in readings]})
     normalized, _quality = normalize_meter(spec, frame, None)
     series = MeterSeries(spec.id, series_kind(spec), normalized, 15)
