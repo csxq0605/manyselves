@@ -894,3 +894,31 @@ def test_number_hints_skip_codes_and_dates_and_read_shared_units() -> None:
         assert number_hints([text], known) == [], text
     assert number_hints(["表 im1-40 夜间"], known, ["im1-40"]) == []
     assert len(number_hints(["每年多耗约 5,000 kWh"], known)) == 1
+
+
+def test_a_new_finding_under_a_dropped_item_s_key_does_not_replace_it() -> None:
+    gaps_item = _item("A2", "IM1", ["EV-0123456789"], GAPS, ("2026-03-05 10:00", "2026-03-05 11:30"))
+    gaps_item["phenomenon"] = "批次间隙空转"
+    first = _round([_on("A1", "IM1", "夜间不停"), gaps_item])
+    # The model drops A2 and numbers a different finding A2.
+    final = _round([_on("A1", "IM1", "夜间不停"), _on("A2", "IM1", "周日白天不停机", ("2026-03-08 08:00", "2026-03-08 18:00"))])
+    result = _settled(first, ["A2"], final)
+
+    assert "批次间隙空转" in [item["phenomenon"] for item in result["submission"]["items"]]
+
+
+def test_a_pairing_that_changed_the_item_s_window_is_named() -> None:
+    first = _round([_on("A1", "AC1", "X"), _on("A2", "LT1", "Y"), _on("A3", "AC1", "Z", ("2026-03-04 20:00", "2026-03-05 08:00"))])
+    final = _round([_on("A1", "AC1", "X"), _on("A2", "LT1", "Y"), _on("A3", "AC1", "另一个夜晚", ("2026-03-11 20:00", "2026-03-12 08:00"))])
+    result = _settled(first, ["A3"], final)
+
+    assert any("原来的 A3" in note and "“Z”" in note for note in result["notes"])
+
+
+def test_two_meter_fixes_in_place_stay_two_items() -> None:
+    first = _round([_on("A1", "AC-1", "X"), _on("A2", "LT-1", "Y")])
+    final = _round([_on("A1", "AC1", "X"), _on("A2", "LT1", "Y")])
+    result = _settled(first, ["A1", "A2"], final)
+
+    assert [item["meter_ids"] for item in result["submission"]["items"]] == [["AC1"], ["LT1"]]
+    assert result["check"]["issues"] == []

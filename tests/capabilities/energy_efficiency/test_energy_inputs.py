@@ -347,3 +347,29 @@ def test_a_moment_pandas_cannot_hold_is_unreadable_not_a_crash() -> None:
 
     assert declared.iloc[0] == pd.Timestamp("2026-03-02 08:00") and pd.isna(declared.iloc[1])
     assert pd.isna(plain.iloc[0]) and plain.iloc[1] == pd.Timestamp("2026-03-03 00:00")
+
+
+ERROR_VALUE = 65535  # what some gateways log when a read fails
+
+
+@pytest.mark.parametrize(
+    "readings",
+    [
+        [5000, 5001, *[ERROR_VALUE] * 6, 5007, 5008, 5009, *[ERROR_VALUE] * 8, 5018, 5019, 5020],  # two outages
+        [5000, 5001, *[ERROR_VALUE] * 6, 5007, *[ERROR_VALUE] * 6, 5014, 5015, 5016],  # a flaky link
+        [8000, 8001, 8002, *[ERROR_VALUE] * 8, 0, 0.8, 1.6, 2.4],  # meter swapped during the outage
+        [5000, 5001, 5002, 5003, 5004, *[0] * 8],  # the export ends while the link is down
+    ],
+)
+def test_error_values_and_outages_never_read_as_no_use_or_a_jump(readings: list[float]) -> None:
+    normalized, _quality = _breaks(readings)
+
+    assert 0.0 not in normalized["kwh"].tolist()
+    assert max(normalized["kwh"]) <= 1.0
+
+
+def test_one_error_value_on_an_idle_plateau_does_not_cost_the_plateau() -> None:
+    normalized, quality = _breaks([4990, *[5000] * 96, ERROR_VALUE, *[5000] * 96, 5010, 5020])
+
+    assert quality.intervals_excluded_at_breaks <= 4
+    assert max(normalized["kwh"]) == 10.0

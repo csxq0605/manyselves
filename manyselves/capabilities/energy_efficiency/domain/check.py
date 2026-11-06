@@ -193,13 +193,22 @@ def _identity(item: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _describe(item: dict[str, Any]) -> str:
+    windows = "；".join(f"{window['start']}–{window['end']}" for window in item["windows"][:2])
+    more = f" 等 {len(item['windows'])} 段" if len(item["windows"]) > 2 else ""
+    text = item["phenomenon"] if len(item["phenomenon"]) <= 30 else f"{item['phenomenon'][:30]}…"
+    meters = "、".join(item["meter_ids"])
+    return f"表 {meters}，{windows}{more}，{item['finding_method']['method_id']}：“{text}”"
+
+
 def _match(first: list[dict[str, Any]], final: list[dict[str, Any]]) -> dict[str, str]:
     """First key -> corrected key.
 
     The same content pairs first (the model may renumber).  A changed item
     then pairs, in this order, with an item of the same meters, windows and
-    method; of the same key and meters; of the same key, windows and method
-    (a meter corrected); of the same meters and method.  It pairs only when
+    method; of the same key and meters and either the same windows or the
+    same method; of the same key, windows and method (a meter corrected); of
+    the same meters and method.  It pairs only when
     nothing else left could be that item (another first item of the same
     windows and method could be, too), and never with a copy of another
     first item, so a dropped item is put back rather than taken for someone
@@ -224,7 +233,7 @@ def _match(first: list[dict[str, Any]], final: list[dict[str, Any]]) -> dict[str
         other_meters, other_windows, other_method = _identity(new)
         if (meters, windows, method) == (other_meters, other_windows, other_method):
             return 1
-        if old["key"] == new["key"] and meters == other_meters:
+        if old["key"] == new["key"] and meters == other_meters and (windows == other_windows or method == other_method):
             return 2
         if old["key"] == new["key"] and (windows, method) == (other_windows, other_method):
             return 3
@@ -232,9 +241,21 @@ def _match(first: list[dict[str, Any]], final: list[dict[str, Any]]) -> dict[str
             return 4
         return None
 
+    final_by_key = {item["key"]: item for item in final}
+
     def could_be(item: dict[str, Any], new: dict[str, Any], fit: int) -> bool:
         if fit == 1:
             return rank(item, new) == 1
+        # An item whose own key still holds its own fix is that fix, not a rival.
+        mine = final_by_key.get(item["key"])
+        if (
+            mine is not None
+            and mine is not new
+            and mine["key"] not in used
+            and _content(mine) not in first_contents
+            and rank(item, mine) in (2, 3)
+        ):
+            return False
         return rank(item, new) is not None or _identity(item)[1:] == _identity(new)[1:]
 
     for level in (1, 2, 3, 4):
@@ -249,7 +270,7 @@ def _match(first: list[dict[str, Any]], final: list[dict[str, Any]]) -> dict[str
                 fit = rank(old, new)
                 if fit is None or fit > level:
                     continue
-                if [item for item in left if could_be(item, new, fit)] == [old]:
+                if [item for item in left if item is old or could_be(item, new, fit)] == [old]:
                     candidates.append(new["key"])
             if candidates:
                 chosen = old["key"] if old["key"] in candidates else candidates[0]
@@ -334,6 +355,14 @@ def _settle(
     for item in final["items"]:
         if item["key"] not in matched_new:
             issues.append({"key": item["key"], "problem": "这一项是修正轮新增的，核对没有要求"})
+    notes: list[str] = []
+    for item in first["items"]:
+        new = pairs.get(item["key"])
+        if new is not None and _identity(item) != _identity(now[new]):
+            notes.append(
+                f"第一次提交的 {item['key']}（{_describe(item)}）在修正轮里对应到 {new}（{_describe(now[new])}）；"
+                f"如果这不是同一件事，原来的 {item['key']} 已不在清单里"
+            )
     restored_keys = {item["key"] for item in restored}
     if restored:
         final["items"] += restored
@@ -453,7 +482,7 @@ def _settle(
         "partition_id": partition_id,
         "submission": settled,
         "check": {"ok": not issues, "issues": issues},
-        "notes": [],
+        "notes": notes,
     }
 
 

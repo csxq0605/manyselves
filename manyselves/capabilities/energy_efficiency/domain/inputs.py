@@ -534,26 +534,35 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
 
     A register only counts up, so a reading below the one before it breaks
     it.  Whether the meter was reset, rolled over or replaced, or some
-    readings are wrong, cannot be told from the values, so around a break
-    nothing is assumed.  These intervals are left out:
+    readings are wrong (zeros or an error value such as 65535 while the link
+    is down), cannot be told from the values, so around a break nothing is
+    assumed.  These intervals are left out:
 
     - the interval across the drop, the one before it and the one after it;
-    - after the drop, a run of readings that stays flat (or keeps falling),
-      together with the interval that rises out of it: stuck or zero
-      readings would otherwise read as no use followed by one made-up jump;
+    - after the drop, a run of readings that stays flat (or keeps falling)
+      to the next rise or to the end of the data, with the interval that
+      rises out of it: stuck or zero readings would otherwise read as no use
+      followed by one made-up jump.  When the drop lands back at or above
+      the reading before a flat high stretch (one wrong high reading on an
+      idle plateau), that stretch explains the drop and only the rise is
+      left out;
     - when the readings later climb back past the reading just before the
       drop after rising on the way, the interval that climbs past;
     - before the drop, the latest climb since the previous break from at or
-      below the reading just after the drop to above it: if the readings
-      stayed flat from that climb to the drop (a run of wrong high
-      readings), the whole stretch, unless the readings after the drop came
-      straight back past the old reading, which shows the drop itself was
-      wrong; if they rose on the way, only that climb.
+      below the reading just after the drop to above it, or, when the drop
+      lands below every reading since that break, the climb into the flat
+      stretch just before the drop.  If the readings stayed flat from that
+      climb to the drop (a run of wrong high readings), the whole stretch,
+      unless the readings after the drop came straight back past the old
+      reading, which shows the drop itself was wrong; if they then fall
+      again before rising, the stretch is left out after all.  If they rose
+      on the way, only that climb.
 
     A run that kept rising is cut only at its edges, so a reset or rollover
     loses a few intervals per cycle rather than the whole cycle.  The price
     is that a run of three or more wrong readings that keeps rising keeps
-    its inner intervals.  What is left out is counted, never filled or
+    its inner intervals, and that a real reset followed by a long idle spell
+    loses the idle spell.  What is left out is counted, never filled or
     spread.
     """
 
@@ -567,13 +576,42 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
     pending: list[list[Any]] = []
     rises = 0
     previous_break = 0
+    # A flat high stretch kept because the readings came straight back:
+    # (start, drop, rises then).  Falling again before any rise undoes that.
+    revisit: tuple[int, int, int] | None = None
+
+    def explained_by_stretch(drop: int, high_start: int | None) -> bool:
+        return high_start is not None and readings[drop] >= readings[high_start - 1]
+
+    def flat_run(end: int, rising: bool) -> None:
+        """Leave out the flat run after the latest drops, through interval ``end``.
+
+        ``rising`` says interval ``end`` is the rise out of it; otherwise the
+        data ends there.
+        """
+
+        flat = len(pending)
+        while flat > 0 and pending[flat - 1][2] == rises:
+            flat -= 1
+        for _level, drop, _rises, high_start in pending[flat:]:
+            if explained_by_stretch(drop, high_start):
+                if rising:
+                    excluded.add(end)
+                continue
+            excluded.update(range(drop, end + 1))
+            break
+
     for index in range(1, len(readings)):
         before, now = readings[index - 1], readings[index]
         if now < before:
             quality.reading_decreases.append(stamps[index].isoformat(sep=" "))
             excluded.update({index - 1, index, index + 1})
+            if revisit is not None and revisit[2] == rises:
+                excluded.update(range(revisit[0], revisit[1] + 1))
+            revisit = None
             high_start = None
             rose = False
+            first_rise = None
             for start in range(index - 1, previous_break, -1):
                 if readings[start - 1] <= now < readings[start]:
                     if rose:
@@ -581,30 +619,31 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
                     else:
                         high_start = start
                     break
-                rose = rose or readings[start] > readings[start - 1]
+                if readings[start] > readings[start - 1]:
+                    first_rise = start if not rose else first_rise
+                    rose = True
+            else:
+                high_start = first_rise
             pending.append([before, index, rises, high_start])
             previous_break = index
             continue
         if now == before:
             continue
-        # The first rise since the latest drops: the flat run before it and this step.
-        flat = len(pending)
-        while flat > 0 and pending[flat - 1][2] == rises:
-            flat -= 1
-        if flat < len(pending):
-            excluded.update(range(pending[flat][1], index + 1))
+        flat_run(index, rising=True)
         while pending and pending[-1][0] <= now:
             _level, drop, rises_at_drop, high_start = pending.pop()
             if rises_at_drop == rises:
                 # Straight back past the old reading: the low side was wrong.
                 if high_start is not None:
                     excluded.add(high_start)
+                    revisit = (high_start, drop, rises + 1)
             else:
                 excluded.add(index)
                 if high_start is not None:
                     excluded.update(range(high_start, drop + 1))
-            previous_break = index
+            previous_break = index - 1
         rises += 1
+    flat_run(len(readings) - 1, rising=False)
     for _level, drop, _rises, high_start in pending:
         if high_start is not None:
             excluded.update(range(high_start, drop + 1))
