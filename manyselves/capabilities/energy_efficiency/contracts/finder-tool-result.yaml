@@ -1,0 +1,9 @@
+id: finder-tool-result
+version: 1.0.0
+description: A finder tool's result, kept as evidence under its evidence_id
+adapter: json_schema
+schema:
+  type: object
+  required: [evidence_id]
+  properties:
+    evidence_id: {type: string}

@@ -1,0 +1,9 @@
+id: energy-step-summary
+version: 1.0.0
+description: What a program step did, for the run record
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id]
+  properties:
+    run_id: {type: string}

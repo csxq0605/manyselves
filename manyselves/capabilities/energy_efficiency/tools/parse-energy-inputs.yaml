@@ -1,0 +1,10 @@
+id: parse-energy-inputs
+version: 0.1.0
+description: Read the frozen manifest and data files and write normalized series and data quality notes
+implementation: capability:energy-efficiency:parse-energy-inputs
+input_contract: run-ref
+output_contract: energy-step-summary
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

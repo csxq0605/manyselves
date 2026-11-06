@@ -1,0 +1,10 @@
+id: select-energy-items
+version: 0.1.0
+description: Apply the person's marks and selection rules to the candidate register
+implementation: capability:energy-efficiency:select-energy-items
+input_contract: select-request
+output_contract: selection-result
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

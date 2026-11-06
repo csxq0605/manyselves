@@ -1,0 +1,5 @@
+id: quantify-request
+version: 1.0.0
+description: Every partition result and every partition failure of one run
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:QuantifyRequest

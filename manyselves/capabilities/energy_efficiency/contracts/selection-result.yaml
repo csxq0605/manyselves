@@ -1,0 +1,23 @@
+id: selection-result
+version: 1.0.0
+description: The decision on every candidate item and who made it
+adapter: json_schema
+schema:
+  type: object
+  required: [source_run_id, decisions, counts]
+  properties:
+    source_run_id: {type: string}
+    decisions:
+      type: array
+      items:
+        type: object
+        required: [item_id, decision]
+        properties:
+          item_id: {type: string}
+          decision: {type: string, enum: [keep, drop, needs_data, unselected]}
+          by: {type: [string, "null"]}
+          note: {type: string}
+    counts: {type: object}
+    warnings:
+      type: array
+      items: {type: string}

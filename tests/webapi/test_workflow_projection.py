@@ -397,6 +397,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
     assert [item["id"] for item in capabilities] == [
         "checklist-review",
         "distribution-reporting",
+        "energy-efficiency",
         "parameter-adjustment",
     ]
     reporting = capabilities[1]
@@ -409,7 +410,13 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "distribution-photo-reading",
         "extract-template-skills",
     } <= set(reporting["workflow_ids"])
-    assert capabilities[2] == {
+    assert set(capabilities[2]["workflow_ids"]) == {
+        "correct-partition",
+        "energy-candidates",
+        "energy-report",
+        "find-partition",
+    }
+    assert capabilities[3] == {
         "id": "parameter-adjustment",
         "version": "1.0.0",
         "description": "Neutral declarative parameter adjustment capability",

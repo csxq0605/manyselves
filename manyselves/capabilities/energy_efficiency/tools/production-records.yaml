@@ -1,0 +1,11 @@
+id: production-records
+version: 0.1.0
+description: Production batches of the machines mapped to this partition's meters
+instructions: scope 填分区说明里的 scope；machine 可留空（本分区所有机台），start、end 可留空（全期）。只有 manifest 给了生产记录、且机台挂到本分区的表时才有结果。结果的 evidence_id 可在损耗项里引用。
+implementation: capability:energy-efficiency:production-records
+input_contract: production-request
+output_contract: finder-tool-result
+side_effect: run_local_write
+parallel_safe: true
+reuse_result: false
+model_visible: true

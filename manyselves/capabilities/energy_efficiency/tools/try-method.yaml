@@ -1,0 +1,11 @@
+id: try-method
+version: 0.1.0
+description: Run one menu method with given parameters on whole-period data of one or more meters
+instructions: scope 填分区说明里的 scope；meter_ids 只能是本分区的表；method_id 和 params 按分区说明里的方法菜单填（params 只能用菜单列出的字段）。程序在全期数据上算出每次出现、命中次数、电量和占比。结果的 evidence_id 可在损耗项里引用。
+implementation: capability:energy-efficiency:try-method
+input_contract: method-request
+output_contract: finder-tool-result
+side_effect: run_local_write
+parallel_safe: true
+reuse_result: false
+model_visible: true

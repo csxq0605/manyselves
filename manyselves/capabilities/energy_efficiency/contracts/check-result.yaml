@@ -1,0 +1,17 @@
+id: check-result
+version: 1.0.0
+description: Problems the program found in a submission against the run's data
+adapter: json_schema
+schema:
+  type: object
+  required: [ok, issues]
+  properties:
+    ok: {type: boolean}
+    issues:
+      type: array
+      items:
+        type: object
+        required: [key, problem]
+        properties:
+          key: {type: string}
+          problem: {type: string}

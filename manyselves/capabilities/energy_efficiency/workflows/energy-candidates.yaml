@@ -1,0 +1,78 @@
+id: energy-candidates
+version: 0.1.0
+description: Read one site's meter data, look for candidate loss items partition by partition, replay them over the whole period and write the candidate register
+tasks: []
+recovery:
+- typed-turn-recovery
+outputs:
+- candidate-register
+input_contract: energy-candidates-request
+input_variable: request
+output_contract: candidate-register-summary
+state:
+  run-id: ''
+  request: {}
+actions:
+- id: run-ref
+  kind: set_variable
+  variable: run_ref
+  value_variables:
+    run_id: run-id
+- id: parse
+  kind: invoke_tool
+  tool: parse-energy-inputs
+  input_variable: run_ref
+  output_variable: parsed
+- id: profile
+  kind: invoke_tool
+  tool: profile-energy-data
+  input_variable: run_ref
+  output_variable: profiled
+- id: prechecks
+  kind: invoke_tool
+  tool: run-energy-prechecks
+  input_variable: run_ref
+  output_variable: prechecked
+- id: max-meters
+  kind: set_variable
+  variable: max_meters
+  value_variable: request
+  field: max_meters_per_partition
+- id: partition
+  kind: invoke_tool
+  tool: partition-energy-meters
+  input_variables:
+    run_id: run-id
+    max_meters: max_meters
+  output_variable: partition_set
+- id: briefs
+  kind: set_variable
+  variable: briefs
+  value_variable: partition_set
+  field: partitions
+- id: find-all
+  kind: map
+  items_variable: briefs
+  key_field: partition_id
+  workflow: find-partition
+  key_input_variable: partition_key
+  output_variable: partition_results
+  errors_variable: partition_errors
+  max_concurrency: 4
+- id: quantify
+  kind: invoke_tool
+  tool: quantify-candidates
+  input_variables:
+    run_id: run-id
+    partition_results: partition_results
+    partition_errors: partition_errors
+  output_variable: register
+- id: publish
+  kind: publish_result
+  output: candidate-register
+  input_variable: register
+  output_name: register
+- id: finish
+  kind: end_workflow
+  output_variable: register
+  output_name: result

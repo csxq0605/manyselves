@@ -1,0 +1,10 @@
+id: settle-partition-items
+version: 0.1.0
+description: Settle a partition from its first submission and the correction round; items the model dropped while correcting are put back
+implementation: capability:energy-efficiency:settle-partition-items
+input_contract: settle-request
+output_contract: partition-result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

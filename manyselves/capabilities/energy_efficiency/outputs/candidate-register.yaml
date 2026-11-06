@@ -1,0 +1,6 @@
+id: candidate-register
+version: 0.1.0
+description: Candidate loss items with how each was found and the program's replay, for a person to mark
+output_type: value
+contract: candidate-register-summary
+label: 候选损耗项清单

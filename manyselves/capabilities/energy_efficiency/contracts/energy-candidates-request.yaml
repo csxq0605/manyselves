@@ -1,0 +1,5 @@
+id: energy-candidates-request
+version: 1.0.0
+description: Public input of energy-candidates, the input folder and the partition size
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:CandidatesRequest

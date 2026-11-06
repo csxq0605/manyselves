@@ -1,0 +1,5 @@
+id: select-request
+version: 1.0.0
+description: The report run and its request
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:SelectRequest

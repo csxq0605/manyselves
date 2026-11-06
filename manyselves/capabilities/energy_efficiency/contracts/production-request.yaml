@@ -1,0 +1,5 @@
+id: production-request
+version: 1.0.0
+description: Production batches of the partition's machines
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.finder_tools:ProductionRequest

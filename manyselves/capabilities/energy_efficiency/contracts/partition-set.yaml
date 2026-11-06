@@ -1,0 +1,12 @@
+id: partition-set
+version: 1.0.0
+description: The partitions of one run, each with the brief its finder reads
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, partitions]
+  properties:
+    run_id: {type: string}
+    partitions:
+      type: array
+      items: {type: object, required: [partition_id, scope]}

@@ -1,0 +1,5 @@
+id: run-ref
+version: 1.0.0
+description: The run whose data a step reads
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:RunRef

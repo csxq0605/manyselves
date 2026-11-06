@@ -96,5 +96,6 @@ def test_builtin_catalog_exposes_every_production_capability() -> None:
     assert [item.definition.id for item in catalog.all()] == [
         "checklist-review",
         "distribution-reporting",
+        "energy-efficiency",
         "parameter-adjustment",
     ]

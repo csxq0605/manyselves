@@ -1,0 +1,11 @@
+id: compare-windows
+version: 0.1.0
+description: Compare one meter's energy and average power over two to four time windows
+instructions: scope 填分区说明里的 scope；meter_id 只能是本分区的表；windows 给 2 到 4 个时间窗（start、end，站点本地时间）。只比较数值，不说明原因。结果的 evidence_id 可在损耗项里引用。
+implementation: capability:energy-efficiency:compare-windows
+input_contract: compare-request
+output_contract: finder-tool-result
+side_effect: run_local_write
+parallel_safe: true
+reuse_result: false
+model_visible: true

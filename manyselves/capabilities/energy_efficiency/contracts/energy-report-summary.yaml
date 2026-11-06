@@ -1,0 +1,19 @@
+id: energy-report-summary
+version: 1.0.0
+description: The report of the selected items and the files it was written to
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, source_run_id, counts, files, output_artifacts]
+  properties:
+    run_id: {type: string}
+    source_run_id: {type: string}
+    counts: {type: object}
+    files: {type: array, items: {type: string}}
+    output_artifacts:
+      type: array
+      items:
+        type: object
+        required: [path]
+        properties:
+          path: {type: string}

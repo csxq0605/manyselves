@@ -1,0 +1,27 @@
+id: find-partition
+version: 0.1.0
+description: Look through one partition and submit its candidate loss items with how each was found
+agent: loss-finder
+objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像、方法菜单和程序规则已经列出的规则项。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何。
+input_contract: partition-brief
+context_fields:
+- profile_text
+output_contract: partition-submission
+constraints:
+- 每次调用工具都把输入里的 scope 原样填进 scope；meter_id 只能是本分区 meters 里的表。
+- 每个损耗项至少引用一个工具返回的 evidence_id；phenomenon 里的数字（电量、功率、次数、占比）必须能在所引证据里找到，不自己估算，不把几块表的数相加。
+- finding_method 说明这一项是怎么找到的。能用方法菜单里的方法描述的，填 method_id 和 params（参数只能用菜单 params 里列出的字段），并先用 try-method 在全期数据上试过，程序会按它在全期复算；菜单里没有合适的方法时 method_id 填 none，params 留空，在 description 里用文字说清怎么找的。
+- windows 写看到现象的具体时间窗（站点本地时间，不带时区），在数据期内、互不重叠；每个时间窗里这一项的表都要有记录。evidence_ids 里的证据要讲本项的表，查的时段要和本项的时间窗有交集。
+- reasoning 写思考过程：从画像或哪次查数开始注意到它，又查了什么、排除了什么，为什么认为它可能是损耗。
+- root_cause_candidates 至少一条；cause 写可能的原因；basis 填 data（数据现象，basis_detail 写本项 evidence_ids 里的证据编号，如 EV-0123456789，可加一句说明）或 general_knowledge（通用设备或工艺知识，basis_detail 写是哪条知识）；你看不到现场资料，不要写成依据现场资料；how_to_check 写人要核实或排除它需要看什么、问什么。原因不要写成定论。
+- 不判断这一项是否真实、是否值得处理、能节约多少，也不排序；不写年化节约或金额。拿不准的项照样列出，在 missing_info 写还缺什么资料。
+- coverage 对方法菜单里每个方法都写一条：found（找到了，item_keys 列你提交的对应项；只由规则项体现的，rule_keys 列它的 rule_key）、none_found（查了没找到，note 写查了什么）、not_applicable（本分区不适用，note 写原因）或 needs_input（缺日历、生产记录等资料，note 写缺什么）。meter_ids 只写本分区的表。
+- rule_items 是程序按规则已经列出的规则项，不能删除。你认为某个规则项是误报或需要说明时，写进 rule_item_notes（rule_key 填它的 rule_key）；不要把规则项再作为自己的损耗项重复提交。
+- 几个损耗项有关联（同一时段、同一原因的不同表现）时在 related_keys 互相列出，不要合并成一项。
+- 本分区确实没有找到损耗项时 items 可以为空，但 coverage 仍要逐个方法写明。
+tools:
+- energy-series
+- compare-windows
+- try-method
+- production-records
+recovery: typed-turn-recovery

@@ -1,0 +1,10 @@
+id: profile-energy-data
+version: 0.1.0
+description: Compute each meter's period totals, daily and hour-of-day profile
+implementation: capability:energy-efficiency:profile-energy-data
+input_contract: run-ref
+output_contract: energy-step-summary
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

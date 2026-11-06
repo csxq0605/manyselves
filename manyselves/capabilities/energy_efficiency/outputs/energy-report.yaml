@@ -1,0 +1,6 @@
+id: energy-report
+version: 0.1.0
+description: Report of the loss items a person or a person-written rule kept
+output_type: value
+contract: energy-report-summary
+label: 能效诊断报告

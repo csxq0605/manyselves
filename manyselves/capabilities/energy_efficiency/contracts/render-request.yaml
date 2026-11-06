@@ -1,0 +1,5 @@
+id: render-request
+version: 1.0.0
+description: The report run, its request and the selection
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:RenderRequest

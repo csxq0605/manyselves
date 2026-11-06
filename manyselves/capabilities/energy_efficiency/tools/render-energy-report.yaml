@@ -1,0 +1,10 @@
+id: render-energy-report
+version: 0.1.0
+description: Render the report of the selected items with their finding method and sources
+implementation: capability:energy-efficiency:render-energy-report
+input_contract: render-request
+output_contract: energy-report-summary
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

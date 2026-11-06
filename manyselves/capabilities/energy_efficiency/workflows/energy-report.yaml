@@ -1,0 +1,46 @@
+id: energy-report
+version: 0.1.0
+description: Keep the candidate items a person marked or a person-written rule selected, and render them with how each was found
+tasks: []
+recovery: []
+outputs:
+- energy-report
+input_contract: energy-report-request
+input_variable: request
+output_contract: energy-report-summary
+state:
+  run-id: ''
+  request: {}
+actions:
+- id: select-input
+  kind: set_variable
+  variable: select_input
+  value_variables:
+    run_id: run-id
+    request: request
+- id: select
+  kind: invoke_tool
+  tool: select-energy-items
+  input_variable: select_input
+  output_variable: selection
+- id: render-input
+  kind: set_variable
+  variable: render_input
+  value_variables:
+    run_id: run-id
+    request: request
+    selection: selection
+- id: render
+  kind: invoke_tool
+  tool: render-energy-report
+  input_variable: render_input
+  output_variable: report
+- id: publish
+  kind: publish_result
+  output: energy-report
+  input_variable: report
+  output_name: report
+- id: finish
+  kind: end_workflow
+  output_variable: report
+  output_name: result

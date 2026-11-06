@@ -1,0 +1,5 @@
+id: partition-attempt
+version: 1.0.0
+description: A corrected partition submission and the program's recheck of it
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:PartitionAttempt

@@ -1,0 +1,5 @@
+id: series-request
+version: 1.0.0
+description: One meter over a time span at native, hourly or daily granularity
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.finder_tools:SeriesRequest

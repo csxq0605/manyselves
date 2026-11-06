@@ -2113,6 +2113,7 @@ async def test_generic_workflow_routes_execute_the_second_production_capability(
     assert [item["id"] for item in capabilities.json()["capabilities"]] == [
         "checklist-review",
         "distribution-reporting",
+        "energy-efficiency",
         "parameter-adjustment",
     ]
     assert schema.status_code == 200

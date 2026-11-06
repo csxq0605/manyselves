@@ -1,0 +1,5 @@
+id: fix-request
+version: 1.0.0
+description: The program's check of a submission, sent back to the finder with the submission
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:FixRequest

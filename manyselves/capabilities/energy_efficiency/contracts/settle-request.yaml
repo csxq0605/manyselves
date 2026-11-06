@@ -1,0 +1,5 @@
+id: settle-request
+version: 1.0.0
+description: A partition's first submission and check, and what the correction round returned
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:SettleRequest

@@ -1,0 +1,5 @@
+id: energy-report-request
+version: 1.0.0
+description: Public input of energy-report, the candidate run and the marks and/or rules to select with
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ReportRequest
