@@ -17,15 +17,18 @@ from manyselves.capabilities.distribution_reporting.runtime.input_snapshot impor
 from manyselves.capabilities.distribution_reporting.runtime.ledger_report import (
     build_ledger_report_binding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
-    RenderExistingWorkflowRuntime,
+from manyselves.capabilities.distribution_reporting.runtime.render_existing_binding import (
+    build_render_existing_binding,
 )
 from manyselves.capabilities.distribution_reporting.runtime.template_skill_binding import (
     build_template_skill_binding,
 )
 from manyselves.runtime.agent_execution import AgentExecutionService
 from manyselves.runtime.artifacts.content_store import ContentAddressedStore
-from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.capability_binding import (
+    CapabilityRunNotFoundError,
+    CapabilityRunStateError,
+)
 from manyselves.runtime.run_lifecycle import (
     DetachedRunTaskOwner,
     DetachedRuntime,
@@ -45,7 +48,6 @@ class DistributionReportingRuntimeBinding:
         self.services = services
         self._execution = AgentExecutionService(services.bus)
         self._detached_runs = DetachedRunTaskOwner()
-        render_state_store = StartAwareFileWorkflowStateStore(self.workspace)
         snapshot_store = RunInputSnapshotStore(self.workspace)
         content_store = ContentAddressedStore(self.workspace)
         ledger_report = build_ledger_report_binding(
@@ -58,21 +60,23 @@ class DistributionReportingRuntimeBinding:
         template_skills = build_template_skill_binding(
             self.workspace, services, execution=self._execution
         )
+        render_existing = build_render_existing_binding(
+            self.workspace, services, execution=self._execution
+        )
+        # Bindings whose settled Runs are reported to the listeners.
         self._providers = (ledger_report, template_skills)
+        self._bindings = (ledger_report, template_skills, render_existing)
         self._runtimes: dict[str, DetachedRuntime] = {
             "full-report": ledger_report,
             "extract-template-skills": template_skills,
             "triage-writing-lessons": template_skills,
-            "render-existing": RenderExistingWorkflowRuntime(
-                self.workspace,
-                state_store=render_state_store,
-            ),
+            "render-existing": render_existing,
         }
         self._start_stores = {
             "full-report": ledger_report.state_store,
             "extract-template-skills": template_skills.state_store,
             "triage-writing-lessons": template_skills.state_store,
-            "render-existing": render_state_store,
+            "render-existing": render_existing.state_store,
         }
 
     async def start(
@@ -109,7 +113,10 @@ class DistributionReportingRuntimeBinding:
 
     @property
     def active(self) -> bool:
-        return self._detached_runs.active
+        # A resume, input or rerun executes in the generic binding's own task.
+        return self._detached_runs.active or any(
+            bool(getattr(binding, "active", False)) for binding in self._bindings
+        )
 
     async def provide_input(
         self,
@@ -158,6 +165,10 @@ class DistributionReportingRuntimeBinding:
         """Run a report again in place as its next version (same run id)."""
 
         runtime, _store = self._runtime_and_store_for_run(run_id)
+        # A start or resume accepted here executes in this binding's own task,
+        # which the Capability binding's own check does not see.
+        if self._detached_runs.is_active(run_id):
+            raise CapabilityRunStateError("run is still executing")
         rerun = getattr(runtime, "rerun", None)
         if not callable(rerun):
             raise ValueError(f"run {run_id} cannot be run again in place")
@@ -175,14 +186,22 @@ class DistributionReportingRuntimeBinding:
     def cancel(self, run_id: str) -> Awaitable[Any] | None:
         """Request a stop of this process's in-flight execution of one Run."""
 
-        self._runtime_for_run(run_id)
-        return self._detached_runs.cancel(run_id)
+        runtime = self._runtime_for_run(run_id)
+        settled = self._detached_runs.cancel(run_id)
+        if settled is None:
+            # The execution a resume, input or rerun started belongs to the
+            # generic binding itself.
+            cancel = getattr(runtime, "cancel", None)
+            settled = cancel(run_id) if callable(cancel) else None
+        return settled
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         projection = self._runtime_for_run(run_id).get_run(run_id)
         run = projection.get("run")
         if isinstance(run, dict):
-            run["active"] = self._detached_runs.is_active(run_id)
+            run["active"] = self._detached_runs.is_active(run_id) or bool(
+                run.get("active")
+            )
         return projection
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
@@ -195,8 +214,8 @@ class DistributionReportingRuntimeBinding:
         """Close the Agent sessions owned by this account binding."""
 
         await self._detached_runs.close()
-        for provider in reversed(self._providers):
-            await provider.close()
+        for binding in reversed(self._bindings):
+            await binding.close()
 
     def _runtime_for_run(self, run_id: str) -> Any:
         runtime, _store = self._runtime_and_store_for_run(run_id)

@@ -1,4 +1,4 @@
-"""Durable full histories for Agent conversations of one Run.
+"""Durable histories for Agent conversations of one Run.
 
 A conversation's history is saved after each Agent invocation.  It lets a
 restarted Run continue the same conversation, and lets a forked conversation
@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +48,43 @@ def _calls(message: Any) -> list[tuple[str, str]]:
     ]
 
 
+def _is_request(message: Any, request: str) -> bool:
+    return (
+        _get(message, "role") == "user"
+        and not _get(message, "is_tool_result")
+        and str(_get(message, "content") or "").strip() == str(request or "").strip()
+    )
+
+
+def _without_calls(message: Any, call_ids: set[str]) -> Any:
+    """A copy of an assistant message without the tool calls ``call_ids``."""
+
+    calls = [
+        call
+        for call in _get(message, "tool_calls") or ()
+        if str(_get(call, "id") or "") not in call_ids
+    ]
+    if isinstance(message, Mapping):
+        return {**message, "tool_calls": calls}
+    return replace(message, tool_calls=calls)
+
+
+def _accepted(message: Any) -> bool:
+    """Whether a tool result says its submission was accepted."""
+
+    try:
+        payload = json.loads(str(_get(message, "content") or ""))
+    except ValueError:
+        return False
+    return isinstance(payload, Mapping) and payload.get("accepted") is True
+
+
 def drop_rejected_attempts(
-    messages: Sequence[Any], start: int, *, terminal: str = "submit_result"
+    messages: Sequence[Any],
+    start: int,
+    *,
+    request: str | None = None,
+    terminal: str = "submit_result",
 ) -> list[Any]:
     """The conversation after one finished task, without its rejected attempts.
 
@@ -58,10 +93,18 @@ def drop_rejected_attempts(
     earlier attempts that only submitted (or said something without
     submitting), the results answering them and the correction prompts in
     between are removed: later turns read the accepted answer once, not a
-    superseded copy next to it.  Calls to other tools and their results stay.
+    superseded copy next to it.  Calls to other tools and their results stay,
+    also when a superseded submission was made in the same round as them.
+    In the round of the accepted submission, the other ``terminal`` calls
+    (rejected before it, or skipped after it) and their results go too.
+
+    With ``request``, the turn's first message is kept as its request only
+    when it is that request; compaction during the turn may have evicted
+    the request, and then the turn starts with an attempt.
     """
 
     head, turn = list(messages[:start]), list(messages[start:])
+    first = 1 if request is None or (turn and _is_request(turn[0], request)) else 0
     finals = [
         index
         for index, message in enumerate(turn)
@@ -71,17 +114,33 @@ def drop_rejected_attempts(
     if not finals:
         return list(messages)
     last = finals[-1]
-    dropped: set[str] = set()
+    submissions = {call_id for call_id, name in _calls(turn[last]) if name == terminal}
+    accepted = {
+        _get(message, "tool_call_id")
+        for message in turn[last + 1 :]
+        if _get(message, "tool_call_id") in submissions and _accepted(message)
+    }
+    # The accepted submission is told by its result, not by its place: one
+    # skipped after it comes later in the round.  When no result says so,
+    # the round stays as it is.
+    beside = submissions - accepted if accepted else set()
+    dropped: set[str] = set(beside)
     kept: list[Any] = []
     for index, message in enumerate(turn):
         role = _get(message, "role")
         calls = _calls(message)
-        if 0 < index < last:
+        if index == last and beside:
+            message = _without_calls(message, beside)
+        if first <= index < last:
             if role == "assistant" and all(name == terminal for _id, name in calls):
                 dropped.update(call_id for call_id, _name in calls)
                 continue
             if role == "user" and not _get(message, "is_tool_result"):
                 continue
+            superseded = {call_id for call_id, name in calls if name == terminal}
+            if role == "assistant" and superseded:
+                dropped |= superseded
+                message = _without_calls(message, superseded)
         if _get(message, "tool_call_id") in dropped:
             continue
         kept.append(message)
@@ -132,4 +191,8 @@ class FileConversationHistoryStore:
         os.replace(temporary, path)
 
 
-__all__ = ["FileConversationHistoryStore", "drop_rejected_attempts", "serialize_message"]
+__all__ = [
+    "FileConversationHistoryStore",
+    "drop_rejected_attempts",
+    "serialize_message",
+]

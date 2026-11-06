@@ -165,7 +165,6 @@ class WorkflowCompiler:
         output_ids: list[str] = []
         recovery_ids: list[str] = []
         conversation_bindings: dict[str, dict[str, str]] = {}
-        conversation_agents: dict[str, str] = {}
         variable_contracts: dict[str, str] = {}
         end_actions: list[EndWorkflowAction] = []
 
@@ -223,10 +222,12 @@ class WorkflowCompiler:
                 output_ids,
                 recovery_ids,
                 conversation_bindings,
-                conversation_agents,
                 variable_contracts,
                 assignable_pairs=assignable_pairs,
             )
+            if isinstance(action, InvokeAgentAction):
+                self._validate_recovery_scope(action, definitions, workflow)
+                self._validate_model_tools_read_only(action, definitions, workflow)
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
             actions.append(action)
@@ -251,6 +252,14 @@ class WorkflowCompiler:
             definitions,
         )
         self._validate_definite_assignment(
+            actions,
+            control_flow_edges,
+            initial_variables={
+                *workflow.state,
+                *([workflow.input_variable] if workflow.input_variable else []),
+            },
+        )
+        self._validate_conversation_roles(
             actions,
             control_flow_edges,
             initial_variables={
@@ -324,7 +333,11 @@ class WorkflowCompiler:
         control_flow_edges: dict[str, list[str]],
         definitions: DefinitionRegistry,
     ) -> dict[str, int]:
-        """Resolve direct Tool scheduling without crossing subworkflow isolation."""
+        """Resolve direct Tool scheduling without crossing subworkflow isolation.
+
+        A subworkflow call does not end its branch: the parent actions after it
+        are still checked, but the child workflow's own actions are not.
+        """
 
         action_by_id = {action.id: action for action in actions}
         resolved: dict[str, int] = {}
@@ -338,9 +351,6 @@ class WorkflowCompiler:
                 if action_id == parallel.join or action_id in branch_action_ids:
                     continue
                 branch_action_ids.add(action_id)
-                branch_action = action_by_id[action_id]
-                if isinstance(branch_action, SubworkflowAction):
-                    continue
                 pending.extend(control_flow_edges[action_id])
 
             direct_tool_ids = {
@@ -388,6 +398,52 @@ class WorkflowCompiler:
                 f"action {action.id} references {kind} outside workflow scope: "
                 f"{definition_id}"
             )
+
+    @staticmethod
+    def _validate_recovery_scope(
+        action: InvokeAgentAction,
+        definitions: DefinitionRegistry,
+        workflow: WorkflowDefinition,
+    ) -> None:
+        """Keep the policy a turn recovers by inside the workflow's scope.
+
+        A turn recovers by the policy its task references.  The workflow's
+        ``recovery`` list declares these policies; a policy listed there never
+        applies to a task that references another one.
+        """
+
+        task = definitions.require(DefinitionKind.TASK, action.task)
+        recovery = getattr(task, "recovery", None)
+        if recovery is not None and recovery not in workflow.recovery:
+            raise CompilerError(
+                f"action {action.id} references recovery outside workflow scope: "
+                f"{recovery}"
+            )
+
+    @staticmethod
+    def _validate_model_tools_read_only(
+        action: InvokeAgentAction,
+        definitions: DefinitionRegistry,
+        workflow: WorkflowDefinition,
+    ) -> None:
+        """Offer a workflow's model task only Tools that just read.
+
+        A Tool the model calls runs inside the model call, outside the Steps
+        the workflow lays out, so writing stays with the workflow's own
+        ``invoke_tool`` Steps.  The structured submit tool and the Runtime's
+        own tools are not Capability Tools and are not declared here.
+        """
+
+        task = definitions.require(DefinitionKind.TASK, action.task)
+        for tool_id in getattr(task, "tools", ()):
+            tool = definitions.require(DefinitionKind.TOOL, tool_id)
+            side_effect = getattr(tool, "side_effect", None)
+            if side_effect != "pure_read":
+                raise CompilerError(
+                    f"workflow {workflow.id} action {action.id} task {action.task} "
+                    f"offers the model tool {tool_id} with side_effect "
+                    f"{side_effect}; a model task may only call pure_read tools"
+                )
 
     @staticmethod
     def _validate_definite_assignment(
@@ -455,6 +511,95 @@ class WorkflowCompiler:
                         f"reachable path: {variable}"
                     )
 
+    @staticmethod
+    def _validate_conversation_roles(
+        actions: list[ResolvedAction],
+        control_flow_edges: dict[str, list[str]],
+        *,
+        initial_variables: set[str],
+    ) -> None:
+        """Reject a model call that a path reaches with another Agent's conversation.
+
+        For every variable the analysis keeps the Agents whose conversation it
+        may hold on some path reaching an Action, plus ``None`` when on some
+        path the variable holds a value whose Agent cannot be told at compile
+        time.  A call is rejected only when that set names an Agent other than
+        the caller's; an unknown Agent is left to the check at execution.
+        """
+
+        action_by_id = {action.id: action for action in actions}
+        entry = actions[0].id
+        # A parallel branch runs on a copy of the parent variables and only
+        # its declared result reaches the Join, so the parent variables at
+        # the Join are those the parallel action started with.
+        joins = {
+            action.id: action.parallel
+            for action in actions
+            if isinstance(action, JoinAction)
+        }
+        unknown: frozenset[str | None] = frozenset({None})
+        incoming: dict[str, dict[str, frozenset[str | None]]] = {
+            entry: {variable: unknown for variable in initial_variables}
+        }
+        pending = [entry]
+        while pending:
+            owner = pending.pop()
+            action = action_by_id[owner]
+            facts = incoming[owner]
+            for target in control_flow_edges[owner]:
+                if target in joins and joins[target] != owner:
+                    continue
+                outgoing = dict(facts)
+                for variable in _defined_variables(action, successor=target):
+                    outgoing[variable] = unknown
+                if isinstance(
+                    action,
+                    (
+                        CreateConversationAction,
+                        ResolveConversationAction,
+                        ResetConversationAction,
+                    ),
+                ):
+                    outgoing[action.output_variable] = frozenset({action.agent})
+                elif isinstance(action, ForkConversationAction):
+                    outgoing[action.output_variable] = facts.get(
+                        action.source_variable,
+                        unknown,
+                    )
+                elif (
+                    isinstance(action, SetVariableAction)
+                    and action.value_variable is not None
+                    and action.field is None
+                ):
+                    outgoing[action.variable] = facts.get(
+                        action.value_variable,
+                        unknown,
+                    )
+                previous = incoming.get(target)
+                if previous is None:
+                    merged = outgoing
+                else:
+                    merged = dict(previous)
+                    for variable, agents in outgoing.items():
+                        merged[variable] = merged.get(variable, frozenset()) | agents
+                    if merged == previous:
+                        continue
+                incoming[target] = merged
+                pending.append(target)
+
+        for action in actions:
+            if not isinstance(action, InvokeAgentAction) or action.id not in incoming:
+                continue
+            agents = incoming[action.id].get(action.conversation_variable, unknown)
+            others = sorted(
+                agent for agent in agents if agent is not None and agent != action.agent
+            )
+            if others:
+                raise CompilerError(
+                    f"action {action.id} uses conversation for agent "
+                    f"{', '.join(others)} with agent {action.agent}"
+                )
+
     def _resolve_action(
         self,
         action: ResolvedAction,
@@ -471,7 +616,6 @@ class WorkflowCompiler:
         output_ids: list[str],
         recovery_ids: list[str],
         conversation_bindings: dict[str, dict[str, str]],
-        conversation_agents: dict[str, str],
         variable_contracts: dict[str, str],
         assignable_pairs: set[tuple[str, str]],
     ) -> None:
@@ -553,7 +697,6 @@ class WorkflowCompiler:
             _append_unique(agent_ids, action.agent)
             defined_variables.add(action.output_variable)
             variable_contracts.pop(action.output_variable, None)
-            conversation_agents[action.output_variable] = action.agent
             conversation_bindings[action.id] = {
                 "agent": action.agent,
                 "conversation_key": action.conversation_key,
@@ -565,11 +708,6 @@ class WorkflowCompiler:
             self._require_variable(action.source_variable, defined_variables, action.id)
             if action.key_variable is not None:
                 self._require_variable(action.key_variable, defined_variables, action.id)
-            source_agent = conversation_agents.get(action.source_variable)
-            if source_agent is not None:
-                conversation_agents[action.output_variable] = source_agent
-            else:
-                conversation_agents.pop(action.output_variable, None)
             defined_variables.add(action.output_variable)
             variable_contracts.pop(action.output_variable, None)
             conversation_bindings[action.id] = {
@@ -703,12 +841,6 @@ class WorkflowCompiler:
                     raise CompilerError(
                         f"agent {agent.id} exposes non-model-visible tool {tool_id}"
                     )
-            conversation_agent = conversation_agents.get(action.conversation_variable)
-            if conversation_agent is not None and conversation_agent != agent.id:
-                raise CompilerError(
-                    f"action {action.id} uses conversation for agent "
-                    f"{conversation_agent} with agent {agent.id}"
-                )
             self._require_assignable(
                 definitions,
                 variable_contracts.get(action.input_variable),

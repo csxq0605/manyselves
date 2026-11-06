@@ -236,8 +236,9 @@ class KnowledgeContextBuilder:
         """Share whole sources across sections; never slice a purported rule.
 
         The catalogue and user requirements are mandatory. Only optional source
-        bodies consume the remaining inline target. Large sources stay available
-        in the existing ledger and via open_reference, without a new model call.
+        bodies consume the remaining inline target. A source left unexpanded
+        stays in the source ledger; the model cannot read it in this request,
+        and the text says so instead of naming a reading tool.
         """
         blocks = [header, (
             "以下匹配项是候选参考，不表示已穷尽适用标准或已核实版本有效性。"
@@ -253,7 +254,7 @@ class KnowledgeContextBuilder:
         if include_catalog:
             blocks.append("\n".join([
                 "## 冻结知识来源目录（含未被自动选中的来源）",
-                "下方排名只提供候选；词面无匹配不表示无适用规则。可用open_reference读取目录中的任一locator；目录和命中数不证明内容正确、现行或适用。",
+                "下方排名只提供候选；词面无匹配不表示无适用规则。目录只列出来源，下文没有展开的原文本次读不到；目录和命中数不证明内容正确、现行或适用。",
                 *(f"- {document.title}；locator={json.dumps(document.relative_path, ensure_ascii=False)}"
                   for document in self._load_documents()),
             ]))
@@ -295,9 +296,8 @@ class KnowledgeContextBuilder:
                 prefix += "解析范围：正文段落与顶层表格；图像、文本框及嵌套表格尚未核验。\n"
             prefixes.append(prefix)
             entries.append(prefix + (
-                f"原文未展开（{len(document.text)} 字）；此目录项不是条款依据。"
-                f"请用 open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
-                "读取完整原文；无法取得或核实适用性时保留不确定性。"
+                f"原文未展开（{len(document.text)} 字），本次读不到；此目录项不是条款依据，"
+                "无法核实适用性时保留不确定性。"
             ))
         size = len("\n\n".join([*blocks, *entries]))
         for index, (key, (_source_id, document)) in enumerate(sources.items()):
@@ -318,8 +318,7 @@ class KnowledgeContextBuilder:
                 skipped = [heading for heading, _terms in cumulative[count:]]
                 partial = prefixes[index] + selected + (
                     "\n" + (f"预算内未按以下小节检索词展开：{'、'.join(skipped)}；" if skipped else "")
-                    + f"其余原文未展开；open_reference(locator={json.dumps(document.relative_path, ensure_ascii=False)}) "
-                    "可读取完整来源。"
+                    + "其余原文未展开，本次读不到。"
                 )
                 increment = len(partial) - len(entries[index])
                 if size + increment <= self.MAX_MODULE_CHARS:

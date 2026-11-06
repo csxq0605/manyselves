@@ -254,16 +254,21 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
         "/api/v1/control/lease",
         "/api/v1/maintenance/quiesce",
     ))
+    # resume_account leaves maintenance through release_maintenance, then
+    # gives the lease back and logs out.
+    shell_release = shell.split("release_maintenance() {", 1)[1].split("\n}\n", 1)[0]
+    assert "/api/v1/maintenance/release" in shell_release
     shell_cleanup = shell.split("resume_account() {", 1)[1].split("\n}\n", 1)[0]
-    assert [shell_cleanup.index(endpoint) for endpoint in (
-        "/api/v1/maintenance/release",
-        "/api/v1/control/lease",
-        "/api/v1/auth/logout",
-    )] == sorted(shell_cleanup.index(endpoint) for endpoint in (
-        "/api/v1/maintenance/release",
-        "/api/v1/control/lease",
-        "/api/v1/auth/logout",
-    ))
+    lease_return = shell_cleanup.index('-X DELETE \\\n      "$API_URL/api/v1/control/lease"')
+    assert [
+        shell_cleanup.index('release_maintenance "$session"'),
+        lease_return,
+        shell_cleanup.index("/api/v1/auth/logout"),
+    ] == sorted([
+        shell_cleanup.index('release_maintenance "$session"'),
+        lease_return,
+        shell_cleanup.index("/api/v1/auth/logout"),
+    ])
 
     powershell_login_flow = powershell.split("function Suspend-Account", 1)[1].split("\n}\n", 1)[0]
     assert [powershell_login_flow.index(endpoint) for endpoint in (
@@ -275,16 +280,17 @@ def test_backup_clients_preserve_session_maintenance_lease_and_logout_contract()
         "/api/v1/control/lease",
         "/api/v1/maintenance/quiesce",
     ))
+    # The finally block leaves maintenance through Invoke-Release, then gives
+    # the lease back and logs out.
+    powershell_release = powershell.split("function Invoke-Release", 1)[1].split("\n}\n", 1)[0]
+    assert "/api/v1/maintenance/release" in powershell_release
     powershell_cleanup = powershell.split("} finally {", 1)[1]
-    assert [powershell_cleanup.index(endpoint) for endpoint in (
-        "/api/v1/maintenance/release",
-        "/api/v1/control/lease",
-        "/api/v1/auth/logout",
-    )] == sorted(powershell_cleanup.index(endpoint) for endpoint in (
-        "/api/v1/maintenance/release",
-        "/api/v1/control/lease",
-        "/api/v1/auth/logout",
-    ))
+    powershell_steps = [
+        powershell_cleanup.index("Invoke-Release $entry"),
+        powershell_cleanup.index('-Method Delete -Uri "$apiUrl/api/v1/control/lease"'),
+        powershell_cleanup.index("/api/v1/auth/logout"),
+    ]
+    assert powershell_steps == sorted(powershell_steps)
 
     # One cookie session per paused account.
     assert '--cookie-jar "$session/cookie"' in shell

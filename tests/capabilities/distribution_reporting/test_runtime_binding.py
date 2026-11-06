@@ -44,7 +44,8 @@ class _ResumableRuntime:
                 "capability_id": "distribution-reporting",
                 "workflow_id": state.workflow_id,
                 "status": state.status.value,
-                "active": state.status in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING},
+                # Like the generic binding: only an in-process task is active.
+                "active": False,
                 "task_id": None,
             },
             "state": state.model_dump(mode="json"),
@@ -132,8 +133,8 @@ async def test_render_start_returns_after_initial_state_is_persisted(
     release = asyncio.Event()
     finished = asyncio.Event()
 
-    async def blocked_execute(plan, state, registry, contracts):
-        del plan, registry, contracts
+    async def blocked_execute(plan, state, registry):
+        del plan, registry
         runtime.state_store.save(
             state.model_copy(update={"status": WorkflowStatus.RUNNING})
         )

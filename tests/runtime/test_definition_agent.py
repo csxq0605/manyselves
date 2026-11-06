@@ -207,6 +207,18 @@ async def test_submission_is_validated_and_returned(tmp_path: Path) -> None:
     assert "Answer the question in one word." in prompt
     assert '"text":"q"' in prompt and "Be brief." in prompt
     assert harness.loops[0].kwargs["system_prompt"] == "You answer questions."
+    # The loop also gets the objective and constraints as the task identity,
+    # so a handoff summary keeps them after the task message is evicted.
+    assert harness.loops[0].task_contexts == [
+        {
+            "task_id": "ask:answer-question",
+            "run_id": RUN_ID,
+            "objective": "Answer the question in one word.",
+            "constraints": ["Be brief."],
+            "input_contract": "question",
+            "output_contract": "answer",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -769,6 +781,72 @@ def test_rejected_attempts_are_dropped_but_other_tools_stay() -> None:
     kept = drop_rejected_attempts(earlier + turn, 1)
     assert [m["content"] for m in kept] == ["old", "task", "", "found", "", "ok"]
     assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["1", "3"]
+
+
+def test_a_rejected_submission_made_beside_other_tools_is_dropped_alone() -> None:
+    from manyselves.runtime.conversation_history import drop_rejected_attempts
+
+    def call(call_id: str, name: str) -> dict[str, Any]:
+        return {"id": call_id, "name": name, "arguments": {}}
+
+    turn = [
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": "looking",
+            "tool_calls": [call("1", "lookup"), call("2", "submit_result")],
+        },
+        {"role": "tool", "content": "found", "tool_call_id": "1", "is_tool_result": True},
+        {"role": "tool", "content": "invalid", "tool_call_id": "2", "is_tool_result": True},
+        {"role": "assistant", "content": "", "tool_calls": [call("3", "submit_result")]},
+        {"role": "tool", "content": "ok", "tool_call_id": "3", "is_tool_result": True},
+    ]
+    kept = drop_rejected_attempts(turn, 0)
+    assert [m["content"] for m in kept] == ["task", "looking", "found", "", "ok"]
+    assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["1", "3"]
+    # The input is left as it was.
+    assert [c["id"] for c in turn[1]["tool_calls"]] == ["1", "2"]
+
+
+def test_submissions_beside_the_accepted_one_in_its_round_are_dropped() -> None:
+    from manyselves.runtime.conversation_history import drop_rejected_attempts
+
+    def call(call_id: str, name: str) -> dict[str, Any]:
+        return {"id": call_id, "name": name, "arguments": {}}
+
+    def result(call_id: str, content: str) -> dict[str, Any]:
+        return {"role": "tool", "content": content, "tool_call_id": call_id, "is_tool_result": True}
+
+    rejected = '{"status": "correction_required", "accepted": false}'
+    accepted = '{"status": "ok", "accepted": true, "result_path": "r.json"}'
+    skipped = "Tool call skipped: a terminal result already ended this turn."
+    # One round: a lookup, a rejected submission, the accepted one, and one
+    # skipped after it.
+    turn = [
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": "both",
+            "tool_calls": [
+                call("1", "lookup"),
+                call("2", "submit_result"),
+                call("3", "submit_result"),
+                call("4", "submit_result"),
+            ],
+        },
+        result("1", "found"),
+        result("2", rejected),
+        result("3", accepted),
+        result("4", skipped),
+    ]
+    kept = drop_rejected_attempts(turn, 0, request="task")
+    assert [m["content"] for m in kept] == ["task", "both", "found", accepted]
+    assert [c["id"] for m in kept for c in m.get("tool_calls") or ()] == ["1", "3"]
+    assert [c["id"] for c in turn[1]["tool_calls"]] == ["1", "2", "3", "4"]
+
+    # Without a result that says which one was accepted, the round stays.
+    unknown = [*turn[:4], result("3", "ok"), turn[5]]
+    assert drop_rejected_attempts(unknown, 0, request="task") == unknown
 
 
 @pytest.mark.asyncio

@@ -77,6 +77,7 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
         implementation="capability:neutral:lookup",
         input_contract=tool_input.id,
         output_contract=tool_output.id,
+        side_effect="pure_read",
     )
     for definition in (contract, tool_input, tool_output, recovery, tool, agent, task):
         registry.register(definition)
@@ -321,6 +322,77 @@ def test_compiler_enforces_task_scope_even_when_the_list_is_empty(
         match="action invoke references task outside workflow scope: outside-task",
     ):
         WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
+@pytest.mark.parametrize("declared", [[], ["other-recovery"], ["task-recovery"]])
+def test_a_task_recovers_by_a_policy_inside_the_workflow_scope(
+    declared: list[str],
+) -> None:
+    registry = DefinitionRegistry()
+    contract = _contract("text", "string")
+    agent = AgentDefinition(
+        id="writer",
+        version="1.0.0",
+        description="Writer",
+        instructions="Return text.",
+        accepts=[contract.id],
+        produces=[contract.id],
+    )
+    task = TaskDefinition(
+        id="write",
+        version="1.0.0",
+        description="Write text",
+        agent=agent.id,
+        objective="Return text",
+        input_contract=contract.id,
+        output_contract=contract.id,
+        recovery="task-recovery",
+    )
+    policies = [
+        RecoveryPolicyDefinition(
+            id=policy_id, version="1.0.0", description="Neutral policy", rules={}
+        )
+        for policy_id in ("task-recovery", "other-recovery")
+    ]
+    for definition in (contract, agent, task, *policies):
+        registry.register(definition)
+    workflow = WorkflowDefinition(
+        id="recovery-scope",
+        version="1.0.0",
+        description="A listed policy does not apply to a task with its own",
+        tasks=[task.id],
+        recovery=declared,
+        state={"input": "hello"},
+        actions=[
+            {
+                "id": "conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "writer",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": task.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "result",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+    compiler = WorkflowCompiler(build_builtin_executor_registry())
+
+    if "task-recovery" in declared:
+        assert "task-recovery" in compiler.compile(workflow, registry).recovery_ids
+        return
+    with pytest.raises(
+        CompilerError,
+        match="action invoke references recovery outside workflow scope: task-recovery",
+    ):
+        compiler.compile(workflow, registry)
 
 
 @pytest.mark.parametrize("kind", ["interaction", "output"])

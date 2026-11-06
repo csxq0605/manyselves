@@ -682,3 +682,53 @@ async def test_section_wording_change_writes_only_that_section(tmp_path: Path) -
     assert texts_now[first] == texts_before[first]
     assert chief_now["chapter1"] == chief_before["chapter1"]
     assert chief_now["chapter3"] == chief_before["chapter3"]
+
+
+@pytest.mark.asyncio
+async def test_each_revision_stays_readable_in_its_archived_version(tmp_path: Path) -> None:
+    """Two revisions in a row: the earlier one is kept with the version it made.
+
+    The archive of the first revised version holds the revision it ran with
+    (its target, scope and instruction); the current version reads the
+    second revision only.
+    """
+
+    from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
+        ReportRevision,
+    )
+    from manyselves.runtime.generic_binding import START_INPUT_FILE
+
+    await run_ledger_report(tmp_path, run_id=RUN_ID)
+    first_section = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    first = {
+        "instruction": f"改写 {first_section} 的措辞。",
+        "changes": [{"target": first_section, "instruction": "语气更客观。", "scope": "text"}],
+    }
+    second = {
+        "instruction": "改第三章。",
+        "changes": [{"target": "3", "instruction": "汇总更简洁。", "scope": "judgment"}],
+    }
+    await _revise(tmp_path, first, _any_fix)
+    tasks, messages = await _revise(tmp_path, second, _any_fix)
+
+    run_dir = tmp_path / "Work/runs" / RUN_ID
+    read = lambda path: json.loads(path.read_text(encoding="utf-8"))  # noqa: E731
+    # The first version was the report itself: no revision.
+    assert "revision" not in read(run_dir / "versions/v1" / START_INPUT_FILE)
+    archived = ReportRevision.model_validate(
+        read(run_dir / "versions/v2" / START_INPUT_FILE)["revision"]
+    )
+    assert archived.base_version == 1
+    assert archived.instruction == first["instruction"]
+    assert [(c.target, c.scope, c.instruction) for c in archived.changes] == [
+        (first_section, "text", "语气更客观。")
+    ]
+    current = ReportRevision.model_validate(read(run_dir / START_INPUT_FILE)["revision"])
+    assert current.base_version == 2
+    assert [(c.target, c.scope, c.instruction) for c in current.changes] == [
+        ("3", "judgment", "汇总更简洁。")
+    ]
+    # The current version is made from this revision, not the earlier one.
+    assert "chief-chapter-3" in tasks and "write-section" not in tasks
+    assert any("汇总更简洁。" in m.content for m in messages)
+    assert not any("语气更客观。" in m.content for m in messages)

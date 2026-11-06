@@ -1,10 +1,10 @@
 id: distribution-photo-reading
-version: 1.1.0
+version: 1.2.0
 description: Read every project photo once per run against its bound table records
 tasks:
 - photo-reading
 recovery:
-- current-reporting-recovery
+- typed-turn-recovery
 input_contract: preparation_context
 input_variable: preparation-context
 output_contract: photo_reading_summary

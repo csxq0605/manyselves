@@ -477,6 +477,62 @@ async def test_read_only_calls_past_the_batch_still_run(tmp_path: Path):
     assert "每轮最多发起 2 个工具调用" in await loop._get_system_prompt()
 
 
+class SubmittingTool(CountingTool):
+    name = "submitting_tool"
+    side_effect = "terminal"
+
+
+@pytest.mark.asyncio
+async def test_a_submission_past_the_batch_still_runs(tmp_path: Path):
+    # The batch limit still holds for the other calls: a call past it that
+    # changes something waits, a read-only one runs; the submission runs.
+    provider = EventuallySuccessfulProvider(failures=0)
+    counting, reading, submitting = CountingTool(), ReadingTool(), SubmittingTool()
+    registry = ToolRegistry()
+    for tool in (counting, reading, submitting):
+        registry.register(tool)
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=registry,
+        bus=MessageBus(),
+        config=AgentDefaults(max_tool_calls_per_round=2),
+        llm_provider=provider,
+    )
+    names = [
+        "counting_tool",
+        "counting_tool",
+        "counting_tool",
+        "reading_tool",
+        "submitting_tool",
+    ]
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        usage=None,
+        tool_calls=[
+            LLMToolCall(id=f"tool-{index}", name=name, arguments={"value": index})
+            for index, name in enumerate(names)
+        ],
+    )
+
+    await loop._handle_tool_calls(response, "message-1")
+
+    assert (counting.calls, reading.calls, submitting.calls) == (2, 1, 1)
+    skipped = [
+        message.tool_call_id
+        for message in loop.conversation_messages()
+        if message.is_tool_result
+        and "exceeded the maximum batch" in (message.content or "")
+    ]
+    assert skipped == ["tool-2"]
+    # The prompt tells the model the submission is not held by the batch.
+    assert (
+        "提交最终结果不受这个批次上限限制，但仍要通过结果校验。"
+        in await loop._get_system_prompt()
+    )
+
+
 @pytest.mark.asyncio
 async def test_repeated_tool_results_inject_replan_into_real_tool_loop(tmp_path: Path):
     provider = RepeatingToolProvider()

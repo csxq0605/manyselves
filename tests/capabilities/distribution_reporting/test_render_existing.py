@@ -14,15 +14,15 @@ from manyselves.capabilities.distribution_reporting import (
 from manyselves.capabilities.distribution_reporting.adapters.runtime import (
     DistributionReportingRuntimeBinding,
 )
-from manyselves.capabilities.distribution_reporting.runtime.render_existing import (
-    RenderExistingWorkflowRuntime,
+from manyselves.capabilities.distribution_reporting.runtime.render_existing_binding import (
+    build_render_existing_binding,
 )
 from manyselves.capabilities.distribution_reporting.runtime.rendering.handoff_docx import (
     PackagedV2DocxCore,
 )
 from manyselves.config.schema import AgentDefaults
 from manyselves.kernel.definitions import DefinitionKind
-from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
 from manyselves.runtime.loops.bus import MessageBus
 from manyselves.runtime.services import RuntimeServicesView
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -181,17 +181,26 @@ async def test_render_existing_publishes_openable_docx_with_content_warnings(
     assert "omitted approved Markdown content" in result["validation_warnings"][0]
 
 
+def _render_binding(tmp_path: Path):
+    return build_render_existing_binding(
+        tmp_path,
+        RuntimeServicesView(
+            workspace=tmp_path,
+            bus=MessageBus(),
+            active_provider=None,
+            agent_defaults=AgentDefaults(),
+            global_knowledge_root=None,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_render_existing_resume_loads_saved_plan_and_state(
     tmp_path: Path,
 ) -> None:
-    runtime = RenderExistingWorkflowRuntime(tmp_path)
+    binding = _render_binding(tmp_path)
     run_id = "render-existing-restart"
-    plan = ResolvedPlan(
-        workflow_id="render-existing",
-        workflow_version="1.0.0",
-        actions=[],
-    )
+    _registry, plan = binding._compile("render-existing")
     state = WorkflowState.for_plan(run_id, plan)
     state.status = WorkflowStatus.RUNNING
     FileWorkflowStateStore(tmp_path).save_plan(run_id, plan)
@@ -200,26 +209,26 @@ async def test_render_existing_resume_loads_saved_plan_and_state(
 
     async def execute(
         saved_plan: object,
-        saved_state: object,
+        saved_state: WorkflowState,
         registry: object,
-        contracts: object,
     ) -> WorkflowState:
         observed.update(
             {
                 "plan": saved_plan,
                 "state": saved_state,
                 "registry": registry,
-                "contracts": contracts,
             }
         )
-        return state
+        binding.state_store.save(saved_state)
+        return saved_state
 
-    runtime._execute = execute
+    binding._execute = execute
 
-    accepted = await runtime.resume(
+    accepted = await binding.resume(
         UUID("50000000-0000-4000-8000-000000000009"),
         run_id,
     )
+    await binding.close()
 
     assert accepted == {"run_id": run_id, "task_id": None}
     assert observed["plan"] == plan
@@ -230,12 +239,8 @@ async def test_render_existing_resume_loads_saved_plan_and_state(
 async def test_render_existing_resume_is_idempotent_for_completed_and_retries_failed(
     tmp_path: Path,
 ) -> None:
-    runtime = RenderExistingWorkflowRuntime(tmp_path)
-    plan = ResolvedPlan(
-        workflow_id="render-existing",
-        workflow_version="1.0.0",
-        actions=[],
-    )
+    binding = _render_binding(tmp_path)
+    _registry, plan = binding._compile("render-existing")
     store = FileWorkflowStateStore(tmp_path)
     completed = WorkflowState.for_plan("render-existing-completed", plan)
     completed.status = WorkflowStatus.COMPLETED
@@ -250,19 +255,21 @@ async def test_render_existing_resume_is_idempotent_for_completed_and_retries_fa
 
     observed: list[WorkflowStatus] = []
 
-    async def execute(plan, state, registry, contracts):
-        del plan, registry, contracts
+    async def execute(plan, state, registry):
+        del plan, registry
         observed.append(state.status)
+        binding.state_store.save(state)
         return state
 
-    runtime._execute = execute
+    binding._execute = execute
 
-    assert await runtime.resume(
+    assert await binding.resume(
         UUID("50000000-0000-4000-8000-000000000010"),
         completed.run_id,
     ) == {"run_id": completed.run_id, "task_id": None}
-    assert await runtime.resume(
+    assert await binding.resume(
         UUID("50000000-0000-4000-8000-000000000011"),
         failed.run_id,
     ) == {"run_id": failed.run_id, "task_id": None}
+    await binding.close()
     assert observed == [WorkflowStatus.FAILED]

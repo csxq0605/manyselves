@@ -70,8 +70,12 @@ KEPT_ON_RERUN = ("input-snapshot.json", "frozen-project")
 def ledger_report_rerun_input(workspace: Path):
     """Initial variables for running a report again under the same run id.
 
-    Without revision values the report runs again from its saved request.
-    With them it becomes a revision of the version just archived.  The
+    Without revision values the report runs again from its saved start
+    input: the request and, when the archived version was a revision, that
+    same revision on its original base version.  This is how a revision
+    interrupted and executed again after its definitions or code changed
+    stays a revision; its frozen inputs are kept in place on rerun.
+    With revision values it becomes a revision of the version just archived.  The
     request stays exactly as it was and the revision goes in its own
     variable, read only by the ledger, so every step before the ledger sees
     the same input and is skipped; with ``new_inputs`` the project's current
@@ -91,7 +95,12 @@ def ledger_report_rerun_input(workspace: Path):
             raise ValueError(f"run {run_id} has no saved report request")
         request = ReportRequest.model_validate(request).model_dump(mode="json")
         if values is None:
-            return {"request": request, "run-id": run_id}
+            saved = previous.get("revision")
+            if saved is None:
+                return {"request": request, "run-id": run_id}
+            # The same revision again, on the base version it was made from.
+            revision = ReportRevision.model_validate(saved)
+            return {"request": request, "run-id": run_id, "revision": revision.model_dump(mode="json")}
         if not (archive / "ledger" / "judgments.json").is_file():
             raise ValueError(
                 f"run {run_id} has no finished ledger to revise; resume or run it again first"
