@@ -27,7 +27,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .methods import MENU, NO_METHOD
 from .quantify import SCALAR_FIELDS
-from .register import CHOICE_HEADER, CODE_HEADER, ID_HEADER, LABEL_DECISIONS, NOTE_HEADER
+from .register import (
+    CHOICE_HEADER,
+    CODE_HEADER,
+    ID_HEADER,
+    LABEL_DECISIONS,
+    NOTE_HEADER,
+    SERVICE_HEADER,
+)
 
 Decision = Literal["keep", "drop", "needs_data"]
 NUMBER_FIELDS = set(SCALAR_FIELDS)
@@ -166,7 +173,7 @@ def _holds(condition: Condition, actual: Any) -> bool:
     return actual <= expected
 
 
-def read_marks(path: Path, codes: dict[str, str]) -> dict[str, dict[str, str]]:
+def read_marks(path: Path, codes: dict[str, str]) -> dict[str, dict[str, Any]]:
     """Read 编号 / 核对码 / 选择 / 备注 from a marked register (.xlsx) or a .csv with those columns.
 
     ``codes`` maps each item id of the register to its check code.  Every row
@@ -200,6 +207,9 @@ def read_marks(path: Path, codes: dict[str, str]) -> dict[str, dict[str, str]]:
         code = str(row[CODE_HEADER]).strip()
         label = str(row[CHOICE_HEADER]).strip()
         note = str(row.get(NOTE_HEADER, "") or "").strip()
+        service = str(row.get(SERVICE_HEADER, "") or "").strip()
+        if service == "未知":
+            service = ""
         if not item_id and not label:
             continue
         if item_id not in codes:
@@ -212,14 +222,17 @@ def read_marks(path: Path, codes: dict[str, str]) -> dict[str, dict[str, str]]:
             )
             continue
         if not label:
+            if service:
+                # The person confirmed the necessary service but chose nothing yet.
+                marks[item_id] = {"decision": None, "note": note, "service": service}
             continue
         if label not in LABEL_DECISIONS:
             problems.append(f"第 {line} 行的选择 {label!r} 不是 保留/不保留/需补资料")
             continue
-        if item_id in marks:
+        if item_id in marks and marks[item_id]["decision"] is not None:
             problems.append(f"编号 {item_id} 标了不止一次")
             continue
-        marks[item_id] = {"decision": LABEL_DECISIONS[label], "note": note}
+        marks[item_id] = {"decision": LABEL_DECISIONS[label], "note": note, "service": service}
     if problems:
         raise SelectionError("marks file has problems: " + "；".join(problems))
     return marks
@@ -227,14 +240,16 @@ def read_marks(path: Path, codes: dict[str, str]) -> dict[str, dict[str, str]]:
 
 def select(
     register: dict[str, Any],
-    marks: dict[str, dict[str, str]] | None,
+    marks: dict[str, dict[str, Any]] | None,
     rules: RuleSet | None,
 ) -> dict[str, Any]:
     decisions = []
     for item in register["items"]:
         entry: dict[str, Any] = {"item_id": item["id"], "decision": "unselected", "by": None, "note": ""}
         mark = (marks or {}).get(item["id"])
-        if mark is not None:
+        if mark is not None and mark.get("service"):
+            entry["service"] = mark["service"]
+        if mark is not None and mark["decision"] is not None:
             entry.update({"decision": mark["decision"], "by": "person", "note": mark["note"]})
         elif rules is not None:
             for number, rule in enumerate(rules.rules, start=1):
@@ -246,7 +261,7 @@ def select(
     for entry in decisions:
         counts[entry["decision"]] += 1
     warnings = _unmatched_values(register, rules)
-    if marks is not None and not marks:
+    if marks is not None and not any(mark["decision"] for mark in marks.values()):
         warnings.insert(0, "标记文件里没有一项填了选择，全部按规则文件处理")
     return {
         "source_run_id": register["run_id"],

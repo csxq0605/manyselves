@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .items import CAUSE_KINDS
 from .register import (
     PAGE_STYLE,
     cost_note,
@@ -21,8 +22,10 @@ from .register import (
     overlap_text,
     partition_html,
     precheck_lines,
+    relations_text,
     sort_key,
 )
+from .verification import checklist, checklist_html, checklist_markdown
 
 _LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料", "unselected": "未选"}
 
@@ -62,11 +65,19 @@ def _md_item(item: dict[str, Any], names: dict[str, str], entry: dict[str, Any])
     lines.append(f"- 寻找方式：{_md(method_text(item))}。{_md(item['finding_method']['description'])}")
     if item["reasoning"]:
         lines.append(f"- 思考过程：{_md(item['reasoning'])}")
+    if item.get("candidate_categories"):
+        lines.append(
+            "- 候选类别（模型提议，未核实）："
+            + _md("；".join(f"{p['item_id']} {p['title']}：{p['why']}" for p in item["candidate_categories"]))
+        )
+    if item["computed"].get("category_notes"):
+        lines.append(f"- 类别缺的资料：{_md('；'.join(item['computed']['category_notes']))}")
     if item["root_cause_candidates"]:
-        lines.append("- 候选原因（均未核实）：")
+        lines.append("- 候选解释（均未核实）：")
         for cause in item["root_cause_candidates"]:
+            kind = CAUSE_KINDS.get(cause.get("kind", "loss"), "")
             lines.append(
-                f"  - {_md(cause['cause'])}（依据：{cause['basis']}，{_md(cause['basis_detail'])}；"
+                f"  - [{kind}] {_md(cause['cause'])}（依据：{cause['basis']}，{_md(cause['basis_detail'])}；"
                 f"核实方法：{_md(cause['how_to_check'])}）"
             )
     if item["missing_info"]:
@@ -85,7 +96,9 @@ def _md_item(item: dict[str, Any], names: dict[str, str], entry: dict[str, Any])
     if len(item["meter_ids"]) > 1:
         lines.append("- 多块表的数不合计（表之间可能有上下级关系），逐表数值见候选清单 JSON。")
     if item.get("related_ids"):
-        lines.append(f"- 模型标的相关项：{'、'.join(item['related_ids'])}")
+        lines.append(f"- 模型标的相关项：{_md(relations_text(item))}")
+    if item["computed"].get("relation_notes"):
+        lines.append(f"- 关系核对：{_md('；'.join(item['computed']['relation_notes']))}")
     if item["computed"]["overlap"]:
         lines.append(f"- 与其他项重叠：{overlap_text(item)}")
     if item["rule_notes"]:
@@ -109,7 +122,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     counts = selection["counts"]
 
     md = [
-        f"# {_md(register['site'])} 用能损耗项报告（待审）",
+        f"# {_md(register['site'])} 候选损耗项报告（待审）",
         "",
         f"数据期：{register['period']['start']} 至 {register['period']['end']}。",
         f"候选清单共 {len(items)} 项：保留 {counts['keep']}、需补资料 {counts['needs_data']}、不保留 {counts['drop']}、未选 {counts['unselected']}。",
@@ -119,10 +132,11 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
         md.append(f"> 规则提示：{_md(warning)}")
     md += [
         "",
-        "本报告只收录人或人定的规则保留的项。所有数值由程序从数据算出；候选原因均未经现场核实。"
+        "本报告只收录人或人定的规则保留的项。保留只表示值得核实，不表示损耗已成立；"
+        "“涉及电量”是这段时间实际用的电，不是可避免的电量。所有数值由程序从数据算出；候选原因均未经现场核实。"
         "各项可能计入同一批记录，表之间也可能有上下级关系，所以不给合计。",
         "",
-        "## 保留的损耗项",
+        "## 保留的候选损耗项",
         "",
     ]
     if not kept:
@@ -143,7 +157,10 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     for item in dropped:
         entry = decisions[item["id"]]
         md.append(f"- {item['id']}（{_by(entry)}）" + (f"：{_md(entry['note'])}" if entry["note"] else ""))
-    md += ["", "## 查了什么", ""]
+    md += [""]
+    lists = [checklist(item, decisions[item["id"]]) for item in [*kept, *needs]]
+    md += checklist_markdown(lists)
+    md += ["## 查了什么", ""]
     for record in register["partitions"]:
         if record["outcome"] != "ok":
             meters = _md("、".join(record["meter_ids"]))
@@ -168,12 +185,13 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     markdown = "\n".join(md) + "\n"
 
     body = [
-        f"<h1>{html.escape(register['site'])} 用能损耗项报告（待审）</h1>",
+        f"<h1>{html.escape(register['site'])} 候选损耗项报告（待审）</h1>",
         f"<p>数据期 {html.escape(register['period']['start'])} 至 {html.escape(register['period']['end'])}；"
         f"保留 {counts['keep']}、需补资料 {counts['needs_data']}、不保留 {counts['drop']}、未选 {counts['unselected']}。</p>",
-        "<p>本报告只收录人或人定的规则保留的项。所有数值由程序算出；候选原因均未经现场核实；不给合计。</p>",
+        "<p>本报告只收录人或人定的规则保留的项。保留只表示值得核实，不表示损耗已成立；“涉及电量”不是可避免的电量。"
+        "所有数值由程序算出；候选原因均未经现场核实；不给合计。</p>",
         *[f"<p class='warn'>规则提示：{html.escape(warning)}</p>" for warning in selection.get("warnings", [])],
-        "<h2>保留的损耗项</h2>",
+        "<h2>保留的候选损耗项</h2>",
     ]
     body += [item_html(item, names, _decision_text(decisions[item["id"]])) for item in kept] or [
         "<p>（没有保留的项）</p>"
@@ -196,6 +214,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
             reason = f"：{entry['note']}" if entry["note"] else ""
             body.append(f"<li>{html.escape(item['id'])}（{html.escape(_by(entry))}）{html.escape(reason)}</li>")
         body.append("</ul>")
+    body.append(checklist_html(lists))
     body.append(partition_html(register))
     body.append("<h2>数据与来源</h2><ul>")
     for meter in register["meters"]:
@@ -207,7 +226,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     page = (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>用能损耗项报告</title><style>{PAGE_STYLE}</style></head><body>"
+        f"<title>候选损耗项报告</title><style>{PAGE_STYLE}</style></head><body>"
         + "\n".join(body)
         + "</body></html>"
     )

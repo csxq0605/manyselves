@@ -18,6 +18,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .inputs import UNPRICED_REASONS
+from .items import CAUSE_KINDS, RELATIONS
 from .store import write_json
 
 DECISION_LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料"}
@@ -26,6 +27,7 @@ ID_HEADER = "编号"
 CODE_HEADER = "核对码"
 CHOICE_HEADER = "选择"
 NOTE_HEADER = "备注"
+SERVICE_HEADER = "必要服务（人确认）"
 REGISTER_COLUMNS = [
     ID_HEADER,
     CODE_HEADER,
@@ -34,6 +36,10 @@ REGISTER_COLUMNS = [
     "表",
     "寻找方式",
     "现象",
+    "候选类别（模型提议）",
+    "类别缺的资料",
+    "非损耗解释",
+    "可能的必要服务",
     "窗口电量kWh",
     "窗口平均kW",
     "窗口覆盖",
@@ -42,7 +48,7 @@ REGISTER_COLUMNS = [
     "全期命中次数",
     "全期无法判断次数",
     "全期出现平均覆盖",
-    "全期相关电量kWh",
+    "全期涉及电量kWh",
     "占该表电量",
     "最大单次占比",
     "后/前半期",
@@ -53,6 +59,7 @@ REGISTER_COLUMNS = [
     "全期回放电费",
     "未解决的检查问题",
     "数字提示",
+    SERVICE_HEADER,
     CHOICE_HEADER,
     NOTE_HEADER,
 ]
@@ -78,6 +85,29 @@ def method_text(item: dict[str, Any]) -> str:
     return f"{head} {params}".strip()
 
 
+def category_text(item: dict[str, Any]) -> str:
+    return "、".join(
+        f"{proposal['item_id']} {proposal['title']}" for proposal in item.get("candidate_categories", [])
+    )
+
+
+def alternatives_text(item: dict[str, Any]) -> str:
+    return "；".join(
+        f"{CAUSE_KINDS.get(cause.get('kind', 'loss'), '')}：{cause['cause']}"
+        for cause in item["root_cause_candidates"]
+        if cause.get("kind", "loss") != "loss"
+    )
+
+
+def relations_text(item: dict[str, Any]) -> str:
+    relations = item.get("relations")
+    if relations is None:
+        return "、".join(item.get("related_ids", []))
+    return "、".join(
+        f"{relation['item_id']}（{RELATIONS.get(relation['relation'], '未标关系')}）" for relation in relations
+    )
+
+
 def _row(item: dict[str, Any], names: dict[str, str]) -> list[Any]:
     scalars = item["scalars"]
     overlap = sorted({entry["item_id"] for entry in item["computed"]["overlap"]})
@@ -89,6 +119,10 @@ def _row(item: dict[str, Any], names: dict[str, str]) -> list[Any]:
         "、".join(f"{meter_id} {names.get(meter_id, '')}".strip() for meter_id in item["meter_ids"]),
         method_text(item),
         item["phenomenon"],
+        category_text(item),
+        "；".join(item["computed"].get("category_notes", [])),
+        alternatives_text(item),
+        "；".join(item.get("possible_necessary_services", [])),
         scalars["window_energy_kwh"],
         scalars["window_avg_kw"],
         scalars["window_coverage"],
@@ -103,11 +137,12 @@ def _row(item: dict[str, Any], names: dict[str, str]) -> list[Any]:
         scalars["halves_ratio"],
         scalars["boundary_max_change"],
         "、".join(overlap),
-        "、".join(item.get("related_ids", [])),
+        relations_text(item),
         scalars["window_cost"],
         scalars["replay_cost"],
         "；".join(item["check_issues"]),
-        "；".join(item["computed"]["number_hints"]),
+        "；".join(item["computed"]["number_hints"] + item["computed"].get("relation_notes", [])),
+        "未知",
         "",
         "",
     ]
@@ -133,9 +168,10 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     if sheet.max_row > 1:
         validation.add(f"{letter}2:{letter}{sheet.max_row}")
     highlight = PatternFill("solid", fgColor="FFF2CC")
+    service_column = REGISTER_COLUMNS.index(SERVICE_HEADER) + 1
     for row in range(1, sheet.max_row + 1):
-        sheet.cell(row=row, column=choice_column).fill = highlight
-        sheet.cell(row=row, column=choice_column + 1).fill = highlight
+        for column in (service_column, choice_column, choice_column + 1):
+            sheet.cell(row=row, column=column).fill = highlight
     sheet.freeze_panes = "C2"
     for column, width in zip("ABCDEFG", (8, 10, 10, 6, 18, 30, 50), strict=True):
         sheet.column_dimensions[column].width = width
@@ -144,6 +180,8 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     guide.append(["怎样标记"])
     guide.append([f"在“候选清单”的“{CHOICE_HEADER}”列填 保留 / 不保留 / 需补资料，可在“{NOTE_HEADER}”列写理由；不填的项按规则文件处理，没有规则就是未选。"])
     guide.append([f"标好后保存，用 energy-report 入口指定这个文件出报告。“{ID_HEADER}”和“{CODE_HEADER}”两列不要改：出报告时程序用它们确认标记对应的是这份清单里的同一项。"])
+    guide.append([f"“{SERVICE_HEADER}”列默认“未知”：人确认这段用电里有哪些必要服务（工艺、环保、质量、安全）后填写；程序和模型都不填。"])
+    guide.append(["“候选类别”是模型按知识库 17 项提议的，程序只核对编号合法、列出缺的资料，不由方法推断，也不作结论。"])
     guide.append([f"这份清单来自运行 {register['run_id']}。"])
     guide.append([])
     guide.append(["字段", "含义"])
@@ -309,7 +347,7 @@ def figures(item: dict[str, Any]) -> list[tuple[str, Any]]:
         ("全期命中次数", scalars["replay_hits"]),
         ("全期无法判断次数", scalars["replay_unknown"]),
         ("全期出现平均覆盖", scalars["replay_mean_coverage"]),
-        ("全期相关电量 kWh", scalars["replay_item_kwh"]),
+        ("全期涉及电量 kWh", scalars["replay_item_kwh"]),
         ("占该表电量", scalars["replay_share_of_meter"]),
         ("最大单次占比", scalars["top_share"]),
         ("后/前半期", scalars["halves_ratio"]),
@@ -344,14 +382,26 @@ def item_html(item: dict[str, Any], names: dict[str, str], decision: str | None 
     ]
     if item["reasoning"]:
         parts.append(f"<p><b>思考过程</b>：{_e(item['reasoning'])}</p>")
+    if item.get("candidate_categories"):
+        parts.append("<p><b>候选类别</b>（模型提议，未核实）：</p><ul>")
+        for proposal in item["candidate_categories"]:
+            parts.append(f"<li>{_e(proposal['item_id'])} {_e(proposal['title'])}：{_e(proposal['why'])}</li>")
+        parts.append("</ul>")
+    if item["computed"].get("category_notes"):
+        parts.append(f"<p class='note'><b>类别缺的资料</b>：{_e('；'.join(item['computed']['category_notes']))}</p>")
     if item["root_cause_candidates"]:
-        parts.append("<p><b>候选原因</b>（均未核实）：</p><ul>")
+        parts.append("<p><b>候选解释</b>（均未核实，含至少一条非损耗解释）：</p><ul>")
         for cause in item["root_cause_candidates"]:
+            kind = CAUSE_KINDS.get(cause.get("kind", "loss"), "")
             parts.append(
-                f"<li>{_e(cause['cause'])}（依据：{_e(cause['basis'])}，{_e(cause['basis_detail'])}；"
+                f"<li>[{_e(kind)}] {_e(cause['cause'])}（依据：{_e(cause['basis'])}，{_e(cause['basis_detail'])}；"
                 f"核实方法：{_e(cause['how_to_check'])}）</li>"
             )
         parts.append("</ul>")
+    if item.get("possible_necessary_services"):
+        parts.append(
+            f"<p><b>可能的必要服务</b>（待人确认）：{_e('；'.join(item['possible_necessary_services']))}</p>"
+        )
     if item["missing_info"]:
         parts.append(f"<p><b>还缺的资料</b>：{_e('；'.join(item['missing_info']))}</p>")
     if item["monitoring_suggestion"]:
@@ -368,7 +418,9 @@ def item_html(item: dict[str, Any], names: dict[str, str], decision: str | None 
     if len(item["meter_ids"]) > 1:
         parts.append("<p class='note'>多块表的数不合计（表之间可能有上下级关系），逐表数值见 JSON。</p>")
     if item.get("related_ids"):
-        parts.append(f"<p><b>模型标的相关项</b>：{_e('、'.join(item['related_ids']))}</p>")
+        parts.append(f"<p><b>模型标的相关项</b>：{_e(relations_text(item))}</p>")
+    if item["computed"].get("relation_notes"):
+        parts.append(f"<p class='warn'><b>关系核对</b>：{_e('；'.join(item['computed']['relation_notes']))}</p>")
     if item["computed"]["overlap"]:
         parts.append(f"<p><b>与其他项重叠</b>：{_e(overlap_text(item))}</p>")
     if item["check_issues"]:
@@ -387,7 +439,7 @@ body{font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-se
 h1{font-size:1.5rem}h2{font-size:1.2rem;margin-top:2rem}h3{font-size:1.05rem}
 .item{border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;margin:12px 0}
 .source{font-size:.8rem;color:#57606a;font-weight:normal}
-.figures td{padding:2px 12px 2px 0}.warn{color:#9a6700}.note,.refs{color:#57606a;font-size:.85rem}
+.figures td{padding:2px 12px 2px 0}.check{border-collapse:collapse;margin:8px 0;font-size:.85rem}.check td,.check th{border:1px solid #d0d7de;padding:4px 6px;vertical-align:top;text-align:left}.warn{color:#9a6700}.note,.refs{color:#57606a;font-size:.85rem}
 @media (prefers-color-scheme: dark){body{background:#0d1117;color:#e6edf3}.item{border-color:#30363d}.source,.note,.refs{color:#8b949e}.warn{color:#d29922}}
 """
 
@@ -401,7 +453,7 @@ def write_page(path: Path, register: dict[str, Any]) -> None:
         f"模型发现 {counts['model_items']} 项，规则检出 {counts['rule_items']} 项；"
         f"分区 {counts['partitions']} 个，失败 {counts['partitions_failed']} 个。</p>",
         "<p>这是候选清单，不是结论：保留哪些由人在表格里标记或按人写的规则决定。所有数值由程序从数据算出；候选原因都未经核实。</p>",
-        "<h2>候选项（按全期相关电量从大到小）</h2>",
+        "<h2>候选项（按全期涉及电量从大到小）</h2>",
     ]
     body += [item_html(item, names) for item in sorted(register["items"], key=sort_key)]
     body.append(partition_html(register))
@@ -433,6 +485,10 @@ __all__ = [
     "LABEL_DECISIONS",
     "NOTE_HEADER",
     "PAGE_STYLE",
+    "SERVICE_HEADER",
+    "alternatives_text",
+    "category_text",
+    "relations_text",
     "cost_note",
     "figures",
     "item_html",

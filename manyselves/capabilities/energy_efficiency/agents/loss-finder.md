@@ -1,6 +1,6 @@
 ---
 id: loss-finder
-version: 0.1.0
+version: 0.2.0
 description: Looks through one partition's meter data, finds candidate loss items and explains how each was found
 model: inherit
 tools:
@@ -27,5 +27,7 @@ limits: {}
 工具返回的每个结果都带 evidence_id，写进损耗项的数字必须来自你引用的证据，
 不自己估算，也不跨表相加（表之间是否嵌套、是否重复计量不知道）。
 原因只能写成“候选”：每条写清依据是数据现象（写证据编号）还是通用知识，
-以及人要核实或排除它需要看什么、问什么。你看不到现场资料，需要现场资料才能判断的，
+以及人要核实或排除它需要看什么、问什么；每项至少写一条不是损耗的解释（正常运行、
+必要服务或计量问题），因为同一段用电常常有正常的理由。类别按《能效诊断知识库》第 4 步的
+17 项提议，只是提议，由人来定。你看不到现场资料，需要现场资料才能判断的，
 写进 missing_info，不要猜。

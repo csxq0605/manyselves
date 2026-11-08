@@ -17,6 +17,64 @@ from .methods import MENU, NO_METHOD, MethodParamsError, Window, overlapping_win
 
 _KEY = r"^[A-Za-z0-9_-]{1,20}$"
 
+# The 17 stable items of step 4 of the knowledge base, with their role.
+KB_ITEMS: dict[str, tuple[str, str]] = {
+    "LOSS-PROCESS": ("ENERGY", "同条件加工超耗"),
+    "LOSS-INTERRUPTION": ("ENERGY", "加工中断可避免维持用电"),
+    "LOSS-IDLE": ("ENERGY", "批间隙或计划外待机超耗"),
+    "LOSS-HOLD": ("ENERGY", "休息日保温策略净超耗"),
+    "LOSS-TRANSITION": ("ENERGY", "同切换对过渡作业超耗"),
+    "LOSS-PARALLEL": ("ENERGY", "可压缩并行窗口超耗"),
+    "LOSS-SUPPORT": ("ENERGY", "公辅供给或运行组合失配"),
+    "LOSS-CONDITIONAL": ("ENERGY", "归一条件后的残余超耗"),
+    "MECH-CONTROL": ("MECHANISM", "控制覆盖或故障维护机制"),
+    "OPP-CAPABILITY": ("OPPORTUNITY", "跨能力档/规模/经济批量排产机会"),
+    "COST-SHIFT": ("ECONOMIC", "完整工艺周期移峰净节费"),
+    "COST-BASIC": ("ECONOMIC", "基本电费方案与峰值管理机会"),
+    "COST-REACTIVE": ("ECONOMIC", "力调费用差额"),
+    "COST-STORAGE": ("ECONOMIC", "储能联合调度净收益"),
+    "COST-PROCURE": ("ECONOMIC", "购电方案全成本差额"),
+    "NECESSARY": ("NON_LOSS", "必要工艺/环境/安全服务耗能"),
+    "MEASUREMENT_ISSUE": ("DATA_ISSUE", "计量或时间口径待核"),
+}
+KbItemId = Literal[
+    "LOSS-PROCESS",
+    "LOSS-INTERRUPTION",
+    "LOSS-IDLE",
+    "LOSS-HOLD",
+    "LOSS-TRANSITION",
+    "LOSS-PARALLEL",
+    "LOSS-SUPPORT",
+    "LOSS-CONDITIONAL",
+    "MECH-CONTROL",
+    "OPP-CAPABILITY",
+    "COST-SHIFT",
+    "COST-BASIC",
+    "COST-REACTIVE",
+    "COST-STORAGE",
+    "COST-PROCURE",
+    "NECESSARY",
+    "MEASUREMENT_ISSUE",
+]
+# How two items relate (knowledge base 4.7.1).
+RELATIONS: dict[str, str] = {
+    "alternative_explanation": "同一事实的替代解释",
+    "same_event_evidence": "同一事件的不同证据",
+    "parent_child": "父子分解",
+    "mutually_exclusive": "并行但互斥",
+    "independent": "独立事件",
+    "joint_scenario": "联合情景",
+}
+Relation = Literal[
+    "alternative_explanation", "same_event_evidence", "parent_child", "mutually_exclusive", "independent", "joint_scenario"
+]
+CAUSE_KINDS: dict[str, str] = {
+    "loss": "可能是损耗",
+    "normal_operation": "正常运行或工艺需要",
+    "necessary_service": "必要服务",
+    "measurement": "计量或时间口径问题",
+}
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -24,6 +82,10 @@ class _Strict(BaseModel):
 
 class RootCauseCandidate(_Strict):
     cause: str = Field(min_length=1, description="可能的原因")
+    kind: Literal["loss", "normal_operation", "necessary_service", "measurement"] = Field(
+        description="这个解释属于哪种：loss 可能是损耗；normal_operation 正常运行或工艺需要；"
+        "necessary_service 必要服务；measurement 计量或时间口径问题"
+    )
     basis: Literal["data", "general_knowledge"] = Field(
         description="依据类型：data 数据现象；general_knowledge 通用工艺/设备知识"
     )
@@ -32,6 +94,11 @@ class RootCauseCandidate(_Strict):
         description="依据的具体出处：data 写本项 evidence_ids 里的证据编号（可加一句说明）；general_knowledge 写是哪条知识",
     )
     how_to_check: str = Field(min_length=1, description="人要核实或排除这个原因，需要看什么、问什么")
+
+
+class CategoryProposal(_Strict):
+    item_id: KbItemId = Field(description="知识库第 4 步 17 个稳定项之一")
+    why: str = Field(min_length=1, description="为什么可能属于这一类：数据上看到了什么")
 
 
 class FindingMethod(_Strict):
@@ -60,10 +127,19 @@ class LossItem(_Strict):
     phenomenon: str = Field(min_length=1, description="看到了什么；数字要来自引用的证据")
     evidence_ids: list[str] = Field(min_length=1)
     reasoning: str = Field(min_length=1, description="思考过程：从画像和查数一步步怎样看到这里")
-    root_cause_candidates: list[RootCauseCandidate] = Field(min_length=1)
+    root_cause_candidates: list[RootCauseCandidate] = Field(min_length=2)
+    candidate_categories: list[CategoryProposal] = Field(
+        min_length=1, description="可能对应知识库 17 项里的哪几项（可多选；只是提议，人来定）"
+    )
+    possible_necessary_services: list[str] = Field(
+        default_factory=list, description="这段用电里可能有哪些必要服务（工艺、环保、质量、安全），由人确认"
+    )
     missing_info: list[str] = Field(default_factory=list, description="判断这一项还缺的资料")
     monitoring_suggestion: str | None = None
     related_keys: list[str] = Field(default_factory=list)
+    relation_types: dict[str, Relation] = Field(
+        default_factory=dict, description="related_keys 里每一项与本项是什么关系"
+    )
 
     @model_validator(mode="after")
     def distinct(self) -> "LossItem":
@@ -71,6 +147,16 @@ class LossItem(_Strict):
             raise ValueError(f"item {self.key}: meter_ids repeat")
         if self.key in self.related_keys:
             raise ValueError(f"item {self.key} cannot be related to itself")
+        if set(self.relation_types) != set(self.related_keys):
+            raise ValueError(f"item {self.key}: relation_types must give a relation for each of related_keys and no other")
+        if all(cause.kind == "loss" for cause in self.root_cause_candidates):
+            raise ValueError(
+                f"item {self.key}: root_cause_candidates need at least one explanation that is not a loss "
+                "(normal_operation, necessary_service or measurement)"
+            )
+        ids = [proposal.item_id for proposal in self.candidate_categories]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"item {self.key}: candidate_categories repeat")
         clashes = overlapping_windows(self.windows)
         if clashes:
             raise ValueError(f"item {self.key}: windows must not overlap ({'; '.join(clashes)})")
@@ -134,6 +220,10 @@ class PartitionSubmission(_Strict):
 
 
 __all__ = [
+    "CAUSE_KINDS",
+    "KB_ITEMS",
+    "RELATIONS",
+    "CategoryProposal",
     "CoverageEntry",
     "FindingMethod",
     "LossItem",

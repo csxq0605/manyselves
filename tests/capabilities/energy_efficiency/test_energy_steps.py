@@ -60,8 +60,10 @@ def _item(key: str, meter: str, evidence: list[str], method: dict[str, Any], win
         "evidence_ids": evidence,
         "reasoning": "从画像看到",
         "root_cause_candidates": [
-            {"cause": "设备未停", "basis": "data", "basis_detail": evidence[0], "how_to_check": "问值班"}
+            {"cause": "设备未停", "kind": "loss", "basis": "data", "basis_detail": evidence[0], "how_to_check": "问值班"},
+            {"cause": "夜间有必要的工艺维持", "kind": "necessary_service", "basis": "general_knowledge", "basis_detail": "保温工艺", "how_to_check": "问工艺"},
         ],
+        "candidate_categories": [{"item_id": "LOSS-IDLE", "why": "非生产时段功率不降"}],
     }
 
 
@@ -218,7 +220,7 @@ def test_marks_win_over_rules_and_the_report_has_no_totals(tmp_path: Path) -> No
 
     report = tools["render-energy-report"]({"run_id": "report-1", "request": initial["request"], "selection": selection})
     text = (tmp_path / report["files"][0]).read_text(encoding="utf-8")
-    kept = text.split("## 保留的损耗项")[1].split("## 需补资料的项")[0]
+    kept = text.split("## 保留的候选损耗项")[1].split("## 需补资料的项")[0]
     assert "### R001" in kept and "### L001" not in kept and "### L002" not in kept
     assert "不给合计" in text and "合计：" not in text
     assert "候选原因（均未核实）" not in kept  # rule items carry no model causes
@@ -351,10 +353,10 @@ def test_check_asks_evidence_about_the_item_and_causes_that_cite_it(tmp_path: Pa
     first_day = tools["energy-series"]({"scope": scope, "meter_id": "AC1", "start": "2026-03-02 00:00", "end": "2026-03-03 00:00"})
     item = _item("A1", "AC1", [first_day["evidence_id"]], NIGHT, ("2026-03-10 20:00", "2026-03-11 08:00"))
     item["root_cause_candidates"].append(
-        {"cause": "管网泄漏", "basis": "data", "basis_detail": "夜间功率不降", "how_to_check": "听漏"}
+        {"cause": "管网泄漏", "kind": "loss", "basis": "data", "basis_detail": "夜间功率不降", "how_to_check": "听漏"}
     )
     item["root_cause_candidates"].append(
-        {"cause": "备用机", "basis": "data", "basis_detail": "见 EV-0123456789", "how_to_check": "看机组"}
+        {"cause": "备用机", "kind": "loss", "basis": "data", "basis_detail": "见 EV-0123456789", "how_to_check": "看机组"}
     )
     late = _item("A2", "AC1", [first_day["evidence_id"]], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
     late["windows"].append({"start": "2026-03-20 00:00", "end": "2026-03-21 00:00"})
@@ -641,7 +643,7 @@ def test_model_text_cannot_start_markdown_sections(tmp_path: Path) -> None:
     tools, _briefs = _prepared(tmp_path)
     tools["__workspace__"] = tmp_path
     item = _item("A1", "AC1", ["EV-0123456789"], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
-    item["phenomenon"] = "两块表\n## 保留的损耗项\n- 假列表"
+    item["phenomenon"] = "两块表\n## 保留的候选损耗项\n- 假列表"
     _quantified(tools, [item], {"daily-clock-window": ["A1"]})
     (tmp_path / "rules.yaml").write_text(
         "rules:\n- when:\n  - {field: source, op: eq, value: model}\n  decision: keep\n", encoding="utf-8"
@@ -652,7 +654,7 @@ def test_model_text_cannot_start_markdown_sections(tmp_path: Path) -> None:
     markdown = (tmp_path / report["files"][0]).read_text(encoding="utf-8")
 
     headings = [line for line in markdown.splitlines() if line.startswith("#")]
-    assert headings.count("## 保留的损耗项") == 1
+    assert headings.count("## 保留的候选损耗项") == 1
     assert not any("假列表" in line for line in markdown.splitlines() if line.startswith("- 假"))
 
 
@@ -757,6 +759,7 @@ def test_a_dropped_item_goes_back_to_the_coverage_of_its_own_meter() -> None:
 def test_unasked_changes_to_links_and_coverage_are_flagged() -> None:
     a1, a2, a3 = _on("A1", "AC1", "X"), _on("A2", "LT1", "Y"), _on("A3", "IM1", "Z")
     a1["related_keys"], a2["related_keys"] = ["A2"], ["A1"]
+    a1["relation_types"], a2["relation_types"] = {"A2": "independent"}, {"A1": "independent"}
     first = _round([a1, a2, a3])
     final = _round([_on("A1", "AC1", "X"), _on("A2", "LT1", "Y"), _on("A3", "IM1", "Z 改过")])
     baseload = next(entry for entry in final["coverage"] if entry["method_id"] == "baseload")
@@ -827,6 +830,7 @@ def test_the_report_keeps_model_text_inline_and_shows_links(tmp_path: Path) -> N
     one["reasoning"] = "1. 画像显示夜间不降\n2. 查数确认"
     two = _item("A2", "AC1", ["EV-0123456789"], NIGHT, ("2026-03-03 20:00", "2026-03-04 08:00"))
     two["related_keys"] = ["A1"]
+    two["relation_types"] = {"A1": "same_event_evidence"}
     _quantified(tools, [one, two], {"daily-clock-window": ["A1", "A2"]})
     (tmp_path / "rules.yaml").write_text(
         "rules:\n- when:\n  - {field: source, op: eq, value: model}\n  decision: keep\n", encoding="utf-8"
@@ -980,3 +984,66 @@ def test_reasoning_may_quote_the_profile_but_the_phenomenon_must_quote_evidence(
         "文字里的 7392 在引用的证据和程序计算里没有找到对应的数",
         "文字里的 9999 在引用的证据和程序计算里没有找到对应的数",
     ]
+
+
+# --- knowledge-base card fields and the verification checklist --------------
+
+
+def test_a_card_needs_a_non_loss_explanation_a_category_and_typed_links() -> None:
+    from pydantic import ValidationError
+
+    from manyselves.capabilities.energy_efficiency.domain.items import LossItem
+
+    base = _item("A1", "AC1", ["EV-0123456789"], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
+    LossItem.model_validate(base)
+    only_loss = dict(base, root_cause_candidates=[dict(base["root_cause_candidates"][0])] * 2)
+    with pytest.raises(ValidationError, match="not a loss"):
+        LossItem.model_validate(only_loss)
+    with pytest.raises(ValidationError, match="candidate_categories"):
+        LossItem.model_validate({key: value for key, value in base.items() if key != "candidate_categories"})
+    with pytest.raises(ValidationError):
+        LossItem.model_validate(dict(base, candidate_categories=[{"item_id": "LOSS-NIGHT", "why": "夜间"}]))
+    with pytest.raises(ValidationError, match="relation_types"):
+        LossItem.model_validate(dict(base, related_keys=["A2"]))
+
+
+def test_a_restored_item_keeps_the_kind_of_its_links() -> None:
+    a1, a2 = _on("A1", "AC1", "X"), _on("A2", "LT1", "Y")
+    a2["related_keys"], a2["relation_types"] = ["A1"], {"A1": "same_event_evidence"}
+    first = _round([a1, a2])
+    # The model drops A2 while fixing A1.
+    final = _round([_on("A1", "AC1", "X 改过")])
+    result = _settled(first, ["A1"], final)
+    restored = next(item for item in result["submission"]["items"] if item["phenomenon"] == "Y")
+
+    assert restored["relation_types"] == {"A1": "same_event_evidence"}
+
+
+def test_the_report_carries_a_verification_checklist_with_blank_judgments(tmp_path: Path) -> None:
+    tools, _briefs = _prepared(tmp_path)
+    tools["__workspace__"] = tmp_path
+    one = _item("A1", "AC1", ["EV-0123456789"], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
+    one["possible_necessary_services"] = ["夜间冷却水循环"]
+    two = _item("A2", "LT1", ["EV-0123456789"], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
+    two["related_keys"], two["relation_types"] = ["A1"], {"A1": "same_event_evidence"}
+    two["candidate_categories"] = [{"item_id": "LOSS-PROCESS", "why": "试一下"}]
+    items = _quantified(tools, [one, two], {"daily-clock-window": ["A1", "A2"]})
+
+    assert items["A1"]["candidate_categories"][0]["role"] == "ENERGY"
+    assert any("经人声明口径的产出数量" in note for note in items["A2"]["computed"]["category_notes"])
+    assert any("没有同一块表" in note for note in items["A2"]["computed"]["relation_notes"])
+    (tmp_path / "rules.yaml").write_text(
+        "rules:\n- when:\n  - {field: source, op: eq, value: model}\n  decision: keep\n", encoding="utf-8"
+    )
+    initial = start_input(tmp_path)("report-kb", "energy-report", {"source_run_id": RUN, "rules_file": "rules.yaml"})
+    selection = tools["select-energy-items"]({"run_id": "report-kb", "request": initial["request"]})
+    report = tools["render-energy-report"]({"run_id": "report-kb", "request": initial["request"], "selection": selection})
+    markdown = (tmp_path / report["files"][0]).read_text(encoding="utf-8")
+    checklist = markdown.split("## 人工核实清单")[1].split("## 查了什么")[0]
+
+    assert "## 保留的候选损耗项" in markdown and "涉及电量" in markdown
+    assert "必要服务（人确认）：未知" in checklist and "夜间冷却水循环" in checklist
+    # The knowledge base's competing explanations for a night window, with a blank status column.
+    assert "停产窗口公辅持续运行" in checklist and "| 已排除/未排除（人填） |" in checklist
+    assert "| 假设待验证 |  |  |" in checklist
+    assert "夜间有必要的工艺维持" in checklist

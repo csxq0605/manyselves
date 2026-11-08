@@ -1,10 +1,10 @@
 id: partition-brief
 version: 1.0.0
-description: One partition's meters, data period, profile text, method menu and rule items
+description: One partition's meters, data period, profile text, method menu with readiness per meter, and rule items
 adapter: json_schema
 schema:
   type: object
-  required: [scope, partition_id, label, site, period, meters, available_inputs, methods, rule_items, profile_text]
+  required: [scope, partition_id, label, site, period, meters, available_inputs, methods, method_readiness, rule_items, profile_text]
   properties:
     scope: {type: string}
     partition_id: {type: string}
@@ -19,5 +19,6 @@ schema:
     meters: {type: array, items: {type: object}}
     available_inputs: {type: object}
     methods: {type: array, items: {type: object}}
+    method_readiness: {type: array, items: {type: object}}
     rule_items: {type: array, items: {type: object}}
     profile_text: {type: string}

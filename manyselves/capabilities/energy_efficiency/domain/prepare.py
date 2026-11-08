@@ -23,6 +23,7 @@ from .methods import (
     MethodParamsError,
     menu_entries,
     parse_params,
+    readiness,
     resolved_params,
     run_method,
     top_occurrences,
@@ -119,12 +120,27 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
 
 
 def method_context(site: SiteData) -> MethodContext:
+    production = site.manifest.production
     return MethodContext(
         period=site.period(),
         calendar=site.calendar(),
         batches=site.batches(),
         machines={meter.id: list(meter.production_machines) for meter in site.manifest.meters},
+        quantity_basis=production.quantity_basis if production else None,
+        quantity_unit=production.quantity_unit if production else None,
     )
+
+
+def method_readiness(site: SiteData, meter_ids: list[str]) -> list[dict[str, Any]]:
+    """For each menu method and meter, whether the inputs could feed it (program decided)."""
+
+    ctx = method_context(site)
+    rows = []
+    for spec in MENU.values():
+        for meter_id in meter_ids:
+            state, reason = readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx)
+            rows.append({"method_id": spec.id, "meter_id": meter_id, "state": state, "reason": reason})
+    return rows
 
 
 def meter_totals(site: SiteData) -> dict[str, float | None]:
@@ -286,6 +302,7 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
     available = {
         "calendar_states": sorted({window.state for window in calendar}) if calendar else [],
         "production_machines": machines if batches is not None else [],
+        "production_quantity_basis": site.manifest.production.quantity_basis if site.manifest.production else None,
         "tariff": site.manifest.tariff is not None,
     }
     return {
@@ -306,6 +323,7 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
         ],
         "available_inputs": available,
         "methods": menu_entries(),
+        "method_readiness": method_readiness(site, meter_ids),
         "rule_items": rule_items,
         "profile_text": "\n\n".join(profile_text(profiles[meter_id]) for meter_id in meter_ids),
     }
@@ -314,6 +332,7 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
 __all__ = [
     "meter_totals",
     "method_context",
+    "method_readiness",
     "parse_inputs",
     "partition_brief",
     "partition_meters",

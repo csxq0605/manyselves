@@ -1,8 +1,8 @@
 id: find-partition
-version: 0.1.0
+version: 0.2.0
 description: Look through one partition and submit its candidate loss items with how each was found
 agent: loss-finder
-objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像、方法菜单和程序规则已经列出的规则项。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何。
+objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像、方法菜单（每个方法是知识库算子链，标了 OP 号和对应的专家场景）、程序判定的每块表能否用每个方法（method_readiness），以及程序规则已经列出的规则项。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何。
 input_contract: partition-brief
 context_fields:
 - profile_text
@@ -13,11 +13,13 @@ constraints:
 - finding_method 说明这一项是怎么找到的。能用方法菜单里的方法描述的，填 method_id 和 params（参数只能用菜单 params 里列出的字段），并先用 try-method 在全期数据上试过，程序会按它在全期复算；菜单里没有合适的方法时 method_id 填 none，params 留空，在 description 里用文字说清怎么找的。
 - windows 写看到现象的具体时间窗（站点本地时间，不带时区），在数据期内、互不重叠；每个时间窗里这一项的表都要有记录。evidence_ids 里的证据要讲本项的表，查的时段要和本项的时间窗有交集。
 - reasoning 写思考过程：从画像或哪次查数开始注意到它，又查了什么、排除了什么，为什么认为它可能是损耗。
-- root_cause_candidates 至少一条；cause 写可能的原因；basis 填 data（数据现象，basis_detail 写本项 evidence_ids 里的证据编号，如 EV-0123456789，可加一句说明）或 general_knowledge（通用设备或工艺知识，basis_detail 写是哪条知识）；你看不到现场资料，不要写成依据现场资料；how_to_check 写人要核实或排除它需要看什么、问什么。原因不要写成定论。
-- 不判断这一项是否真实、是否值得处理、能节约多少，也不排序；不写年化节约或金额。拿不准的项照样列出，在 missing_info 写还缺什么资料。
-- coverage 对方法菜单里每个方法都写一条：found（找到了，item_keys 列你提交的对应项；只由规则项体现的，rule_keys 列它的 rule_key）、none_found（查了没找到，note 写查了什么）、not_applicable（本分区不适用，note 写原因）或 needs_input（缺日历、生产记录等资料，note 写缺什么）。meter_ids 只写本分区的表。
+- root_cause_candidates 至少两条，其中至少一条不是损耗：kind 填 loss（可能是损耗）、normal_operation（正常运行或工艺需要）、necessary_service（必要服务）或 measurement（计量或时间口径问题）。不要为了凑数写和现场无关的解释，也不要因为常见就默认它最可能。cause 写可能的原因；basis 填 data（数据现象，basis_detail 写本项 evidence_ids 里的证据编号，如 EV-0123456789，可加一句说明）或 general_knowledge（通用设备或工艺知识，basis_detail 写是哪条知识）；你看不到现场资料，不要写成依据现场资料；how_to_check 写人要核实或排除它需要看什么、问什么。原因不要写成定论。
+- candidate_categories 至少一条：从知识库 17 项里选可能对应的（LOSS-PROCESS、LOSS-INTERRUPTION、LOSS-IDLE、LOSS-HOLD、LOSS-TRANSITION、LOSS-PARALLEL、LOSS-SUPPORT、LOSS-CONDITIONAL、MECH-CONTROL、OPP-CAPABILITY、COST-SHIFT、COST-BASIC、COST-REACTIVE、COST-STORAGE、COST-PROCURE、NECESSARY、MEASUREMENT_ISSUE），可多选，why 写数据上看到了什么。按对象和状态选，不按方法名选；只是提议，人来定。
+- possible_necessary_services 列出这段用电里可能有的必要服务（工艺、环保、质量、安全），由人确认；想不到就留空，不要编。
+- 不判断这一项是否真实、是否值得处理、能节约多少，也不排序；不写年化节约或金额。拿不准的项照样列出，在 missing_info 写还缺什么资料。不写“相关性高所以存在浪费”“功率最大所以设备是根因”“夜班偏高所以人员未关机”这类由相关或标签推出原因的话，也不写人员过错。
+- coverage 对方法菜单里每个方法都写一条（method_readiness 是程序按资料判定的：程序判定 ready 的不能写 not_applicable；程序判定用不了的不能写 found）：found（找到了，item_keys 列你提交的对应项；只由规则项体现的，rule_keys 列它的 rule_key）、none_found（查了没找到，note 写查了什么）、not_applicable（本分区不适用，note 写原因）或 needs_input（缺日历、生产记录等资料，note 写缺什么）。meter_ids 只写本分区的表。
 - rule_items 是程序按规则已经列出的规则项，不能删除。你认为某个规则项是误报或需要说明时，写进 rule_item_notes（rule_key 填它的 rule_key）；不要把规则项再作为自己的损耗项重复提交。
-- 几个损耗项有关联（同一时段、同一原因的不同表现）时在 related_keys 互相列出，不要合并成一项。
+- 几个损耗项有关联时在 related_keys 互相列出，不要合并成一项；relation_types 给 related_keys 里每一项写关系：alternative_explanation（同一事实的替代解释）、same_event_evidence（同一事件的不同证据）、parent_child（父子分解）、mutually_exclusive（并行但互斥）、independent（独立事件）、joint_scenario（联合情景）。程序会核对同一事件、替代解释、父子分解的两项是否真在同一块表上计入了共同的记录。
 - 本分区确实没有找到损耗项时 items 可以为空，但 coverage 仍要逐个方法写明。
 tools:
 - energy-series

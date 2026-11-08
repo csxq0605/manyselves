@@ -148,6 +148,43 @@ class MeterSeries:
             powers = np.where(hours > 0, self.values[lo:hi] / hours, np.nan)
         return powers[~np.isnan(powers)]
 
+    def record_powers(self) -> np.ndarray:
+        """Power of every record (kW): its average power, or the instant reading; NaN when unknown."""
+
+        if self.kind == "instant":
+            return self.values.astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(self.durations_h > 0, self.values / self.durations_h, np.nan)
+
+    def follows(self, index: int) -> bool:
+        """Whether record ``index`` follows record ``index - 1`` with no data missing between them.
+
+        Interval records must touch; instant readings may be at most one and
+        a half intervals apart.
+        """
+
+        if index <= 0:
+            return False
+        if self.kind == "instant":
+            gap = (self.starts[index] - self.starts[index - 1]) / np.timedelta64(1, "m")
+            return bool(gap <= 1.5 * self.interval_minutes)
+        return bool(self.starts[index] == self.ends[index - 1])
+
+    def record_end(self, index: int) -> datetime:
+        """Where record ``index`` stops counting: its end, or for an instant reading the
+        next reading (at most one interval on)."""
+
+        if self.kind != "instant":
+            return pd.Timestamp(self.ends[index]).to_pydatetime()
+        moment = pd.Timestamp(self.starts[index]).to_pydatetime()
+        step = moment + timedelta(minutes=self.interval_minutes)
+        if index + 1 < len(self):
+            return min(step, pd.Timestamp(self.starts[index + 1]).to_pydatetime())
+        return step
+
+    def record_start(self, index: int) -> datetime:
+        return pd.Timestamp(self.starts[index]).to_pydatetime()
+
     def index_set(self, measure: WindowMeasure) -> range:
         return range(measure.first_index, measure.last_index)
 

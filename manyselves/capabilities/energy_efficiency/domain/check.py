@@ -27,7 +27,7 @@ import pandas as pd
 
 from .evidence import has_evidence, load_evidence
 from .items import PartitionSubmission
-from .methods import MENU, NO_METHOD, run_method
+from .methods import MENU, NO_METHOD, readiness, run_method
 from .prepare import meter_totals, method_context
 from .store import SiteData, read_json
 
@@ -161,6 +161,31 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
         stray = sorted(set(entry.rule_keys) - rule_keys)
         if stray:
             issues.append({"key": "", "problem": f"覆盖说明里的规则项 {stray} 不属于本分区"})
+        spec = MENU.get(entry.method_id)
+        if spec is None:
+            continue
+        states = {
+            meter_id: readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx)
+            for meter_id in entry.meter_ids
+            if meter_id in meters
+        }
+        if entry.outcome == "found" and states and all(state != "ready" for state, _reason in states.values()):
+            reasons = "；".join(f"{meter_id}：{reason}" for meter_id, (_state, reason) in states.items())
+            issues.append(
+                {
+                    "key": "",
+                    "problem": f"覆盖说明写方法 {entry.method_id} 找到了项，但程序判定这些表都用不了这个方法（{reasons}）",
+                }
+            )
+        ready = [meter_id for meter_id, (state, _reason) in states.items() if state == "ready"]
+        if entry.outcome == "not_applicable" and ready:
+            issues.append(
+                {
+                    "key": "",
+                    "problem": f"覆盖说明写方法 {entry.method_id} 不适用，但程序判定表 {ready} 资料齐全、可以用；"
+                    "查过没找到写 none_found，缺人给的参数或资料写 needs_input 并写明缺什么",
+                }
+            )
     for note in parsed.rule_item_notes:
         if note.rule_key not in rule_keys:
             issues.append({"key": "", "problem": f"规则检出项 {note.rule_key} 不属于本分区"})
@@ -170,7 +195,7 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
 def _content(item: dict[str, Any]) -> str:
     """What an item says, apart from its key and its links to other items."""
 
-    rest = {name: value for name, value in item.items() if name not in {"key", "related_keys"}}
+    rest = {name: value for name, value in item.items() if name not in {"key", "related_keys", "relation_types"}}
     return json.dumps(rest, ensure_ascii=False, sort_keys=True)
 
 
@@ -368,18 +393,25 @@ def _settle(
         final["items"] += restored
         present = {item["key"] for item in final["items"]}
         first_links = {item["key"]: item["related_keys"] for item in first["items"]}
+        first_types = {item["key"]: item.get("relation_types", {}) for item in first["items"]}
         back = dict(key_map)
         reverse = {new: old for old, new in key_map.items()}
         for item in final["items"]:
+            types: dict[str, str]
             if item["key"] in restored_keys:
-                links = [back.get(key) for key in first_links.get(reverse[item["key"]], [])]
+                old = reverse[item["key"]]
+                links = [back.get(key) for key in first_links.get(old, [])]
+                types = {back[key]: kind for key, kind in first_types.get(old, {}).items() if key in back}
             else:
                 links = list(item["related_keys"])
+                types = dict(item.get("relation_types", {}))
                 old = reverse.get(item["key"])
                 for key in first_links.get(old, []) if old else []:
                     if back.get(key) in restored_keys:
                         links.append(back[key])
+                        types[back[key]] = first_types[old][key]
             item["related_keys"] = list(dict.fromkeys(key for key in links if key in present and key != item["key"]))
+            item["relation_types"] = {key: types[key] for key in item["related_keys"] if key in types}
     # Every item the first coverage listed under a method goes back there
     # when it still has that method but the round left it out.
     settled_items = {item["key"]: item for item in final["items"]}
@@ -461,13 +493,13 @@ def _settle(
     ):
         issues.append({"key": "", "problem": "修正轮改了规则项说明或分区说明，但核对没有指出分区层面的问题"})
     # Links of items the check did not flag should not change.
-    first_links = {item["key"]: item["related_keys"] for item in first["items"]}
-    settled_links = {item["key"]: set(item["related_keys"]) for item in final["items"]}
+    first_links = {item["key"]: item.get("relation_types", {}) for item in first["items"]}
+    settled_links = {item["key"]: item.get("relation_types", {}) for item in final["items"]}
     for old, new in pairs.items():
         if old in flagged:
             continue
-        expected = {key_map[key] for key in first_links[old] if key in key_map}
-        if expected != settled_links.get(new, set()):
+        expected = {key_map[key]: kind for key, kind in first_links[old].items() if key in key_map}
+        if expected != settled_links.get(new, {}):
             issues.append({"key": new, "problem": "修正轮改了这一项的相关项，但核对没有指出它的问题"})
     # Two settled items that say the same thing: one of them replaced another item.
     seen: dict[str, str] = {}

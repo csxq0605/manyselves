@@ -154,6 +154,18 @@ class ProductionSpec(TableSource):
     end_column: str = Field(min_length=1)
     product_column: str | None = None
     quantity_column: str | None = None
+    quantity_basis: str | None = Field(
+        default=None,
+        min_length=1,
+        description="数量列是什么口径（例如 合格品件数、投料吨数），由人填写；不填时不算单耗",
+    )
+    quantity_unit: str | None = Field(default=None, min_length=1, description="数量的单位，例如 件、吨")
+
+    @model_validator(mode="after")
+    def basis_needs_column(self) -> "ProductionSpec":
+        if (self.quantity_basis or self.quantity_unit) and not self.quantity_column:
+            raise ValueError("quantity_basis and quantity_unit describe quantity_column, which is not given")
+        return self
 
 
 class CalendarSpec(TableSource):

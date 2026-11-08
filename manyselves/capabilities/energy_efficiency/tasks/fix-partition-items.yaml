@@ -1,5 +1,5 @@
 id: fix-partition-items
-version: 0.1.0
+version: 0.2.0
 description: Correct this partition's submission after the program's check, in the same conversation
 agent: loss-finder
 objective: 程序核对了你刚才提交的损耗项，check.issues 列出了对不上的地方（引用的证据不存在、不是这块表或没查本项的时间窗，依据为 data 的原因没写本项的证据编号，表不在本分区，时间窗超出数据期或没有记录，方法在这块表上不能用等）。submission 是你上次的提交。逐条改正后重新提交整个分区的结果。

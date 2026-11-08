@@ -95,7 +95,13 @@ def _coverage(meter_ids: list[str], found: dict[str, list[str]]) -> list[dict[st
 
 
 def _cause(evidence: str) -> list[dict[str, str]]:
-    return [{"cause": "设备没有停", "basis": "data", "basis_detail": evidence, "how_to_check": "问值班人员"}]
+    return [
+        {"cause": "设备没有停", "kind": "loss", "basis": "data", "basis_detail": evidence, "how_to_check": "问值班人员"},
+        {"cause": "有必须连续运行的服务", "kind": "necessary_service", "basis": "general_knowledge", "basis_detail": "公辅常识", "how_to_check": "问设备科"},
+    ]
+
+
+CATEGORY = [{"item_id": "LOSS-IDLE", "why": "非生产时段功率不降"}]
 
 
 NIGHT = {"start_time": "20:00", "end_time": "08:00", "min_avg_kw": 5}
@@ -129,6 +135,7 @@ def _p01(brief: dict[str, Any]):
                         "evidence_ids": [evidence],
                         "reasoning": "画像里夜间和周末都是 12 kW，不随生产下降。",
                         "root_cause_candidates": _cause(evidence),
+                        "candidate_categories": CATEGORY,
                         "missing_info": ["夜间是否有用气设备"],
                     }
                 ],
@@ -159,6 +166,7 @@ def _p02_first(brief: dict[str, Any]):
                         "evidence_ids": [gaps],
                         "reasoning": "批次之间功率没有降到夜间水平。",
                         "root_cause_candidates": _cause(gaps),
+                        "candidate_categories": CATEGORY,
                     },
                     {
                         "key": "B2",
@@ -170,7 +178,9 @@ def _p02_first(brief: dict[str, Any]):
                         "evidence_ids": [gaps],
                         "reasoning": "照明画像周末和工作日相同。",
                         "root_cause_candidates": _cause(gaps),
+                        "candidate_categories": CATEGORY,
                         "related_keys": ["B1"],
+                        "relation_types": {"B1": "independent"},
                     },
                 ],
                 "coverage": _coverage(["IM1", "LT1"], {"production-gaps": ["B1"], "calendar-state": ["B2"]}),
@@ -314,7 +324,7 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
     assert (tmp_path / "Work/runs" / report_id / "energy-selection/marks.csv").is_file()
     assert (tmp_path / "Work/runs" / report_id / "energy-selection/source-register/register.json").is_file()
     text = (tmp_path / "Work/runs" / report_id / "energy-report/report.md").read_text(encoding="utf-8")
-    kept = text.split("## 保留的损耗项")[1].split("## 需补资料的项")[0]
+    kept = text.split("## 保留的候选损耗项")[1].split("## 需补资料的项")[0]
     assert f"### {items['B1']['id']}" in kept
     assert "午休不停机" in kept
     assert f"### {items['A1']['id']}" not in kept

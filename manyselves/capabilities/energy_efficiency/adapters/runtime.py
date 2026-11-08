@@ -207,7 +207,8 @@ def _freeze_selection(workspace: Path, run_id: str, request: ReportRequest) -> N
         register = read_json(copy / "register.json")
         if request.marks_file:
             codes = {item["id"]: item["check_code"] for item in register["items"]}
-            if not read_marks(frozen / Path(request.marks_file).name, codes) and not request.rules_file:
+            marked = read_marks(frozen / Path(request.marks_file).name, codes)
+            if not any(mark["decision"] for mark in marked.values()) and not request.rules_file:
                 raise SelectionError(
                     "marks file marks no item: fill 选择 (保留/不保留/需补资料) in the register you marked, "
                     "or give a rules file"

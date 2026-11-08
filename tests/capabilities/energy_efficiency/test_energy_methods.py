@@ -113,8 +113,10 @@ def test_overlapping_windows_are_refused() -> None:
                 "evidence_ids": ["EV-0123456789"],
                 "reasoning": "画像",
                 "root_cause_candidates": [
-                    {"cause": "未停机", "basis": "general_knowledge", "basis_detail": "常识", "how_to_check": "问"}
+                    {"cause": "未停机", "kind": "loss", "basis": "general_knowledge", "basis_detail": "常识", "how_to_check": "问"},
+                    {"cause": "夜间有工艺", "kind": "normal_operation", "basis": "general_knowledge", "basis_detail": "常识", "how_to_check": "问"},
                 ],
+                "candidate_categories": [{"item_id": "LOSS-IDLE", "why": "夜间不停"}],
             }
         )
 

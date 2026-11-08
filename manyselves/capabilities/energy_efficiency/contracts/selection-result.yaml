@@ -17,6 +17,7 @@ schema:
           decision: {type: string, enum: [keep, drop, needs_data, unselected]}
           by: {type: [string, "null"]}
           note: {type: string}
+          service: {type: string, description: 必要服务，由人在清单上确认后填写}
     counts: {type: object}
     warnings:
       type: array

@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from .evidence import has_evidence, load_evidence
-from .items import PartitionSubmission
+from .items import KB_ITEMS, RELATIONS, PartitionSubmission
 from .methods import (
     MENU,
     NO_METHOD,
@@ -54,14 +54,14 @@ SCALAR_FIELDS: dict[str, str] = {
     "replay_occurrences": "按寻找方式在全期回放得到的出现次数",
     "replay_hits": "其中达到阈值的次数（没设阈值时为空）",
     "replay_unknown": "其中没有数据、无法判断是否达到阈值的次数（不算命中也不算未命中；没设阈值时为空）",
-    "replay_item_kwh": "全期回放中与本项相关的电量：有阈值时为命中部分；基底方法为基底电量（有阈值时只算命中的天）；否则为全部出现",
+    "replay_item_kwh": "全期回放中本项涉及的电量（实测，不是可避免电量）：有阈值时为命中部分；基底方法为基底电量（有阈值时只算命中的天）；否则为全部出现",
     "replay_share_of_meter": "replay_item_kwh 占该表全期电量的比例",
     "replay_mean_coverage": "全期回放各次出现的平均数据覆盖",
     "top_share": "最大的一次出现占全部的比例（越接近 1 越像是由一次造成）",
     "halves_ratio": "后半期 / 前半期的平均功率（按各次出现里实有的记录；基底方法比基底功率）",
     "boundary_max_change": "时间窗前后移动一个记录间隔或两头各收窄一个间隔后，平均功率的最大相对变化；基底方法是百分位上下移 5 时本项数值的最大相对变化",
     "window_cost": "本项时间窗里的电费（只在提供电价时；有记录跨两个价格、落在电价没覆盖的时刻或适用日期之外、不能整条计价时为空）",
-    "replay_cost": "全期回放相关电量的电费（同上；方法没能回放或没有数据时为空，回放了但没有命中时为 0）",
+    "replay_cost": "全期回放涉及电量的电费（同上；方法没能回放或没有数据时为空，回放了但没有命中时为 0）",
     "overlap_items": "与本项计入同一块表同一批记录的其他项数",
     "overlap_max_shared_kwh": "与其他某一项共同计入的最大电量（kWh；每条记录取两项各自计入部分的较小者）",
     "check_issue_count": "程序检查后仍未解决的问题数",
@@ -520,6 +520,15 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
                     "missing_info": item.get("missing_info", []),
                     "monitoring_suggestion": item.get("monitoring_suggestion"),
                     "related_ids": [local[key] for key in item.get("related_keys", [])],
+                    "relations": [
+                        {"item_id": local[key], "relation": item.get("relation_types", {}).get(key)}
+                        for key in item.get("related_keys", [])
+                    ],
+                    "candidate_categories": [
+                        {**proposal, "role": KB_ITEMS[proposal["item_id"]][0], "title": KB_ITEMS[proposal["item_id"]][1]}
+                        for proposal in item.get("candidate_categories", [])
+                    ],
+                    "possible_necessary_services": item.get("possible_necessary_services", []),
                     "evidence_ids": item["evidence_ids"],
                     "check_issues": [
                         issue["problem"] for issue in check["issues"] if issue["key"] == item["key"]
@@ -545,6 +554,9 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
                 "missing_info": [],
                 "monitoring_suggestion": None,
                 "related_ids": [],
+                "relations": [],
+                "candidate_categories": [],
+                "possible_necessary_services": [],
                 "evidence_ids": item["evidence_ids"],
                 "check_issues": [],
                 "rule_notes": rule_notes.get(item["key"], []),
@@ -636,8 +648,15 @@ def quantify_register(
                 else None
             )
             per_meter[meter_id] = entry
-        item["computed"] = {"per_meter": per_meter, "overlap": [], "number_hints": []}
+        item["computed"] = {
+            "per_meter": per_meter,
+            "overlap": [],
+            "number_hints": [],
+            "category_notes": category_notes(site, item),
+            "relation_notes": [],
+        }
     _overlaps(site, items, bases)
+    _relation_notes(items)
     names = [site.manifest.site.name]
     for meter_id in site.meter_ids():
         spec = site.spec(meter_id)
@@ -740,6 +759,7 @@ def check_code(item: dict[str, Any]) -> str:
         "method_id": item["finding_method"]["method_id"],
         "params": item["finding_method"]["params"],
         "phenomenon": item["phenomenon"],
+        "categories": [proposal["item_id"] for proposal in item.get("candidate_categories", [])],
     }
     text = json.dumps(identity, ensure_ascii=False, sort_keys=True, default=str)
     # A leading letter keeps a spreadsheet from reading the code as a number.
@@ -768,6 +788,91 @@ def _overlaps(site: SiteData, items: list[dict[str, Any]], bases: dict[str, dict
                     index[this]["computed"]["overlap"].append(
                         {"item_id": other, "meter_id": meter_id, "shared_records": len(shared), "shared_kwh": kwh}
                     )
+
+
+def category_notes(site: SiteData, item: dict[str, Any]) -> list[str]:
+    """For each proposed category, the evidence it needs that the inputs do not hold.
+
+    Only what the presence of inputs decides (knowledge base 4.3-4.6,
+    "必要证据"); whether the evidence suffices is a person's call.  An item is
+    never dropped for this.
+    """
+
+    manifest = site.manifest
+    production = manifest.production
+    has_batches = site.batches() is not None
+    has_quantity = bool(production and production.quantity_basis)
+    has_product = bool(production and production.product_column)
+    notes = []
+    for proposal in item.get("candidate_categories", []):
+        item_id = proposal["item_id"]
+        lacking: list[str] = []
+        if item_id in {"LOSS-PROCESS", "LOSS-INTERRUPTION", "LOSS-IDLE", "LOSS-TRANSITION", "OPP-CAPABILITY"} and not has_batches:
+            lacking.append("生产记录")
+        if item_id in {"LOSS-PROCESS", "OPP-CAPABILITY"} and not has_quantity:
+            lacking.append("经人声明口径的产出数量")
+        if item_id == "LOSS-TRANSITION" and not has_product:
+            lacking.append("批次的产品（判断切换对）")
+        if item_id in {"LOSS-IDLE", "LOSS-HOLD"} and site.calendar() is None:
+            lacking.append("经人确认的日历")
+        if item_id == "LOSS-PARALLEL" and len(item["meter_ids"]) < 2:
+            lacking.append("并行两侧各自的计量（本项只有一块表）")
+        if item_id == "COST-SHIFT" and manifest.tariff is None:
+            lacking.append("分时电价")
+        if item_id == "MEASUREMENT_ISSUE":
+            noted = [meter_id for meter_id in item["meter_ids"] if meter_id in site.meter_ids() and site.quality(meter_id).notes()]
+            if not noted:
+                lacking.append("（程序的数据质量说明里这几块表没有记录问题，需另附依据）")
+        outside = {
+            "LOSS-INTERRUPTION": "停机原因或日志",
+            "LOSS-HOLD": "温度与再升温要求",
+            "LOSS-SUPPORT": "供给量与压力/温度等服务参数",
+            "LOSS-CONDITIONAL": "经人批准的基准模型",
+            "MECH-CONTROL": "命令、反馈与维护日志",
+            "COST-BASIC": "合同、账单与结算需量",
+            "COST-REACTIVE": "无功或结算功率因数与账单",
+            "COST-STORAGE": "储能充放、库存与合同",
+            "COST-PROCURE": "购电合同与报价",
+            "NECESSARY": "服务标准和负责人确认",
+        }.get(item_id)
+        if outside:
+            lacking.append(f"{outside}（manifest 不收这类资料）")
+        if lacking:
+            notes.append(f"{item_id}：缺 {'、'.join(lacking)}")
+    return notes
+
+
+def _relation_notes(items: list[dict[str, Any]]) -> None:
+    """Check what the program can of each declared relation between two items.
+
+    Two items said to be the same event, or two explanations of the same
+    fact, should count some of the same records of a meter they share.
+    Relations across meters need the meters' topology, which a person gives.
+    """
+
+    index = {item["id"]: item for item in items}
+    for item in items:
+        shared = {entry["item_id"] for entry in item["computed"]["overlap"]}
+        for relation in item.get("relations", []):
+            other = index.get(relation["item_id"])
+            if other is None:
+                continue
+            kind = relation["relation"]
+            common = set(item["meter_ids"]) & set(other["meter_ids"])
+            label = RELATIONS.get(kind, kind)
+            if kind in {"same_event_evidence", "alternative_explanation", "parent_child"}:
+                if not common:
+                    item["computed"]["relation_notes"].append(
+                        f"与 {other['id']} 标为“{label}”，但两项没有同一块表；跨表关系要人给表间拓扑，程序未核"
+                    )
+                elif relation["item_id"] not in shared:
+                    item["computed"]["relation_notes"].append(
+                        f"与 {other['id']} 标为“{label}”，但两项在同一块表上没有共同计入的记录"
+                    )
+            elif kind == "independent" and relation["item_id"] in shared:
+                item["computed"]["relation_notes"].append(
+                    f"与 {other['id']} 标为“{label}”，但两项计入了同一块表的同一批记录"
+                )
 
 
 def _scalars(item: dict[str, Any]) -> dict[str, Any]:
