@@ -23,6 +23,7 @@ from .methods import (
     MethodParamsError,
     menu_entries,
     parse_params,
+    resolved_params,
     run_method,
     top_occurrences,
 )
@@ -199,13 +200,23 @@ def run_prechecks(workspace: Path, run_id: str) -> dict[str, Any]:
                 site,
                 partition_id=None,
                 tool="precheck",
-                arguments={"method_id": check.method, "params": check.params, "meter_id": meter_id},
+                arguments={
+                    "method_id": check.method,
+                    "params": check.params,
+                    "resolved_params": resolved_params(check.method, check.params),
+                    "meter_id": meter_id,
+                },
                 meter_ids=[meter_id],
                 result=run.as_dict(),
             )
             key = f"R{len(items) + 1}"
             hits = run.summary["hits"]
-            counted_text = f"命中 {hits} 次" if hits is not None else f"有数据的出现 {run.summary['with_data']} 次"
+            if hits is None:
+                counted_text = f"有数据的出现 {run.summary['with_data']} 次"
+            else:
+                counted_text = f"命中 {hits} 次"
+                if run.summary.get("unknown"):
+                    counted_text += f"，{run.summary['unknown']} 次没有数据、无法判断"
             items.append(
                 {
                     "key": key,

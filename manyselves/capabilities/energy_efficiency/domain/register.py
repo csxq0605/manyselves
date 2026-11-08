@@ -17,6 +17,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from .inputs import UNPRICED_REASONS
 from .store import write_json
 
 DECISION_LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料"}
@@ -36,8 +37,10 @@ REGISTER_COLUMNS = [
     "窗口电量kWh",
     "窗口平均kW",
     "窗口覆盖",
+    "窗口功率小时位次（筛查参考）",
     "全期出现次数",
     "全期命中次数",
+    "全期无法判断次数",
     "全期出现平均覆盖",
     "全期相关电量kWh",
     "占该表电量",
@@ -68,7 +71,9 @@ def sort_key(item: dict[str, Any]) -> tuple[float, float, str]:
 
 def method_text(item: dict[str, Any]) -> str:
     method = item["finding_method"]
-    params = json.dumps(method["params"], ensure_ascii=False) if method["params"] else ""
+    # The parameters the program used, defaults filled in, when it could replay the method.
+    used = method.get("resolved_params", method["params"])
+    params = json.dumps(used, ensure_ascii=False) if used else ""
     head = f"{method['title']}（{method['method_id']}）"
     return f"{head} {params}".strip()
 
@@ -87,8 +92,10 @@ def _row(item: dict[str, Any], names: dict[str, str]) -> list[Any]:
         scalars["window_energy_kwh"],
         scalars["window_avg_kw"],
         scalars["window_coverage"],
+        scalars["window_avg_kw_hour_rank"],
         scalars["replay_occurrences"],
         scalars["replay_hits"],
+        scalars["replay_unknown"],
         scalars["replay_mean_coverage"],
         scalars["replay_item_kwh"],
         scalars["replay_share_of_meter"],
@@ -142,6 +149,10 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     guide.append(["字段", "含义"])
     for name, meaning in register["scalar_fields"].items():
         guide.append([name, meaning])
+    guide.append([])
+    guide.append(["计算口径", "说明"])
+    for name, rule in (register.get("rules_of_computation") or {}).items():
+        guide.append([name, rule])
 
     coverage = book.create_sheet("覆盖说明")
     coverage.append(["分区", "表", "方法", "结果", "说明", "对应项"])
@@ -213,11 +224,13 @@ def _cost_notes(item: dict[str, Any]) -> list[str]:
     for name, label in (("window", "时间窗"), ("replay", "全期回放")):
         for meter_id, entry in item["computed"]["per_meter"].items():
             cost = ((entry.get("cost") or {}).get(name)) or {}
-            if cost.get("unpriced_records"):
-                notes.append(
-                    f"表 {meter_id} {label}里有 {cost['unpriced_records']} 条记录跨电价时段（{cost['unpriced_kwh']} kWh），"
-                    f"不拆分计价，所以不给{label}电费"
-                )
+            if not cost.get("unpriced_records"):
+                continue
+            reasons = "、".join(
+                f"{value['records']} 条{UNPRICED_REASONS.get(reason, reason)}（{value['kwh']} kWh）"
+                for reason, value in (cost.get("unpriced_by_reason") or {}).items()
+            )
+            notes.append(f"表 {meter_id} {label}里有记录不能整条计价：{reasons}；不拆分、不估价，所以不给{label}电费")
     return notes
 
 
@@ -291,8 +304,10 @@ def figures(item: dict[str, Any]) -> list[tuple[str, Any]]:
         ("窗口电量 kWh", scalars["window_energy_kwh"]),
         ("窗口平均 kW", scalars["window_avg_kw"]),
         ("窗口覆盖", scalars["window_coverage"]),
+        ("窗口功率小时位次（筛查参考）", scalars["window_avg_kw_hour_rank"]),
         ("全期出现次数", scalars["replay_occurrences"]),
         ("全期命中次数", scalars["replay_hits"]),
+        ("全期无法判断次数", scalars["replay_unknown"]),
         ("全期出现平均覆盖", scalars["replay_mean_coverage"]),
         ("全期相关电量 kWh", scalars["replay_item_kwh"]),
         ("占该表电量", scalars["replay_share_of_meter"]),

@@ -117,14 +117,51 @@ def test_instant_power_is_never_turned_into_energy() -> None:
     assert measure.records == 3
 
 
-def test_interval_average_power_stays_power() -> None:
+def test_interval_average_power_becomes_energy_by_its_duration() -> None:
     rows = [("2026-03-02 00:15", 10), ("2026-03-02 00:30", 30)]
-    series = _series(_spec("interval_avg_power", "kW", marks="end"), _frame(rows))
+    spec = _spec("interval_avg_power", "kW", marks="end")
+    normalized, _quality = normalize_meter(spec, _frame(rows), None)
+    series = _series(spec, _frame(rows))
     measure = series.measure(datetime(2026, 3, 2), datetime(2026, 3, 2, 0, 30))
 
-    assert series.kind == "avg_power"
-    assert measure.energy_kwh is None
+    # Each record is a true average over its quarter hour: e = P x 0.25 h.
+    assert normalized["avg_kw"].tolist() == [10.0, 30.0]
+    assert normalized["kwh"].tolist() == [2.5, 7.5]
+    assert spec.has_energy and spec.unit_kind == "energy"
+    assert series.has_energy
+    assert measure.energy_kwh == 10.0
     assert measure.avg_kw == 20.0
+
+
+def test_a_start_mark_puts_the_average_power_after_its_timestamp() -> None:
+    rows = [("2026-03-02 00:00", 8)]
+    normalized, _quality = normalize_meter(_spec("interval_avg_power", "kW", marks="start"), _frame(rows), None)
+
+    assert normalized["start"].iloc[0] == pd.Timestamp("2026-03-02 00:00")
+    assert normalized["end"].iloc[0] == pd.Timestamp("2026-03-02 00:15")
+    assert normalized["kwh"].iloc[0] == 2.0
+
+
+@pytest.mark.parametrize(
+    ("semantics", "unit", "marks", "minutes", "expected"),
+    [
+        ("interval_energy", "kWh", "end", 30, "平均功率会偏高"),
+        ("interval_avg_power", "kW", "end", 30, "覆盖率会偏低"),
+        ("instant_power", "kW", None, 30, "覆盖率按每条 15 分钟估算"),
+        ("interval_energy", "kWh", "end", 15, None),
+    ],
+)
+def test_records_further_apart_than_declared_are_noted(semantics, unit, marks, minutes, expected) -> None:
+    start = pd.Timestamp("2026-03-02 00:30")
+    rows = [((start + pd.Timedelta(minutes=minutes * n)).strftime("%Y-%m-%d %H:%M"), 1) for n in range(6)]
+    _normalized, quality = normalize_meter(_spec(semantics, unit, marks=marks), _frame(rows), None)
+
+    assert quality.median_spacing_minutes == minutes
+    notes = " ".join(quality.notes())
+    if expected is None:
+        assert quality.spacing_note() is None
+    else:
+        assert expected in notes and "interval_minutes" in notes
 
 
 def test_a_window_counts_only_records_wholly_inside_it() -> None:

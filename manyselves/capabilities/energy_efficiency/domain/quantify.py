@@ -32,12 +32,14 @@ from .items import PartitionSubmission
 from .methods import (
     MENU,
     NO_METHOD,
+    PERCENTILE_RULE,
     MethodContext,
     MethodRun,
     Occurrence,
     base_portions,
     item_kwh,
     parse_params,
+    resolved_params,
     run_method,
 )
 from .prepare import meter_totals, method_context
@@ -51,19 +53,26 @@ SCALAR_FIELDS: dict[str, str] = {
     "window_coverage": "本项时间窗的数据覆盖（0-1）",
     "replay_occurrences": "按寻找方式在全期回放得到的出现次数",
     "replay_hits": "其中达到阈值的次数（没设阈值时为空）",
+    "replay_unknown": "其中没有数据、无法判断是否达到阈值的次数（不算命中也不算未命中；没设阈值时为空）",
     "replay_item_kwh": "全期回放中与本项相关的电量：有阈值时为命中部分；基底方法为基底电量（有阈值时只算命中的天）；否则为全部出现",
     "replay_share_of_meter": "replay_item_kwh 占该表全期电量的比例",
     "replay_mean_coverage": "全期回放各次出现的平均数据覆盖",
     "top_share": "最大的一次出现占全部的比例（越接近 1 越像是由一次造成）",
     "halves_ratio": "后半期 / 前半期的平均功率（按各次出现里实有的记录；基底方法比基底功率）",
     "boundary_max_change": "时间窗前后移动一个记录间隔或两头各收窄一个间隔后，平均功率的最大相对变化；基底方法是百分位上下移 5 时本项数值的最大相对变化",
-    "window_cost": "本项时间窗里的电费（只在提供电价时；有记录跨电价时段、不能整条计价时为空）",
+    "window_cost": "本项时间窗里的电费（只在提供电价时；有记录跨两个价格、落在电价没覆盖的时刻或适用日期之外、不能整条计价时为空）",
     "replay_cost": "全期回放相关电量的电费（同上；方法没能回放或没有数据时为空，回放了但没有命中时为 0）",
     "overlap_items": "与本项计入同一块表同一批记录的其他项数",
     "overlap_max_shared_kwh": "与其他某一项共同计入的最大电量（kWh；每条记录取两项各自计入部分的较小者）",
     "check_issue_count": "程序检查后仍未解决的问题数",
     "number_hint_count": "文字中对不上证据和程序计算的数的个数",
+    "window_avg_kw_hour_rank": "筛查参考：本项时间窗的平均功率在该表全期各小时平均功率里的位次（0-1）",
 }
+
+HOUR_RANK_RULE = (
+    "全期每个整点小时（只算有记录的）各取平均功率，数出不高于本项时间窗平均功率的小时占几成；"
+    "是经验分布的位次，不插值。只作筛查参考，不说明是否损耗"
+)
 
 
 def _r(value: float | None, digits: int = 3) -> float | None:
@@ -261,7 +270,7 @@ def _baseload_boundary(
 
 
 class _Hourly:
-    """Hourly average power of each meter over the period, for percentile ranks."""
+    """Hourly average power of each meter over the period, for HOUR_RANK_RULE."""
 
     def __init__(self, site: SiteData, period: tuple[datetime, datetime]) -> None:
         self.site = site
@@ -296,33 +305,36 @@ def _price_records(
 ) -> dict[str, Any] | None:
     """Price the kWh counted of each record at the tariff of the period that holds the record.
 
-    A record that crosses from one tariff period into another is not split;
-    it stays unpriced and the cost is then left empty, because a partial sum
-    would read as the whole cost.  Nothing counted is a cost of 0 when the
-    data was there (``measured``) and empty when it was not.
+    A record that crosses from one tariff period into another is not split,
+    and one outside the tariff's dates or hours has no price; either stays
+    unpriced and the cost is then left empty, because a partial sum would
+    read as the whole cost.  Nothing counted is a cost of 0 when the data was
+    there (``measured``) and empty when it was not.
     """
 
     tariff = site.manifest.tariff
     if tariff is None or not series.has_energy or not (portions or measured):
         return None
     cost = 0.0
-    unpriced = 0
-    unpriced_kwh = 0.0
+    unpriced: dict[str, dict[str, float]] = {}
     for index in sorted(portions):
         start = pd.Timestamp(series.starts[index]).to_pydatetime()
         end = pd.Timestamp(series.ends[index]).to_pydatetime()
-        price = tariff.price_over(start, end)
+        price, reason = tariff.price_status(start, end)
         if price is None:
-            unpriced += 1
-            unpriced_kwh += portions[index]
+            entry = unpriced.setdefault(reason or "not_covered", {"records": 0, "kwh": 0.0})
+            entry["records"] += 1
+            entry["kwh"] += portions[index]
             continue
         cost += portions[index] * price[1]
     return {
-        "cost": _r(cost, 2) if unpriced == 0 else None,
-        "priced_part": _r(cost, 2),
+        "cost": _r(cost, 2) if not unpriced else None,
         "currency": tariff.currency,
-        "unpriced_records": unpriced,
-        "unpriced_kwh": _r(unpriced_kwh),
+        "unpriced_records": sum(int(entry["records"]) for entry in unpriced.values()),
+        "unpriced_kwh": _r(sum(entry["kwh"] for entry in unpriced.values())),
+        "unpriced_by_reason": {
+            reason: {"records": int(entry["records"]), "kwh": _r(entry["kwh"])} for reason, entry in unpriced.items()
+        },
     }
 
 
@@ -563,6 +575,8 @@ def quantify_register(
         method_id = method["method_id"]
         spec = MENU.get(method_id)
         item["finding_method"] = {**method, "title": spec.title if spec else "菜单外（不能程序回放）"}
+        if spec is not None:
+            item["finding_method"]["resolved_params"] = resolved_params(method_id, method["params"])
         windows = [
             (pd.Timestamp(window["start"]).to_pydatetime(), pd.Timestamp(window["end"]).to_pydatetime())
             for window in item["windows"]
@@ -583,7 +597,7 @@ def quantify_register(
                 "window_total": whole,
                 "replay": None,
                 "reference": {
-                    "window_avg_kw_percentile_of_hours": hourly.rank(meter_id, whole["avg_kw"]),
+                    "window_avg_kw_hour_rank": hourly.rank(meter_id, whole["avg_kw"]),
                 },
             }
             baseload = False
@@ -679,6 +693,11 @@ def quantify_register(
         "prechecks": prechecks,
         "items": items,
         "scalar_fields": SCALAR_FIELDS,
+        "rules_of_computation": {
+            "基底功率的百分位": PERCENTILE_RULE,
+            "窗口功率小时位次": HOUR_RANK_RULE,
+            "区间平均功率换算电量": "区间平均功率是区间内的真实平均值，电量 = 平均功率 × 区间时长；不外推、不跨区间摊分",
+        },
         "counts": {
             "model_items": sum(1 for item in items if item["source"] == "model"),
             "rule_items": sum(1 for item in items if item["source"] == "rule"),
@@ -779,8 +798,10 @@ def _scalars(item: dict[str, Any]) -> dict[str, Any]:
             "window_energy_kwh": entry["window_total"]["energy_kwh"],
             "window_avg_kw": entry["window_total"]["avg_kw"],
             "window_coverage": entry["window_total"]["coverage"],
+            "window_avg_kw_hour_rank": entry["reference"]["window_avg_kw_hour_rank"],
             "replay_occurrences": summary.get("occurrences"),
             "replay_hits": summary.get("hits"),
+            "replay_unknown": summary.get("unknown"),
             "replay_item_kwh": replay.get("item_kwh"),
             "replay_share_of_meter": summary.get("base_share_of_meter", summary.get("share_of_meter")),
             "replay_mean_coverage": summary.get("mean_coverage"),
@@ -794,4 +815,4 @@ def _scalars(item: dict[str, Any]) -> dict[str, Any]:
     return scalars
 
 
-__all__ = ["SCALAR_FIELDS", "check_code", "number_hints", "quantify_register"]
+__all__ = ["HOUR_RANK_RULE", "SCALAR_FIELDS", "check_code", "number_hints", "quantify_register"]

@@ -93,9 +93,7 @@ def _json_default(value: Any) -> Any:
 
 
 def series_kind(spec: MeterSpec) -> Kind:
-    if spec.semantics in {"interval_energy", "cumulative_energy"}:
-        return "energy"
-    return "instant" if spec.semantics == "instant_power" else "avg_power"
+    return "energy" if spec.has_energy else "instant"
 
 
 @lru_cache(maxsize=256)

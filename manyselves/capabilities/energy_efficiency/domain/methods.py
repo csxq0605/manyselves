@@ -128,16 +128,26 @@ class MethodContext:
     machines: dict[str, list[str]] = field(default_factory=dict)
 
 
+UNKNOWN_HIT = "无数据，无法判断"
+
+
 @dataclass
 class Occurrence:
+    """One time the method's pattern occurs.
+
+    ``judged`` says a threshold was set.  A judged occurrence with no data
+    has ``hit`` None: it is unknown, not a miss.
+    """
+
     measure: WindowMeasure
     hit: bool | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    judged: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         value = self.measure.as_dict()
-        if self.hit is not None:
-            value["hit"] = self.hit
+        if self.judged:
+            value["hit"] = UNKNOWN_HIT if self.hit is None else self.hit
         value.update(self.extra)
         return value
 
@@ -150,6 +160,7 @@ class MethodRun:
     reason: str | None = None
     occurrences: list[Occurrence] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
+    thresholded: bool = False
 
     def as_dict(self, *, top: int = 10) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -185,16 +196,27 @@ class MethodSpec:
         }
 
 
+def _thresholded(params: Thresholds) -> bool:
+    return params.min_kwh is not None or params.min_avg_kw is not None
+
+
 def _hit(measure: WindowMeasure, params: Thresholds) -> bool | None:
-    if params.min_kwh is None and params.min_avg_kw is None:
+    """Whether the occurrence reaches the thresholds; None when there is nothing to judge.
+
+    No records, or no value for a threshold, is unknown rather than a miss.
+    """
+
+    if not _thresholded(params) or measure.records == 0:
         return None
-    if measure.records == 0:
-        return False
     checks = []
     if params.min_kwh is not None:
-        checks.append(measure.energy_kwh is not None and measure.energy_kwh >= params.min_kwh)
+        if measure.energy_kwh is None:
+            return None
+        checks.append(measure.energy_kwh >= params.min_kwh)
     if params.min_avg_kw is not None:
-        checks.append(measure.avg_kw is not None and measure.avg_kw >= params.min_avg_kw)
+        if measure.avg_kw is None:
+            return None
+        checks.append(measure.avg_kw >= params.min_avg_kw)
     return all(checks)
 
 
@@ -213,11 +235,12 @@ def _windowed(
     problem = _threshold_problem(series, params)
     if problem:
         return MethodRun(method_id, series.meter_id, "not_applicable", problem)
+    judged = _thresholded(params)
     occurrences = []
     for start, end in windows:
         measure = series.measure(start, end)
-        occurrences.append(Occurrence(measure, _hit(measure, params)))
-    return MethodRun(method_id, series.meter_id, "ok", occurrences=occurrences)
+        occurrences.append(Occurrence(measure, _hit(measure, params), judged=judged))
+    return MethodRun(method_id, series.meter_id, "ok", occurrences=occurrences, thresholded=judged)
 
 
 def _fixed_windows(series: MeterSeries, params: FixedWindowsParams, ctx: MethodContext) -> MethodRun:
@@ -280,8 +303,16 @@ def _calendar_state(series: MeterSeries, params: CalendarStateParams, ctx: Metho
     return run
 
 
+PERCENTILE_RULE = (
+    "按时长加权的下侧最近秩分位：功率从小到大排，累计时长第一次达到总时长的 p% 时那条记录的功率，不插值；"
+    "瞬时读数每条权重相同"
+)
+
+
 def _weighted_percentile(values: np.ndarray, weights: np.ndarray, percentile: float) -> float:
-    order = np.argsort(values)
+    """The weighted lower nearest-rank percentile (see PERCENTILE_RULE)."""
+
+    order = np.argsort(values, kind="stable")
     values, weights = values[order], weights[order]
     cumulative = np.cumsum(weights)
     target = percentile / 100 * cumulative[-1]
@@ -291,15 +322,17 @@ def _weighted_percentile(values: np.ndarray, weights: np.ndarray, percentile: fl
 def base_power(series: MeterSeries, lo: int, hi: int, percentile: float) -> float | None:
     """The base power of records lo..hi: a low percentile of their power.
 
-    Instant readings weigh the same; interval records weigh as long as they
-    last, so one record that spans a gap in the data does not count as one
-    ordinary sample.
+    One rule for every kind of meter (PERCENTILE_RULE).  Instant readings
+    weigh the same; interval records weigh as long as they last, so one
+    record that spans a gap in the data does not count as one ordinary
+    sample.
     """
 
     if hi <= lo:
         return None
     if series.kind == "instant":
-        return float(np.percentile(series.values[lo:hi], percentile))
+        values = series.values[lo:hi]
+        return _weighted_percentile(values, np.ones(len(values)), percentile)
     hours = series.durations_h[lo:hi]
     with np.errstate(divide="ignore", invalid="ignore"):
         powers = series.values[lo:hi] / np.where(hours > 0, hours, np.nan) if series.has_energy else series.values[lo:hi]
@@ -329,6 +362,7 @@ def _baseload(series: MeterSeries, params: BaseloadParams, ctx: MethodContext) -
             f"表 {series.meter_id} 是功率数据，没有电量，min_share 不适用；请改用 min_avg_kw",
         )
     start, end = ctx.period
+    thresholds = params.min_share is not None or params.min_avg_kw is not None
     occurrences = []
     for day in days_between(start, end):
         day_end = day + timedelta(days=1)
@@ -346,20 +380,20 @@ def _baseload(series: MeterSeries, params: BaseloadParams, ctx: MethodContext) -
                     base_kwh = sum(base_portions(series, lo, hi, base_kw).values())
                     extra["base_kwh"] = round(base_kwh, 3)
                     extra["base_share"] = round(base_kwh / measure.energy_kwh, 4)
-                checks = []
-                if params.min_share is not None:
-                    checks.append(extra["base_share"] is not None and extra["base_share"] >= params.min_share)
-                if params.min_avg_kw is not None:
-                    checks.append(base_kw >= params.min_avg_kw)
-                hit = all(checks) if checks else None
-        if hit is None and (params.min_share is not None or params.min_avg_kw is not None):
-            hit = False
-        occurrences.append(Occurrence(measure, hit, extra))
-    run = MethodRun("baseload", series.meter_id, "ok", occurrences=occurrences)
+                # A day with no share to compare stays unknown, not a miss.
+                share_known = params.min_share is None or extra["base_share"] is not None
+                if thresholds and share_known:
+                    checks = []
+                    if params.min_share is not None:
+                        checks.append(extra["base_share"] >= params.min_share)
+                    if params.min_avg_kw is not None:
+                        checks.append(base_kw >= params.min_avg_kw)
+                    hit = all(checks)
+        occurrences.append(Occurrence(measure, hit, extra, judged=thresholds))
+    run = MethodRun("baseload", series.meter_id, "ok", occurrences=occurrences, thresholded=thresholds)
     bases = [item.extra["base_kwh"] for item in occurrences if item.extra["base_kwh"] is not None]
     run.summary["total_base_kwh"] = _r(sum(bases)) if bases else None
     hit_bases = [item.extra["base_kwh"] or 0.0 for item in occurrences if item.hit]
-    thresholds = params.min_share is not None or params.min_avg_kw is not None
     measured = any(item.measure.records for item in occurrences)
     run.summary["hit_base_kwh"] = _r(sum(hit_bases)) if thresholds and series.has_energy and measured else None
     kws = [item.extra["base_kw"] for item in occurrences if item.extra["base_kw"] is not None]
@@ -424,6 +458,7 @@ def _production_gaps(series: MeterSeries, params: ProductionGapsParams, ctx: Met
             # either alone would block is blocked, and every gap between them.
             low, high = min(batch.start, batch.end), max(batch.start, batch.end)
             blocked.update(number for number, gap in enumerate(gaps) if gap[0] <= high and gap[1] >= low)
+    judged = _thresholded(params)
     occurrences = []
     crossing = 0
     for number, (gap_start, gap_end, before_row, after_row) in enumerate(gaps):
@@ -443,9 +478,10 @@ def _production_gaps(series: MeterSeries, params: ProductionGapsParams, ctx: Met
                 measure,
                 _hit(measure, params),
                 {"after_batch_row": before_row, "before_batch_row": after_row},
+                judged=judged,
             )
         )
-    run = MethodRun("production-gaps", series.meter_id, "ok", occurrences=occurrences)
+    run = MethodRun("production-gaps", series.meter_id, "ok", occurrences=occurrences, thresholded=judged)
     run.summary["batches_unusable"] = len(own) - len(usable)
     run.summary["batches_overlapping"] = overlapping
     run.summary["gaps_skipped_unusable_batch"] = crossing
@@ -485,7 +521,8 @@ MENU: dict[str, MethodSpec] = {
         MethodSpec(
             "baseload",
             "每日基底负荷",
-            "每天取各条记录平均功率的低百分位（按记录时长加权）作基底功率；基底电量是每条记录不超过基底功率的那部分电量之和，再算它占当天电量的比例。",
+            "每天取各条记录平均功率的低百分位作基底功率（" + PERCENTILE_RULE + "）；"
+            "基底电量是每条记录不超过基底功率的那部分电量之和，再算它占当天电量的比例。",
             BaseloadParams,
             frozenset(),
             False,
@@ -518,6 +555,12 @@ def parse_params(method_id: str, params: dict[str, Any]) -> Any:
         raise MethodParamsError(f"{method_id} parameters are not valid: {exc}") from exc
 
 
+def resolved_params(method_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The parameters the program actually uses, defaults filled in."""
+
+    return parse_params(method_id, params).model_dump(mode="json")
+
+
 def run_method(
     method_id: str,
     params: dict[str, Any],
@@ -528,7 +571,10 @@ def run_method(
     spec = MENU[method_id]
     run = spec.run(series, parse_params(method_id, params), ctx)
     if run.status == "ok":
-        run.summary = {**summarize(run.occurrences, series.has_energy, meter_total_kwh), **run.summary}
+        run.summary = {
+            **summarize(run.occurrences, series.has_energy, meter_total_kwh, thresholded=run.thresholded),
+            **run.summary,
+        }
         if method_id == "baseload":
             # share_of_meter stays the share of the whole days' energy beside it.
             base = item_kwh(run)
@@ -542,15 +588,25 @@ def summarize(
     occurrences: list[Occurrence],
     has_energy: bool,
     meter_total_kwh: float | None,
+    *,
+    thresholded: bool = False,
 ) -> dict[str, Any]:
+    """Counts and sums over the occurrences.
+
+    With thresholds, ``hits`` counts the occurrences that reach them and
+    ``unknown`` those with nothing to judge (no data); unknown ones are
+    neither hits nor misses and add nothing to ``hit_kwh``.
+    """
+
     with_data = [item for item in occurrences if item.measure.records > 0]
     powers = [item.measure.avg_kw for item in with_data if item.measure.avg_kw is not None]
     hits = [item for item in occurrences if item.hit]
-    any_threshold = any(item.hit is not None for item in occurrences)
+    any_threshold = thresholded or any(item.judged for item in occurrences)
     summary: dict[str, Any] = {
         "occurrences": len(occurrences),
         "with_data": len(with_data),
         "hits": len(hits) if any_threshold else None,
+        "unknown": sum(1 for item in occurrences if item.hit is None) if any_threshold else None,
         "mean_avg_kw": _r(statistics.fmean(powers)) if powers else None,
         "median_avg_kw": _r(statistics.median(powers)) if powers else None,
         "max_avg_kw": _r(max(powers)) if powers else None,
@@ -605,16 +661,19 @@ def _r(value: float, digits: int = 3) -> float:
 __all__ = [
     "MENU",
     "NO_METHOD",
+    "PERCENTILE_RULE",
     "MethodContext",
     "MethodParamsError",
     "MethodRun",
     "MethodSpec",
     "Occurrence",
+    "UNKNOWN_HIT",
     "base_portions",
     "item_kwh",
     "overlapping_windows",
     "menu_entries",
     "parse_params",
+    "resolved_params",
     "run_method",
     "summarize",
     "top_occurrences",

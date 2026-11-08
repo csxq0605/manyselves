@@ -456,3 +456,123 @@ def test_swapped_batch_times_block_what_either_time_alone_would() -> None:
 
     assert run.occurrences == []
     assert run.summary["gaps_skipped_unusable_batch"] == 2
+
+
+# --- knowledge-base round: unknown, tariff dates, one percentile rule --------
+
+
+def test_an_occurrence_without_data_is_unknown_not_a_miss() -> None:
+    series = _energy_series(lambda moment: 5.0, days=2, skip=lambda moment: moment.day == 3)
+    run = run_method(
+        "daily-clock-window",
+        {"start_time": "00:00", "end_time": "06:00", "min_avg_kw": 1},
+        series,
+        _ctx(days=2),
+        240.0,
+    )
+
+    assert run.summary["occurrences"] == 2
+    assert run.summary["hits"] == 1
+    assert run.summary["unknown"] == 1
+    hits = sorted(str(item.as_dict()["hit"]) for item in run.occurrences)
+    assert hits == ["True", "无数据，无法判断"]
+
+
+def test_without_thresholds_nothing_is_counted_unknown() -> None:
+    series = _energy_series(lambda moment: 5.0, days=2, skip=lambda moment: moment.day == 3)
+    run = run_method("daily-clock-window", {"start_time": "00:00", "end_time": "06:00"}, series, _ctx(days=2), 240.0)
+
+    assert run.summary["hits"] is None
+    assert run.summary["unknown"] is None
+    assert all("hit" not in item.as_dict() for item in run.occurrences)
+
+
+def test_baseload_day_without_data_is_unknown() -> None:
+    series = _energy_series(lambda moment: 5.0, days=2, skip=lambda moment: moment.day == 3)
+    run = run_method("baseload", {"min_avg_kw": 1}, series, _ctx(days=2), 240.0)
+
+    assert run.summary["hits"] == 1
+    assert run.summary["unknown"] == 1
+
+
+def test_tariff_dates_and_why_a_record_has_no_price() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.inputs import TariffSpec
+
+    tariff = TariffSpec(
+        periods=[
+            {"name": "峰", "start": "08:00", "end": "22:00", "price": 1.0},
+            {"name": "谷", "start": "00:00", "end": "06:00", "price": 0.4},
+        ],
+        valid_from=DAY,
+        valid_until=DAY + timedelta(days=1),
+    )
+    assert tariff.price_status(DAY.replace(hour=9), DAY.replace(hour=10)) == (("峰", 1.0), None)
+    assert tariff.price_status(DAY.replace(hour=7), DAY.replace(hour=7, minute=15)) == (None, "not_covered")
+    assert tariff.price_status(DAY.replace(hour=21, minute=45), DAY.replace(hour=22, minute=15)) == (
+        None,
+        "not_covered",
+    )
+    assert tariff.price_status(DAY.replace(hour=5, minute=45), DAY.replace(hour=8, minute=15))[1] == "not_covered"
+    two = TariffSpec(
+        periods=[
+            {"name": "峰", "start": "08:00", "end": "22:00", "price": 1.0},
+            {"name": "谷", "start": "22:00", "end": "08:00", "price": 0.4},
+        ]
+    )
+    assert two.price_status(DAY.replace(hour=21, minute=45), DAY.replace(hour=22, minute=15)) == (
+        None,
+        "crosses_prices",
+    )
+    later = DAY + timedelta(days=1, hours=9)
+    assert tariff.price_status(later, later + timedelta(minutes=15)) == (None, "outside_dates")
+    with pytest.raises(ValidationError, match="valid_until"):
+        TariffSpec(periods=two.periods, valid_from=DAY, valid_until=DAY)
+
+
+def test_one_percentile_rule_for_instant_and_interval_meters() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.methods import base_power
+
+    spec = MeterSpec(
+        id="P1",
+        name="表",
+        file="p.csv",
+        time_column="t",
+        value_column="v",
+        semantics="instant_power",
+        unit="kW",
+        interval_minutes=15,
+    )
+    values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    rows = [((DAY + timedelta(minutes=15 * n)).strftime("%Y-%m-%d %H:%M"), str(value)) for n, value in enumerate(values)]
+    frame = pd.DataFrame({"t": [row[0] for row in rows], "v": [row[1] for row in rows]})
+    normalized, _quality = normalize_meter(spec, frame, None)
+    instant = MeterSeries("P1", series_kind(spec), normalized, 15)
+    interval = _energy_series(lambda moment: values[(moment.hour * 60 + moment.minute) // 15 % 10])
+
+    # Nearest rank without interpolation: the 10th percentile of 1..10 is 1, not 1.9.
+    assert base_power(instant, 0, len(instant), 10) == 1.0
+    assert base_power(instant, 0, len(instant), 25) == 3.0
+    assert base_power(interval, 0, 10, 25) == pytest.approx(3.0)
+
+
+def test_evidence_and_register_show_the_parameters_used() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.methods import resolved_params
+
+    assert resolved_params("baseload", {}) == {"percentile": 10.0, "min_share": None, "min_avg_kw": None}
+
+
+def test_the_cost_note_names_why_records_were_not_priced() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.register import cost_note
+
+    cost = {
+        "cost": None,
+        "unpriced_records": 3,
+        "unpriced_kwh": 4.5,
+        "unpriced_by_reason": {"crosses_prices": {"records": 1, "kwh": 1.5}, "outside_dates": {"records": 2, "kwh": 3.0}},
+    }
+    item = {"computed": {"per_meter": {"M1": {"cost": {"window": cost, "replay": None}}}}}
+    note = cost_note(item)
+
+    assert "1 条跨两个不同价格的电价时段（1.5 kWh）" in note
+    assert "2 条不在电价的适用日期内（3.0 kWh）" in note
+    assert "priced_part" not in cost

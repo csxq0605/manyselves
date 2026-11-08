@@ -119,7 +119,12 @@ def _day_cell(day: dict[str, Any], unit_kind: str) -> str:
 def profile_text(profile: dict[str, Any]) -> str:
     """Plain text of one meter's profile, short enough to read in full."""
 
-    kind = "电量" if profile["unit_kind"] == "energy" else "功率（不能换算成电量）"
+    if profile["unit_kind"] != "energy":
+        kind = "瞬时功率（不能换算成电量）"
+    elif profile["semantics"] == "interval_avg_power":
+        kind = "电量（由区间平均功率乘区间时长得出）"
+    else:
+        kind = "电量"
     lines = [
         f"## 表 {profile['meter_id']} {profile['name']}（{kind}，记录间隔 "
         f"{profile['interval_minutes']} 分钟，分组 {profile['group'] or '未分组'}）"

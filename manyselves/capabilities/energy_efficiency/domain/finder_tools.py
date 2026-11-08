@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .evidence import record_evidence
 from .inputs import InputFormatError
-from .methods import MENU, MethodParamsError, Window, parse_params, run_method
+from .methods import MENU, MethodParamsError, Window, resolved_params, run_method
 from .prepare import meter_totals, method_context
 from .series import WindowMeasure
 from .store import RunDataError, SiteData
@@ -213,7 +213,7 @@ def try_method(workspace: Path, arguments: dict[str, Any]) -> dict[str, Any]:
         _own(meter_id, meters, partition_id)
     if request.method_id not in MENU:
         raise MethodParamsError(f"unknown method {request.method_id!r}; the menu has {sorted(MENU)}")
-    parse_params(request.method_id, request.params)
+    resolved = resolved_params(request.method_id, request.params)
     ctx = method_context(site)
     totals = meter_totals(site)
     runs = [
@@ -223,6 +223,7 @@ def try_method(workspace: Path, arguments: dict[str, Any]) -> dict[str, Any]:
     result = {
         "method_id": request.method_id,
         "params": request.params,
+        "resolved_params": resolved,
         "runs": runs,
         "note": "程序在全期数据上按这个方法算出的结果；top_occurrences 是按电量（功率表按平均功率）排的前 10 次。",
     }

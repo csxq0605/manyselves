@@ -15,7 +15,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-Kind = Literal["energy", "avg_power", "instant"]
+Kind = Literal["energy", "instant"]
 
 
 @dataclass(frozen=True)
@@ -69,8 +69,7 @@ class MeterSeries:
         else:
             self.starts = frame["start"].to_numpy(dtype="datetime64[ns]")
             self.ends = frame["end"].to_numpy(dtype="datetime64[ns]")
-            column = "kwh" if kind == "energy" else "avg_kw"
-            self.values = frame[column].to_numpy(dtype=float)
+            self.values = frame["kwh"].to_numpy(dtype=float)
         self.durations_h = (self.ends - self.starts).astype("timedelta64[s]").astype(float) / 3600
 
     @property
@@ -119,11 +118,8 @@ class MeterSeries:
         else:
             hours = float(self.durations_h[lo:hi].sum())
             covered = hours * 60
-            if self.kind == "energy":
-                energy = float(self.values[lo:hi].sum()) if count else None
-                avg = energy / hours if count and hours > 0 else None
-            elif count and hours > 0:
-                avg = float((self.values[lo:hi] * self.durations_h[lo:hi]).sum() / hours)
+            energy = float(self.values[lo:hi].sum()) if count else None
+            avg = energy / hours if energy is not None and hours > 0 else None
         coverage = covered / window_minutes if window_minutes > 0 else 0.0
         return WindowMeasure(
             start=start,
@@ -145,12 +141,12 @@ class MeterSeries:
         """Average power of each record wholly inside the window (kW)."""
 
         lo, hi, _partial = self.inside(start, end)
-        if self.kind == "energy":
-            hours = self.durations_h[lo:hi]
-            with np.errstate(divide="ignore", invalid="ignore"):
-                powers = np.where(hours > 0, self.values[lo:hi] / hours, np.nan)
-            return powers[~np.isnan(powers)]
-        return self.values[lo:hi]
+        if self.kind == "instant":
+            return self.values[lo:hi]
+        hours = self.durations_h[lo:hi]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            powers = np.where(hours > 0, self.values[lo:hi] / hours, np.nan)
+        return powers[~np.isnan(powers)]
 
     def index_set(self, measure: WindowMeasure) -> range:
         return range(measure.first_index, measure.last_index)

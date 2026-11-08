@@ -13,9 +13,11 @@ is inferred from its name or its values.  In particular:
   filled in or spread over the gap (see ``_difference_readings``);
 - ``instant_power`` values are power at an instant.  They are never turned
   into energy;
-- ``interval_avg_power`` values are the average power of one recording
-  interval.  They are kept as power; whether they may be turned into energy
-  is left open (see the handoff notes).
+- ``interval_avg_power`` values are the true average power over one
+  recording interval (a person confirmed this for the meters at hand), so
+  the energy of the interval is that power times the interval's length
+  (rectangle rule).  Nothing is extrapolated past the data and no energy is
+  apportioned across an interval's edge.
 
 Rows that cannot be read are counted in the meter's quality notes, not
 repaired.
@@ -131,8 +133,19 @@ class MeterSpec(TableSource):
         return self
 
     @property
+    def has_energy(self) -> bool:
+        """Whether the normalized data holds energy.
+
+        Interval average power is turned into energy; instant power is not.
+        """
+
+        return self.semantics != "instant_power"
+
+    @property
     def unit_kind(self) -> Literal["energy", "power"]:
-        return "energy" if self.semantics in ENERGY_SEMANTICS else "power"
+        """What the normalized data holds: energy, or power that is never energy."""
+
+        return "energy" if self.has_energy else "power"
 
 
 class ProductionSpec(TableSource):
@@ -171,11 +184,26 @@ class TariffPeriod(_Strict):
         return [(start, end)] if start < end else [(start, 24 * 60), (0, end)]
 
 
+UnpricedReason = Literal["outside_dates", "not_covered", "crosses_prices"]
+UNPRICED_REASONS: dict[str, str] = {
+    "outside_dates": "不在电价的适用日期内",
+    "not_covered": "落在电价没有覆盖的时刻",
+    "crosses_prices": "跨两个不同价格的电价时段",
+}
+
+
 class TariffSpec(_Strict):
-    """A time-of-use price per kWh that a person has confirmed for the site."""
+    """A time-of-use price per kWh that a person has confirmed for the site.
+
+    ``valid_from`` / ``valid_until`` bound the time the prices apply to
+    ([valid_from, valid_until), site local time); a record outside them is
+    not priced.  Without them the prices apply to the whole data period.
+    """
 
     currency: str = "元"
     periods: list[TariffPeriod] = Field(min_length=1)
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
 
     @model_validator(mode="after")
     def no_overlap(self) -> "TariffSpec":
@@ -183,7 +211,21 @@ class TariffSpec(_Strict):
         for (_s1, e1), (s2, _e2) in zip(spans, spans[1:], strict=False):
             if s2 < e1:
                 raise ValueError("tariff periods overlap")
+        for value in (self.valid_from, self.valid_until):
+            if value is not None and value.tzinfo:
+                raise ValueError("tariff dates use site local time without a time zone")
+        if self.valid_from and self.valid_until and self.valid_until <= self.valid_from:
+            raise ValueError("tariff valid_until must be after valid_from")
         return self
+
+    def price_status(self, start: datetime, end: datetime) -> tuple[tuple[str, float] | None, UnpricedReason | None]:
+        """The price of all of [start, end), or why the record has none."""
+
+        if (self.valid_from is not None and start < self.valid_from) or (
+            self.valid_until is not None and end > self.valid_until
+        ):
+            return None, "outside_dates"
+        return self._price_within_day(start, end)
 
     def price_at(self, moment: datetime) -> tuple[str, float] | None:
         minute = moment.hour * 60 + moment.minute
@@ -193,16 +235,21 @@ class TariffSpec(_Strict):
         return None
 
     def price_over(self, start: datetime, end: datetime) -> tuple[str, float] | None:
-        """The price of all of [start, end), or None when the record runs under two prices.
+        """The price of all of [start, end), or None when it has none."""
 
-        Periods with the same price that touch (22:00-24:00 and 00:00-08:00,
+        return self.price_status(start, end)[0]
+
+    def _price_within_day(
+        self, start: datetime, end: datetime
+    ) -> tuple[tuple[str, float] | None, UnpricedReason | None]:
+        """Periods with the same price that touch (22:00-24:00 and 00:00-08:00,
         or one 00:00-24:00 period across midnight) count as one price.  Time
         that no period covers has no price.
         """
 
         length = (end - start).total_seconds() / 60
         if length <= 0:
-            return None
+            return None, "not_covered"
         begin = start.hour * 60 + start.minute + start.second / 60
         finish = begin + length
         covered = 0.0
@@ -217,10 +264,12 @@ class TariffSpec(_Strict):
                         names = found.setdefault(period.price, [])
                         if period.name not in names:
                             names.append(period.name)
-        if len(found) != 1 or covered < length - 1e-6:
-            return None
+        if covered < length - 1e-6:
+            return None, "not_covered"
+        if len(found) != 1:
+            return None, "crosses_prices"
         ((price, names),) = found.items()
-        return "/".join(names), price
+        return ("/".join(names), price), None
 
 
 class PrecheckSpec(_Strict):
@@ -489,6 +538,9 @@ class MeterQuality(_Strict):
     flat_throughout: bool = False
     long_intervals: int = 0
     outside_period_excluded: int = 0
+    semantics: str | None = None
+    declared_interval_minutes: int | None = None
+    median_spacing_minutes: float | None = None
     records: int = 0
     first: str | None = None
     last: str | None = None
@@ -525,9 +577,46 @@ class MeterQuality(_Strict):
             )
         if self.long_intervals:
             notes.append(f"{self.long_intervals} 个区间跨过缺测时段，只按整段使用，不摊分")
+        spacing = self.spacing_note()
+        if spacing:
+            notes.append(spacing)
         if self.outside_period_excluded:
             notes.append(f"{self.outside_period_excluded} 条记录不完全在分析期内，未纳入")
         return notes
+
+
+    def spacing_note(self) -> str | None:
+        """A note when the timestamps are not as far apart as the manifest says."""
+
+        declared, actual = self.declared_interval_minutes, self.median_spacing_minutes
+        if declared is None or actual is None or self.semantics == "cumulative_energy":
+            return None
+        if 0.9 * declared <= actual <= 1.1 * declared:
+            return None
+        head = f"相邻记录的时间间隔中位数是 {actual:g} 分钟，manifest 写的是 {declared} 分钟"
+        if self.semantics == "interval_energy":
+            if actual > declared:
+                return (
+                    f"{head}；每条电量仍按 {declared} 分钟一段使用。若每条其实是 {actual:g} 分钟的电量，"
+                    "平均功率会偏高；若只是每隔几段导出一条，电量会偏少。请人核对 interval_minutes"
+                )
+            return f"{head}；与前一段重叠的记录已不纳入，电量可能偏少。请人核对 interval_minutes"
+        if self.semantics == "interval_avg_power":
+            if actual > declared:
+                return (
+                    f"{head}；每条只代表 {declared} 分钟，中间没有记录的时间不算入电量，覆盖率会偏低。"
+                    "请人核对 interval_minutes"
+                )
+            return f"{head}；与前一段重叠的记录已不纳入。请人核对 interval_minutes"
+        return f"{head}；覆盖率按每条 {declared} 分钟估算，会因此失真。请人核对 interval_minutes"
+
+
+def _spacing(times: pd.Series) -> float | None:
+    gaps = times.sort_values().diff().dropna()
+    gaps = gaps[gaps > pd.Timedelta(0)]
+    if gaps.empty:
+        return None
+    return round(gaps.median().total_seconds() / 60, 2)
 
 
 def _dedupe(frame: pd.DataFrame, quality: MeterQuality) -> pd.DataFrame:
@@ -751,14 +840,17 @@ def normalize_meter(
 ) -> tuple[pd.DataFrame, MeterQuality]:
     """Turn one meter's raw rows into intervals (or points) in kWh / kW."""
 
-    quality = MeterQuality(rows=len(frame))
+    quality = MeterQuality(
+        rows=len(frame), semantics=spec.semantics, declared_interval_minutes=spec.interval_minutes
+    )
     times = parse_times(frame[spec.time_column], f"{spec.file}:{spec.time_column}", spec.time_format)
     values = parse_numbers(frame[spec.value_column])
     quality.unreadable_time_rows = int(times.isna().sum())
     quality.unreadable_value_rows = int((values.isna() & times.notna()).sum())
-    factor = (ENERGY_UNITS if spec.unit_kind == "energy" else POWER_UNITS)[spec.unit]
+    factor = (ENERGY_UNITS if spec.semantics in ENERGY_SEMANTICS else POWER_UNITS)[spec.unit]
     raw = pd.DataFrame({"time": times, "value": values * factor}).dropna()
     raw = _dedupe(raw, quality)
+    quality.median_spacing_minutes = _spacing(raw["time"])
     step = pd.Timedelta(minutes=spec.interval_minutes)
 
     if spec.semantics == "instant_power":
@@ -776,7 +868,6 @@ def normalize_meter(
     if spec.semantics == "cumulative_energy":
         result = _difference_readings(raw, quality)
     else:
-        column = "kwh" if spec.semantics == "interval_energy" else "avg_kw"
         negative = raw["value"] < 0
         quality.negative_values_excluded = int(negative.sum())
         kept = raw[~negative]
@@ -784,9 +875,14 @@ def normalize_meter(
             starts, ends = kept["time"], kept["time"] + step
         else:
             starts, ends = kept["time"] - step, kept["time"]
-        result = pd.DataFrame(
-            {"start": starts.to_numpy(), "end": ends.to_numpy(), column: kept["value"].to_numpy()}
-        )
+        result = pd.DataFrame({"start": starts.to_numpy(), "end": ends.to_numpy()})
+        if spec.semantics == "interval_energy":
+            result["kwh"] = kept["value"].to_numpy()
+        else:
+            # The true average power of the interval times its length (OP016,
+            # rectangle rule); the power read stays beside it.
+            result["avg_kw"] = kept["value"].to_numpy()
+            result["kwh"] = result["avg_kw"] * (spec.interval_minutes / 60)
         result = result.sort_values("start").reset_index(drop=True)
         overlap = result["start"] < result["end"].shift(1)
         quality.overlapping_intervals_excluded = int(overlap.sum())
@@ -924,6 +1020,7 @@ __all__ = [
     "PrecheckSpec",
     "ProductionSpec",
     "TariffSpec",
+    "UNPRICED_REASONS",
     "clock_window",
     "file_sha256",
     "load_batches",
