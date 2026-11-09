@@ -20,6 +20,7 @@ from manyselves.runtime.state_store import FileWorkflowStateStore
 
 from .. import CAPABILITY_FILE
 from ..domain import finder_tools
+from ..domain.caliber import caliber_brief, settle_assumptions
 from ..domain.check import check_submission, settle_partition
 from ..domain.inputs import MANIFEST_NAME, InputFormatError, load_manifest
 from ..domain.items import PLANT
@@ -38,6 +39,7 @@ from ..domain.requests import (
     ReportRequest,
     RunRef,
     SelectRequest,
+    SettleAssumptionsRequest,
     SettleRequest,
 )
 from ..domain.selection import SelectionError, load_rules, read_marks, select
@@ -86,6 +88,13 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
     def profile(values: Any) -> dict[str, Any]:
         return profile_meters(workspace, RunRef.model_validate(_value(values)).run_id)
 
+    def caliber(values: Any) -> dict[str, Any]:
+        return caliber_brief(workspace, RunRef.model_validate(_value(values)).run_id)
+
+    def settle_drafted(values: Any) -> dict[str, Any]:
+        request = SettleAssumptionsRequest.model_validate(_value(values))
+        return settle_assumptions(workspace, request.run_id, request.draft.model_dump(mode="json"))
+
     def prechecks(values: Any) -> dict[str, Any]:
         return run_prechecks(workspace, RunRef.model_validate(_value(values)).run_id)
 
@@ -117,7 +126,9 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
         results = {key: value.model_dump(mode="json") for key, value in request.partition_results.items()}
         results.update({PLANT: value.model_dump(mode="json") for value in request.plant_results.values()})
         errors = {**request.partition_errors, **({PLANT: next(iter(request.plant_errors.values()))} if request.plant_errors else {})}
-        register = quantify_register(workspace, request.run_id, results, errors)
+        register = quantify_register(
+            workspace, request.run_id, results, errors, drafting_failed=bool(request.assumption_errors)
+        )
         paths = write_register(run_dir(workspace, request.run_id) / DATA_DIR, register)
         files = [_relative(workspace, path) for path in paths]
         return {
@@ -168,6 +179,8 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
     return {
         "parse-energy-inputs": parse,
         "profile-energy-data": profile,
+        "caliber-facts": caliber,
+        "settle-assumptions": settle_drafted,
         "run-energy-prechecks": prechecks,
         "partition-energy-meters": partitions,
         "plant-brief": plant,

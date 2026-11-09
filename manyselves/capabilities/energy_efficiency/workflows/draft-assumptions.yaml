@@ -1,0 +1,46 @@
+id: draft-assumptions
+version: 0.1.0
+description: The caliber drafter writes inferences about what the data measures from the program's facts; the program numbers them and checks what they cite
+tasks:
+- draft-assumptions
+recovery:
+- typed-turn-recovery
+output_contract: assumption-summary
+state:
+  item: null
+  draft_key: null
+actions:
+- id: open
+  kind: create_conversation
+  agent: caliber-drafter
+  conversation_key: caliber
+  key_variable: draft_key
+  mode: run
+  output_variable: conversation
+- id: draft
+  kind: invoke_agent
+  agent: caliber-drafter
+  task: draft-assumptions
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: draft
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: settle-input
+  kind: set_variable
+  variable: settle_input
+  value_variables:
+    run_id: run_id
+    draft: draft
+- id: settle
+  kind: invoke_tool
+  tool: settle-assumptions
+  input_variable: settle_input
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

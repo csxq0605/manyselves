@@ -104,11 +104,33 @@ class QuantifyRequest(_Strict):
     partition_errors: dict[str, Any] = Field(default_factory=dict)
     plant_results: dict[str, PartitionResult] = Field(default_factory=dict)
     plant_errors: dict[str, Any] = Field(default_factory=dict)
+    assumption_errors: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlantRequest(_Strict):
     run_id: str
     partition_results: dict[str, PartitionResult]
+
+
+class DraftedAssumption(_Strict):
+    """One inference about what the data measures, drafted from the program's facts."""
+
+    topic: str = Field(min_length=1, description="关于什么，例如“E06 的计量范围”“数量列的口径”")
+    inference: str = Field(min_length=1, description="推断：可能是什么，写成待确认的话")
+    reasoning: str = Field(min_length=1, description="从依据怎样推到这条推断；有别的可能也写上")
+    basis_fact_ids: list[str] = Field(min_length=1, description="依据的编号：程序算的事实（如 E06-MACHINES）或现场调研答复的编号")
+    meter_ids: list[str] = Field(default_factory=list, description="涉及的表")
+    affects: str = Field(default="", description="推断不成立时，哪些数字或线索会变（例如单耗、批间功率）")
+    how_to_confirm: str = Field(min_length=1, description="现场怎样确认：看什么、问谁、比什么")
+
+
+class AssumptionDraft(_Strict):
+    assumptions: list[DraftedAssumption] = Field(default_factory=list)
+
+
+class SettleAssumptionsRequest(_Strict):
+    run_id: str
+    draft: AssumptionDraft
 
 
 class SelectRequest(_Strict):
@@ -123,7 +145,10 @@ class RenderRequest(_Strict):
 
 
 __all__ = [
+    "AssumptionDraft",
     "CandidatesRequest",
+    "DraftedAssumption",
+    "SettleAssumptionsRequest",
     "CheckRequest",
     "FixRequest",
     "PartitionAttempt",

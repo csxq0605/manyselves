@@ -1,0 +1,10 @@
+id: settle-assumptions
+version: 0.1.0
+description: Number the drafted inferences, drop citations that do not exist with a note, and keep them for the briefs and the register
+implementation: capability:energy-efficiency:settle-assumptions
+input_contract: settle-assumptions-request
+output_contract: assumption-summary
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

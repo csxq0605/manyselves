@@ -1,0 +1,24 @@
+id: caliber-brief
+version: 1.0.0
+description: The meters, the production columns and the program's measured facts about the data, for drafting inferences about what it measures
+adapter: json_schema
+schema:
+  type: object
+  required: [key, run_id, site, period, meters, facts_text, fact_ids, existing_assumptions, input_kinds]
+  properties:
+    key: {type: string}
+    run_id: {type: string}
+    site: {type: string}
+    period:
+      type: object
+      required: [start, end]
+      properties:
+        start: {type: string}
+        end: {type: string}
+    meters: {type: array, items: {type: object}}
+    production: {type: [object, "null"]}
+    facts_text: {type: string}
+    fact_ids: {type: array, items: {type: string}}
+    existing_assumptions: {type: array, items: {type: object}}
+    site_facts: {type: array, items: {type: object}}
+    input_kinds: {type: object}

@@ -75,7 +75,7 @@ def plant_lines(register: dict[str, Any]) -> list[str]:
     return lines
 
 
-ASSUMPTION_HEAD = ["编号", "来源", "事项", "推断", "依据", "影响的项", "程序核对", "现场确认结果"]
+ASSUMPTION_HEAD = ["编号", "来源", "事项", "推断", "依据", "不成立时影响", "怎样确认", "依赖它的项", "程序核对", "现场确认结果"]
 ORIGINS = {"manifest": "准备资料时写的", "drafted": "模型按程序算的依据起草"}
 
 
@@ -87,11 +87,23 @@ def assumption_rows(register: dict[str, Any]) -> list[list[Any]]:
             entry["topic"],
             entry["inference"],
             entry["basis"],
+            entry.get("affects", ""),
+            entry.get("how_to_confirm", ""),
             "、".join(entry.get("item_ids", [])),
             "；".join(entry.get("check_notes", [])),
             "",
         ]
         for entry in register.get("assumptions", [])
+    ]
+
+
+FACT_HEAD = ["编号", "涉及的表", "事项", "程序量出的事实"]
+
+
+def fact_rows(register: dict[str, Any]) -> list[list[Any]]:
+    return [
+        [fact["id"], "、".join(fact["meter_ids"]), fact["topic"], fact["text"]]
+        for fact in register.get("caliber_facts", [])
     ]
 
 
@@ -206,6 +218,7 @@ def add_sheets(book: Workbook, register: dict[str, Any]) -> None:
     sheets = [
         ("状态轴", STATE_HEAD, state_rows(register), plant_lines(register)),
         ("口径推断", ASSUMPTION_HEAD, assumption_rows(register), ["推断都待现场确认；最后一列留给人填。"]),
+        ("口径依据", FACT_HEAD, fact_rows(register), ["程序从数据量出的事实，推断引用的编号在这里。"]),
         ("表计对应", TOPOLOGY_HEAD, topology_rows(register), (register.get("topology") or {}).get("notes", [])),
         ("未纳入的数据", EXCLUDED_HEAD, excluded_rows(register), []),
         ("类别覆盖", CATEGORY_HEAD, category_rows(register), ["知识库 17 类在每个分区每块表上：有项提议，或看过没找到、不适用、缺资料。"]),
@@ -231,6 +244,11 @@ def data_html(register: dict[str, Any]) -> str:
     if rows:
         parts.append("<h3>数据口径推断（待现场确认）</h3>")
         parts.append(_table(ASSUMPTION_HEAD, rows))
+    rows = fact_rows(register)
+    if rows:
+        parts.append("<details><summary>口径依据：程序从数据量出的事实</summary>")
+        parts.append(_table(FACT_HEAD, rows))
+        parts.append("</details>")
     rows = topology_rows(register)
     if rows:
         parts.append("<h3>表计和台账、工厂树的对应</h3>")
@@ -288,6 +306,7 @@ __all__ = [
     "add_sheets",
     "assumption_rows",
     "category_rows",
+    "fact_rows",
     "data_html",
     "ledgers_html",
     "missing_rows",

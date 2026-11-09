@@ -209,7 +209,11 @@ def checklist_markdown(lists: list[dict[str, Any]], site_part: list[str] | None 
 
 
 ASSUMPTION_STATE = "待现场确认"
-ASSUMPTION_HEAD = ["编号", "事项", "推断", "依据", "状态", "现场确认结果（人填）"]
+ASSUMPTION_HEAD = ["编号", "事项", "推断", "依据", "怎样确认", "状态", "现场确认结果（人填）"]
+ASSUMPTION_INTRO = (
+    "下面是从数据推出、但没有人确认过的口径（准备资料时写的，或模型按程序量出的事实起草的）。"
+    "各候选项的数字都建立在这些推断上；现场确认前不当作事实。"
+)
 
 
 def assumptions_markdown(assumptions: list[dict[str, Any]]) -> list[str]:
@@ -220,13 +224,14 @@ def assumptions_markdown(assumptions: list[dict[str, Any]]) -> list[str]:
     lines = [
         "### 数据口径待现场确认",
         "",
-        "下面是准备资料时从数据推出、但没有人确认过的口径。各候选项的数字都建立在这些推断上；现场确认前不当作事实。",
+        ASSUMPTION_INTRO,
         "",
         "| " + " | ".join(ASSUMPTION_HEAD) + " |",
         "|" + "---|" * len(ASSUMPTION_HEAD),
     ]
     lines += [
-        f"| {_md(entry['id'])} | {_md(entry['topic'])} | {_md(entry['inference'])} | {_md(entry['basis'])} | {ASSUMPTION_STATE} |  |"
+        f"| {_md(entry['id'])} | {_md(entry['topic'])} | {_md(entry['inference'])} | {_md(entry['basis'])} "
+        f"| {_md(entry.get('how_to_confirm', ''))} | {ASSUMPTION_STATE} |  |"
         for entry in assumptions
     ]
     return [*lines, ""]
@@ -236,11 +241,12 @@ def assumptions_html(assumptions: list[dict[str, Any]]) -> str:
     if not assumptions:
         return ""
     rows = [
-        [entry["id"], entry["topic"], entry["inference"], entry["basis"], ASSUMPTION_STATE, ""] for entry in assumptions
+        [entry["id"], entry["topic"], entry["inference"], entry["basis"], entry.get("how_to_confirm", ""), ASSUMPTION_STATE, ""]
+        for entry in assumptions
     ]
     return (
         "<h3>数据口径待现场确认</h3>"
-        "<p>下面是准备资料时从数据推出、但没有人确认过的口径。各候选项的数字都建立在这些推断上；现场确认前不当作事实。</p>"
+        f"<p>{html.escape(ASSUMPTION_INTRO)}</p>"
         + _table(ASSUMPTION_HEAD, rows)
     )
 

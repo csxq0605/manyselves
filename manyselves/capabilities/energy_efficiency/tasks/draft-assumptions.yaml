@@ -1,0 +1,16 @@
+id: draft-assumptions
+version: 0.1.0
+description: Draft inferences about what the data measures from the program's facts, each citing its basis and saying how to confirm it on site
+agent: caliber-drafter
+objective: 下面是这次数据的表计清单、生产记录用到的列，以及程序量出来的数据事实（facts_text，每条前面方括号里是编号）。请起草数据口径推断：表计的计量范围和上下级、机台和表的对应、生产记录各列的口径、表计哪段时间不可信、读数精度对后面分析的影响等。每条推断写依据编号、推理、别的可能、不成立时影响什么、现场怎样确认。
+input_contract: caliber-brief
+context_fields:
+- facts_text
+output_contract: assumption-draft
+constraints:
+- basis_fact_ids 只能写 fact_ids 里的编号或 site_facts 里的现场调研答复编号；至少一条。meter_ids 只写 meters 里有的表。
+- 每条只写一件事。推断写成“可能……”“看起来……”，不写成定论；reasoning 里写清楚有没有别的解释（例如两表相关也可能只是同一班次开关机）。
+- 一块表随某机台抬升，只说明两者同时起落，不等于这台机接在这块表上；一块表一直不超过另一块，也可能只是它本来就小。拿不准的照样写，写明拿不准在哪里。
+- existing_assumptions 里已经写过的同一件事不重复；可以写与它冲突的事实，在 reasoning 里点明冲突的是哪一条。
+- 没有事实支撑的方面不写；不用为了凑数量写。也不写损耗、节能量和改进建议。
+recovery: typed-turn-recovery

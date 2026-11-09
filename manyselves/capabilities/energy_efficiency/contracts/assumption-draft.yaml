@@ -1,0 +1,5 @@
+id: assumption-draft
+version: 1.0.0
+description: Inferences about what the data measures, each citing the program's facts it rests on
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:AssumptionDraft

@@ -247,8 +247,35 @@ def _plant(brief: dict[str, Any]):
     return ("work", calls, build)
 
 
+def _draft(brief: dict[str, Any]):
+    assert brief["key"] == "CALIBER"
+    assert "AC1-COVER" in brief["fact_ids"]
+
+    def build(_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "assumptions": [
+                    {
+                        "topic": "AC1 的计量范围",
+                        "inference": "AC1 可能只量空压机，不带别的设备",
+                        "reasoning": "停产时功率稳定，不随机台起落；也可能只是别的负载同样不停。",
+                        "basis_fact_ids": ["AC1-COVER", "NOPE-1"],
+                        "meter_ids": ["AC1", "ZZ9"],
+                        "affects": "停产时空压机的电量",
+                        "how_to_confirm": "看配电柜回路标签",
+                    }
+                ]
+            }
+        ]
+
+    return ("work", [], build)
+
+
 def _answer(message):
     content = message.content
+    if '<task id="draft-assumptions">' in content:
+        assert '<context name="facts_text">' in content
+        return _draft(_input_of(content))
     if '<task id="find-plant">' in content:
         return _plant(_input_of(content))
     if '<task id="find-partition">' in content:
@@ -317,6 +344,8 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
             "partitions_failed": 0,
             "plant_items": 1,
             "plant_pass": "ok",
+            "assumptions_drafted": 1,
+            "assumption_draft": "ok",
         }
         assert {"path": f"Work/runs/{run_id}/energy/register.xlsx"} in register["output_artifacts"]
         artifacts = {item["path"] for item in binding.get_outputs(run_id)["outputs"] if item["kind"] == "artifact"}
@@ -324,6 +353,10 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
 
         data = json.loads((tmp_path / "Work/runs" / run_id / "energy/register.json").read_text(encoding="utf-8"))
         items = {item["local_key"]: item for item in data["items"]}
+        drafted = next(entry for entry in data["assumptions"] if entry["origin"] == "drafted")
+        assert drafted["id"] == "D1" and drafted["basis_fact_ids"] == ["AC1-COVER"] and drafted["meter_ids"] == ["AC1"]
+        assert len(drafted["check_notes"]) == 2
+        assert any(fact["id"] == "AC1-COVER" for fact in data["caliber_facts"])
         assert items["B2"]["check_issues"] == []
         assert items["X1"]["partition_id"] == "PLANT" and items["X1"]["check_issues"] == []
         assert items["A1"]["id"] in items["X1"]["related_ids"] and items["X1"]["id"] in items["A1"]["related_ids"]
@@ -337,7 +370,8 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
         assert items["B2"]["scalars"]["replay_hits"] == 2
 
         # One correction round, only in the partition whose check failed.
-        by_partition = {_input_of(loop.received[0].content)["partition_id"]: loop for loop in loops}
+        firsts = [(_input_of(loop.received[0].content), loop) for loop in loops]
+        by_partition = {brief["partition_id"]: loop for brief, loop in firsts if "partition_id" in brief}
         assert len(by_partition["P01"].received) == 1
         assert ['<task id="fix-partition-items">' in m.content for m in by_partition["P02"].received] == [False, True]
         state = run["state"]["variables"]

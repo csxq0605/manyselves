@@ -538,6 +538,7 @@ def quantify_register(
     run_id: str,
     results: dict[str, Any],
     errors: dict[str, Any],
+    drafting_failed: bool = False,
 ) -> dict[str, Any]:
     site = SiteData(workspace, run_id)
     period = site.period()
@@ -683,6 +684,7 @@ def quantify_register(
             for entry in site.assumptions()
         ],
         "states": _states_record(site),
+        "caliber_facts": read_json(site.path("caliber.json"))["facts"] if site.path("caliber.json").is_file() else [],
         "partitions": partitions,
         "prechecks": prechecks,
         "items": items,
@@ -700,6 +702,10 @@ def quantify_register(
             ),
             "plant_items": sum(1 for item in items if item["partition_id"] == PLANT),
             "plant_pass": next((record["outcome"] for record in partitions if record["partition_id"] == PLANT), None),
+            "assumptions_drafted": sum(1 for entry in site.assumptions() if entry.get("origin") == "drafted"),
+            "assumption_draft": "failed"
+            if drafting_failed
+            else ("ok" if site.path("assumptions.json").is_file() else None),
         },
     }
 

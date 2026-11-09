@@ -1,0 +1,10 @@
+id: caliber-facts
+version: 0.1.0
+description: Measure how each meter's data behaves (coverage, reading step, zero power, power in each production state and while each machine runs, meters that move together, meter against report) and write the brief for drafting inferences
+implementation: capability:energy-efficiency:caliber-facts
+input_contract: run-ref
+output_contract: caliber-set
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

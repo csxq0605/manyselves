@@ -1,0 +1,5 @@
+id: settle-assumptions-request
+version: 1.0.0
+description: The run and the drafted inferences to number and check
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:SettleAssumptionsRequest

@@ -1,0 +1,12 @@
+id: caliber-set
+version: 1.0.0
+description: The one brief for drafting the data inferences, in a list so a failure of the draft leaves the run going
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, briefs]
+  properties:
+    run_id: {type: string}
+    briefs:
+      type: array
+      items: {type: object, required: [key, run_id]}

@@ -205,7 +205,7 @@ def test_replay_recomputes_every_item_over_the_whole_period(tmp_path: Path) -> N
     tools, _briefs = _prepared(tmp_path)
     summary = _candidates(tools)
 
-    assert summary["counts"] == {"model_items": 2, "rule_items": 1, "partitions": 2, "partitions_failed": 0, "plant_items": 0, "plant_pass": None}
+    assert summary["counts"] == {"model_items": 2, "rule_items": 1, "partitions": 2, "partitions_failed": 0, "plant_items": 0, "plant_pass": None, "assumptions_drafted": 0, "assumption_draft": None}
     register = read_json(tmp_path / "Work/runs" / RUN / "energy/register.json")
     items = {item["id"]: item for item in register["items"]}
     assert set(items) == {"L001", "L002", "R001"}
@@ -1168,6 +1168,6 @@ def test_inferences_are_listed_in_the_report_as_waiting_for_the_site() -> None:
     lines = checklist_markdown([], assumptions_markdown(rows))
     text = "\n".join(lines)
     assert "### 数据口径待现场确认" in text
-    assert "| A1 | E06 表范围 | 没计到整条线 | 批次电量只有报表的六成 | 待现场确认 |  |" in text
+    assert "| A1 | E06 表范围 | 没计到整条线 | 批次电量只有报表的六成 |  | 待现场确认 |  |" in text
     assert "待现场确认" in assumptions_html(rows)
     assert assumptions_markdown([]) == []

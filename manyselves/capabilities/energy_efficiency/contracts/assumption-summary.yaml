@@ -1,0 +1,11 @@
+id: assumption-summary
+version: 1.0.0
+description: How many inferences were drafted and how many carry a note from the program's check
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, drafted, with_notes]
+  properties:
+    run_id: {type: string}
+    drafted: {type: integer}
+    with_notes: {type: integer}

@@ -203,6 +203,10 @@ class ProductionSpec(TableSource):
         ),
     )
     quantity_unit: str | None = Field(default=None, min_length=1, description="数量的单位，例如 件、吨")
+    reported_energy_column: str | None = Field(
+        default=None, min_length=1, description="报表里每批的用电量列；程序拿它和挂表的计量电量比，不当作计量数据"
+    )
+    reported_energy_unit: Literal["Wh", "kWh", "MWh"] = "kWh"
 
     @model_validator(mode="after")
     def basis_needs_column(self) -> "ProductionSpec":
@@ -1242,6 +1246,7 @@ class Batch(_Strict):
     product: str | None = None
     groups: dict[str, str] = Field(default_factory=dict)
     quantity: float | None = None
+    reported_energy_kwh: float | None = None
     problem: str | None = None
 
 
@@ -1293,7 +1298,9 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
     time_columns = [spec.start_column, spec.end_column]
     time_columns += [column for column in (spec.start_time_column, spec.end_time_column) if column]
     columns = [spec.machine_column, *time_columns]
-    columns += [column for column in (spec.product_column, spec.quantity_column) if column]
+    columns += [
+        column for column in (spec.product_column, spec.quantity_column, spec.reported_energy_column) if column
+    ]
     columns += spec.product_group_columns
     frame = read_table(folder, spec, list(dict.fromkeys(columns)))
     starts = _batch_times(frame, spec, spec.start_column, spec.start_time_column)
@@ -1301,6 +1308,7 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
     quantities = (
         parse_numbers(frame[spec.quantity_column]) if spec.quantity_column else None
     )
+    reported = parse_numbers(frame[spec.reported_energy_column]) if spec.reported_energy_column else None
     batches: list[Batch] = []
     skipped = 0
     offset = first_data_row(spec)
@@ -1330,6 +1338,9 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
                 product=product or None,
                 groups={column: value for column, value in groups.items() if value},
                 quantity=quantity,
+                reported_energy_kwh=None
+                if reported is None or pd.isna(reported.iloc[index])
+                else float(reported.iloc[index]) * ENERGY_UNITS[spec.reported_energy_unit],
                 problem=problem,
             )
         )

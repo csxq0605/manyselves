@@ -28,6 +28,28 @@ actions:
   tool: profile-energy-data
   input_variable: run_ref
   output_variable: profiled
+# The program measures how the data behaves; the caliber drafter writes the
+# inferences those facts support.  A map of one, so a failed draft leaves
+# the run going without drafted inferences.
+- id: caliber
+  kind: invoke_tool
+  tool: caliber-facts
+  input_variable: run_ref
+  output_variable: caliber_set
+- id: caliber-briefs
+  kind: set_variable
+  variable: caliber_briefs
+  value_variable: caliber_set
+  field: briefs
+- id: draft
+  kind: map
+  items_variable: caliber_briefs
+  key_field: key
+  workflow: draft-assumptions
+  key_input_variable: draft_key
+  output_variable: assumption_results
+  errors_variable: assumption_errors
+  max_concurrency: 1
 - id: prechecks
   kind: invoke_tool
   tool: run-energy-prechecks
@@ -95,6 +117,7 @@ actions:
     partition_errors: partition_errors
     plant_results: plant_results
     plant_errors: plant_errors
+    assumption_errors: assumption_errors
   output_variable: register
 - id: publish
   kind: publish_result

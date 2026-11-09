@@ -397,10 +397,19 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
 
 
 def brief_assumptions(site: SiteData) -> list[dict[str, Any]]:
-    return [
-        {key: entry[key] for key in ("id", "topic", "inference", "basis", "origin", "meter_ids") if key in entry}
-        for entry in site.assumptions()
-    ]
+    """The inferences for a finder: a drafted one gives its reasoning and fact ids, not the facts' full text."""
+
+    keys = ("id", "topic", "inference", "origin", "meter_ids", "affects")
+    listed = []
+    for entry in site.assumptions():
+        row = {key: entry[key] for key in keys if entry.get(key)}
+        if entry.get("origin") == "drafted":
+            row["reasoning"] = entry.get("reasoning", "")
+            row["basis_fact_ids"] = entry.get("basis_fact_ids", [])
+        else:
+            row["basis"] = entry["basis"]
+        listed.append(row)
+    return listed
 
 
 __all__ = [
