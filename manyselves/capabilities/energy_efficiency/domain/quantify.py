@@ -28,17 +28,14 @@ import numpy as np
 import pandas as pd
 
 from .evidence import has_evidence, load_evidence
+from .inputs import QUANTITY_BASES
 from .items import KB_ITEMS, RELATIONS, PartitionSubmission
 from .methods import (
     MENU,
     NO_METHOD,
-    PERCENTILE_RULE,
-    MethodContext,
     MethodRun,
     Occurrence,
-    base_portions,
     item_kwh,
-    parse_params,
     resolved_params,
     run_method,
 )
@@ -54,12 +51,12 @@ SCALAR_FIELDS: dict[str, str] = {
     "replay_occurrences": "按寻找方式在全期回放得到的出现次数",
     "replay_hits": "其中达到阈值的次数（没设阈值时为空）",
     "replay_unknown": "其中没有数据、无法判断是否达到阈值的次数（不算命中也不算未命中；没设阈值时为空）",
-    "replay_item_kwh": "全期回放中本项涉及的电量（实测，不是可避免电量）：有阈值时为命中部分；基底方法为基底电量（有阈值时只算命中的天）；否则为全部出现",
+    "replay_item_kwh": "全期回放中本项涉及的电量（实测，不是可避免电量）：有阈值时为命中部分，否则为全部出现",
     "replay_share_of_meter": "replay_item_kwh 占该表全期电量的比例",
     "replay_mean_coverage": "全期回放各次出现的平均数据覆盖",
     "top_share": "最大的一次出现占全部的比例（越接近 1 越像是由一次造成）",
-    "halves_ratio": "后半期 / 前半期的平均功率（按各次出现里实有的记录；基底方法比基底功率）",
-    "boundary_max_change": "时间窗前后移动一个记录间隔或两头各收窄一个间隔后，平均功率的最大相对变化；基底方法是百分位上下移 5 时本项数值的最大相对变化",
+    "halves_ratio": "后半期 / 前半期的平均功率（按各次出现里实有的记录）",
+    "boundary_max_change": "时间窗前后移动一个记录间隔或两头各收窄一个间隔后，平均功率的最大相对变化",
     "window_cost": "本项时间窗里的电费（只在提供电价时；有记录跨两个价格、落在电价没覆盖的时刻或适用日期之外、不能整条计价时为空）",
     "replay_cost": "全期回放涉及电量的电费（同上；方法没能回放或没有数据时为空，回放了但没有命中时为 0）",
     "overlap_items": "与本项计入同一块表同一批记录的其他项数",
@@ -95,19 +92,11 @@ class _MeterBasis:
         return set(self.portions)
 
 
-def _portions(series: MeterSeries, counted: list[Occurrence], baseload: bool) -> dict[int, float]:
+def _portions(series: MeterSeries, counted: list[Occurrence]) -> dict[int, float]:
     portions: dict[int, float] = {}
     for occurrence in counted:
-        measure = occurrence.measure
-        if baseload:
-            base_kw = occurrence.extra.get("base_kw")
-            if base_kw is None or not series.has_energy:
-                portions.update({index: 0.0 for index in series.index_set(measure)})
-                continue
-            portions.update(base_portions(series, measure.first_index, measure.last_index, base_kw))
-        else:
-            for index in series.index_set(measure):
-                portions[index] = float(series.values[index]) if series.has_energy else 0.0
+        for index in series.index_set(occurrence.measure):
+            portions[index] = float(series.values[index]) if series.has_energy else 0.0
     return portions
 
 
@@ -204,69 +193,6 @@ def _robustness(
         "mean_coverage": _r(statistics.fmean(coverages), 4) if coverages else None,
         "low_coverage": sum(1 for value in coverages if value < 0.9),
     }
-
-
-def _base_robustness(series: MeterSeries, counted: list[Occurrence], period: tuple[datetime, datetime]) -> dict[str, Any]:
-    """Stability of a baseload item, on each day's base energy (or base power)."""
-
-    start, end = period
-    middle = start + (end - start) / 2
-    # Halves compare the base power of the days; missing records do not move it.
-    powers = [(item.measure.start, item.extra["base_kw"]) for item in counted if item.extra.get("base_kw") is not None]
-    first = [value for day, value in powers if day < middle]
-    second = [value for day, value in powers if day >= middle]
-    ratio = None
-    if first and second and statistics.fmean(first):
-        ratio = _r(statistics.fmean(second) / statistics.fmean(first), 4)
-    days = [item.extra["base_kwh"] for item in counted if item.extra.get("base_kwh") is not None]
-    total = sum(days)
-    coverages = [item.measure.coverage for item in counted]
-    return {
-        "counted": len(counted),
-        "halves": {"first_count": len(first), "second_count": len(second), "ratio": ratio},
-        "top_share": _r(max(days) / total, 4) if series.has_energy and total else None,
-        "boundary": None,
-        "mean_coverage": _r(statistics.fmean(coverages), 4) if coverages else None,
-        "low_coverage": sum(1 for value in coverages if value < 0.9),
-    }
-
-
-def _baseload_value(run: MethodRun, has_energy: bool) -> float | None:
-    """The number a baseload item stands for: its base energy, or the median base power of its days."""
-
-    if has_energy:
-        return item_kwh(run)
-    if run.summary.get("hits") is None:
-        return run.summary.get("median_base_kw")
-    powers = [item.extra["base_kw"] for item in run.occurrences if item.hit and item.extra.get("base_kw") is not None]
-    return _r(statistics.median(powers)) if powers else None
-
-
-def _baseload_boundary(
-    series: MeterSeries,
-    params: dict[str, Any],
-    ctx: MethodContext,
-    base_run: MethodRun,
-) -> dict[str, Any] | None:
-    """How much the item's own number moves when the percentile moves by five.
-
-    With thresholds that number covers only the days that hit, so a
-    percentile that changes which days hit shows here.
-    """
-
-    base = _baseload_value(base_run, series.has_energy)
-    if not base:
-        return None
-    percentile = parse_params("baseload", params).percentile
-    changes: dict[str, float | None] = {}
-    for name, value in (("lower", max(1.0, percentile - 5)), ("higher", min(50.0, percentile + 5))):
-        if value == percentile:
-            continue
-        run = run_method("baseload", {**params, "percentile": value}, series, ctx, None)
-        other = _baseload_value(run, series.has_energy)
-        changes[f"{name}_p{value:g}"] = None if other is None else _r((other - base) / base, 4)
-    known = [abs(value) for value in changes.values() if value is not None]
-    return {"changes": changes, "max_change": max(known) if known else None}
 
 
 class _Hourly:
@@ -612,29 +538,23 @@ def quantify_register(
                     "window_avg_kw_hour_rank": hourly.rank(meter_id, whole["avg_kw"]),
                 },
             }
-            baseload = False
             if method_id != NO_METHOD and spec is not None:
                 run = run_method(method_id, method["params"], series, ctx, totals.get(meter_id))
                 entry["replay"] = run.as_dict(top=5)
                 if run.status == "ok":
                     counted = _counted(run)
                     entry["replay"]["item_kwh"] = item_kwh(run)
-                    baseload = method_id == "baseload"
-                    if baseload:
-                        robustness = _base_robustness(series, counted, period)
-                        robustness["boundary"] = _baseload_boundary(series, method["params"], ctx, run)
-                    else:
-                        robustness = _robustness(series, counted, period, spec.shiftable)
+                    robustness = _robustness(series, counted, period, spec.shiftable)
                 else:
                     counted = [Occurrence(measure) for measure in window_measures]
                     robustness = _robustness(series, counted, period, True)
             else:
                 counted = [Occurrence(measure) for measure in window_measures]
                 robustness = _robustness(series, counted, period, True)
-            basis = _MeterBasis(counted, _portions(series, counted, baseload))
+            basis = _MeterBasis(counted, _portions(series, counted))
             bases[item["id"]][meter_id] = basis
             entry["robustness"] = robustness
-            window_portions = _portions(series, [Occurrence(measure) for measure in window_measures], False)
+            window_portions = _portions(series, [Occurrence(measure) for measure in window_measures])
             entry["cost"] = (
                 {
                     "window": _price_records(site, series, window_portions),
@@ -666,7 +586,7 @@ def quantify_register(
     # The figures each finder read in its meters' profiles; the reasoning may quote them.
     profiles = {
         profile["meter_id"]: {
-            **{key: profile[key] for key in ("period_energy_kwh", "period_avg_kw", "period_coverage", "hour_of_day_kw", "median_daily_p10_kw", "max_hourly_kw")},
+            **{key: profile[key] for key in ("period_energy_kwh", "period_avg_kw", "period_coverage", "hour_of_day_kw", "max_hourly_kw")},
             "days": profile["days"] if len(profile["days"]) <= DAILY_ROWS_LIMIT else [],
         }
         for profile in read_json(site.path("profiles.json"))["profiles"]
@@ -713,7 +633,6 @@ def quantify_register(
         "items": items,
         "scalar_fields": SCALAR_FIELDS,
         "rules_of_computation": {
-            "基底功率的百分位": PERCENTILE_RULE,
             "窗口功率小时位次": HOUR_RANK_RULE,
             "区间平均功率换算电量": "区间平均功率是区间内的真实平均值，电量 = 平均功率 × 区间时长；不外推、不跨区间摊分",
         },
@@ -801,7 +720,8 @@ def category_notes(site: SiteData, item: dict[str, Any]) -> list[str]:
     manifest = site.manifest
     production = manifest.production
     has_batches = site.batches() is not None
-    has_quantity = bool(production and production.quantity_basis)
+    basis = production.quantity_basis if production else None
+    has_quantity = basis is not None
     has_product = bool(production and production.product_column)
     notes = []
     for proposal in item.get("candidate_categories", []):
@@ -809,8 +729,12 @@ def category_notes(site: SiteData, item: dict[str, Any]) -> list[str]:
         lacking: list[str] = []
         if item_id in {"LOSS-PROCESS", "LOSS-INTERRUPTION", "LOSS-IDLE", "LOSS-TRANSITION", "OPP-CAPABILITY"} and not has_batches:
             lacking.append("生产记录")
-        if item_id in {"LOSS-PROCESS", "OPP-CAPABILITY"} and not has_quantity:
-            lacking.append("经人声明口径的产出数量")
+        if item_id in {"LOSS-PROCESS", "OPP-CAPABILITY"}:
+            # Both compare at the same qualified output (knowledge base 4.3.1, 4.4.2).
+            if not has_quantity:
+                lacking.append("经人声明口径的合格品产量")
+            elif basis != "qualified":
+                lacking.append(f"合格品产量（manifest 声明的数量是{QUANTITY_BASES[basis]}）")
         if item_id == "LOSS-TRANSITION" and not has_product:
             lacking.append("批次的产品（判断切换对）")
         if item_id in {"LOSS-IDLE", "LOSS-HOLD"} and site.calendar() is None:
@@ -908,7 +832,7 @@ def _scalars(item: dict[str, Any]) -> dict[str, Any]:
             "replay_hits": summary.get("hits"),
             "replay_unknown": summary.get("unknown"),
             "replay_item_kwh": replay.get("item_kwh"),
-            "replay_share_of_meter": summary.get("base_share_of_meter", summary.get("share_of_meter")),
+            "replay_share_of_meter": summary.get("share_of_meter"),
             "replay_mean_coverage": summary.get("mean_coverage"),
             "top_share": robustness.get("top_share"),
             "halves_ratio": robustness["halves"]["ratio"],

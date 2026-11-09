@@ -762,8 +762,8 @@ def test_unasked_changes_to_links_and_coverage_are_flagged() -> None:
     a1["relation_types"], a2["relation_types"] = {"A2": "independent"}, {"A1": "independent"}
     first = _round([a1, a2, a3])
     final = _round([_on("A1", "AC1", "X"), _on("A2", "LT1", "Y"), _on("A3", "IM1", "Z 改过")])
-    baseload = next(entry for entry in final["coverage"] if entry["method_id"] == "baseload")
-    baseload["meter_ids"] = ["AC1"]
+    segments = next(entry for entry in final["coverage"] if entry["method_id"] == "threshold-segments")
+    segments["meter_ids"] = ["AC1"]
     result = _settled(first, ["A3"], final)
     problems = [(issue["key"], issue["problem"]) for issue in result["check"]["issues"]]
 
@@ -1030,7 +1030,7 @@ def test_the_report_carries_a_verification_checklist_with_blank_judgments(tmp_pa
     items = _quantified(tools, [one, two], {"daily-clock-window": ["A1", "A2"]})
 
     assert items["A1"]["candidate_categories"][0]["role"] == "ENERGY"
-    assert any("经人声明口径的产出数量" in note for note in items["A2"]["computed"]["category_notes"])
+    assert any("经人声明口径的合格品产量" in note for note in items["A2"]["computed"]["category_notes"])
     assert any("没有同一块表" in note for note in items["A2"]["computed"]["relation_notes"])
     (tmp_path / "rules.yaml").write_text(
         "rules:\n- when:\n  - {field: source, op: eq, value: model}\n  decision: keep\n", encoding="utf-8"

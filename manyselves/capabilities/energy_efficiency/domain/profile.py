@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .inputs import MeterQuality, MeterSpec
-from .methods import base_power
 from .series import MeterSeries, days_between
 
 DAILY_ROWS_LIMIT = 62
@@ -61,15 +60,6 @@ def meter_profile(
         kind: [_r(statistics.fmean(values)) if values else None for values in buckets]
         for kind, buckets in hours.items()
     }
-    bases = []
-    for day in days_between(start, end):
-        finish = day + timedelta(days=1)
-        if day < start or finish > end:
-            continue
-        measure = series.measure(day, finish)
-        base = base_power(series, measure.first_index, measure.last_index, 10)
-        if base is not None:
-            bases.append(base)
     return {
         "meter_id": spec.id,
         "name": spec.name,
@@ -83,7 +73,6 @@ def meter_profile(
         "period_coverage": round(whole.coverage, 4),
         "days": days,
         "hour_of_day_kw": curve,
-        "median_daily_p10_kw": _r(statistics.median(bases)) if bases else None,
         "max_hourly_kw": _r(max(hourly_powers)) if hourly_powers else None,
         "quality_notes": quality.notes(),
     }
@@ -157,8 +146,6 @@ def profile_text(profile: dict[str, Any]) -> str:
             ]
             lines.append(f"小时曲线·{title}（平均 kW）：" + " | ".join(cells))
     tail = []
-    if profile["median_daily_p10_kw"] is not None:
-        tail.append(f"每日第 10 百分位功率（按记录时长加权）的中位数 {_num(profile['median_daily_p10_kw'])} kW")
     if profile["max_hourly_kw"] is not None:
         tail.append(f"小时平均功率最高 {_num(profile['max_hourly_kw'])} kW")
     if tail:

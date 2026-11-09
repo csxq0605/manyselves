@@ -47,7 +47,7 @@ COMPETING: tuple[Competing, ...] = (
         "低功率长段，候选等料或故障响应迟缓",
         "计划休息、换网、必要保温、正常减速、缺测填零",
         "原因码、日历、报警和生产日志与曲线逐事件配对；区分故障、交接与计划停机",
-        frozenset({"threshold-segments", "baseload", "production-gaps"}),
+        frozenset({"threshold-segments", "production-gaps"}),
         frozenset({"LOSS-INTERRUPTION", "LOSS-IDLE", "LOSS-HOLD"}),
     ),
     Competing(
@@ -89,7 +89,7 @@ COMPETING: tuple[Competing, ...] = (
         "真空或空压近恒功率，候选台数或支路未跟随",
         "最低压力、再生、备用、泄漏或其他服务对象",
         "需求、压力、阀位、运行台数和加载卸载记录；分段隔离或性能测试区分，不只看电曲线",
-        frozenset({"baseload", "threshold-segments"}),
+        frozenset({"threshold-segments"}),
         frozenset({"LOSS-SUPPORT"}),
     ),
     Competing(

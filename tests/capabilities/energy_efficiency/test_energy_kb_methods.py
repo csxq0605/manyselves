@@ -268,7 +268,7 @@ def test_gap_bands_count_hours_and_energy_and_leave_missing_time_unknown() -> No
 
 
 def _intensity_ctx(batches):
-    return _ctx(batches=batches, machines={"M1": ["L1"]}, quantity_basis="合格品件数", quantity_unit="件")
+    return _ctx(batches=batches, machines={"M1": ["L1"]}, quantity_basis="qualified", quantity_unit="件")
 
 
 def test_batch_intensity_needs_a_declared_quantity_basis() -> None:
@@ -283,7 +283,7 @@ def test_batch_intensity_needs_a_declared_quantity_basis() -> None:
     assert run.status == "needs_input"
     assert "数量口径" in run.reason
     with pytest.raises(ValueError, match="quantity_column"):
-        ProductionSpec(file="p.csv", machine_column="m", start_column="s", end_column="e", quantity_basis="件数")
+        ProductionSpec(file="p.csv", machine_column="m", start_column="s", end_column="e", quantity_basis="qualified")
 
 
 def test_batch_intensity_keeps_the_mean_of_ratios_apart_from_sum_over_sum() -> None:
@@ -322,3 +322,33 @@ def test_readiness_follows_the_inputs_only() -> None:
     full = _intensity_ctx([_batch(2, _at(0), _at(1), quantity=1)])
     assert readiness(MENU["batch-intensity"], "M1", True, full) == ("ready", None)
     assert readiness(MENU["batch-intensity"], "M1", False, full)[0] == "not_applicable"
+
+
+def test_quantity_basis_is_one_of_the_knowledge_base_kinds() -> None:
+    with pytest.raises(ValueError):
+        ProductionSpec(
+            file="p.csv", machine_column="m", start_column="s", end_column="e", quantity_column="q", quantity_basis="件数"
+        )
+    spec = ProductionSpec(
+        file="p.csv", machine_column="m", start_column="s", end_column="e", quantity_column="q", quantity_basis="input"
+    )
+    assert spec.quantity_basis == "input"
+
+
+def test_batch_intensity_is_split_by_product_and_names_its_basis() -> None:
+    series = _series(lambda moment: 10.0)
+    batches = [
+        _batch(2, _at(0), _at(1), quantity=10, product="红"),
+        _batch(3, _at(2), _at(3), quantity=5, product="白"),
+        _batch(4, _at(4), _at(5), quantity=5, product="白"),
+    ]
+    ctx = _ctx(batches=batches, machines={"M1": ["L1"]}, quantity_basis="input", quantity_unit="kg")
+    run = run_method("batch-intensity", {"machine": "L1"}, series, ctx, None)
+
+    assert run.summary["quantity_basis"] == "投入量"
+    assert run.summary["by_product"] == {
+        "白": {"count": 2, "median": 2.0, "of_sums": 2.0},
+        "红": {"count": 1, "median": 1.0, "of_sums": 1.0},
+    }
+    only = run_method("batch-intensity", {"machine": "L1", "product": "白"}, series, ctx, None)
+    assert only.summary["by_product"] is None and only.summary["intensity_count"] == 2

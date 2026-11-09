@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .inputs import Batch, CalendarWindow, clock_window
+from .inputs import QUANTITY_BASES, Batch, CalendarWindow, clock_window
 from .series import MeterSeries, WindowMeasure, days_between
 
 _CLOCK = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$|^24:00$")
@@ -120,14 +120,6 @@ class CalendarStateParams(Thresholds):
     exclude: Exclusion | None = Field(default=None, description="从这些时段里扣掉的时间，例如生产批次")
 
 
-class BaseloadParams(_Params):
-    percentile: float = Field(default=10, ge=1, le=50, description="取每天区间平均功率的第几百分位作基底")
-    min_share: float | None = Field(
-        default=None, ge=0, le=1, description="基底电量占当天电量的比例不低于此值才算命中"
-    )
-    min_avg_kw: float | None = Field(default=None, ge=0, description="基底功率不低于此值才算命中")
-
-
 def _ascending(values: list[float], name: str) -> None:
     if any(later <= earlier for earlier, later in zip(values, values[1:], strict=False)):
         raise ValueError(f"{name} must rise strictly")
@@ -198,7 +190,7 @@ class MethodContext:
     calendar: list[CalendarWindow] | None = None
     batches: list[Batch] | None = None
     machines: dict[str, list[str]] = field(default_factory=dict)
-    # What the production quantity counts and its unit, as a person declared them.
+    # What the production quantity counts (input / output / qualified) and its unit, as a person declared them.
     quantity_basis: str | None = None
     quantity_unit: str | None = None
 
@@ -509,104 +501,6 @@ def _calendar_state(series: MeterSeries, params: CalendarStateParams, ctx: Metho
     return run
 
 
-PERCENTILE_RULE = (
-    "按时长加权的下侧最近秩分位：功率从小到大排，累计时长第一次达到总时长的 p% 时那条记录的功率，不插值；"
-    "瞬时读数每条权重相同"
-)
-
-
-def _weighted_percentile(values: np.ndarray, weights: np.ndarray, percentile: float) -> float:
-    """The weighted lower nearest-rank percentile (see PERCENTILE_RULE)."""
-
-    order = np.argsort(values, kind="stable")
-    values, weights = values[order], weights[order]
-    cumulative = np.cumsum(weights)
-    target = percentile / 100 * cumulative[-1]
-    return float(values[min(int(np.searchsorted(cumulative, target, "left")), len(values) - 1)])
-
-
-def base_power(series: MeterSeries, lo: int, hi: int, percentile: float) -> float | None:
-    """The base power of records lo..hi: a low percentile of their power.
-
-    One rule for every kind of meter (PERCENTILE_RULE).  Instant readings
-    weigh the same; interval records weigh as long as they last, so one
-    record that spans a gap in the data does not count as one ordinary
-    sample.
-    """
-
-    if hi <= lo:
-        return None
-    if series.kind == "instant":
-        values = series.values[lo:hi]
-        return _weighted_percentile(values, np.ones(len(values)), percentile)
-    hours = series.durations_h[lo:hi]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        powers = series.values[lo:hi] / np.where(hours > 0, hours, np.nan) if series.has_energy else series.values[lo:hi]
-    usable = (hours > 0) & ~np.isnan(powers)
-    return _weighted_percentile(powers[usable], hours[usable], percentile) if usable.any() else None
-
-
-def base_portions(series: MeterSeries, lo: int, hi: int, base_kw: float) -> dict[int, float]:
-    """Energy of each record up to the base power: min(P, base) x hours (kWh)."""
-
-    portions: dict[int, float] = {}
-    for index in range(lo, hi):
-        hours = float(series.durations_h[index])
-        if hours <= 0:
-            continue
-        power = float(series.values[index]) / hours
-        portions[index] = min(power, base_kw) * hours
-    return portions
-
-
-def _baseload(series: MeterSeries, params: BaseloadParams, ctx: MethodContext) -> MethodRun:
-    if params.min_share is not None and not series.has_energy:
-        return MethodRun(
-            "baseload",
-            series.meter_id,
-            "not_applicable",
-            f"表 {series.meter_id} 是功率数据，没有电量，min_share 不适用；请改用 min_avg_kw",
-        )
-    start, end = ctx.period
-    thresholds = params.min_share is not None or params.min_avg_kw is not None
-    occurrences = []
-    for day in days_between(start, end):
-        day_end = day + timedelta(days=1)
-        if day < start or day_end > end:
-            continue
-        measure = series.measure(day, day_end)
-        lo, hi = measure.first_index, measure.last_index
-        extra: dict[str, Any] = {"base_kw": None, "base_kwh": None, "base_share": None}
-        hit: bool | None = None
-        if hi > lo:
-            base_kw = base_power(series, lo, hi, params.percentile)
-            if base_kw is not None:
-                extra["base_kw"] = round(base_kw, 3)
-                if series.has_energy and measure.energy_kwh:
-                    base_kwh = sum(base_portions(series, lo, hi, base_kw).values())
-                    extra["base_kwh"] = round(base_kwh, 3)
-                    extra["base_share"] = round(base_kwh / measure.energy_kwh, 4)
-                # A day with no share to compare stays unknown, not a miss.
-                share_known = params.min_share is None or extra["base_share"] is not None
-                if thresholds and share_known:
-                    checks = []
-                    if params.min_share is not None:
-                        checks.append(extra["base_share"] >= params.min_share)
-                    if params.min_avg_kw is not None:
-                        checks.append(base_kw >= params.min_avg_kw)
-                    hit = all(checks)
-        occurrences.append(Occurrence(measure, hit, extra, judged=thresholds))
-    run = MethodRun("baseload", series.meter_id, "ok", occurrences=occurrences, thresholded=thresholds)
-    bases = [item.extra["base_kwh"] for item in occurrences if item.extra["base_kwh"] is not None]
-    run.summary["total_base_kwh"] = _r(sum(bases)) if bases else None
-    hit_bases = [item.extra["base_kwh"] or 0.0 for item in occurrences if item.hit]
-    measured = any(item.measure.records for item in occurrences)
-    run.summary["hit_base_kwh"] = _r(sum(hit_bases)) if thresholds and series.has_energy and measured else None
-    kws = [item.extra["base_kw"] for item in occurrences if item.extra["base_kw"] is not None]
-    run.summary["median_base_kw"] = _r(statistics.median(kws)) if kws else None
-    return run
-
-
 def _production_gaps(series: MeterSeries, params: ProductionGapsParams, ctx: MethodContext) -> MethodRun:
     if ctx.batches is None:
         return MethodRun("production-gaps", series.meter_id, "needs_input", "manifest 里没有生产记录")
@@ -865,7 +759,7 @@ def _batch_intensity(series: MeterSeries, params: BatchIntensityParams, ctx: Met
             method_id,
             series.meter_id,
             "needs_input",
-            "生产记录的数量口径没有经人声明（manifest 的 production.quantity_basis，例如 合格品件数）",
+            "生产记录的数量口径没有经人声明（manifest 的 production.quantity_basis：input 投入量、output 成品量、qualified 合格品量）",
         )
     if params.machine not in ctx.machines.get(series.meter_id, []):
         mapped = ctx.machines.get(series.meter_id, [])
@@ -927,9 +821,26 @@ def _batch_intensity(series: MeterSeries, params: BatchIntensityParams, ctx: Met
     ]
     mean = statistics.fmean(values) if values else None
     std = statistics.stdev(values) if len(values) > 1 else None
+    by_product: dict[str, list[tuple[float, float, float]]] = {}
+    for item in occurrences:
+        if item.extra["kwh_per_unit"] is not None:
+            by_product.setdefault(item.extra["product"] or "未写产品", []).append(
+                (item.extra["kwh_per_unit"], item.measure.energy_kwh or 0.0, item.extra["quantity"])
+            )
     run.summary.update(
         {
-            "quantity_basis": ctx.quantity_basis,
+            "quantity_basis": QUANTITY_BASES.get(ctx.quantity_basis or "", ctx.quantity_basis),
+            # Products are not mixed in one comparison (knowledge base 3.4.4, 4.3.1).
+            "by_product": {
+                product: {
+                    "count": len(rows),
+                    "median": _r(statistics.median(row[0] for row in rows), 4),
+                    "of_sums": _r(sum(row[1] for row in rows) / sum(row[2] for row in rows), 4),
+                }
+                for product, rows in sorted(by_product.items())
+            }
+            if params.product is None and len(by_product) > 1
+            else None,
             "intensity_unit": f"kWh/{ctx.quantity_unit}" if ctx.quantity_unit else "kWh/数量单位",
             "batches_unusable": len(own) - len(usable),
             "batches_without_intensity": sum(1 for item in occurrences if item.extra["kwh_per_unit"] is None),
@@ -1012,18 +923,6 @@ MENU: dict[str, MethodSpec] = {
             operators=("OP005", "OP037", "OP016", "OP007"),
             scenarios=("HB-01", "HB-02", "HB-03", "HB-04", "HB-05"),
             kb_note="事件长短、电量是事实；是否超时或异常要和人给的参考比，这里不判断",
-        ),
-        MethodSpec(
-            "baseload",
-            "每日基底负荷",
-            "每天取各条记录平均功率的低百分位作基底功率（" + PERCENTILE_RULE + "）；"
-            "基底电量是每条记录不超过基底功率的那部分电量之和，再算它占当天电量的比例。",
-            BaseloadParams,
-            frozenset(),
-            False,
-            _baseload,
-            operators=("OP012", "OP014", "OP007"),
-            kb_note="知识库没有对应场景（场景里的待机用阈值连续段，BS-11 的 P10 是比值的分位）；分位用的是时长加权变体，不是 OP012 的 type7",
         ),
         MethodSpec(
             "production-gaps",
@@ -1110,12 +1009,6 @@ def run_method(
             **summarize(run.occurrences, series.has_energy, meter_total_kwh, thresholded=run.thresholded),
             **run.summary,
         }
-        if method_id == "baseload":
-            # share_of_meter stays the share of the whole days' energy beside it.
-            base = item_kwh(run)
-            run.summary["base_share_of_meter"] = (
-                _r(base / meter_total_kwh, 4) if base is not None and meter_total_kwh else None
-            )
     return run
 
 
@@ -1166,12 +1059,8 @@ def summarize(
 
 
 def item_kwh(run: MethodRun) -> float | None:
-    """The energy the item stands for: base energy, hit energy or all occurrences."""
+    """The energy the item involves: hit energy, or all occurrences."""
 
-    if run.method_id == "baseload":
-        if run.summary.get("hit_base_kwh") is not None:
-            return run.summary["hit_base_kwh"]
-        return run.summary.get("total_base_kwh")
     if run.summary.get("hits") is not None:
         return run.summary.get("hit_kwh")
     return run.summary.get("total_kwh")
@@ -1196,14 +1085,12 @@ def _r(value: float, digits: int = 3) -> float:
 __all__ = [
     "MENU",
     "NO_METHOD",
-    "PERCENTILE_RULE",
     "MethodContext",
     "MethodParamsError",
     "MethodRun",
     "MethodSpec",
     "Occurrence",
     "UNKNOWN_HIT",
-    "base_portions",
     "item_kwh",
     "overlapping_windows",
     "menu_entries",

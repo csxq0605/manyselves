@@ -154,10 +154,12 @@ class ProductionSpec(TableSource):
     end_column: str = Field(min_length=1)
     product_column: str | None = None
     quantity_column: str | None = None
-    quantity_basis: str | None = Field(
+    quantity_basis: Literal["input", "output", "qualified"] | None = Field(
         default=None,
-        min_length=1,
-        description="数量列是什么口径（例如 合格品件数、投料吨数），由人填写；不填时不算单耗",
+        description=(
+            "数量列是哪种实际量（知识库 3.4.4）：input 投入量、output 成品量、qualified 合格品量；"
+            "由人填写，计划产量不能代替实际产出；不填时不算单耗"
+        ),
     )
     quantity_unit: str | None = Field(default=None, min_length=1, description="数量的单位，例如 件、吨")
 
@@ -166,6 +168,9 @@ class ProductionSpec(TableSource):
         if (self.quantity_basis or self.quantity_unit) and not self.quantity_column:
             raise ValueError("quantity_basis and quantity_unit describe quantity_column, which is not given")
         return self
+
+
+QUANTITY_BASES = {"input": "投入量", "output": "成品量", "qualified": "合格品量"}
 
 
 class CalendarSpec(TableSource):
@@ -1031,6 +1036,7 @@ __all__ = [
     "PeriodSpec",
     "PrecheckSpec",
     "ProductionSpec",
+    "QUANTITY_BASES",
     "TariffSpec",
     "UNPRICED_REASONS",
     "clock_window",

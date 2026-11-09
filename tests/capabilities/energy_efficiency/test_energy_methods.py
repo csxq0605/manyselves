@@ -161,62 +161,6 @@ def test_calendar_rows_that_touch_are_one_stretch() -> None:
     assert run.summary["total_kwh"] == 230.0  # the 11:30-12:30 record is not lost
 
 
-# --- baseload --------------------------------------------------------------
-
-
-def test_base_energy_never_exceeds_the_day() -> None:
-    # 2 kW at night, 50 kW from 08:00 to 18:00.
-    series = _energy_series(lambda moment: 50.0 if 8 <= moment.hour < 18 else 2.0, days=2)
-    run = run_method("baseload", {"percentile": 10}, series, _ctx(days=2), None)
-
-    for occurrence in run.occurrences:
-        assert occurrence.extra["base_kw"] == 2.0
-        assert occurrence.extra["base_kwh"] == 48.0  # 2 kW for 24 hours
-        assert 0 < occurrence.extra["base_share"] <= 1
-    assert item_kwh(run) == 96.0
-
-
-def test_baseload_counts_only_the_days_that_hit() -> None:
-    # Day one has a 20 kW base, day two a 2 kW base.
-    series = _energy_series(lambda moment: 20.0 if moment.day == 2 else 2.0, days=2)
-    run = run_method("baseload", {"min_avg_kw": 10}, series, _ctx(days=2), 528.0)
-
-    assert [occurrence.hit for occurrence in run.occurrences] == [True, False]
-    assert run.summary["hit_base_kwh"] == 480.0
-    assert item_kwh(run) == 480.0
-    assert run.summary["share_of_meter"] == round(480 / 528, 4)
-
-
-def test_a_record_that_spans_a_gap_weighs_as_long_as_it_lasts() -> None:
-    # Cumulative readings stop from 00:00 to 20:00: one 20-hour interval at
-    # 1 kW on average, then sixteen quarter hours at 30 kW.
-    spec = MeterSpec(
-        id="M1",
-        name="表",
-        file="m.csv",
-        time_column="t",
-        value_column="v",
-        semantics="cumulative_energy",
-        unit="kWh",
-        interval_minutes=15,
-    )
-    # One reading before and after the day: the first and last climbs of an
-    # export are left out.
-    moments = [DAY - timedelta(minutes=15), DAY] + [DAY + timedelta(hours=20, minutes=15 * n) for n in range(18)]
-    readings = [99.75, 100.0] + [120.0 + 7.5 * n for n in range(18)]
-    frame = pd.DataFrame({"t": [m.strftime("%Y-%m-%d %H:%M") for m in moments], "v": [str(r) for r in readings]})
-    normalized, _quality = normalize_meter(spec, frame, None)
-    series = MeterSeries(spec.id, series_kind(spec), normalized, 15)
-    run = run_method("baseload", {"percentile": 10}, series, _ctx(), None)
-    day = run.occurrences[0]
-
-    # Counted as one sample among seventeen, the long record would sit below
-    # the 10th percentile and the base would be 30 kW.
-    assert day.extra["base_kw"] == 1.0
-    assert day.extra["base_kwh"] == 24.0  # 20 h at 1 kW + 16 quarter hours at 1 kW
-    assert day.measure.energy_kwh == 140.0
-
-
 # --- production gaps -------------------------------------------------------
 
 
@@ -341,7 +285,7 @@ def test_a_gap_an_incomplete_batch_may_fall_in_is_not_used(start_hour, end_hour)
     assert run.summary["gaps_skipped_unusable_batch"] == 1
 
 
-def test_profile_base_power_and_days_cut_by_the_period() -> None:
+def test_profile_days_cut_by_the_period() -> None:
     from manyselves.capabilities.energy_efficiency.domain.inputs import MeterQuality
     from manyselves.capabilities.energy_efficiency.domain.profile import meter_profile, profile_text
 
@@ -363,46 +307,7 @@ def test_profile_base_power_and_days_cut_by_the_period() -> None:
     assert "e+" not in text  # large numbers are written out, not in exponent form
     assert "03-02" in text and "12:00 起" in text  # the cut day says so
     assert profile["days"][0]["coverage"] == 0.5
-    # The base power weighs records by duration (all quarter hours here): the night's 1 kW.
-    assert profile["median_daily_p10_kw"] == 1.0
-
-
-def test_baseload_stability_follows_the_days_that_hit() -> None:
-    from manyselves.capabilities.energy_efficiency.domain.quantify import _baseload_boundary
-
-    # Days 1-2: base 12 kW.  Days 3-4: ten quarter hours at 9.9 kW, the rest at 10.1 kW,
-    # so at the 10th percentile they miss 10 kW and at the 15th they hit.
-    def kw(moment: datetime) -> float:
-        if moment.day <= 3:
-            return 12.0
-        return 9.9 if moment.hour < 2 or (moment.hour == 2 and moment.minute < 30) else 10.1
-
-    series = _energy_series(kw, days=4)
-    params = {"percentile": 10, "min_avg_kw": 10}
-    run = run_method("baseload", params, series, _ctx(days=4), None)
-    boundary = _baseload_boundary(series, params, _ctx(days=4), run)
-
-    assert [occurrence.hit for occurrence in run.occurrences] == [True, True, False, False]
-    assert boundary["max_change"] > 0.5  # all four days hit at the 15th percentile
-
-
-def test_baseload_with_thresholds_and_no_measured_day_is_empty_not_zero() -> None:
-    series = _energy_series(lambda moment: 5.0)  # data on 2 March only
-    ctx = MethodContext(period=(DAY + timedelta(days=1), DAY + timedelta(days=3)))
-    run = run_method("baseload", {"min_avg_kw": 1}, series, ctx, 120.0)
-
-    assert run.summary["hit_base_kwh"] is None
-    assert item_kwh(run) is None
-    assert run.summary["base_share_of_meter"] is None
-
-
-def test_baseload_shares_sit_next_to_what_they_divide() -> None:
-    series = _energy_series(lambda moment: 20.0 if moment.hour < 12 else 40.0, days=2)
-    run = run_method("baseload", {"min_avg_kw": 10}, series, _ctx(days=2), 1440.0)
-
-    # Whole days: 2 x 720 kWh, all of the meter; base: 20 kW x 48 h = 960 kWh.
-    assert run.summary["hit_kwh"] == 1440.0 and run.summary["share_of_meter"] == 1.0
-    assert run.summary["hit_base_kwh"] == 960.0 and run.summary["base_share_of_meter"] == round(960 / 1440, 4)
+    assert "百分位" not in text  # no default percentile is offered as a base
 
 
 def test_a_gap_between_swapped_batch_times_is_not_used() -> None:
@@ -489,14 +394,6 @@ def test_without_thresholds_nothing_is_counted_unknown() -> None:
     assert all("hit" not in item.as_dict() for item in run.occurrences)
 
 
-def test_baseload_day_without_data_is_unknown() -> None:
-    series = _energy_series(lambda moment: 5.0, days=2, skip=lambda moment: moment.day == 3)
-    run = run_method("baseload", {"min_avg_kw": 1}, series, _ctx(days=2), 240.0)
-
-    assert run.summary["hits"] == 1
-    assert run.summary["unknown"] == 1
-
-
 def test_tariff_dates_and_why_a_record_has_no_price() -> None:
     from manyselves.capabilities.energy_efficiency.domain.inputs import TariffSpec
 
@@ -531,36 +428,11 @@ def test_tariff_dates_and_why_a_record_has_no_price() -> None:
         TariffSpec(periods=two.periods, valid_from=DAY, valid_until=DAY)
 
 
-def test_one_percentile_rule_for_instant_and_interval_meters() -> None:
-    from manyselves.capabilities.energy_efficiency.domain.methods import base_power
-
-    spec = MeterSpec(
-        id="P1",
-        name="表",
-        file="p.csv",
-        time_column="t",
-        value_column="v",
-        semantics="instant_power",
-        unit="kW",
-        interval_minutes=15,
-    )
-    values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    rows = [((DAY + timedelta(minutes=15 * n)).strftime("%Y-%m-%d %H:%M"), str(value)) for n, value in enumerate(values)]
-    frame = pd.DataFrame({"t": [row[0] for row in rows], "v": [row[1] for row in rows]})
-    normalized, _quality = normalize_meter(spec, frame, None)
-    instant = MeterSeries("P1", series_kind(spec), normalized, 15)
-    interval = _energy_series(lambda moment: values[(moment.hour * 60 + moment.minute) // 15 % 10])
-
-    # Nearest rank without interpolation: the 10th percentile of 1..10 is 1, not 1.9.
-    assert base_power(instant, 0, len(instant), 10) == 1.0
-    assert base_power(instant, 0, len(instant), 25) == 3.0
-    assert base_power(interval, 0, 10, 25) == pytest.approx(3.0)
-
-
 def test_evidence_and_register_show_the_parameters_used() -> None:
     from manyselves.capabilities.energy_efficiency.domain.methods import resolved_params
 
-    assert resolved_params("baseload", {}) == {"percentile": 10.0, "min_share": None, "min_avg_kw": None}
+    resolved = resolved_params("production-gaps", {"machine": "IM-01"})
+    assert resolved["min_gap_minutes"] == 0 and resolved["max_gap_minutes"] is None and resolved["band_edges_kw"] == []
 
 
 def test_the_cost_note_names_why_records_were_not_priced() -> None:
