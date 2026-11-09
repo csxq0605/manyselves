@@ -25,7 +25,13 @@ from .register import (
     relations_text,
     sort_key,
 )
-from .verification import checklist, checklist_html, checklist_markdown
+from .verification import (
+    assumptions_html,
+    assumptions_markdown,
+    checklist,
+    checklist_html,
+    checklist_markdown,
+)
 
 _LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料", "unselected": "未选"}
 
@@ -159,7 +165,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
         md.append(f"- {item['id']}（{_by(entry)}）" + (f"：{_md(entry['note'])}" if entry["note"] else ""))
     md += [""]
     lists = [checklist(item, decisions[item["id"]]) for item in [*kept, *needs]]
-    md += checklist_markdown(lists)
+    md += checklist_markdown(lists, assumptions_markdown(register.get("assumptions", [])))
     md += ["## 查了什么", ""]
     for record in register["partitions"]:
         if record["outcome"] != "ok":
@@ -214,7 +220,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
             reason = f"：{entry['note']}" if entry["note"] else ""
             body.append(f"<li>{html.escape(item['id'])}（{html.escape(_by(entry))}）{html.escape(reason)}</li>")
         body.append("</ul>")
-    body.append(checklist_html(lists))
+    body.append(checklist_html(lists, assumptions_html(register.get("assumptions", []))))
     body.append(partition_html(register))
     body.append("<h2>数据与来源</h2><ul>")
     for meter in register["meters"]:

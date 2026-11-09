@@ -628,6 +628,7 @@ def quantify_register(
         "site": site.manifest.site.name,
         "period": {"start": _iso(period[0]), "end": _iso(period[1])},
         "meters": meters,
+        "assumptions": [entry.model_dump(mode="json") for entry in site.manifest.assumptions],
         "partitions": partitions,
         "prechecks": prechecks,
         "items": items,

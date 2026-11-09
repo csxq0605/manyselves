@@ -89,7 +89,12 @@ def _item_issues(
             spans = _spans(record)
             if spans is not None and not _touches(spans, windows):
                 add(f"证据 {evidence_id} 查的时段和本项的时间窗没有交集；请引用查这些时间窗的证据")
+    known_facts = {fact.id for fact in site.facts() or []} | {entry.id for entry in site.manifest.assumptions}
     for cause in item.root_cause_candidates:
+        if cause.basis == "site_fact":
+            if not any(fact_id in cause.basis_detail for fact_id in known_facts):
+                add(f"候选原因“{cause.cause}”依据是 site_fact，basis_detail 要写分区说明里 site_facts 或 assumptions 的编号")
+            continue
         if cause.basis != "data":
             continue
         cited = EVIDENCE_IN_TEXT.findall(cause.basis_detail)

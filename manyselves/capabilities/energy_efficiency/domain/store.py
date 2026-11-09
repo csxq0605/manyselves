@@ -24,6 +24,7 @@ from .inputs import (
     Manifest,
     MeterQuality,
     MeterSpec,
+    SiteFact,
     TariffSchedule,
     TariffSpec,
     load_manifest,
@@ -172,6 +173,12 @@ class SiteData:
         if not path.is_file():
             return None
         return [CalendarWindow.model_validate(item) for item in read_json(path)["windows"]]
+
+    def facts(self) -> list[SiteFact] | None:
+        path = self.path("facts.json")
+        if not path.is_file():
+            return None
+        return [SiteFact.model_validate(item) for item in read_json(path)["facts"]]
 
     def tariff(self) -> TariffSchedule | None:
         """The tariffs resolved when the inputs were parsed; None without a tariff."""

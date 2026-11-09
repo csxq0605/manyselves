@@ -1070,3 +1070,69 @@ def test_rules_can_read_the_candidate_categories(tmp_path: Path) -> None:
     decisions = {entry["item_id"]: entry["decision"] for entry in select(register, None, load_rules(path))["decisions"]}
 
     assert decisions == {"L001": "unselected", "L002": "needs_data", "R001": "drop"}
+
+
+def test_survey_answers_and_inferences_reach_the_finder_and_can_be_cited(tmp_path: Path) -> None:
+    import yaml
+
+    site = write_site(tmp_path / "data/site")
+    (site / "survey.csv").write_text(
+        "调研表\n序号,问题摘要,状态,现场核实结果\n生产·02,污水站,已答复,持续运行\n资料·07,电价方案,部分已了解（待确认）,两个户号\n产线·13,报警,无答复,\n",
+        encoding="utf-8",
+    )
+    manifest = yaml.safe_load((site / "manifest.yaml").read_text(encoding="utf-8"))
+    manifest["site_facts"] = {
+        "file": "survey.csv",
+        "header_row": 2,
+        "id_column": "序号",
+        "topic_column": "问题摘要",
+        "answer_column": "现场核实结果",
+        "status_column": "状态",
+        "confirmed_states": ["已答复", "已确认"],
+    }
+    manifest["assumptions"] = [{"id": "A1", "topic": "AC1 计量范围", "inference": "只计空压机", "basis": "台账名称"}]
+    (site / "manifest.yaml").write_text(yaml.safe_dump(manifest, allow_unicode=True), encoding="utf-8")
+    start_input(tmp_path)(RUN, "energy-candidates", {"input_dir": "data/site"})
+    tools = tool_implementations(tmp_path)
+    parsed = tools["parse-energy-inputs"]({"run_id": RUN})
+    tools["profile-energy-data"]({"run_id": RUN})
+    tools["run-energy-prechecks"]({"run_id": RUN})
+    brief = tools["partition-energy-meters"]({"run_id": RUN, "max_meters": 6})["partitions"][0]
+
+    assert parsed["site_facts"] == {"facts": 2, "confirmed": 1}
+    assert [(fact["id"], fact["confirmed"]) for fact in brief["site_facts"]] == [("生产·02", True), ("资料·07", False)]
+    assert brief["assumptions"][0]["id"] == "A1"
+
+    scope = f"{RUN}#{brief['partition_id']}"
+    meter = brief["meters"][0]["meter_id"]
+    day = tools["energy-series"]({"scope": scope, "meter_id": meter, "start": "2026-03-02 00:00", "end": "2026-03-03 00:00"})
+    item = _item("A1", meter, [day["evidence_id"]], NIGHT, ("2026-03-02 20:00", "2026-03-03 08:00"))
+    item["root_cause_candidates"] += [
+        {"cause": "污水站持续运行", "kind": "necessary_service", "basis": "site_fact", "basis_detail": "生产·02", "how_to_check": "问"},
+        {"cause": "别的", "kind": "normal_operation", "basis": "site_fact", "basis_detail": "问卷", "how_to_check": "问"},
+    ]
+    submission = {
+        "partition_id": brief["partition_id"],
+        "items": [item],
+        "coverage": _coverage([meter], {"daily-clock-window": ["A1"]}),
+    }
+    issues = tools["check-partition-items"]({"scope": scope, "submission": submission})["issues"]
+    problems = [issue["problem"] for issue in issues if issue["key"] == "A1"]
+    assert any("“别的”依据是 site_fact" in problem for problem in problems)
+    assert not any("污水站持续运行" in problem for problem in problems)
+
+
+def test_inferences_are_listed_in_the_report_as_waiting_for_the_site() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.verification import (
+        assumptions_html,
+        assumptions_markdown,
+        checklist_markdown,
+    )
+
+    rows = [{"id": "A1", "topic": "E06 表范围", "inference": "没计到整条线", "basis": "批次电量只有报表的六成"}]
+    lines = checklist_markdown([], assumptions_markdown(rows))
+    text = "\n".join(lines)
+    assert "### 数据口径待现场确认" in text
+    assert "| A1 | E06 表范围 | 没计到整条线 | 批次电量只有报表的六成 | 待现场确认 |  |" in text
+    assert "待现场确认" in assumptions_html(rows)
+    assert assumptions_markdown([]) == []

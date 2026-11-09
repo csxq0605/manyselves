@@ -483,6 +483,46 @@ def tariff_schedule(folder: Path, manifest: "Manifest") -> TariffSchedule | None
         raise InputFormatError(f"tariff: {exc}") from exc
 
 
+class SiteFactsSpec(TableSource):
+    """A site survey table: one question per row with the answer found on site.
+
+    Answers are given to the model as background with their row id; rows whose
+    status is not one of ``confirmed_states`` are marked unconfirmed.  The
+    program never turns an answer into a number or a rule.
+    """
+
+    id_column: str = Field(min_length=1, description="每题编号所在的列，例如 序号")
+    topic_column: str = Field(min_length=1, description="问题摘要所在的列")
+    answer_column: str = Field(min_length=1, description="现场核实结果所在的列；空的行不读")
+    question_column: str | None = Field(default=None, min_length=1, description="完整问题所在的列（可不写）")
+    status_column: str | None = Field(default=None, min_length=1, description="答复状态所在的列（可不写）")
+    confirmed_states: list[str] = Field(
+        default_factory=list, description="状态列里算“已核实”的写法，例如 已答复、已确认；其余状态的答复标为未确认"
+    )
+
+
+class SiteFact(_Strict):
+    id: str
+    row: int
+    topic: str
+    question: str | None = None
+    answer: str
+    status: str | None = None
+    confirmed: bool
+
+
+class Assumption(_Strict):
+    """What the person who prepared the inputs inferred about the data and could not confirm.
+
+    It is shown to the model as an inference and listed in the report as 待现场确认.
+    """
+
+    id: str = Field(pattern=_ID, description="编号，例如 A1")
+    topic: str = Field(min_length=1, description="关于什么，例如 E06 表的计量范围")
+    inference: str = Field(min_length=1, description="推断的内容")
+    basis: str = Field(min_length=1, description="从哪些数据或资料推出来的")
+
+
 class PrecheckSpec(_Strict):
     """A finding method a person asked to run on meters before the model looks."""
 
@@ -517,6 +557,16 @@ class Manifest(_Strict):
     calendar: CalendarSpec | None = None
     tariff: TariffSpec | list[TariffSpec] | TariffFileSpec | None = None
     prechecks: list[PrecheckSpec] = Field(default_factory=list)
+    site_facts: SiteFactsSpec | None = None
+    assumptions: list[Assumption] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_assumptions(self) -> "Manifest":
+        ids = [item.id for item in self.assumptions]
+        duplicates = sorted({item for item in ids if ids.count(item) > 1})
+        if duplicates:
+            raise ValueError(f"assumption ids repeat: {duplicates}")
+        return self
 
     @model_validator(mode="after")
     def unique_meters(self) -> "Manifest":
@@ -565,7 +615,7 @@ def manifest_files(manifest: Manifest) -> list[str]:
     """Every data file the manifest names, in a stable order."""
 
     names = [meter.file for meter in manifest.meters]
-    for source in (manifest.production, manifest.calendar, manifest.tariff):
+    for source in (manifest.production, manifest.calendar, manifest.tariff, manifest.site_facts):
         if isinstance(source, (TableSource, TariffFileSpec)):
             names.append(source.file)
     return sorted(set(names))
@@ -621,13 +671,15 @@ def _load_frame(
 
     del mtime_ns, size
     suffix = Path(path).suffix.casefold()
+    first = header_row - 1
     if suffix == ".csv":
-        raw = pd.read_csv(path, dtype=str, encoding=encoding, keep_default_na=False, header=None)
+        # Title lines above the header may have fewer fields, so they are skipped, not parsed.
+        raw = pd.read_csv(path, dtype=str, encoding=encoding, keep_default_na=False, header=None, skiprows=first)
+        first = 0
     elif suffix in {".xlsx", ".xlsm"}:
         raw = pd.read_excel(path, sheet_name=sheet or 0, dtype=object, header=None)
     else:
         raise InputFormatError(f"{Path(path).name}: only .csv and .xlsx files are read")
-    first = header_row - 1
     if len(raw) < first + header_rows:
         raise InputFormatError(f"{Path(path).name} has no header at row {header_row}")
     frame = raw.iloc[first + header_rows :].reset_index(drop=True)
@@ -1313,6 +1365,34 @@ def load_calendar(folder: Path, spec: CalendarSpec) -> tuple[list[CalendarWindow
     return windows, unusable
 
 
+def load_site_facts(folder: Path, spec: SiteFactsSpec) -> list[SiteFact]:
+    """Every answered row of the survey, in file order."""
+
+    columns = [spec.id_column, spec.topic_column, spec.answer_column]
+    columns += [column for column in (spec.question_column, spec.status_column) if column]
+    frame = read_table(folder, spec, list(dict.fromkeys(columns)))
+    offset = first_data_row(spec)
+    facts: list[SiteFact] = []
+    for index in range(len(frame)):
+        answer = _text(frame[spec.answer_column].iloc[index])
+        if not answer:
+            continue
+        row = index + offset
+        status = _text(frame[spec.status_column].iloc[index]) if spec.status_column else ""
+        facts.append(
+            SiteFact(
+                id=_text(frame[spec.id_column].iloc[index]) or f"第{row}行",
+                row=row,
+                topic=_text(frame[spec.topic_column].iloc[index]),
+                question=_text(frame[spec.question_column].iloc[index]) or None if spec.question_column else None,
+                answer=answer,
+                status=status or None,
+                confirmed=status in spec.confirmed_states,
+            )
+        )
+    return facts
+
+
 def clock_of(value: str) -> time:
     if value == "24:00":
         return time(0, 0)
@@ -1331,6 +1411,7 @@ def clock_window(day: datetime, start: str, end: str) -> tuple[datetime, datetim
 
 
 __all__ = [
+    "Assumption",
     "Batch",
     "CalendarSpec",
     "CalendarWindow",
@@ -1343,6 +1424,8 @@ __all__ = [
     "PeriodSpec",
     "PrecheckSpec",
     "ProductionSpec",
+    "SiteFact",
+    "SiteFactsSpec",
     "QUANTITY_BASES",
     "TariffFileSpec",
     "TariffSchedule",
@@ -1353,6 +1436,7 @@ __all__ = [
     "load_batches",
     "load_calendar",
     "load_manifest",
+    "load_site_facts",
     "manifest_files",
     "normalize_meter",
     "read_meter_table",

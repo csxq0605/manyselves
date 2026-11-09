@@ -86,12 +86,15 @@ class RootCauseCandidate(_Strict):
         description="这个解释属于哪种：loss 可能是损耗；normal_operation 正常运行或工艺需要；"
         "necessary_service 必要服务；measurement 计量或时间口径问题"
     )
-    basis: Literal["data", "general_knowledge"] = Field(
-        description="依据类型：data 数据现象；general_knowledge 通用工艺/设备知识"
+    basis: Literal["data", "site_fact", "general_knowledge"] = Field(
+        description="依据类型：data 数据现象；site_fact 现场调研答复或数据口径推断；general_knowledge 通用工艺/设备知识"
     )
     basis_detail: str = Field(
         min_length=1,
-        description="依据的具体出处：data 写本项 evidence_ids 里的证据编号（可加一句说明）；general_knowledge 写是哪条知识",
+        description=(
+            "依据的具体出处：data 写本项 evidence_ids 里的证据编号（可加一句说明）；"
+            "site_fact 写分区说明里 site_facts 或 assumptions 的编号；general_knowledge 写是哪条知识"
+        ),
     )
     how_to_check: str = Field(min_length=1, description="人要核实或排除这个原因，需要看什么、问什么")
 

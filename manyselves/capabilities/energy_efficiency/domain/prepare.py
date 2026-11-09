@@ -13,6 +13,7 @@ from .inputs import (
     file_sha256,
     load_batches,
     load_calendar,
+    load_site_facts,
     manifest_files,
     normalize_meter,
     read_meter_table,
@@ -103,6 +104,11 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
             "unusable_rows": unusable,
             "states": sorted({window.state for window in windows}),
         }
+    facts = None
+    if manifest.site_facts is not None:
+        loaded = load_site_facts(site.inputs, manifest.site_facts)
+        write_json(site.path("facts.json"), {"facts": [fact.model_dump(mode="json") for fact in loaded]})
+        facts = {"facts": len(loaded), "confirmed": sum(1 for fact in loaded if fact.confirmed)}
     tariff = None
     schedule = tariff_schedule(site.inputs, manifest)
     if schedule is not None:
@@ -129,6 +135,8 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
         "production": production,
         "calendar": calendar,
         "tariff": tariff,
+        "site_facts": facts,
+        "assumptions": len(manifest.assumptions),
     }
 
 
@@ -341,6 +349,18 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
         "method_readiness": method_readiness(site, meter_ids),
         "rule_items": rule_items,
         "profile_text": "\n\n".join(profile_text(profiles[meter_id]) for meter_id in meter_ids),
+        "site_facts": [
+            {
+                "id": fact.id,
+                "topic": fact.topic,
+                "question": fact.question,
+                "answer": fact.answer,
+                "status": fact.status,
+                "confirmed": fact.confirmed,
+            }
+            for fact in site.facts() or []
+        ],
+        "assumptions": [item.model_dump(mode="json") for item in site.manifest.assumptions],
     }
 
 

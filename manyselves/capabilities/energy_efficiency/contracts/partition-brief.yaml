@@ -1,5 +1,5 @@
 id: partition-brief
-version: 1.0.0
+version: 1.1.0
 description: One partition's meters, data period, profile text, method menu with readiness per meter, and rule items
 adapter: json_schema
 schema:
@@ -22,3 +22,5 @@ schema:
     method_readiness: {type: array, items: {type: object}}
     rule_items: {type: array, items: {type: object}}
     profile_text: {type: string}
+    site_facts: {type: array, items: {type: object}}
+    assumptions: {type: array, items: {type: object}}

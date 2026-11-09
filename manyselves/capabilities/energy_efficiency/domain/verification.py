@@ -175,7 +175,7 @@ def _md(value: Any) -> str:
     return " ".join(str("" if value is None else value).split()).replace("|", "／")
 
 
-def checklist_markdown(lists: list[dict[str, Any]]) -> list[str]:
+def checklist_markdown(lists: list[dict[str, Any]], site_part: list[str] | None = None) -> list[str]:
     lines = [
         "## 人工核实清单",
         "",
@@ -183,6 +183,7 @@ def checklist_markdown(lists: list[dict[str, Any]]) -> list[str]:
         f"证据等级可选：{'、'.join(EVIDENCE_GRADES)}。结论状态可选：{'、'.join(CONCLUSION_STATES)}。",
         f"现场回答“无法提供”不算“否”，转为替代测量或暂停该主张。{FORBIDDEN}",
         "",
+        *(site_part or []),
     ]
     if not lists:
         return [*lines, "（没有保留或需补资料的项）", ""]
@@ -207,19 +208,58 @@ def checklist_markdown(lists: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+ASSUMPTION_STATE = "待现场确认"
+ASSUMPTION_HEAD = ["编号", "事项", "推断", "依据", "状态", "现场确认结果（人填）"]
+
+
+def assumptions_markdown(assumptions: list[dict[str, Any]]) -> list[str]:
+    """Inferences about the data that nobody could confirm; every row waits for the site."""
+
+    if not assumptions:
+        return []
+    lines = [
+        "### 数据口径待现场确认",
+        "",
+        "下面是准备资料时从数据推出、但没有人确认过的口径。各候选项的数字都建立在这些推断上；现场确认前不当作事实。",
+        "",
+        "| " + " | ".join(ASSUMPTION_HEAD) + " |",
+        "|" + "---|" * len(ASSUMPTION_HEAD),
+    ]
+    lines += [
+        f"| {_md(entry['id'])} | {_md(entry['topic'])} | {_md(entry['inference'])} | {_md(entry['basis'])} | {ASSUMPTION_STATE} |  |"
+        for entry in assumptions
+    ]
+    return [*lines, ""]
+
+
+def assumptions_html(assumptions: list[dict[str, Any]]) -> str:
+    if not assumptions:
+        return ""
+    rows = [
+        [entry["id"], entry["topic"], entry["inference"], entry["basis"], ASSUMPTION_STATE, ""] for entry in assumptions
+    ]
+    return (
+        "<h3>数据口径待现场确认</h3>"
+        "<p>下面是准备资料时从数据推出、但没有人确认过的口径。各候选项的数字都建立在这些推断上；现场确认前不当作事实。</p>"
+        + _table(ASSUMPTION_HEAD, rows)
+    )
+
+
 def _table(head: list[str], rows: list[list[str]]) -> str:
     cells = "".join(f"<th>{html.escape(name)}</th>" for name in head)
     body = "".join("<tr>" + "".join(f"<td>{html.escape(value)}</td>" for value in row) + "</tr>" for row in rows)
     return f"<table class='check'><tr>{cells}</tr>{body}</table>"
 
 
-def checklist_html(lists: list[dict[str, Any]]) -> str:
+def checklist_html(lists: list[dict[str, Any]], site_part: str = "") -> str:
     parts = [
         "<h2>人工核实清单</h2>",
         "<p>空列由人填写；程序只列出要核的事、知识库里的竞争解释和模型起草的现场问题，不判定原因，也不下结论。</p>",
         f"<p class='note'>证据等级可选：{html.escape('、'.join(EVIDENCE_GRADES))}。结论状态可选：{html.escape('、'.join(CONCLUSION_STATES))}。"
         f"现场回答“无法提供”不算“否”。{html.escape(FORBIDDEN)}</p>",
     ]
+    if site_part:
+        parts.append(site_part)
     if not lists:
         parts.append("<p>（没有保留或需补资料的项）</p>")
     for entry in lists:
