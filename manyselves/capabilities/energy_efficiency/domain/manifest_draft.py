@@ -92,7 +92,11 @@ def check_manifest(folder: Path, manifest: Manifest) -> dict[str, Any]:
         if spec.filter_column:
             used.setdefault((spec.file, spec.sheet, spec.filter_column), set()).add(spec.filter_value or "")
         if quality.records == 0:
-            issues.append(f"表 {spec.id}：按这份写法读不出任何记录")
+            if quality.flat_throughout:
+                # The readings never change: nothing a different way of reading would fix.
+                warnings += [f"表 {spec.id}：{note}" for note in quality.notes()]
+            else:
+                issues.append(f"表 {spec.id}：按这份写法读不出任何记录")
             continue
         readable += 1
         share = _never_down(frame[spec.value_column])
