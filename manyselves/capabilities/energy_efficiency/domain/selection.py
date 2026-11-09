@@ -25,6 +25,7 @@ import pandas as pd
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from .items import KB_ITEMS
 from .methods import MENU, NO_METHOD
 from .quantify import SCALAR_FIELDS
 from .register import (
@@ -39,7 +40,8 @@ from .register import (
 Decision = Literal["keep", "drop", "needs_data"]
 NUMBER_FIELDS = set(SCALAR_FIELDS)
 TEXT_FIELDS = {"source", "method_id", "partition_id"}
-LIST_FIELDS = {"meter_ids"}
+# candidate_categories: the knowledge-base ids the model proposed and the program checked (user, 11-09).
+LIST_FIELDS = {"meter_ids", "candidate_categories"}
 STRUCTURAL_FIELDS = TEXT_FIELDS | LIST_FIELDS
 RULE_FIELDS = NUMBER_FIELDS | STRUCTURAL_FIELDS
 SOURCES = {"model", "rule"}
@@ -96,8 +98,11 @@ class Condition(BaseModel):
                 raise ValueError(f"{self.op} takes no value")
             return self
         if kind == "list":
+            what = "knowledge-base item id" if self.field == "candidate_categories" else "meter id"
             if not isinstance(self.value, str) or not self.value:
-                raise ValueError(f"{self.field} {self.op} needs one meter id")
+                raise ValueError(f"{self.field} {self.op} needs one {what}")
+            if self.field == "candidate_categories" and self.value not in KB_ITEMS:
+                raise ValueError(f"candidate_categories holds ids of {sorted(KB_ITEMS)}; {self.value!r} is not")
             return self
         values = self.value if self.op in {"in", "not_in"} else [self.value]
         if self.op in {"in", "not_in"} and (not isinstance(self.value, list) or not self.value):
@@ -139,6 +144,8 @@ def load_rules(path: Path) -> RuleSet:
 def _field_value(item: dict[str, Any], name: str) -> Any:
     if name == "method_id":
         return item["finding_method"]["method_id"]
+    if name == "candidate_categories":
+        return [proposal["item_id"] for proposal in item.get("candidate_categories", [])]
     if name in STRUCTURAL_FIELDS:
         return item[name]
     return item["scalars"].get(name)
@@ -282,6 +289,9 @@ def _unmatched_values(register: dict[str, Any], rules: RuleSet | None) -> list[s
     seen = {
         "partition_id": {item.get("partition_id") for item in register["items"]},
         "meter_ids": {meter_id for item in register["items"] for meter_id in item.get("meter_ids", [])},
+        "candidate_categories": {
+            proposal["item_id"] for item in register["items"] for proposal in item.get("candidate_categories", [])
+        },
     }
     warnings = []
     for number, rule in enumerate(rules.rules, start=1):

@@ -181,7 +181,7 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     guide.append([f"在“候选清单”的“{CHOICE_HEADER}”列填 保留 / 不保留 / 需补资料，可在“{NOTE_HEADER}”列写理由；不填的项按规则文件处理，没有规则就是未选。"])
     guide.append([f"标好后保存，用 energy-report 入口指定这个文件出报告。“{ID_HEADER}”和“{CODE_HEADER}”两列不要改：出报告时程序用它们确认标记对应的是这份清单里的同一项。"])
     guide.append([f"“{SERVICE_HEADER}”列默认“未知”：人确认这段用电里有哪些必要服务（工艺、环保、质量、安全）后填写；程序和模型都不填。"])
-    guide.append(["“候选类别”是模型按知识库 17 项提议的，程序只核对编号合法、列出缺的资料，不由方法推断，也不作结论。"])
+    guide.append(["“候选类别”是模型按知识库 17 项提议的，程序只核对编号合法、列出缺的资料，不由方法推断，也不作结论；规则文件可以用 candidate_categories contains/not_contains 读它。"])
     guide.append([f"这份清单来自运行 {register['run_id']}。"])
     guide.append([])
     guide.append(["字段", "含义"])

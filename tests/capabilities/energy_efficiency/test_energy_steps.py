@@ -314,6 +314,8 @@ def test_the_report_reads_the_register_as_it_was_when_the_report_started(tmp_pat
         ("{field: window_cost, op: is_null, value: 0}", "takes no value"),
         ("{field: method_id, op: gt, value: a}", "cannot use gt"),
         ("{field: method_id, op: eq, value: daily-clock}", "method_id is one of"),
+        ("{field: candidate_categories, op: contains, value: LOSS-NIGHT}", "candidate_categories holds ids"),
+        ("{field: candidate_categories, op: eq, value: LOSS-IDLE}", "cannot use eq"),
     ],
 )
 def test_rules_that_do_not_fit_their_field_are_refused(tmp_path: Path, condition: str, message: str) -> None:
@@ -1047,3 +1049,24 @@ def test_the_report_carries_a_verification_checklist_with_blank_judgments(tmp_pa
     assert "停产窗口公辅持续运行" in checklist and "| 已排除/未排除（人填） |" in checklist
     assert "| 假设待验证 |  |  |" in checklist
     assert "夜间有必要的工艺维持" in checklist
+
+
+def test_rules_can_read_the_candidate_categories(tmp_path: Path) -> None:
+    path = tmp_path / "rules.yaml"
+    path.write_text(
+        "rules:\n"
+        "- when:\n  - {field: candidate_categories, op: contains, value: MEASUREMENT_ISSUE}\n  decision: needs_data\n"
+        "- when:\n  - {field: candidate_categories, op: not_contains, value: LOSS-IDLE}\n  decision: drop\n",
+        encoding="utf-8",
+    )
+    register = {
+        "run_id": RUN,
+        "items": [
+            {"id": "L001", "meter_ids": ["AC1"], "scalars": {}, "candidate_categories": [{"item_id": "LOSS-IDLE"}]},
+            {"id": "L002", "meter_ids": ["AC1"], "scalars": {}, "candidate_categories": [{"item_id": "MEASUREMENT_ISSUE"}]},
+            {"id": "R001", "meter_ids": ["AC1"], "scalars": {}, "candidate_categories": []},
+        ],
+    }
+    decisions = {entry["item_id"]: entry["decision"] for entry in select(register, None, load_rules(path))["decisions"]}
+
+    assert decisions == {"L001": "unselected", "L002": "needs_data", "R001": "drop"}
