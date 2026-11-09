@@ -450,3 +450,62 @@ def test_the_cost_note_names_why_records_were_not_priced() -> None:
     assert "1 条跨两个不同价格的电价时段（1.5 kWh）" in note
     assert "2 条不在电价的适用日期内（3.0 kWh）" in note
     assert "priced_part" not in cost
+
+
+# --- methods between batches and between meters ------------------------------
+
+
+def _products(*rows: tuple[int, int, int, int, str]) -> list[Batch]:
+    return [
+        Batch(
+            row=number,
+            machine="IM-01",
+            start=DAY.replace(hour=h1, minute=m1),
+            end=DAY.replace(hour=h2, minute=m2),
+            product=product,
+        )
+        for number, (h1, m1, h2, m2, product) in enumerate(rows, start=2)
+    ]
+
+
+def test_low_power_inside_batches_only() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.methods import run_method
+
+    # 30 kW while running, 2 kW from 10:00 to 11:00 inside the first batch and at night.
+    series = _energy_series(lambda moment: 2.0 if moment.hour < 8 or moment.hour >= 17 or moment.hour == 10 else 30.0)
+    ctx = _ctx(batches=_batches((8, 0, 12, 0), (13, 0, 17, 0)), machines={"M1": ["IM-01"]})
+    params = {"comparator": "below", "high_kw": 5, "min_minutes": 30, "within_machines": ["IM-01"]}
+    run = run_method("threshold-segments", params, series, ctx, None)
+    assert run.status == "ok"
+    assert [(item.measure.start.hour, item.measure.end.hour) for item in run.occurrences] == [(10, 11)]
+
+
+def test_changeovers_measure_the_time_between_different_products() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.methods import run_method
+
+    series = _energy_series(lambda moment: 10.0)
+    batches = _products((8, 0, 10, 0, "A"), (10, 30, 12, 0, "B"), (12, 30, 14, 0, "B"), (15, 0, 16, 0, "A"))
+    ctx = _ctx(batches=batches, machines={"M1": ["IM-01"]}, product_column="产品")
+    run = run_method("changeovers", {"machine": "IM-01", "include_same": True}, series, ctx, None)
+    assert run.status == "ok"
+    assert [(item.extra["from"], item.extra["to"]) for item in run.occurrences] == [("A", "B"), ("B", "A")]
+    assert run.occurrences[1].measure.energy_kwh == 10.0
+    pairs = {entry["pair"]: entry for entry in run.summary["pairs"]}
+    assert pairs["未换产（对照）"]["count"] == 1 and pairs["A → B"]["median_minutes"] == 30.0
+    # Without a product column there is no changeover to find.
+    assert run_method("changeovers", {"machine": "IM-01"}, series, _ctx(batches=batches, machines={"M1": ["IM-01"]}), None).status == "needs_input"
+
+
+def test_paired_meter_finds_one_meter_running_while_the_other_is_off() -> None:
+    from manyselves.capabilities.energy_efficiency.domain.methods import run_method
+
+    line = _energy_series(lambda moment: 50.0 if 8 <= moment.hour < 17 else 0.0)
+    utility = _energy_series(lambda moment: 20.0 if 6 <= moment.hour < 20 else 1.0)
+    others = {"LINE": line}
+    ctx = _ctx(series_of=lambda meter_id: others[meter_id], meters_in_scope=frozenset({"M1", "LINE"}))
+    params = {"other_meter": "LINE", "on_kw": 10, "other_state": "below", "other_kw": 5, "min_minutes": 60}
+    run = run_method("paired-meter", params, utility, ctx, None)
+    assert [(item.measure.start.hour, item.measure.end.hour) for item in run.occurrences] == [(6, 8), (17, 20)]
+    assert run.occurrences[0].extra["other_avg_kw"] == 0.0
+    outside = _ctx(series_of=lambda meter_id: others[meter_id], meters_in_scope=frozenset({"M1"}))
+    assert run_method("paired-meter", params, utility, outside, None).status == "needs_input"

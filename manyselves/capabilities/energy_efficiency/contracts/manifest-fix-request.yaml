@@ -1,0 +1,5 @@
+id: manifest-fix-request
+version: 1.0.0
+description: The program's trial read of a drafted manifest, sent back to the drafter with the manifest
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ManifestFixRequest

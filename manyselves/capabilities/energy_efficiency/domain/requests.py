@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .inputs import Manifest
 from .items import PartitionSubmission
 
 
@@ -133,6 +134,22 @@ class SettleAssumptionsRequest(_Strict):
     draft: AssumptionDraft
 
 
+class TryManifestRequest(_Strict):
+    run_id: str
+    manifest: Manifest
+
+
+class ManifestFixRequest(_Strict):
+    check: dict[str, Any]
+    manifest: Manifest
+
+
+class SettleManifestRequest(_Strict):
+    run_id: str
+    first: Manifest
+    corrected: dict[str, Manifest] = Field(default_factory=dict)
+
+
 class SelectRequest(_Strict):
     run_id: str
     request: dict[str, Any]
@@ -148,7 +165,10 @@ __all__ = [
     "AssumptionDraft",
     "CandidatesRequest",
     "DraftedAssumption",
+    "ManifestFixRequest",
     "SettleAssumptionsRequest",
+    "SettleManifestRequest",
+    "TryManifestRequest",
     "CheckRequest",
     "FixRequest",
     "PartitionAttempt",

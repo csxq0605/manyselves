@@ -684,6 +684,8 @@ def quantify_register(
             for entry in site.assumptions()
         ],
         "states": _states_record(site),
+        "manifest_origin": site.manifest_origin(),
+        "topology": site.topology(),
         "caliber_facts": read_json(site.path("caliber.json"))["facts"] if site.path("caliber.json").is_file() else [],
         "partitions": partitions,
         "prechecks": prechecks,

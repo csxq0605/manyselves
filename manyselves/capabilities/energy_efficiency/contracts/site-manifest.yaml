@@ -1,0 +1,5 @@
+id: site-manifest
+version: 1.0.0
+description: How to read one site's files, with the inferences that could not be confirmed
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.inputs:Manifest

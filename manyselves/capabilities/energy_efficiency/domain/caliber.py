@@ -424,6 +424,37 @@ def total_fact(hourly: dict[str, pd.Series]) -> dict[str, Any] | None:
     )
 
 
+def topology_facts(topology: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The asset list and plant tree candidates, as facts an inference can cite."""
+
+    if not topology:
+        return []
+    facts = []
+    for entry in topology["meters"]:
+        parts = []
+        if "asset_matches" in entry:
+            parts.append(f"台账候选：{entry['asset_match'] or '没有对上'}")
+            if entry.get("category"):
+                parts.append(f"用能类别 {entry['category']}")
+            if entry.get("equipment"):
+                parts.append(f"关联设备 {entry['equipment']}")
+        if "tree_nodes" in entry:
+            parts.append(f"工厂树候选：{entry['tree_path'] or '没有对上'}")
+        parts += entry["notes"]
+        facts.append(_fact(f"{entry['meter_id']}-TOPO", [entry["meter_id"]], "台账和工厂树里的位置", f"{entry['meter_id']} " + "；".join(parts), {k: v for k, v in entry.items() if k != "notes"}))
+    if topology["notes"] or topology["relations"]:
+        facts.append(
+            _fact(
+                "PLANT-TREE",
+                sorted({meter for relation in topology["relations"] for meter in (relation["upper"], relation["lower"])}),
+                "表计层级",
+                "；".join(topology["notes"]),
+                {"relations": topology["relations"]},
+            )
+        )
+    return facts
+
+
 def production_facts(site: SiteData, batches: list[Batch] | None) -> list[dict[str, Any]]:
     facts = []
     spec = site.manifest.production
@@ -518,6 +549,7 @@ def compute_facts(site: SiteData) -> list[dict[str, Any]]:
         series_hourly = hourly_kw(series)
         if series_hourly is not None and len(series_hourly):
             hourly[spec.id] = series_hourly
+    facts += topology_facts(site.topology())
     facts += production_facts(site, batches)
     total = total_fact(hourly)
     if total:

@@ -1,0 +1,13 @@
+id: survey-brief
+version: 1.0.0
+description: What the program saw in each file of a folder without a manifest (top rows, header guess, column measures, small sheets whole, lists of objects in JSON)
+adapter: json_schema
+schema:
+  type: object
+  required: [key, run_id, tables, documents, skipped]
+  properties:
+    key: {type: string}
+    run_id: {type: string}
+    tables: {type: array, items: {type: object}}
+    documents: {type: array, items: {type: object}}
+    skipped: {type: array, items: {type: object}}

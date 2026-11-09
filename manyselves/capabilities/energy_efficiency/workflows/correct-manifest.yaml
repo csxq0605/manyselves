@@ -1,0 +1,23 @@
+id: correct-manifest
+version: 0.1.0
+description: One correction round of the drafted manifest in the drafter's own conversation
+tasks:
+- fix-manifest
+recovery:
+- typed-turn-recovery
+output_contract: site-manifest
+state:
+  item: null
+  conversation: null
+actions:
+- id: fix
+  kind: invoke_agent
+  agent: manifest-drafter
+  task: fix-manifest
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: manifest
+- id: finish
+  kind: end_workflow
+  output_variable: manifest
+  output_name: result

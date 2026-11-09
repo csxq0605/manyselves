@@ -1,8 +1,11 @@
 """The input format of one site's energy data and its normalization.
 
 A site's input folder holds ``manifest.yaml`` and the data files it names.
-The manifest says what every column means; nothing about a column's meaning
-is inferred from its name or its values.  In particular:
+The manifest says what every column means; the reading below infers nothing
+about a column's meaning from its name or its values.  (When the folder has
+no manifest, the model drafts one from the program's survey of the files and
+writes what it could not tell as assumptions; see ``manifest_draft``.)  In
+particular:
 
 - ``interval_energy`` values are the energy of one recording interval, and
   ``timestamp_marks`` says whether the timestamp is the start or the end of
@@ -26,6 +29,7 @@ repaired.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import zipfile
 from datetime import datetime, time, timedelta
@@ -527,6 +531,68 @@ class Assumption(_Strict):
     basis: str = Field(min_length=1, description="从哪些数据或资料推出来的")
 
 
+class AssetListSpec(TableSource):
+    """The site's list of metering points (台账): codes, names, energy-use categories, equipment.
+
+    Matched to the meters by code or name; every match is a candidate for a
+    person to confirm, never a fact the program relies on.
+    """
+
+    code_column: str | None = Field(default=None, min_length=1, description="点位或表计编号所在的列")
+    name_column: str | None = Field(default=None, min_length=1, description="点位或表计名称所在的列")
+    category_column: str | None = Field(default=None, min_length=1, description="用能类别所在的列")
+    equipment_column: str | None = Field(default=None, min_length=1, description="关联设备所在的列")
+
+    @model_validator(mode="after")
+    def code_or_name(self) -> "AssetListSpec":
+        if not self.code_column and not self.name_column:
+            raise ValueError("assets needs code_column or name_column")
+        return self
+
+
+class TreeJsonSpec(_Strict):
+    """The plant tree as nested JSON: each node holds its id, name and children."""
+
+    format: Literal["json"]
+    file: str = Field(min_length=1)
+    nodes_path: list[str | int] = Field(
+        default_factory=list, description="从文件根走到最上层节点（列表或单个节点）的键，例如 [data, list]"
+    )
+    id_key: str = "id"
+    name_key: str = "name"
+    children_key: str = "children"
+
+    @field_validator("file")
+    @classmethod
+    def inside_folder(cls, value: str) -> str:
+        return _inside_folder(value)
+
+
+class TreeTableSpec(TableSource):
+    """The plant tree as a table: one node per row with its parent's id."""
+
+    format: Literal["table"]
+    id_column: str = Field(min_length=1)
+    parent_column: str = Field(min_length=1, description="上级节点编号所在的列；最上层的行留空")
+    name_column: str = Field(min_length=1)
+
+
+class TreeNode(_Strict):
+    id: str
+    name: str
+    parent: str | None
+    depth: int
+    path: list[str]
+
+
+class AssetRow(_Strict):
+    row: int
+    code: str | None
+    name: str | None
+    category: str | None
+    equipment: str | None
+
+
 class PrecheckSpec(_Strict):
     """A finding method a person asked to run on meters before the model looks."""
 
@@ -562,6 +628,8 @@ class Manifest(_Strict):
     tariff: TariffSpec | list[TariffSpec] | TariffFileSpec | None = None
     prechecks: list[PrecheckSpec] = Field(default_factory=list)
     site_facts: SiteFactsSpec | None = None
+    assets: AssetListSpec | None = None
+    plant_tree: TreeJsonSpec | TreeTableSpec | None = Field(default=None, discriminator="format")
     assumptions: list[Assumption] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -619,8 +687,9 @@ def manifest_files(manifest: Manifest) -> list[str]:
     """Every data file the manifest names, in a stable order."""
 
     names = [meter.file for meter in manifest.meters]
-    for source in (manifest.production, manifest.calendar, manifest.tariff, manifest.site_facts):
-        if isinstance(source, (TableSource, TariffFileSpec)):
+    sources = (manifest.production, manifest.calendar, manifest.tariff, manifest.site_facts, manifest.assets, manifest.plant_tree)
+    for source in sources:
+        if isinstance(source, (TableSource, TariffFileSpec, TreeJsonSpec)):
             names.append(source.file)
     return sorted(set(names))
 
@@ -1404,6 +1473,89 @@ def load_site_facts(folder: Path, spec: SiteFactsSpec) -> list[SiteFact]:
     return facts
 
 
+MAX_TREE_NODES = 100_000
+
+
+def load_tree(folder: Path, spec: TreeJsonSpec | TreeTableSpec) -> list[TreeNode]:
+    """Every node of the plant tree with its path of names from the top."""
+
+    nodes: list[TreeNode] = []
+    if isinstance(spec, TreeTableSpec):
+        frame = read_table(folder, spec, list(dict.fromkeys([spec.id_column, spec.parent_column, spec.name_column])))
+        rows = {}
+        for index in range(len(frame)):
+            node_id = _text(frame[spec.id_column].iloc[index])
+            if node_id:
+                rows[node_id] = (_text(frame[spec.name_column].iloc[index]), _text(frame[spec.parent_column].iloc[index]) or None)
+
+        def path_of(node_id: str) -> list[str]:
+            names, seen = [], set()
+            current: str | None = node_id
+            while current is not None and current in rows and current not in seen:
+                seen.add(current)
+                names.append(rows[current][0])
+                current = rows[current][1]
+            return names[::-1]
+
+        for node_id, (name, parent) in rows.items():
+            path = path_of(node_id)
+            nodes.append(TreeNode(id=node_id, name=name, parent=parent if parent in rows else None, depth=len(path) - 1, path=path))
+        return nodes
+    path = safe_relative(folder, spec.file)
+    try:
+        data: Any = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise InputFormatError(f"{spec.file} cannot be read as JSON: {exc}") from exc
+    for key in spec.nodes_path:
+        try:
+            data = data[key]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise InputFormatError(f"{spec.file}: nodes_path step {key!r} does not exist") from exc
+    stack = [(item, None, []) for item in reversed(data if isinstance(data, list) else [data])]
+    while stack:
+        item, parent, above = stack.pop()
+        if not isinstance(item, dict):
+            continue
+        if len(nodes) >= MAX_TREE_NODES:
+            raise InputFormatError(f"{spec.file} has more than {MAX_TREE_NODES} nodes")
+        node_id = _text(item.get(spec.id_key))
+        name = _text(item.get(spec.name_key))
+        names = [*above, name]
+        if node_id:
+            nodes.append(TreeNode(id=node_id, name=name, parent=parent, depth=len(above), path=names))
+        children = item.get(spec.children_key) or []
+        if isinstance(children, list):
+            stack.extend((child, node_id or parent, names) for child in reversed(children))
+    if not nodes:
+        raise InputFormatError(f"{spec.file}: no node with {spec.id_key!r} under nodes_path {spec.nodes_path}")
+    return nodes
+
+
+def load_assets(folder: Path, spec: AssetListSpec) -> list[AssetRow]:
+    columns = [column for column in (spec.code_column, spec.name_column, spec.category_column, spec.equipment_column) if column]
+    frame = read_table(folder, spec, list(dict.fromkeys(columns)))
+    offset = first_data_row(spec)
+    rows = []
+
+    def cell(column: str | None, index: int) -> str | None:
+        return (_text(frame[column].iloc[index]) or None) if column else None
+
+    for index in range(len(frame)):
+        code, name = cell(spec.code_column, index), cell(spec.name_column, index)
+        if not code and not name:
+            continue
+        rows.append(
+            AssetRow(
+                row=index + offset,
+                code=code,
+                name=name,
+                category=cell(spec.category_column, index),
+                equipment=cell(spec.equipment_column, index),
+            )
+        )
+    return rows
+
+
 def clock_of(value: str) -> time:
     if value == "24:00":
         return time(0, 0)
@@ -1425,6 +1577,8 @@ __all__ = [
     "Assumption",
     "Batch",
     "CalendarSpec",
+    "AssetListSpec",
+    "AssetRow",
     "CalendarWindow",
     "ENERGY_SEMANTICS",
     "InputFormatError",
@@ -1441,13 +1595,18 @@ __all__ = [
     "TariffFileSpec",
     "TariffSchedule",
     "TariffSpec",
+    "TreeJsonSpec",
+    "TreeNode",
+    "TreeTableSpec",
     "UNPRICED_REASONS",
     "clock_window",
     "file_sha256",
+    "load_assets",
     "load_batches",
     "load_calendar",
     "load_manifest",
     "load_site_facts",
+    "load_tree",
     "manifest_files",
     "normalize_meter",
     "read_meter_table",

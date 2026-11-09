@@ -1,0 +1,5 @@
+id: try-manifest-request
+version: 1.0.0
+description: The run and a drafted manifest to read with
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:TryManifestRequest

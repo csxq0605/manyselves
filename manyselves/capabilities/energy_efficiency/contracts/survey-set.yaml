@@ -1,0 +1,12 @@
+id: survey-set
+version: 1.0.0
+description: The survey of an input folder without a manifest, in a list that is empty when the folder has one
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, briefs]
+  properties:
+    run_id: {type: string}
+    briefs:
+      type: array
+      items: {type: object, required: [key, run_id]}

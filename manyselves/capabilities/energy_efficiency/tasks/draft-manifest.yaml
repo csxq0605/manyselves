@@ -1,0 +1,16 @@
+id: draft-manifest
+version: 0.1.0
+description: Draft how to read a folder of site files from the program's survey, writing what could not be told as assumptions
+agent: manifest-drafter
+objective: 下面是程序对输入文件夹的探测：tables 是每个文件每张表（top_rows 是前几行原样，header_row_guess 是猜的表头行，从 1 数；columns_under_guess 是按猜的表头各列的统计；小表在 all_rows 里整张给出），documents 是 JSON 文件里找到的对象列表，skipped 是读不了的文件。请写出这批数据的读法（manifest）。
+input_contract: survey-brief
+output_contract: site-manifest
+constraints:
+- file 写探测里的文件名原样（含子文件夹），sheet 写表名；header_row 从 1 数；表头占两行时写 header_rows 2，列名写成“上一行/下一行”，上一行是合并单元格时沿用左边的字。
+- 每块表一个 meters 条目。长表（一列里放着各表的编号或名称）用 filter_column 和 filter_value 分开，长表里出现的每个值都要有一块表；id 用字母数字（可以用编号列的值或台账、工厂树里的编号），name 用能找到的最完整的名称。
+- semantics：数值一路不下降、越来越大的是 cumulative_energy；每行是一段时间电量的是 interval_energy；kW 的瞬时值是 instant_power；区间平均功率是 interval_avg_power。看 share_never_down（长表看分组内的那个）、取值范围和列名单位。interval_minutes 用时间间隔的中位数。interval_energy 和 interval_avg_power 必须写 timestamp_marks（时间标在区间开头 start 还是结尾 end）；推不出时写 end 并在 assumptions 里说明。
+- 生产记录：machine_column、开始和结束（日期和时刻分两列时用 start_time_column、end_time_column）；数量列只有一列时按列名推 quantity_basis（投入量 input、成品量 output、合格品量 qualified），推断写进 assumptions；quantity_unit 看列名或样例。报表里每批的用电量列写进 reported_energy_column。机台名或编号和表的名称、编号、台账的关联设备能对上时，把机台写进那块表的 production_machines，并在 assumptions 里写依据；对不上的不写。
+- 电价：分时电价、时段划分在一张或几张表里时，按表的样子选 tariff 的写法；读不出时不写 tariff，在 assumptions 里说明。现场调研问卷写 site_facts。台账（表计或点位清单）写 assets，工厂树写 plant_tree（JSON 用 nodes_path 指到最上层节点，id_key、name_key、children_key 按 keys 和 children_keys 写）。
+- group 不确定时不写，程序会用台账的用能类别。period 不写，程序按数据的首尾定。不写 prechecks。
+- assumptions 的 id 写 M1、M2……；每条写 topic、inference、basis（探测里的哪些数），推断要写成“可能”，不写成定论。
+recovery: typed-turn-recovery

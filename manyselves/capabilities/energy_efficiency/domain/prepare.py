@@ -34,6 +34,7 @@ from .methods import (
 from .profile import meter_profile, profile_text
 from .states import COVERAGE_NOTE, meter_states, plant_summary, segments
 from .store import SiteData, read_json, write_json
+from .topology import build_topology, topology_group
 
 RULE_WINDOWS = 5
 
@@ -122,9 +123,15 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
                 for item in schedule.tariffs
             ],
         }
+    topology = build_topology(site.inputs, manifest)
+    if topology is not None:
+        write_json(site.path("topology.json"), topology)
     return {
         "run_id": run_id,
         "site": manifest.site.name,
+        "topology": None
+        if topology is None
+        else {"relations": len(topology["relations"]), "notes": len(topology["notes"])},
         "period": period,
         "meters": [
             {
@@ -142,7 +149,9 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
     }
 
 
-def method_context(site: SiteData) -> MethodContext:
+def method_context(site: SiteData, meters: list[str] | None = None) -> MethodContext:
+    """What the methods read besides one meter; ``meters`` limits the other meters a method may read."""
+
     production = site.manifest.production
     return MethodContext(
         period=site.period(),
@@ -153,13 +162,16 @@ def method_context(site: SiteData) -> MethodContext:
         quantity_unit=production.quantity_unit if production else None,
         product_group_columns=tuple(production.product_group_columns) if production else (),
         segments=site.segments(),
+        series_of=site.series,
+        meters_in_scope=frozenset(meters) if meters is not None else None,
+        product_column=production.product_column if production else None,
     )
 
 
 def method_readiness(site: SiteData, meter_ids: list[str]) -> list[dict[str, Any]]:
     """For each menu method and meter, whether the inputs could feed it (program decided)."""
 
-    ctx = method_context(site)
+    ctx = method_context(site, meter_ids)
     rows = []
     records = {meter_id: len(site.series(meter_id)) for meter_id in meter_ids}
     for spec in MENU.values():
@@ -313,9 +325,11 @@ def partition_meters(workspace: Path, run_id: str, max_meters: int) -> dict[str,
     """Group meters by their declared group, at most ``max_meters`` per partition."""
 
     site = SiteData(workspace, run_id)
+    topology = site.topology()
     groups: dict[str, list[str]] = {}
     for spec in site.manifest.meters:
-        groups.setdefault(spec.group or "", []).append(spec.id)
+        # The manifest's group; else the asset list's category (a candidate match, said so in the register).
+        groups.setdefault(spec.group or topology_group(topology, spec.id) or "", []).append(spec.id)
     partitions = []
     for group, meter_ids in groups.items():
         chunks = [meter_ids[i : i + max_meters] for i in range(0, len(meter_ids), max_meters)]

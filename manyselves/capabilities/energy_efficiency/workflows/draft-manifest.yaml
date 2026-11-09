@@ -1,0 +1,94 @@
+id: draft-manifest
+version: 0.1.0
+description: The manifest drafter writes how to read a folder without a manifest; the program reads with it, sends it back once and keeps a draft that reads
+tasks:
+- draft-manifest
+recovery:
+- typed-turn-recovery
+output_contract: manifest-check
+state:
+  item: null
+  draft_key: null
+  corrected: {}
+  correction_errors: {}
+actions:
+- id: open
+  kind: create_conversation
+  agent: manifest-drafter
+  conversation_key: manifest
+  key_variable: draft_key
+  mode: run
+  output_variable: conversation
+- id: draft
+  kind: invoke_agent
+  agent: manifest-drafter
+  task: draft-manifest
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: manifest
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: check-input
+  kind: set_variable
+  variable: check_input
+  value_variables:
+    run_id: run_id
+    manifest: manifest
+- id: check
+  kind: invoke_tool
+  tool: check-manifest
+  input_variable: check_input
+  output_variable: check
+- id: passed
+  kind: set_variable
+  variable: passed
+  value_variable: check
+  field: ok
+- id: route
+  kind: if
+  condition:
+    variable: passed
+    operator: eq
+    value: true
+  then: settle-input
+  otherwise: fix-input
+- id: fix-input
+  kind: set_variable
+  variable: fix_input
+  value_variables:
+    check: check
+    manifest: manifest
+# The correction round runs as its own item so that its failure leaves the
+# first draft to fall back on.
+- id: fix-items
+  kind: set_variable
+  variable: fix_items
+  value_variables:
+    correction: fix_input
+- id: correct
+  kind: map
+  items_variable: fix_items
+  workflow: correct-manifest
+  input_variables:
+    conversation: conversation
+  output_variable: corrected
+  errors_variable: correction_errors
+- id: settle-input
+  kind: set_variable
+  variable: settle_input
+  value_variables:
+    run_id: run_id
+    first: manifest
+    corrected: corrected
+- id: settle
+  kind: invoke_tool
+  tool: settle-manifest
+  input_variable: settle_input
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

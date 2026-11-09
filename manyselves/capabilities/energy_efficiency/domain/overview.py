@@ -53,11 +53,25 @@ def state_rows(register: dict[str, Any]) -> list[list[Any]]:
 STATE_HEAD = ["表", "名称", "状态", "含义", "小时", "有记录小时", "电量kWh", "占本表电量", "平均kW"]
 
 
+def origin_lines(register: dict[str, Any]) -> list[str]:
+    origin = register.get("manifest_origin")
+    if not origin:
+        return []
+    lines = [
+        "这次数据的读法（manifest）没有人写，由模型按程序对文件的探测起草，程序试读通过"
+        + ("（用的是改过一轮的稿）" if origin.get("kept") == "corrected" else "")
+        + "；读法里推不出的地方列在下面的口径推断里，待现场确认。"
+    ]
+    if origin.get("issues"):
+        lines.append("程序试读时仍觉得不对、模型没有改的地方：" + "；".join(origin["issues"]))
+    return lines
+
+
 def plant_lines(register: dict[str, Any]) -> list[str]:
     states = register.get("states")
     if not states:
-        return ["没有生产记录，分不出生产、批间和停产。"]
-    lines = [states["note"] + "。"]
+        return [*origin_lines(register), "没有生产记录，分不出生产、批间和停产。"]
+    lines = [*origin_lines(register), states["note"] + "。"]
     coverage = states.get("coverage")
     if coverage:
         lines.append(f"生产记录覆盖 {coverage['start']} 至 {coverage['end']}。")
@@ -76,7 +90,11 @@ def plant_lines(register: dict[str, Any]) -> list[str]:
 
 
 ASSUMPTION_HEAD = ["编号", "来源", "事项", "推断", "依据", "不成立时影响", "怎样确认", "依赖它的项", "程序核对", "现场确认结果"]
-ORIGINS = {"manifest": "准备资料时写的", "drafted": "模型按程序算的依据起草"}
+ORIGINS = {
+    "manifest": "准备资料时写的",
+    "manifest-drafted": "模型起草读法时写的",
+    "drafted": "模型按程序量出的事实起草",
+}
 
 
 def assumption_rows(register: dict[str, Any]) -> list[list[Any]]:
@@ -107,7 +125,7 @@ def fact_rows(register: dict[str, Any]) -> list[list[Any]]:
     ]
 
 
-TOPOLOGY_HEAD = ["表", "名称", "台账里对上的行", "用能类别", "工厂树里的位置", "说明"]
+TOPOLOGY_HEAD = ["表", "名称", "台账里对上的行（候选）", "用能类别", "关联设备", "工厂树里的位置（候选）", "说明"]
 
 
 def topology_rows(register: dict[str, Any]) -> list[list[Any]]:
@@ -116,9 +134,10 @@ def topology_rows(register: dict[str, Any]) -> list[list[Any]]:
         [
             row["meter_id"],
             row["name"],
-            row.get("ledger_match") or "未对上",
+            row.get("asset_match") or ("未对上" if "asset_matches" in row else "没有台账"),
             row.get("category") or "",
-            row.get("tree_path") or "未对上",
+            row.get("equipment") or "",
+            row.get("tree_path") or ("未对上" if "tree_nodes" in row else "没有工厂树"),
             "；".join(row.get("notes", [])),
         ]
         for row in topology.get("meters", [])

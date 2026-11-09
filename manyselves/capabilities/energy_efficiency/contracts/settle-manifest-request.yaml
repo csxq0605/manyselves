@@ -1,0 +1,5 @@
+id: settle-manifest-request
+version: 1.0.0
+description: The first drafted manifest and the corrected one, if the correction round ran
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:SettleManifestRequest

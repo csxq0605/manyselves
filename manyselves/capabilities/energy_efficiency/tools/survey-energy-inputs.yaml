@@ -1,0 +1,10 @@
+id: survey-energy-inputs
+version: 0.1.0
+description: When the input folder has no manifest, describe every file for the manifest drafter; otherwise do nothing
+implementation: capability:energy-efficiency:survey-energy-inputs
+input_contract: run-ref
+output_contract: survey-set
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

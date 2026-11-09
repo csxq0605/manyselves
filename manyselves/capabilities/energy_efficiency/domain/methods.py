@@ -154,9 +154,15 @@ class ThresholdSegmentsParams(Thresholds):
     high_kw: float | None = Field(default=None, gt=0)
     min_minutes: float = Field(gt=0, description="连续满足至少多长才算一段（知识库无预设，必须给）")
     exclude: Exclusion | None = Field(default=None, description="落在这些时间里的记录不参与，例如生产批次")
+    within_machines: list[str] = Field(
+        default_factory=list,
+        description="只看这些机台批次时段里的记录（例如批内低功率段，知识库 BS-08/BS-09）；和 exclude 不同时用",
+    )
 
     @model_validator(mode="after")
     def bounds(self) -> "ThresholdSegmentsParams":
+        if self.within_machines and self.exclude is not None:
+            raise ValueError("within_machines and exclude are not used together")
         need = {"below": ("high_kw",), "at_least": ("low_kw",), "between": ("low_kw", "high_kw")}[self.comparator]
         missing = [name for name in need if getattr(self, name) is None]
         if missing:
@@ -192,6 +198,29 @@ class StateWindowsParams(Thresholds):
         return self
 
 
+class ChangeoversParams(Thresholds):
+    machine: str = Field(min_length=1, description="生产记录里的机台名，须已在 manifest 里挂到这块表")
+    product_column: str | None = Field(
+        default=None,
+        description="按哪一列判断换了产品：不写时用产品列；也可以写 manifest 里 product_group_columns 的一列（例如型号规格）",
+    )
+    head_minutes: float = Field(
+        default=0, ge=0, description="窗口再延到下一批开始后多少分钟（换产后的爬坡）；0 时只看两批之间"
+    )
+    max_gap_minutes: float | None = Field(default=None, gt=0, description="两批相隔超过这么久的不算一次切换（例如跨了停产）")
+    include_same: bool = Field(default=False, description="同时量产品没变的相邻两批，作对照")
+
+
+class PairedMeterParams(Thresholds):
+    other_meter: str = Field(min_length=1, description="对照的另一块表（须在本次能查的范围里）")
+    on_kw: float = Field(gt=0, description="本表功率不低于此值算在运行")
+    other_state: Literal["below", "at_least"] = Field(
+        description="另一块表同时的状态：below 低于 other_kw（例如生产线停着时公辅还开着）；at_least 不低于 other_kw（两表同时运行）"
+    )
+    other_kw: float = Field(ge=0, description="另一块表的功率界线（kW）")
+    min_minutes: float = Field(gt=0, description="连续满足至少多长才算一段（知识库无预设，必须给）")
+
+
 class BatchIntensityParams(_Params):
     machine: str = Field(min_length=1, description="生产记录里的机台名，须已在 manifest 里挂到这块表")
     product: str | None = Field(default=None, min_length=1, description="只看这种产品的批次")
@@ -212,6 +241,11 @@ class MethodContext:
     product_group_columns: tuple[str, ...] = ()
     # The state axis cut from the batches; computed from them when not given.
     segments: list[Segment] | None = None
+    # Other meters' data, for methods that compare two meters; None where no other meter is readable.
+    series_of: Callable[[str], MeterSeries] | None = None
+    # The meters the caller may read (a partition's); None for every meter.
+    meters_in_scope: frozenset[str] | None = None
+    product_column: str | None = None
 
     def state_segments(self) -> list[Segment] | None:
         if self.batches is None:
@@ -703,6 +737,20 @@ def _outside(series: MeterSeries, spans: list[Span]) -> np.ndarray:
     return free
 
 
+def _wholly_inside(series: MeterSeries, spans: list[Span]) -> np.ndarray:
+    """Records that lie wholly inside one of the spans."""
+
+    inside = np.zeros(len(series), dtype=bool)
+    for low, high in spans:
+        a = np.datetime64(pd.Timestamp(low), "ns")
+        b = np.datetime64(pd.Timestamp(high), "ns")
+        if series.kind == "instant":
+            inside |= (series.starts >= a) & (series.starts < b)
+        else:
+            inside |= (series.starts >= a) & (series.ends <= b)
+    return inside
+
+
 def _threshold_segments(series: MeterSeries, params: ThresholdSegmentsParams, ctx: MethodContext) -> MethodRun:
     problem = _threshold_problem(series, params)
     if problem:
@@ -710,9 +758,22 @@ def _threshold_segments(series: MeterSeries, params: ThresholdSegmentsParams, ct
     excluded = _exclusion(params.exclude, ctx)
     if excluded.problem:
         return MethodRun("threshold-segments", series.meter_id, "needs_input", excluded.problem)
+    inside: list[Span] = []
+    unsure: list[Batch] = []
+    if params.within_machines:
+        if ctx.batches is None:
+            return MethodRun("threshold-segments", series.meter_id, "needs_input", "要只看批次时段，但 manifest 里没有生产记录")
+        unknown = sorted(set(params.within_machines) - {batch.machine for batch in ctx.batches})
+        if unknown:
+            return MethodRun("threshold-segments", series.meter_id, "needs_input", f"生产记录里没有机台 {unknown}")
+        chosen = [batch for batch in ctx.batches if batch.machine in params.within_machines]
+        inside = _merge([(batch.start, batch.end) for batch in chosen if batch.problem is None])  # type: ignore[misc]
+        unsure = [batch for batch in chosen if batch.problem is not None]
     powers = series.record_powers()
     keep = np.array([_qualifies(float(power), params) for power in powers], dtype=bool) if len(series) else np.zeros(0, bool)
     keep &= _in_period(series, ctx) & _outside(series, excluded.spans)
+    if params.within_machines:
+        keep &= _wholly_inside(series, inside)
     windows = []
     short = 0
     for lo, hi in _runs(series, keep):
@@ -726,6 +787,8 @@ def _threshold_segments(series: MeterSeries, params: ThresholdSegmentsParams, ct
     run = _windowed("threshold-segments", series, params, kept)
     run.summary["segments_shorter_than_min"] = short
     run.summary["segments_skipped_incomplete_batch"] = len(blocked)
+    if params.within_machines:
+        run.summary["batches_with_missing_times_not_used"] = len(unsure)
     return run
 
 
@@ -799,6 +862,159 @@ def _state_windows(series: MeterSeries, params: StateWindowsParams, ctx: MethodC
     run = _windowed(method_id, series, params, kept)
     run.summary["stretches_of_state"] = len(stretches)
     run.summary["stretches_outside_length"] = len(stretches) - len(kept)
+    return run
+
+
+def _own_machine(method_id: str, series: MeterSeries, machine: str, ctx: MethodContext) -> MethodRun | None:
+    if ctx.batches is None:
+        return MethodRun(method_id, series.meter_id, "needs_input", "manifest 里没有生产记录")
+    if machine not in ctx.machines.get(series.meter_id, []):
+        mapped = ctx.machines.get(series.meter_id, [])
+        return MethodRun(
+            method_id,
+            series.meter_id,
+            "needs_input",
+            f"机台 {machine} 没有在 manifest 里挂到表 {series.meter_id}（已挂：{mapped or '无'}）",
+        )
+    return None
+
+
+def _changeovers(series: MeterSeries, params: ChangeoversParams, ctx: MethodContext) -> MethodRun:
+    """Consecutive batches of one machine whose product changes: the time between them (KB BS-06/BS-07)."""
+
+    method_id = "changeovers"
+    refused = _own_machine(method_id, series, params.machine, ctx) or (
+        MethodRun(method_id, series.meter_id, "not_applicable", problem)
+        if (problem := _threshold_problem(series, params))
+        else None
+    )
+    if refused:
+        return refused
+    column = params.product_column
+    if column is not None and column != ctx.product_column and column not in ctx.product_group_columns:
+        known = [name for name in (ctx.product_column, *ctx.product_group_columns) if name]
+        return MethodRun(method_id, series.meter_id, "needs_input", f"生产记录没有读入列 {column}（读入的产品列：{known or '无'}）")
+    if column is None and ctx.product_column is None:
+        return MethodRun(method_id, series.meter_id, "needs_input", "manifest 的生产记录没有产品列，分不出换产")
+
+    def product(batch: Batch) -> str | None:
+        if column is None or column == ctx.product_column:
+            return batch.product
+        return batch.groups.get(column)
+
+    assert ctx.batches is not None
+    own = [batch for batch in ctx.batches if batch.machine == params.machine]
+    usable = sorted((batch for batch in own if batch.problem is None), key=lambda batch: (batch.start, batch.end))
+    start, end = ctx.period
+    judged = _thresholded(params)
+    occurrences = []
+    skipped = {"overlapping": 0, "product_unknown": 0, "too_far_apart": 0, "outside_period": 0}
+    windows: list[tuple[Span, dict[str, Any]]] = []
+    for before, after in zip(usable, usable[1:], strict=False):
+        assert before.end is not None and after.start is not None
+        if after.start < before.end:
+            skipped["overlapping"] += 1
+            continue
+        first, second = product(before), product(after)
+        if not first or not second:
+            skipped["product_unknown"] += 1
+            continue
+        changed = first != second
+        if not changed and not params.include_same:
+            continue
+        gap = (after.start - before.end).total_seconds() / 60
+        if params.max_gap_minutes is not None and gap > params.max_gap_minutes:
+            skipped["too_far_apart"] += 1
+            continue
+        finish = after.start + timedelta(minutes=params.head_minutes)
+        if params.head_minutes and after.end is not None:
+            finish = min(finish, after.end)
+        if before.end < start or finish > end or finish <= before.end:
+            skipped["outside_period"] += 1
+            continue
+        windows.append(
+            (
+                (before.end, finish),
+                {"from": first, "to": second, "changed": changed, "gap_minutes": _r(gap), "after_batch_row": before.row, "before_batch_row": after.row},
+            )
+        )
+    blocked = blocked_by_incomplete([window for window, _extra in windows], [batch for batch in own if batch.problem is not None])
+    for number, (window, extra) in enumerate(windows):
+        if number in blocked:
+            continue
+        measure = series.measure(*window)
+        occurrences.append(Occurrence(measure, _hit(measure, params) if extra["changed"] else None, extra, judged=judged and extra["changed"]))
+    run = MethodRun(method_id, series.meter_id, "ok", occurrences=[item for item in occurrences if item.extra["changed"]], thresholded=judged)
+    pairs: dict[str, dict[str, Any]] = {}
+    for item in occurrences:
+        key = f"{item.extra['from']} → {item.extra['to']}" if item.extra["changed"] else "未换产（对照）"
+        entry = pairs.setdefault(key, {"pair": key, "count": 0, "minutes": [], "kwh": []})
+        entry["count"] += 1
+        entry["minutes"].append(item.measure.window_minutes)
+        if item.measure.energy_kwh is not None and item.measure.coverage >= 0.9:
+            entry["kwh"].append(item.measure.energy_kwh)
+    run.summary["pairs"] = [
+        {
+            "pair": entry["pair"],
+            "count": entry["count"],
+            "median_minutes": _r(statistics.median(entry["minutes"])),
+            "median_kwh": _r(statistics.median(entry["kwh"])) if entry["kwh"] else None,
+            "covered_count": len(entry["kwh"]),
+        }
+        for entry in sorted(pairs.values(), key=lambda entry: -entry["count"])
+    ][:20]
+    run.summary["skipped"] = {**skipped, "incomplete_batch": len(blocked)}
+    return run
+
+
+def _paired_meter(series: MeterSeries, params: PairedMeterParams, ctx: MethodContext) -> MethodRun:
+    """Stretches where this meter runs while another is below or above a line (KB ZQ16/BS-14)."""
+
+    method_id = "paired-meter"
+    if params.other_meter == series.meter_id:
+        return MethodRun(method_id, series.meter_id, "not_applicable", "other_meter 不能是本表")
+    if ctx.series_of is None or (ctx.meters_in_scope is not None and params.other_meter not in ctx.meters_in_scope):
+        return MethodRun(method_id, series.meter_id, "needs_input", f"表 {params.other_meter} 不在本次能查的范围里")
+    problem = _threshold_problem(series, params)
+    if problem:
+        return MethodRun(method_id, series.meter_id, "not_applicable", problem)
+    try:
+        other = ctx.series_of(params.other_meter)
+    except KeyError:
+        return MethodRun(method_id, series.meter_id, "needs_input", f"没有表 {params.other_meter}")
+    powers = series.record_powers()
+    in_period = _in_period(series, ctx) if len(series) else np.zeros(0, bool)
+    keep = np.zeros(len(series), dtype=bool)
+    unknown_other = 0
+    for index in range(len(series)):
+        if not in_period[index] or np.isnan(powers[index]) or powers[index] < params.on_kw:
+            continue
+        begin = series.record_start(index)
+        finish = series.record_end(index)
+        measure = other.measure(begin, finish) if finish > begin else None
+        if measure is None or measure.avg_kw is None or measure.coverage < 0.5:
+            unknown_other += 1
+            continue
+        if params.other_state == "below":
+            keep[index] = measure.avg_kw < params.other_kw
+        else:
+            keep[index] = measure.avg_kw >= params.other_kw
+    windows = []
+    short = 0
+    for lo, hi in _runs(series, keep):
+        begin, finish = series.record_start(lo), series.record_end(hi - 1)
+        if (finish - begin).total_seconds() / 60 < params.min_minutes:
+            short += 1
+            continue
+        windows.append((begin, finish))
+    run = _windowed(method_id, series, params, windows)
+    for item in run.occurrences:
+        measured = other.measure(item.measure.start, item.measure.end)
+        item.extra["other_meter"] = params.other_meter
+        item.extra["other_avg_kw"] = _r(measured.avg_kw) if measured.avg_kw is not None else None
+        item.extra["other_coverage"] = round(measured.coverage, 4)
+    run.summary["segments_shorter_than_min"] = short
+    run.summary["running_records_other_unknown"] = unknown_other
     return run
 
 
@@ -1014,6 +1230,34 @@ MENU: dict[str, MethodSpec] = {
             kb_note="状态只按生产记录定，停产不等于没有服务需求；与参考电量的差值属于基准，这里不算",
         ),
         MethodSpec(
+            "changeovers",
+            "换产切换",
+            "按生产记录找同一机台相邻两批产品不同的切换：窗口从前一批结束到后一批开始（可再延 head_minutes 看爬坡），"
+            "量这块表在窗口里的电量或平均功率；按“前产品 → 后产品”汇总次数、时长中位数和电量中位数。"
+            "include_same 时也量产品没变的相邻两批作对照。需要生产记录有产品列，且机台已挂到这块表。",
+            ChangeoversParams,
+            frozenset({"production", "product"}),
+            True,
+            _changeovers,
+            operators=("OP004", "OP007", "OP013", "OP015"),
+            scenarios=("BS-06", "BS-07"),
+            kb_note="切换时长和电量是事实；切换顺序是否合理、清洗或预热是否必要由人判断，这里不比参考值",
+        ),
+        MethodSpec(
+            "paired-meter",
+            "两表同时状态",
+            "本表功率不低于 on_kw 的同时，另一块表的功率低于（below）或不低于（at_least）other_kw，"
+            "连续满足且不缺数、不短于 min_minutes 的算一段；量每段本表的电量或平均功率和另一块表同时的平均功率。"
+            "用来看生产线停着时公辅或辅机还开着、两台设备同时运行。另一块表须在本次能查的范围里。",
+            PairedMeterParams,
+            frozenset({"pair"}),
+            True,
+            _paired_meter,
+            operators=("OP005", "OP004", "OP007", "OP013"),
+            scenarios=("ZQ16", "BS-14"),
+            kb_note="两表之间是否有上下级、是否在同一回路不知道；同时运行可能是必要的备用或联动，由人判断",
+        ),
+        MethodSpec(
             "batch-intensity",
             "批次单耗分布",
             "量每个批次时段里这块表的电量，除以批次数量得单耗（数量口径由人在 manifest 声明），给出分布："
@@ -1050,6 +1294,12 @@ def readiness(
             return "needs_input", "manifest 里没有生产记录"
         if not ctx.machines.get(meter_id):
             return "needs_input", f"没有机台挂到表 {meter_id}"
+    if "product" in spec.needs and ctx.product_column is None and not ctx.product_group_columns:
+        return "needs_input", "生产记录没有读入产品列"
+    if "pair" in spec.needs:
+        others = None if ctx.meters_in_scope is None else ctx.meters_in_scope - {meter_id}
+        if ctx.series_of is None or others is not None and not others:
+            return "needs_input", "本次能查的范围里没有另一块表"
     if "quantity" in spec.needs and not ctx.quantity_basis:
         return "needs_input", "生产记录的数量口径没有经人声明"
     if spec.id == "batch-intensity" and not has_energy:

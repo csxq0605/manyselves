@@ -144,7 +144,7 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
         )
     known = set(site.meter_ids())
     period = site.period()
-    ctx = method_context(site)
+    ctx = method_context(site, meters)
     totals = meter_totals(site)
     for item in parsed.items:
         try:

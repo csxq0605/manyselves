@@ -24,6 +24,7 @@ from ..domain.caliber import caliber_brief, settle_assumptions
 from ..domain.check import check_submission, settle_partition
 from ..domain.inputs import MANIFEST_NAME, InputFormatError, load_manifest
 from ..domain.items import PLANT
+from ..domain.manifest_draft import settle_manifest, survey_brief, try_manifest
 from ..domain.plant import plant_brief
 from ..domain.prepare import parse_inputs, partition_meters, profile_meters, run_prechecks
 from ..domain.quantify import quantify_register
@@ -40,7 +41,9 @@ from ..domain.requests import (
     RunRef,
     SelectRequest,
     SettleAssumptionsRequest,
+    SettleManifestRequest,
     SettleRequest,
+    TryManifestRequest,
 )
 from ..domain.selection import SelectionError, load_rules, read_marks, select
 from ..domain.store import (
@@ -81,6 +84,23 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
     """Bind the Capability Tools to one project workspace."""
 
     workspace = Path(workspace)
+
+    def survey(values: Any) -> dict[str, Any]:
+        return survey_brief(workspace, RunRef.model_validate(_value(values)).run_id)
+
+    def check_draft(values: Any) -> dict[str, Any]:
+        request = TryManifestRequest.model_validate(_value(values))
+        return try_manifest(workspace, request.run_id, request.manifest.model_dump(mode="json"))
+
+    def settle_draft(values: Any) -> dict[str, Any]:
+        request = SettleManifestRequest.model_validate(_value(values))
+        corrected = next(iter(request.corrected.values()), None)
+        return settle_manifest(
+            workspace,
+            request.run_id,
+            request.first.model_dump(mode="json"),
+            corrected.model_dump(mode="json") if corrected else None,
+        )
 
     def parse(values: Any) -> dict[str, Any]:
         return parse_inputs(workspace, RunRef.model_validate(_value(values)).run_id)
@@ -177,6 +197,9 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
         return lambda values: handler(workspace, _value(values))
 
     return {
+        "survey-energy-inputs": survey,
+        "check-manifest": check_draft,
+        "settle-manifest": settle_draft,
         "parse-energy-inputs": parse,
         "profile-energy-data": profile,
         "caliber-facts": caliber,

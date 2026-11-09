@@ -1,0 +1,10 @@
+id: check-manifest
+version: 0.1.0
+description: Read the data with a drafted manifest and say what blocks, what looks odd and what to tell the person
+implementation: capability:energy-efficiency:check-manifest
+input_contract: try-manifest-request
+output_contract: manifest-check
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

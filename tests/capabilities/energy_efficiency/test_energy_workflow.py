@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import yaml
 
 from manyselves.capabilities.energy_efficiency import CAPABILITY_FILE
 from manyselves.capabilities.energy_efficiency.adapters.runtime import build_runtime_binding
@@ -287,9 +288,9 @@ def _answer(message):
     return ("say", "still looking")
 
 
-def _binding(workspace: Path, bus: MessageBus, loops: list[FinderLoop]):
+def _binding(workspace: Path, bus: MessageBus, loops: list[FinderLoop], answer=None):
     def build(**kwargs: Any) -> FinderLoop:
-        loop = FinderLoop(bus, _answer, kwargs)
+        loop = FinderLoop(bus, answer or _answer, kwargs)
         loops.append(loop)
         return loop
 
@@ -415,3 +416,52 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
     assert f"### {items['B1']['id']}" in kept
     assert "午休不停机" in kept
     assert f"### {items['A1']['id']}" not in kept
+
+
+async def test_a_folder_without_manifest_is_read_with_a_drafted_one(tmp_path: Path) -> None:
+    folder = write_site(tmp_path / "data/site")
+    written = yaml.safe_load((folder / "manifest.yaml").read_text(encoding="utf-8"))
+    (folder / "manifest.yaml").unlink()
+    wrong = json.loads(json.dumps(written))
+    # The first draft takes the moulding machine's readings for interval energy.
+    moulding = next(meter for meter in wrong["meters"] if meter["id"] == "IM1")
+    moulding.update({"semantics": "interval_energy", "timestamp_marks": "end"})
+    wrong["assumptions"] = [{"id": "M1", "topic": "IM1 读数", "inference": "可能是每段电量", "basis": "列名"}]
+    written["assumptions"] = [{"id": "M1", "topic": "IM1 读数", "inference": "可能是累计读数", "basis": "读数从不下降"}]
+    seen: dict[str, Any] = {}
+
+    def answer(message):
+        content = message.content
+        if '<task id="draft-manifest">' in content:
+            survey = _input_of(content)
+            seen["files"] = sorted({table["file"] for table in survey["tables"]})
+            return ("work", [], lambda _results: [wrong])
+        if '<task id="fix-manifest">' in content:
+            request = _input_of(content)
+            seen["issues"] = request["check"]["issues"]
+            return ("work", [], lambda _results: [written])
+        return _answer(message)
+
+    bus = MessageBus()
+    loops: list[FinderLoop] = []
+    binding = _binding(tmp_path, bus, loops, answer)
+    bus_task = asyncio.create_task(bus.process_queue())
+    try:
+        accepted = await binding.start(
+            UUID("60000000-0000-4000-8000-000000000011"), "energy-candidates", {"input_dir": "data/site"}
+        )
+        run_id = accepted["run_id"]
+        run = binding.get_run(run_id)
+    finally:
+        await binding.close()
+        bus.shutdown()
+        await bus_task
+
+    assert run["run"]["status"] == "completed", run["run"]
+    assert "compressor.csv" in seen["files"] and "production.csv" in seen["files"]
+    assert any("IM1" in issue and "累计" in issue for issue in seen["issues"])
+    data = json.loads((tmp_path / "Work/runs" / run_id / "energy/register.json").read_text(encoding="utf-8"))
+    assert data["manifest_origin"]["kept"] == "corrected"
+    assert data["counts"]["model_items"] == 4
+    drafted = next(entry for entry in data["assumptions"] if entry["id"] == "M1")
+    assert drafted["origin"] == "manifest-drafted" and drafted["inference"] == "可能是累计读数"

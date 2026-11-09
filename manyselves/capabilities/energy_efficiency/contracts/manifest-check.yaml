@@ -1,0 +1,15 @@
+id: manifest-check
+version: 1.0.0
+description: The program's trial read of a drafted manifest
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, ok, blocking, issues, warnings]
+  properties:
+    run_id: {type: string}
+    ok: {type: boolean}
+    kept: {type: string}
+    meters: {type: integer}
+    blocking: {type: array, items: {type: string}}
+    issues: {type: array, items: {type: string}}
+    warnings: {type: array, items: {type: string}}

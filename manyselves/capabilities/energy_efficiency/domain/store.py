@@ -51,23 +51,46 @@ def run_dir(workspace: Path, run_id: str) -> Path:
     return Path(workspace) / "Work" / "runs" / run_id
 
 
+# Files copied from a folder with no manifest, for the survey and the drafter.
+SURVEYED_SUFFIXES = {".csv", ".xlsx", ".xlsm", ".json"}
+MAX_SURVEYED_FILES = 200
+
+
 def freeze_inputs(workspace: Path, run_id: str, input_dir: str) -> Path:
-    """Copy the manifest and every file it names into the run, once."""
+    """Copy the manifest and every file it names into the run, once.
+
+    A folder without a manifest is copied whole (the files the reader could
+    take), so the program can survey it and the model draft a manifest.
+    """
 
     target = run_dir(workspace, run_id) / FROZEN_INPUTS
-    if (target / MANIFEST_NAME).is_file():
+    if target.is_dir():
         return target
     root = Path(workspace).resolve()
     source = (root / input_dir).resolve()
     if not source.is_relative_to(root) or not source.is_dir():
         raise InputFormatError(f"input folder is not a project folder: {input_dir}")
-    manifest = load_manifest(source)
     staging = target.with_name(f"{FROZEN_INPUTS}.partial")
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
-    shutil.copy2(source / MANIFEST_NAME, staging / MANIFEST_NAME)
-    for name in manifest_files(manifest):
+    if (source / MANIFEST_NAME).is_file():
+        manifest = load_manifest(source)
+        shutil.copy2(source / MANIFEST_NAME, staging / MANIFEST_NAME)
+        names = manifest_files(manifest)
+    else:
+        names = sorted(
+            path.relative_to(source).as_posix()
+            for path in source.rglob("*")
+            if path.is_file()
+            and path.suffix.casefold() in SURVEYED_SUFFIXES
+            and not any(part.startswith(".") for part in path.relative_to(source).parts)
+        )
+        if not names:
+            raise InputFormatError(f"{input_dir} has no {MANIFEST_NAME} and no .csv, .xlsx or .json file")
+        if len(names) > MAX_SURVEYED_FILES:
+            raise InputFormatError(f"{input_dir} has {len(names)} data files; at most {MAX_SURVEYED_FILES} without a manifest")
+    for name in names:
         path = safe_relative(source, name)
         destination = staging / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +133,8 @@ def _read_series(path: str, mtime_ns: int, kind: Kind) -> pd.DataFrame:
 
 
 TASK_FILE = "task.json"
+# Written when the model drafted the manifest: which draft was kept and what still looked odd.
+ORIGIN_FILE = "manifest-origin.json"
 
 
 def write_task_scope(workspace: Path, run_id: str, scope: dict[str, Any]) -> None:
@@ -265,6 +290,18 @@ class SiteData:
             ]
         return self._segments
 
+    def manifest_origin(self) -> dict[str, Any] | None:
+        """How the manifest came about when the model drafted it; None when a person wrote it."""
+
+        path = self.root / ORIGIN_FILE
+        return read_json(path) if path.is_file() else None
+
+    def topology(self) -> dict[str, Any] | None:
+        """The meters' candidate rows in the asset list and nodes in the plant tree; None without either."""
+
+        path = self.path("topology.json")
+        return read_json(path) if path.is_file() else None
+
     def machine_meter(self, machine: str) -> str | None:
         for meter in self.manifest.meters:
             if machine in meter.production_machines:
@@ -285,8 +322,9 @@ class SiteData:
     def assumptions(self) -> list[dict[str, Any]]:
         """The inferences about the data: written in the manifest, then drafted in the run."""
 
+        origin = "manifest-drafted" if self.manifest_origin() else "manifest"
         listed = [
-            {**entry.model_dump(mode="json"), "origin": "manifest", "meter_ids": [], "basis_fact_ids": [], "check_notes": []}
+            {**entry.model_dump(mode="json"), "origin": origin, "meter_ids": [], "basis_fact_ids": [], "check_notes": []}
             for entry in self.manifest.assumptions
         ]
         path = self.path("assumptions.json")
@@ -296,6 +334,7 @@ class SiteData:
 
 
 __all__ = [
+    "ORIGIN_FILE",
     "PLANT_SCOPE",
     "DATA_DIR",
     "FROZEN_INPUTS",

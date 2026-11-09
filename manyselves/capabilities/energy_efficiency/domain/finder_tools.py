@@ -214,7 +214,7 @@ def try_method(workspace: Path, arguments: dict[str, Any]) -> dict[str, Any]:
     if request.method_id not in MENU:
         raise MethodParamsError(f"unknown method {request.method_id!r}; the menu has {sorted(MENU)}")
     resolved = resolved_params(request.method_id, request.params)
-    ctx = method_context(site)
+    ctx = method_context(site, meters)
     totals = meter_totals(site)
     runs = [
         run_method(request.method_id, request.params, site.series(meter_id), ctx, totals.get(meter_id)).as_dict()

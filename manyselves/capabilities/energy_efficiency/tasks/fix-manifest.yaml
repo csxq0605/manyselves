@@ -1,0 +1,12 @@
+id: fix-manifest
+version: 0.1.0
+description: Correct the drafted manifest after the program's trial read, in the same conversation
+agent: manifest-drafter
+objective: 程序按你刚才写的读法试读了数据，check 里 blocking 是读不出的地方，issues 是读得出但看起来不对的地方，warnings 只是告诉人的说明。manifest 是你上次的读法。逐条改正后重新提交整份读法。
+input_contract: manifest-fix-request
+output_contract: site-manifest
+constraints:
+- 先改 blocking，再看 issues。issues 说的不一定都要改：你仍然认为原来的写法对时保留它，并在 assumptions 里写明为什么、程序指出的现象是什么。
+- 没有被指出的部分照原样保留。
+needs_history: true
+recovery: typed-turn-recovery

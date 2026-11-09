@@ -18,6 +18,28 @@ actions:
   variable: run_ref
   value_variables:
     run_id: run-id
+# A folder without a manifest: the program surveys the files and the
+# manifest drafter writes how to read them.  The survey gives no brief when
+# the folder has a manifest, so the map runs nothing.  No errors variable:
+# without a manifest that reads, nothing after this can run.
+- id: survey
+  kind: invoke_tool
+  tool: survey-energy-inputs
+  input_variable: run_ref
+  output_variable: survey_set
+- id: survey-briefs
+  kind: set_variable
+  variable: survey_briefs
+  value_variable: survey_set
+  field: briefs
+- id: draft-manifest
+  kind: map
+  items_variable: survey_briefs
+  key_field: key
+  workflow: draft-manifest
+  key_input_variable: draft_key
+  output_variable: manifest_results
+  max_concurrency: 1
 - id: parse
   kind: invoke_tool
   tool: parse-energy-inputs
