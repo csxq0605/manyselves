@@ -24,6 +24,8 @@ from .inputs import (
     Manifest,
     MeterQuality,
     MeterSpec,
+    TariffSchedule,
+    TariffSpec,
     load_manifest,
     manifest_files,
     safe_relative,
@@ -170,6 +172,21 @@ class SiteData:
         if not path.is_file():
             return None
         return [CalendarWindow.model_validate(item) for item in read_json(path)["windows"]]
+
+    def tariff(self) -> TariffSchedule | None:
+        """The tariffs resolved when the inputs were parsed; None without a tariff."""
+
+        if self.manifest.tariff is None:
+            return None
+        if getattr(self, "_tariff", None) is None:
+            path = self.path("tariff.json")
+            if not path.is_file():
+                raise RunDataError("the run's tariff has not been prepared")
+            data = read_json(path)
+            self._tariff = TariffSchedule(
+                [TariffSpec.model_validate(item) for item in data["tariffs"]], data["currency"]
+            )
+        return self._tariff
 
     def machine_meter(self, machine: str) -> str | None:
         for meter in self.manifest.meters:

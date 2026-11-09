@@ -29,6 +29,7 @@ import hashlib
 import re
 import zipfile
 from datetime import datetime, time, timedelta
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -60,10 +61,30 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _inside_folder(value: str) -> str:
+    value = value.replace("\\", "/")
+    parts = PurePosixPath(value)
+    if parts.is_absolute() or re.match(r"^[A-Za-z]:", value) or ".." in parts.parts:
+        raise ValueError(f"file must be a path inside the input folder, not {value!r}")
+    return value
+
+
 class TableSource(_Strict):
     file: str = Field(min_length=1, description="相对 manifest 所在文件夹的路径")
     sheet: str | None = None
     encoding: str = "utf-8-sig"
+    header_row: int = Field(
+        default=1, ge=1, description="表头在第几行（从 1 数）；上面的标题行不读"
+    )
+    header_rows: int = Field(
+        default=1,
+        ge=1,
+        le=2,
+        description=(
+            "表头占几行。占两行时，下一行有字的列名写成“上一行/下一行”，"
+            "上一行是合并单元格时沿用左边的字；重名的列依次加 .1、.2"
+        ),
+    )
     time_format: str | None = Field(
         default=None,
         description=(
@@ -75,11 +96,7 @@ class TableSource(_Strict):
     @field_validator("file")
     @classmethod
     def inside_folder(cls, value: str) -> str:
-        value = value.replace("\\", "/")
-        parts = PurePosixPath(value)
-        if parts.is_absolute() or re.match(r"^[A-Za-z]:", value) or ".." in parts.parts:
-            raise ValueError(f"file must be a path inside the input folder, not {value!r}")
-        return value
+        return _inside_folder(value)
 
     @field_validator("time_format")
     @classmethod
@@ -113,6 +130,18 @@ class MeterSpec(TableSource):
     timestamp_marks: Literal["start", "end"] | None = None
     group: str | None = None
     production_machines: list[str] = Field(default_factory=list)
+    filter_column: str | None = Field(
+        default=None,
+        min_length=1,
+        description="多块表放在同一张长表里时，用这一列筛出本表的行（和 filter_value 一起写）",
+    )
+    filter_value: str | None = Field(default=None, min_length=1, description="filter_column 等于这个值的行属于本表")
+
+    @model_validator(mode="after")
+    def filter_is_whole(self) -> "MeterSpec":
+        if (self.filter_column is None) != (self.filter_value is None):
+            raise ValueError(f"meter {self.id}: filter_column and filter_value go together")
+        return self
 
     @model_validator(mode="after")
     def unit_matches_semantics(self) -> "MeterSpec":
@@ -152,7 +181,19 @@ class ProductionSpec(TableSource):
     machine_column: str = Field(min_length=1)
     start_column: str = Field(min_length=1)
     end_column: str = Field(min_length=1)
+    start_time_column: str | None = Field(
+        default=None,
+        min_length=1,
+        description="开始的日期和时刻分两列写时，时刻所在的列；start_column 这时只取日期",
+    )
+    end_time_column: str | None = Field(
+        default=None, min_length=1, description="结束的时刻所在的列；end_column 这时只取日期"
+    )
     product_column: str | None = None
+    product_group_columns: list[str] = Field(
+        default_factory=list,
+        description="单耗另外按这些列分组各给一张表（例如型号规格、成品品号）；不写时只按 product_column 分",
+    )
     quantity_column: str | None = None
     quantity_basis: Literal["input", "output", "qualified"] | None = Field(
         default=None,
@@ -289,6 +330,159 @@ class TariffSpec(_Strict):
         return ("/".join(names), price), None
 
 
+class TariffFileSpec(_Strict):
+    """Time-of-use prices read from a site's tariff workbook, one tariff per month.
+
+    The workbook has a price sheet (plan, month, one column per period name
+    holding the price per kWh) and a period sheet (plan, month, then pairs of
+    period name and hour ranges such as ``7:00 - 11:00`` with several ranges
+    split by line breaks or 、).  Each month with hour ranges becomes one
+    tariff valid for that calendar month of ``year``.  A period with hour
+    ranges and no price is an input error; a period without hour ranges is
+    not used that month.
+    """
+
+    file: str = Field(min_length=1, description="相对 manifest 所在文件夹的路径")
+    plan: str = Field(min_length=1, description="电价方案编号，例如 1G3；表里写 1G3/2G3 的行也算")
+    year: int = Field(ge=2000, le=2100, description="表里只写月份，这里写是哪一年")
+    currency: str = "元"
+    price_sheet: str = "分时电价"
+    period_sheet: str = "时段划分"
+
+    @field_validator("file")
+    @classmethod
+    def inside_folder(cls, value: str) -> str:
+        return _inside_folder(value)
+
+
+class TariffSchedule:
+    """The tariffs that apply over the data period; each record is priced by the one whose dates hold it."""
+
+    def __init__(self, tariffs: list[TariffSpec], currency: str) -> None:
+        if not tariffs:
+            raise ValueError("a tariff schedule needs at least one tariff")
+        if len(tariffs) > 1:
+            for tariff in tariffs:
+                if tariff.valid_from is None or tariff.valid_until is None:
+                    raise ValueError("with more than one tariff each needs valid_from and valid_until")
+            spans = sorted((tariff.valid_from, tariff.valid_until) for tariff in tariffs)  # type: ignore[type-var]
+            for (_s1, e1), (s2, _e2) in zip(spans, spans[1:], strict=False):
+                if s2 < e1:
+                    raise ValueError("tariff dates overlap")
+        self.tariffs = sorted(tariffs, key=lambda item: item.valid_from or datetime.min)
+        self.currency = currency
+
+    def price_status(self, start: datetime, end: datetime) -> tuple[tuple[str, float] | None, UnpricedReason | None]:
+        """The price of all of [start, end), or why the record has none."""
+
+        for tariff in self.tariffs:
+            if (tariff.valid_from is None or tariff.valid_from <= start) and (
+                tariff.valid_until is None or end <= tariff.valid_until
+            ):
+                return tariff.price_status(start, end)
+        return None, "outside_dates"
+
+    def price_over(self, start: datetime, end: datetime) -> tuple[str, float] | None:
+        return self.price_status(start, end)[0]
+
+    def as_list(self) -> list[dict[str, Any]]:
+        return [tariff.model_dump(mode="json") for tariff in self.tariffs]
+
+
+_HOUR_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—~～至到]\s*(\d{1,2}):(\d{2})")
+_MONTH = re.compile(r"^\s*(\d{1,2})\s*月?\s*$")
+
+
+def _month_of(value: Any) -> int | None:
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        number = float(value)
+        return int(number) if number.is_integer() and 1 <= number <= 12 else None
+    match = _MONTH.match(str(value))
+    if match and 1 <= int(match.group(1)) <= 12:
+        return int(match.group(1))
+    return None
+
+
+def _plan_matches(cell: Any, plan: str) -> bool:
+    text = _text(cell)
+    return text == plan or plan in [part.strip() for part in re.split(r"[/、,，]", text)]
+
+
+def load_tariff_file(folder: Path, spec: TariffFileSpec) -> list[TariffSpec]:
+    path = safe_relative(folder, spec.file)
+    try:
+        prices = pd.read_excel(path, sheet_name=spec.price_sheet, dtype=object)
+        periods = pd.read_excel(path, sheet_name=spec.period_sheet, header=None, dtype=object)
+    except (ValueError, OSError, LookupError, ImportError, SyntaxError, zipfile.BadZipFile) as exc:
+        raise InputFormatError(f"{spec.file} cannot be read as a tariff workbook: {exc}") from exc
+    prices.columns = [str(column).strip() for column in prices.columns]
+    if len(prices.columns) < 3:
+        raise InputFormatError(f"{spec.file}:{spec.price_sheet} needs plan, month and price columns")
+    plan_col, month_col = prices.columns[0], prices.columns[1]
+    price_rows: dict[int, dict[str, Any]] = {}
+    for _index, row in prices.iterrows():
+        month = _month_of(row[month_col])
+        if month is not None and _plan_matches(row[plan_col], spec.plan):
+            price_rows[month] = {name: row[name] for name in prices.columns[2:]}
+    tariffs: list[TariffSpec] = []
+    for index in range(1, len(periods)):
+        row = periods.iloc[index].tolist()
+        if len(row) < 2 or not _plan_matches(row[0], spec.plan):
+            continue
+        month = _month_of(row[1])
+        if month is None:
+            continue
+        where = f"{spec.file}:{spec.period_sheet} 第 {index + 1} 行"
+        entries: list[TariffPeriod] = []
+        for position in range(2, len(row) - 1, 2):
+            name = _text(row[position])
+            ranges = _HOUR_RANGE.findall(_text(row[position + 1]))
+            if not name or not ranges:
+                continue
+            raw = price_rows.get(month, {}).get(name)
+            price = parse_numbers(pd.Series([raw])).iloc[0]
+            if pd.isna(price):
+                raise InputFormatError(f"{where}：{month} 月的“{name}”有小时区间，但{spec.price_sheet}里没有它的单价")
+            for h1, m1, h2, m2 in ranges:
+                entries.append(
+                    TariffPeriod(name=name, start=f"{int(h1):02d}:{m1}", end=f"{int(h2):02d}:{m2}", price=float(price))
+                )
+        if not entries:
+            continue
+        first = datetime(spec.year, month, 1)
+        until = datetime(spec.year + (month == 12), month % 12 + 1, 1)
+        try:
+            tariffs.append(TariffSpec(currency=spec.currency, periods=entries, valid_from=first, valid_until=until))
+        except ValueError as exc:
+            raise InputFormatError(f"{where}：{exc}") from exc
+    if not tariffs:
+        raise InputFormatError(f"{spec.file} has no month with hour ranges for plan {spec.plan}")
+    return tariffs
+
+
+def tariff_schedule(folder: Path, manifest: "Manifest") -> TariffSchedule | None:
+    """Every tariff the manifest gives, resolved; None when it gives none."""
+
+    source = manifest.tariff
+    if source is None:
+        return None
+    try:
+        if isinstance(source, TariffFileSpec):
+            return TariffSchedule(load_tariff_file(folder, source), source.currency)
+        if isinstance(source, TariffSpec):
+            return TariffSchedule([source], source.currency)
+        currencies = {tariff.currency for tariff in source}
+        if len(currencies) != 1:
+            raise InputFormatError(f"tariffs use different currencies: {sorted(currencies)}")
+        return TariffSchedule(list(source), source[0].currency)
+    except InputFormatError:
+        raise
+    except ValueError as exc:
+        raise InputFormatError(f"tariff: {exc}") from exc
+
+
 class PrecheckSpec(_Strict):
     """A finding method a person asked to run on meters before the model looks."""
 
@@ -321,7 +515,7 @@ class Manifest(_Strict):
     meters: list[MeterSpec] = Field(min_length=1)
     production: ProductionSpec | None = None
     calendar: CalendarSpec | None = None
-    tariff: TariffSpec | None = None
+    tariff: TariffSpec | list[TariffSpec] | TariffFileSpec | None = None
     prechecks: list[PrecheckSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -371,8 +565,8 @@ def manifest_files(manifest: Manifest) -> list[str]:
     """Every data file the manifest names, in a stable order."""
 
     names = [meter.file for meter in manifest.meters]
-    for source in (manifest.production, manifest.calendar):
-        if source is not None:
+    for source in (manifest.production, manifest.calendar, manifest.tariff):
+        if isinstance(source, (TableSource, TariffFileSpec)):
             names.append(source.file)
     return sorted(set(names))
 
@@ -395,16 +589,61 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _header_names(rows: pd.DataFrame) -> list[str]:
+    """Column names from one or two header rows; repeated names get .1, .2 like pandas."""
+
+    top = [_text(value) for value in rows.iloc[0].tolist()]
+    names = list(top)
+    if len(rows) > 1:
+        bottom = [_text(value) for value in rows.iloc[1].tolist()]
+        carried = ""
+        for index, (upper, lower) in enumerate(zip(top, bottom, strict=True)):
+            carried = upper or carried
+            if lower:
+                names[index] = f"{carried}/{lower}" if carried else lower
+            else:
+                carried = upper
+    seen: dict[str, int] = {}
+    unique = []
+    for name in names:
+        name = name or "Unnamed"
+        count = seen.get(name, 0)
+        seen[name] = count + 1
+        unique.append(name if count == 0 else f"{name}.{count}")
+    return unique
+
+
+@lru_cache(maxsize=8)
+def _load_frame(
+    path: str, mtime_ns: int, size: int, sheet: str | None, encoding: str, header_row: int, header_rows: int
+) -> pd.DataFrame:
+    """One file read once per run, however many meters it holds."""
+
+    del mtime_ns, size
+    suffix = Path(path).suffix.casefold()
+    if suffix == ".csv":
+        raw = pd.read_csv(path, dtype=str, encoding=encoding, keep_default_na=False, header=None)
+    elif suffix in {".xlsx", ".xlsm"}:
+        raw = pd.read_excel(path, sheet_name=sheet or 0, dtype=object, header=None)
+    else:
+        raise InputFormatError(f"{Path(path).name}: only .csv and .xlsx files are read")
+    first = header_row - 1
+    if len(raw) < first + header_rows:
+        raise InputFormatError(f"{Path(path).name} has no header at row {header_row}")
+    frame = raw.iloc[first + header_rows :].reset_index(drop=True)
+    frame.columns = _header_names(raw.iloc[first : first + header_rows])
+    return frame
+
+
 def read_table(folder: Path, source: TableSource, columns: list[str]) -> pd.DataFrame:
+    """The table below its header; row ``i`` of the result is file row ``first_data_row(source) + i``."""
+
     path = safe_relative(folder, source.file)
-    suffix = path.suffix.casefold()
+    stat = path.stat()
     try:
-        if suffix == ".csv":
-            frame = pd.read_csv(path, dtype=str, encoding=source.encoding, keep_default_na=False)
-        elif suffix in {".xlsx", ".xlsm"}:
-            frame = pd.read_excel(path, sheet_name=source.sheet or 0, dtype=object)
-        else:
-            raise InputFormatError(f"{source.file}: only .csv and .xlsx files are read")
+        frame = _load_frame(
+            str(path), stat.st_mtime_ns, stat.st_size, source.sheet, source.encoding, source.header_row, source.header_rows
+        ).copy()
     except InputFormatError:
         raise
     except (
@@ -417,11 +656,31 @@ def read_table(folder: Path, source: TableSource, columns: list[str]) -> pd.Data
         zipfile.BadZipFile,
     ) as exc:
         raise InputFormatError(f"{source.file} cannot be read: {exc}") from exc
-    frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in columns if column not in frame.columns]
     if missing:
         raise InputFormatError(f"{source.file} has no column {missing}")
     return frame
+
+
+def first_data_row(source: TableSource) -> int:
+    """The file row (counted from 1) of the table's first data row."""
+
+    return source.header_row + source.header_rows
+
+
+def read_meter_table(folder: Path, spec: MeterSpec) -> pd.DataFrame:
+    """The meter's own rows; in a long table, those whose filter column holds the meter's value."""
+
+    columns = [spec.time_column, spec.value_column]
+    if spec.filter_column is None:
+        return read_table(folder, spec, columns)
+    frame = read_table(folder, spec, [*columns, spec.filter_column])
+    keep = frame[spec.filter_column].map(_text) == spec.filter_value
+    if not keep.any():
+        raise InputFormatError(
+            f"{spec.file}: no row has {spec.filter_column} = {spec.filter_value!r} (meter {spec.id})"
+        )
+    return frame.loc[keep, columns].reset_index(drop=True)
 
 
 _YEAR_FIRST = re.compile(
@@ -929,6 +1188,7 @@ class Batch(_Strict):
     start: datetime | None
     end: datetime | None
     product: str | None = None
+    groups: dict[str, str] = Field(default_factory=dict)
     quantity: float | None = None
     problem: str | None = None
 
@@ -941,17 +1201,62 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
-def load_batches(folder: Path, spec: ProductionSpec) -> list[Batch]:
-    columns = [spec.machine_column, spec.start_column, spec.end_column]
+def _date_and_clock(dates: pd.Series, clocks: pd.Series, label: str, time_format: str | None) -> pd.Series:
+    """Join a date column and a time-of-day column into one time; either unreadable gives NaT."""
+
+    days = parse_times(dates, label, time_format)
+    joined = []
+    for day, clock in zip(days, clocks, strict=True):
+        if pd.isna(day):
+            joined.append(pd.NaT)
+            continue
+        if isinstance(clock, datetime):
+            clock = clock.time()
+        if isinstance(clock, time):
+            minutes = clock.hour * 60 + clock.minute + clock.second / 60
+        else:
+            match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", _text(clock))
+            if not match or int(match.group(1)) > 24 or int(match.group(2)) > 59:
+                joined.append(pd.NaT)
+                continue
+            minutes = int(match.group(1)) * 60 + int(match.group(2)) + int(match.group(3) or 0) / 60
+            if minutes > 24 * 60:
+                joined.append(pd.NaT)
+                continue
+        base = pd.Timestamp(day).normalize()
+        joined.append(base + pd.Timedelta(minutes=minutes))
+    return pd.Series(pd.to_datetime(joined), index=dates.index)
+
+
+def _batch_times(frame: pd.DataFrame, spec: ProductionSpec, column: str, clock_column: str | None) -> pd.Series:
+    label = f"{spec.file}:{column}"
+    if clock_column is None:
+        return parse_times(frame[column], label, spec.time_format)
+    return _date_and_clock(frame[column], frame[clock_column], label, spec.time_format)
+
+
+def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
+    """The batches, and how many blank rows (no machine and no times, such as subtotal lines) were skipped."""
+
+    time_columns = [spec.start_column, spec.end_column]
+    time_columns += [column for column in (spec.start_time_column, spec.end_time_column) if column]
+    columns = [spec.machine_column, *time_columns]
     columns += [column for column in (spec.product_column, spec.quantity_column) if column]
-    frame = read_table(folder, spec, columns)
-    starts = parse_times(frame[spec.start_column], f"{spec.file}:{spec.start_column}", spec.time_format)
-    ends = parse_times(frame[spec.end_column], f"{spec.file}:{spec.end_column}", spec.time_format)
+    columns += spec.product_group_columns
+    frame = read_table(folder, spec, list(dict.fromkeys(columns)))
+    starts = _batch_times(frame, spec, spec.start_column, spec.start_time_column)
+    ends = _batch_times(frame, spec, spec.end_column, spec.end_time_column)
     quantities = (
         parse_numbers(frame[spec.quantity_column]) if spec.quantity_column else None
     )
     batches: list[Batch] = []
+    skipped = 0
+    offset = first_data_row(spec)
     for index in range(len(frame)):
+        machine = _text(frame[spec.machine_column].iloc[index])
+        if not machine and all(not _text(frame[column].iloc[index]) for column in time_columns):
+            skipped += 1
+            continue
         start = None if pd.isna(starts.iloc[index]) else starts.iloc[index].to_pydatetime()
         end = None if pd.isna(ends.iloc[index]) else ends.iloc[index].to_pydatetime()
         problem = None
@@ -960,21 +1265,23 @@ def load_batches(folder: Path, spec: ProductionSpec) -> list[Batch]:
         elif end <= start:
             problem = "end_not_after_start"
         product = _text(frame[spec.product_column].iloc[index]) if spec.product_column else ""
+        groups = {column: _text(frame[column].iloc[index]) for column in spec.product_group_columns}
         quantity = None
         if quantities is not None and not pd.isna(quantities.iloc[index]):
             quantity = float(quantities.iloc[index])
         batches.append(
             Batch(
-                row=index + 2,
-                machine=_text(frame[spec.machine_column].iloc[index]),
+                row=index + offset,
+                machine=machine,
                 start=start,
                 end=end,
                 product=product or None,
+                groups={column: value for column, value in groups.items() if value},
                 quantity=quantity,
                 problem=problem,
             )
         )
-    return batches
+    return batches, skipped
 
 
 class CalendarWindow(_Strict):
@@ -1002,7 +1309,7 @@ def load_calendar(folder: Path, spec: CalendarSpec) -> tuple[list[CalendarWindow
         if end <= start:
             unusable += 1
             continue
-        windows.append(CalendarWindow(row=index + 2, state=state, start=start, end=end))
+        windows.append(CalendarWindow(row=index + first_data_row(spec), state=state, start=start, end=end))
     return windows, unusable
 
 
@@ -1037,6 +1344,8 @@ __all__ = [
     "PrecheckSpec",
     "ProductionSpec",
     "QUANTITY_BASES",
+    "TariffFileSpec",
+    "TariffSchedule",
     "TariffSpec",
     "UNPRICED_REASONS",
     "clock_window",
@@ -1046,6 +1355,8 @@ __all__ = [
     "load_manifest",
     "manifest_files",
     "normalize_meter",
+    "read_meter_table",
     "read_table",
+    "tariff_schedule",
     "safe_relative",
 ]

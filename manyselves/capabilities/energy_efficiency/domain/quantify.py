@@ -238,7 +238,7 @@ def _price_records(
     there (``measured``) and empty when it was not.
     """
 
-    tariff = site.manifest.tariff
+    tariff = site.tariff()
     if tariff is None or not series.has_energy or not (portions or measured):
         return None
     cost = 0.0

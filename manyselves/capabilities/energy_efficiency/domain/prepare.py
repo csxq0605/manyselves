@@ -15,7 +15,8 @@ from .inputs import (
     load_calendar,
     manifest_files,
     normalize_meter,
-    read_table,
+    read_meter_table,
+    tariff_schedule,
 )
 from .methods import (
     MENU,
@@ -51,7 +52,7 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
     meters = []
     firsts, lasts = [], []
     for spec in manifest.meters:
-        frame = read_table(site.inputs, spec, [spec.time_column, spec.value_column])
+        frame = read_meter_table(site.inputs, spec)
         normalized, quality = normalize_meter(spec, frame, manifest.period)
         path = site.series_path(spec.id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,13 +80,14 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
 
     production = None
     if manifest.production is not None:
-        batches = load_batches(site.inputs, manifest.production)
+        batches, skipped = load_batches(site.inputs, manifest.production)
         write_json(
             site.path("production.json"),
-            {"batches": [batch.model_dump(mode="json") for batch in batches]},
+            {"batches": [batch.model_dump(mode="json") for batch in batches], "blank_rows_skipped": skipped},
         )
         production = {
             "batches": len(batches),
+            "blank_rows_skipped": skipped,
             "unusable": sum(1 for batch in batches if batch.problem),
             "machines": sorted({batch.machine for batch in batches}),
         }
@@ -101,6 +103,17 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
             "unusable_rows": unusable,
             "states": sorted({window.state for window in windows}),
         }
+    tariff = None
+    schedule = tariff_schedule(site.inputs, manifest)
+    if schedule is not None:
+        write_json(site.path("tariff.json"), {"currency": schedule.currency, "tariffs": schedule.as_list()})
+        tariff = {
+            "tariffs": len(schedule.tariffs),
+            "valid": [
+                {"from": _iso(item.valid_from) if item.valid_from else None, "until": _iso(item.valid_until) if item.valid_until else None}
+                for item in schedule.tariffs
+            ],
+        }
     return {
         "run_id": run_id,
         "site": manifest.site.name,
@@ -115,7 +128,7 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
         ],
         "production": production,
         "calendar": calendar,
-        "tariff": manifest.tariff is not None,
+        "tariff": tariff,
     }
 
 
@@ -128,6 +141,7 @@ def method_context(site: SiteData) -> MethodContext:
         machines={meter.id: list(meter.production_machines) for meter in site.manifest.meters},
         quantity_basis=production.quantity_basis if production else None,
         quantity_unit=production.quantity_unit if production else None,
+        product_group_columns=tuple(production.product_group_columns) if production else (),
     )
 
 

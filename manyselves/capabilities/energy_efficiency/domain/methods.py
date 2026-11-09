@@ -193,6 +193,7 @@ class MethodContext:
     # What the production quantity counts (input / output / qualified) and its unit, as a person declared them.
     quantity_basis: str | None = None
     quantity_unit: str | None = None
+    product_group_columns: tuple[str, ...] = ()
 
 
 UNKNOWN_HIT = "无数据，无法判断"
@@ -807,6 +808,7 @@ def _batch_intensity(series: MeterSeries, params: BatchIntensityParams, ctx: Met
         extra = {
             "batch_row": batch.row,
             "product": batch.product,
+            "groups": dict(batch.groups),
             "quantity": batch.quantity,
             "kwh_per_unit": _r(intensity, 4) if intensity is not None else None,
             "no_intensity_reason": reason,
@@ -822,24 +824,32 @@ def _batch_intensity(series: MeterSeries, params: BatchIntensityParams, ctx: Met
     mean = statistics.fmean(values) if values else None
     std = statistics.stdev(values) if len(values) > 1 else None
     by_product: dict[str, list[tuple[float, float, float]]] = {}
+    by_group: dict[str, dict[str, list[tuple[float, float, float]]]] = {}
     for item in occurrences:
         if item.extra["kwh_per_unit"] is not None:
-            by_product.setdefault(item.extra["product"] or "未写产品", []).append(
-                (item.extra["kwh_per_unit"], item.measure.energy_kwh or 0.0, item.extra["quantity"])
-            )
+            row = (item.extra["kwh_per_unit"], item.measure.energy_kwh or 0.0, item.extra["quantity"])
+            by_product.setdefault(item.extra["product"] or "未写产品", []).append(row)
+            for column in ctx.product_group_columns:
+                value = item.extra["groups"].get(column) or "未写"
+                by_group.setdefault(column, {}).setdefault(value, []).append(row)
+
+    def _groups(rows_by: dict[str, list[tuple[float, float, float]]]) -> dict[str, dict[str, Any]]:
+        return {
+            label: {
+                "count": len(rows),
+                "median": _r(statistics.median(row[0] for row in rows), 4),
+                "of_sums": _r(sum(row[1] for row in rows) / sum(row[2] for row in rows), 4),
+            }
+            for label, rows in sorted(rows_by.items())
+        }
     run.summary.update(
         {
             "quantity_basis": QUANTITY_BASES.get(ctx.quantity_basis or "", ctx.quantity_basis),
             # Products are not mixed in one comparison (knowledge base 3.4.4, 4.3.1).
-            "by_product": {
-                product: {
-                    "count": len(rows),
-                    "median": _r(statistics.median(row[0] for row in rows), 4),
-                    "of_sums": _r(sum(row[1] for row in rows) / sum(row[2] for row in rows), 4),
-                }
-                for product, rows in sorted(by_product.items())
-            }
-            if params.product is None and len(by_product) > 1
+            "by_product": _groups(by_product) if params.product is None and len(by_product) > 1 else None,
+            # The same batches split once per grouping a person named (product_group_columns).
+            "by_group": {column: _groups(by_group.get(column, {})) for column in ctx.product_group_columns}
+            if by_group
             else None,
             "intensity_unit": f"kWh/{ctx.quantity_unit}" if ctx.quantity_unit else "kWh/数量单位",
             "batches_unusable": len(own) - len(usable),
