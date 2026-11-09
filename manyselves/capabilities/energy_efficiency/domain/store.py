@@ -24,6 +24,7 @@ from .inputs import (
     Manifest,
     MeterQuality,
     MeterSpec,
+    PeriodSpec,
     SiteFact,
     TariffSchedule,
     TariffSpec,
@@ -32,8 +33,10 @@ from .inputs import (
     safe_relative,
 )
 from .series import Kind, MeterSeries
+from .states import Segment
 
 FROZEN_INPUTS = "energy-inputs"
+PLANT_SCOPE = "PLANT"
 DATA_DIR = "energy"
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
@@ -106,6 +109,49 @@ def _read_series(path: str, mtime_ns: int, kind: Kind) -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=columns)
 
 
+TASK_FILE = "task.json"
+
+
+def write_task_scope(workspace: Path, run_id: str, scope: dict[str, Any]) -> None:
+    write_json(run_dir(workspace, run_id) / DATA_DIR / TASK_FILE, scope)
+
+
+def task_scope(root: Path) -> dict[str, Any] | None:
+    path = root / DATA_DIR / TASK_FILE
+    return read_json(path) if path.is_file() else None
+
+
+def narrowed(manifest: Manifest, scope: dict[str, Any] | None) -> Manifest:
+    """The manifest cut to the meters and times the run was asked about."""
+
+    if not scope:
+        return manifest
+    update: dict[str, Any] = {}
+    if scope.get("meters"):
+        known = {meter.id for meter in manifest.meters}
+        unknown = sorted(set(scope["meters"]) - known)
+        if unknown:
+            raise InputFormatError(f"the run asks for meters the inputs do not have: {unknown}")
+        update["meters"] = [meter for meter in manifest.meters if meter.id in scope["meters"]]
+        update["prechecks"] = [
+            check.model_copy(update={"meters": [m for m in check.meters if m in scope["meters"]]})
+            if check.meters != "all"
+            else check
+            for check in manifest.prechecks
+            if check.meters == "all" or set(check.meters) & set(scope["meters"])
+        ]
+    if scope.get("start") or scope.get("end"):
+        start = pd.Timestamp(scope["start"]).to_pydatetime() if scope.get("start") else None
+        end = pd.Timestamp(scope["end"]).to_pydatetime() if scope.get("end") else None
+        if manifest.period is not None:
+            start = max(start, manifest.period.start) if start else manifest.period.start
+            end = min(end, manifest.period.end) if end else manifest.period.end
+        if start is None or end is None:
+            raise InputFormatError("a run limited by start or end needs both, or a period in the manifest")
+        update["period"] = PeriodSpec(start=start, end=end)
+    return manifest.model_copy(update=update) if update else manifest
+
+
 class SiteData:
     """Read access to one run's frozen manifest and normalized data."""
 
@@ -117,7 +163,12 @@ class SiteData:
         self.data = self.root / DATA_DIR
         if not (self.inputs / MANIFEST_NAME).is_file():
             raise RunDataError(f"run {run_id} has no frozen energy inputs")
-        self.manifest: Manifest = load_manifest(self.inputs)
+        self.manifest: Manifest = narrowed(load_manifest(self.inputs), self.task_scope())
+
+    def task_scope(self) -> dict[str, Any] | None:
+        """What the person asked this run to look at: meters, times, a focus."""
+
+        return task_scope(self.root)
 
     # Paths -----------------------------------------------------------------
     def series_path(self, meter_id: str) -> Path:
@@ -195,6 +246,25 @@ class SiteData:
             )
         return self._tariff
 
+    def segments(self) -> list[Segment] | None:
+        """The state axis cut from the production records; None without them."""
+
+        path = self.path("states.json")
+        if not path.is_file():
+            return None
+        if getattr(self, "_segments", None) is None:
+            self._segments = [
+                Segment(
+                    start=pd.Timestamp(item["start"]).to_pydatetime(),
+                    end=pd.Timestamp(item["end"]).to_pydatetime(),
+                    running=frozenset(item["running"]),
+                    unknown=frozenset(item["unknown"]),
+                    recorded=item["recorded"],
+                )
+                for item in read_json(path)["segments"]
+            ]
+        return self._segments
+
     def machine_meter(self, machine: str) -> str | None:
         for meter in self.manifest.meters:
             if machine in meter.production_machines:
@@ -205,13 +275,36 @@ class SiteData:
         value = read_json(self.path("partitions.json"))
         return {item["partition_id"]: item["meter_ids"] for item in value["partitions"]}
 
+    def scope_meters(self, partition_id: str) -> list[str] | None:
+        """The meters a scope may read: a partition's, or every meter for the plant-wide pass."""
+
+        if partition_id == PLANT_SCOPE:
+            return self.meter_ids()
+        return self.partitions().get(partition_id)
+
+    def assumptions(self) -> list[dict[str, Any]]:
+        """The inferences about the data: written in the manifest, then drafted in the run."""
+
+        listed = [
+            {**entry.model_dump(mode="json"), "origin": "manifest", "meter_ids": [], "basis_fact_ids": [], "check_notes": []}
+            for entry in self.manifest.assumptions
+        ]
+        path = self.path("assumptions.json")
+        if path.is_file():
+            listed += read_json(path)["drafted"]
+        return listed
+
 
 __all__ = [
+    "PLANT_SCOPE",
     "DATA_DIR",
     "FROZEN_INPUTS",
     "RunDataError",
     "SiteData",
     "freeze_inputs",
+    "narrowed",
+    "task_scope",
+    "write_task_scope",
     "read_json",
     "run_dir",
     "series_kind",

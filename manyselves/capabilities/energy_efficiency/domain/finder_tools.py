@@ -92,10 +92,10 @@ def _scope(workspace: Path, scope: str) -> tuple[SiteData, str, list[str]]:
     if not separator or not partition_id:
         raise ScopeError(f"scope must look like <run id>#<partition id>, not {scope!r}")
     site = SiteData(workspace, run_id)
-    partitions = site.partitions()
-    if partition_id not in partitions:
+    meters = site.scope_meters(partition_id)
+    if meters is None:
         raise ScopeError(f"unknown partition {partition_id}")
-    return site, partition_id, partitions[partition_id]
+    return site, partition_id, meters
 
 
 def _own(meter_id: str, meters: list[str], partition_id: str) -> None:

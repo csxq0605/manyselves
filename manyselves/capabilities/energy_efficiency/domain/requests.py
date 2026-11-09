@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,8 +15,29 @@ class _Strict(BaseModel):
 
 
 class CandidatesRequest(_Strict):
-    input_dir: str = Field(min_length=1, description="项目里放 manifest.yaml 和数据文件的文件夹")
+    input_dir: str = Field(
+        min_length=1,
+        description="项目里放数据文件的文件夹；有 manifest.yaml 就按它读，没有时程序先探测文件、由模型起草一份",
+    )
     max_meters_per_partition: int = Field(default=6, ge=1, le=30)
+    meters: list[str] = Field(default_factory=list, description="只分析这些表（表编号）；不写时分析全部")
+    start: datetime | None = Field(default=None, description="只分析这之后（站点本地时间）")
+    end: datetime | None = Field(default=None, description="只分析这之前（站点本地时间）")
+    focus: str | None = Field(default=None, max_length=500, description="关注点，例如“空压系统”；只作为给模型的提示")
+
+    @model_validator(mode="after")
+    def ordered(self) -> "CandidatesRequest":
+        for value in (self.start, self.end):
+            if value is not None and value.tzinfo is not None:
+                raise ValueError("start and end are site local time without a time zone")
+        if self.start and self.end and self.end <= self.start:
+            raise ValueError("end must be after start")
+        if len(set(self.meters)) != len(self.meters):
+            raise ValueError("meters repeat")
+        return self
+
+    def task_scope(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", include={"meters", "start", "end", "focus"})
 
 
 class ReportRequest(_Strict):
@@ -80,6 +102,13 @@ class QuantifyRequest(_Strict):
     run_id: str
     partition_results: dict[str, PartitionResult]
     partition_errors: dict[str, Any] = Field(default_factory=dict)
+    plant_results: dict[str, PartitionResult] = Field(default_factory=dict)
+    plant_errors: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlantRequest(_Strict):
+    run_id: str
+    partition_results: dict[str, PartitionResult]
 
 
 class SelectRequest(_Strict):
@@ -100,6 +129,7 @@ __all__ = [
     "PartitionAttempt",
     "PartitionRequest",
     "PartitionResult",
+    "PlantRequest",
     "QuantifyRequest",
     "RenderRequest",
     "ReportRequest",

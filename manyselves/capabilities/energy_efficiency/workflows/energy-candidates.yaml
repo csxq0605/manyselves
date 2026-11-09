@@ -1,6 +1,6 @@
 id: energy-candidates
 version: 0.1.0
-description: Read one site's meter data, look for candidate loss items partition by partition, replay them over the whole period and write the candidate register
+description: Read one site's meter data, look for candidate loss items partition by partition and once across the plant, replay them over the whole period and write the candidate register
 tasks: []
 recovery:
 - typed-turn-recovery
@@ -59,6 +59,33 @@ actions:
   output_variable: partition_results
   errors_variable: partition_errors
   max_concurrency: 4
+# One look across every meter: items between objects and links between
+# partitions.  It runs as a map of one so its failure leaves the run going.
+- id: plant-input
+  kind: set_variable
+  variable: plant_input
+  value_variables:
+    run_id: run-id
+    partition_results: partition_results
+- id: plant-brief
+  kind: invoke_tool
+  tool: plant-brief
+  input_variable: plant_input
+  output_variable: plant_set
+- id: plant-briefs
+  kind: set_variable
+  variable: plant_briefs
+  value_variable: plant_set
+  field: briefs
+- id: plant
+  kind: map
+  items_variable: plant_briefs
+  key_field: partition_id
+  workflow: find-plant
+  key_input_variable: partition_key
+  output_variable: plant_results
+  errors_variable: plant_errors
+  max_concurrency: 1
 - id: quantify
   kind: invoke_tool
   tool: quantify-candidates
@@ -66,6 +93,8 @@ actions:
     run_id: run-id
     partition_results: partition_results
     partition_errors: partition_errors
+    plant_results: plant_results
+    plant_errors: plant_errors
   output_variable: register
 - id: publish
   kind: publish_result

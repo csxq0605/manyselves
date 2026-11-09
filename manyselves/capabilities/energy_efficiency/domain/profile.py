@@ -8,6 +8,7 @@ from typing import Any
 
 from .inputs import MeterQuality, MeterSpec
 from .series import MeterSeries, days_between
+from .states import states_text
 
 DAILY_ROWS_LIMIT = 62
 
@@ -150,6 +151,8 @@ def profile_text(profile: dict[str, Any]) -> str:
         tail.append(f"小时平均功率最高 {_num(profile['max_hourly_kw'])} kW")
     if tail:
         lines.append("；".join(tail))
+    if profile.get("states") is not None:
+        lines.append(states_text(profile["states"], profile["unit_kind"], bool(profile["production_machines"])))
     return "\n".join(lines)
 
 

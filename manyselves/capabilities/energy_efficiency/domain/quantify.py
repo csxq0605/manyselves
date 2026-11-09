@@ -29,7 +29,7 @@ import pandas as pd
 
 from .evidence import has_evidence, load_evidence
 from .inputs import QUANTITY_BASES
-from .items import KB_ITEMS, RELATIONS, PartitionSubmission
+from .items import KB_ITEMS, PLANT, RELATIONS, PartitionSubmission
 from .methods import (
     MENU,
     NO_METHOD,
@@ -385,15 +385,75 @@ def number_hints(texts: list[str], known: list[float], codes: list[str] | tuple[
     return list(dict.fromkeys(hints))
 
 
-def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """All items in a stable order with program ids, and the partition records."""
+def _category_coverage(submission: dict[str, Any], local: dict[str, str]) -> list[dict[str, Any]]:
+    """The submission's category entries, and a found entry per category its items propose."""
 
-    partitions_meta = read_json(site.path("partitions.json"))["partitions"]
+    found: dict[str, dict[str, Any]] = {}
+    for item in submission["items"]:
+        for proposal in item.get("candidate_categories", []):
+            entry = found.setdefault(
+                proposal["item_id"], {"item_id": proposal["item_id"], "meter_ids": [], "outcome": "found", "item_ids": []}
+            )
+            entry["meter_ids"] = list(dict.fromkeys(entry["meter_ids"] + item["meter_ids"]))
+            entry["item_ids"].append(local[item["key"]])
+    written = [{**entry, "item_ids": []} for entry in submission.get("category_coverage", [])]
+    order = {item_id: number for number, item_id in enumerate(KB_ITEMS)}
+    return sorted([*found.values(), *written], key=lambda entry: (order[entry["item_id"]], entry["outcome"] != "found"))
+
+
+def _model_item(item: dict[str, Any], item_id: str, partition_id: str, local: dict[str, str], check: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "source": "model",
+        "partition_id": partition_id,
+        "local_key": item["key"],
+        "meter_ids": item["meter_ids"],
+        "windows": [
+            {"start": _iso(pd.Timestamp(window["start"])), "end": _iso(pd.Timestamp(window["end"]))}
+            for window in item["windows"]
+        ],
+        "finding_method": item["finding_method"],
+        "phenomenon": item["phenomenon"],
+        "reasoning": item["reasoning"],
+        "root_cause_candidates": item["root_cause_candidates"],
+        "missing_info": item.get("missing_info", []),
+        "depends_on_assumptions": item.get("depends_on_assumptions", []),
+        "monitoring_suggestion": item.get("monitoring_suggestion"),
+        "related_ids": [local[key] for key in item.get("related_keys", [])],
+        "relations": [
+            {"item_id": local[key], "relation": item.get("relation_types", {}).get(key)}
+            for key in item.get("related_keys", [])
+        ],
+        "candidate_categories": [
+            {**proposal, "role": KB_ITEMS[proposal["item_id"]][0], "title": KB_ITEMS[proposal["item_id"]][1]}
+            for proposal in item.get("candidate_categories", [])
+        ],
+        "possible_necessary_services": item.get("possible_necessary_services", []),
+        "evidence_ids": item["evidence_ids"],
+        "check_issues": [issue["problem"] for issue in check["issues"] if issue["key"] == item["key"]],
+        "rule_notes": [],
+    }
+
+
+def _collect_items(
+    site: SiteData, results: dict[str, Any], plant_failed: bool = False
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """All items in a stable order with program ids, and the partition records.
+
+    The plant-wide pass, when it ran, comes after the partitions; its links
+    to partition items become relations on both items.
+    """
+
+    partitions_meta = list(read_json(site.path("partitions.json"))["partitions"])
+    if PLANT in results or plant_failed:
+        partitions_meta.append({"partition_id": PLANT, "label": "全厂关联", "meter_ids": site.meter_ids()})
     rule_items = read_json(site.path("prechecks.json"))["items"]
     rule_ids = {item["key"]: f"R{number:03d}" for number, item in enumerate(rule_items, start=1)}
     rule_notes: dict[str, list[str]] = {}
     items: list[dict[str, Any]] = []
     partitions: list[dict[str, Any]] = []
+    refs: dict[str, str] = {}
+    links: list[tuple[dict[str, Any], dict[str, str]]] = []
     number = 0
     for meta in partitions_meta:
         partition_id = meta["partition_id"]
@@ -410,6 +470,7 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
         for item in submission["items"]:
             number += 1
             local[item["key"]] = f"L{number:03d}"
+            refs[f"{partition_id}:{item['key']}"] = local[item["key"]]
         record.update(
             {
                 "outcome": "ok",
@@ -421,6 +482,7 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
                     }
                     for entry in submission["coverage"]
                 ],
+                "category_coverage": _category_coverage(submission, local),
                 "notes": submission["notes"],
                 "issues": [issue["problem"] for issue in check["issues"] if not issue["key"]]
                 + list(result.get("notes") or []),
@@ -428,42 +490,21 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
         )
         partitions.append(record)
         for item in submission["items"]:
-            items.append(
-                {
-                    "id": local[item["key"]],
-                    "source": "model",
-                    "partition_id": partition_id,
-                    "local_key": item["key"],
-                    "meter_ids": item["meter_ids"],
-                    "windows": [
-                        {"start": _iso(pd.Timestamp(window["start"])), "end": _iso(pd.Timestamp(window["end"]))}
-                        for window in item["windows"]
-                    ],
-                    "finding_method": item["finding_method"],
-                    "phenomenon": item["phenomenon"],
-                    "reasoning": item["reasoning"],
-                    "root_cause_candidates": item["root_cause_candidates"],
-                    "missing_info": item.get("missing_info", []),
-                    "monitoring_suggestion": item.get("monitoring_suggestion"),
-                    "related_ids": [local[key] for key in item.get("related_keys", [])],
-                    "relations": [
-                        {"item_id": local[key], "relation": item.get("relation_types", {}).get(key)}
-                        for key in item.get("related_keys", [])
-                    ],
-                    "candidate_categories": [
-                        {**proposal, "role": KB_ITEMS[proposal["item_id"]][0], "title": KB_ITEMS[proposal["item_id"]][1]}
-                        for proposal in item.get("candidate_categories", [])
-                    ],
-                    "possible_necessary_services": item.get("possible_necessary_services", []),
-                    "evidence_ids": item["evidence_ids"],
-                    "check_issues": [
-                        issue["problem"] for issue in check["issues"] if issue["key"] == item["key"]
-                    ],
-                    "rule_notes": [],
-                }
-            )
+            items.append(_model_item(item, local[item["key"]], partition_id, local, check))
+        links += [(link, local) for link in submission.get("links", [])]
         for note in submission.get("rule_item_notes", []):
             rule_notes.setdefault(note["rule_key"], []).append(f"{partition_id}：{note['note']}")
+    index = {item["id"]: item for item in items}
+    for link, local in links:
+        left = local.get(link["left"]) or refs.get(link["left"])
+        right = local.get(link["right"]) or refs.get(link["right"])
+        if left is None or right is None or left == right:
+            continue
+        for one, other in ((left, right), (right, left)):
+            item = index[one]
+            if other not in item["related_ids"]:
+                item["related_ids"].append(other)
+            item["relations"].append({"item_id": other, "relation": link["relation"], "note": link["note"], "by": PLANT})
     for item in rule_items:
         items.append(
             {
@@ -478,6 +519,7 @@ def _collect_items(site: SiteData, results: dict[str, Any]) -> tuple[list[dict[s
                 "reasoning": "",
                 "root_cause_candidates": [],
                 "missing_info": [],
+                "depends_on_assumptions": [],
                 "monitoring_suggestion": None,
                 "related_ids": [],
                 "relations": [],
@@ -503,7 +545,7 @@ def quantify_register(
     totals = meter_totals(site)
     hourly = _Hourly(site, period)
     known_meters = set(site.meter_ids())
-    items, partitions = _collect_items(site, results)
+    items, partitions = _collect_items(site, results, PLANT in errors)
     for record in partitions:
         if record["outcome"] == "failed":
             record["error"] = str(errors.get(record["partition_id"], "no result"))
@@ -607,14 +649,19 @@ def quantify_register(
             item["computed"]["number_hints"] = list(dict.fromkeys(hints))
         item["scalars"] = _scalars(item)
         item["check_code"] = check_code(item)
+    states_by_meter = {
+        profile["meter_id"]: profile.get("states") for profile in read_json(site.path("profiles.json"))["profiles"]
+    }
     meters = [
         {
             "meter_id": spec.id,
             "name": spec.name,
             "unit_kind": spec.unit_kind,
             "group": spec.group,
+            "production_machines": list(spec.production_machines),
             "period_energy_kwh": totals.get(spec.id),
             "quality_notes": site.quality(spec.id).notes(),
+            "states": states_by_meter.get(spec.id),
         }
         for spec in site.manifest.meters
     ]
@@ -628,7 +675,14 @@ def quantify_register(
         "site": site.manifest.site.name,
         "period": {"start": _iso(period[0]), "end": _iso(period[1])},
         "meters": meters,
-        "assumptions": [entry.model_dump(mode="json") for entry in site.manifest.assumptions],
+        "assumptions": [
+            {
+                **entry,
+                "item_ids": [item["id"] for item in items if entry["id"] in item.get("depends_on_assumptions", [])],
+            }
+            for entry in site.assumptions()
+        ],
+        "states": _states_record(site),
         "partitions": partitions,
         "prechecks": prechecks,
         "items": items,
@@ -640,10 +694,22 @@ def quantify_register(
         "counts": {
             "model_items": sum(1 for item in items if item["source"] == "model"),
             "rule_items": sum(1 for item in items if item["source"] == "rule"),
-            "partitions": len(partitions),
-            "partitions_failed": sum(1 for record in partitions if record["outcome"] == "failed"),
+            "partitions": sum(1 for record in partitions if record["partition_id"] != PLANT),
+            "partitions_failed": sum(
+                1 for record in partitions if record["outcome"] == "failed" and record["partition_id"] != PLANT
+            ),
+            "plant_items": sum(1 for item in items if item["partition_id"] == PLANT),
+            "plant_pass": next((record["outcome"] for record in partitions if record["partition_id"] == PLANT), None),
         },
     }
+
+
+def _states_record(site: SiteData) -> dict[str, Any] | None:
+    path = site.path("states.json")
+    if not path.is_file():
+        return None
+    data = read_json(path)
+    return {key: data[key] for key in ("coverage", "unplaced_batches", "uncertain_batches", "note", "plant")}
 
 
 def _combined(measures: list[WindowMeasure], has_energy: bool) -> dict[str, Any]:

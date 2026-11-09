@@ -1,0 +1,10 @@
+id: plant-brief
+version: 0.1.0
+description: Write the brief of the plant-wide pass from every meter's profile, the state axis and the partitions' items
+implementation: capability:energy-efficiency:plant-brief
+input_contract: plant-request
+output_contract: plant-set
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

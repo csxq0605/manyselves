@@ -24,6 +24,7 @@ from manyselves.runtime.providers.base import LLMToolCall
 from manyselves.runtime.providers.base import Message as LLMMessage
 from manyselves.runtime.services import RuntimeServicesView
 from tests.capabilities.energy_efficiency.synthetic import write_site
+from tests.capabilities.energy_efficiency.test_energy_steps import categories
 from tests.runtime.scripted_loop import ScriptedLoop
 
 
@@ -140,6 +141,7 @@ def _p01(brief: dict[str, Any]):
                     }
                 ],
                 "coverage": _coverage(["AC1"], {"daily-clock-window": ["A1"]}),
+                "category_coverage": categories(["AC1"], [{"meter_ids": ["AC1"], "candidate_categories": CATEGORY}]),
                 "rule_item_notes": [{"rule_key": "R1", "note": "与 A1 是同一现象"}],
             }
         ]
@@ -184,6 +186,9 @@ def _p02_first(brief: dict[str, Any]):
                     },
                 ],
                 "coverage": _coverage(["IM1", "LT1"], {"production-gaps": ["B1"], "calendar-state": ["B2"]}),
+                "category_coverage": categories(
+                    ["IM1", "LT1"], [{"meter_ids": ["IM1", "LT1"], "candidate_categories": CATEGORY}]
+                ),
             }
         ]
 
@@ -207,8 +212,45 @@ def _p02_fix(request: dict[str, Any]):
     return ("work", calls, build)
 
 
+STOPPED = {"state": "plant_stopped", "min_minutes": 600}
+
+
+def _plant(brief: dict[str, Any]):
+    scope = brief["scope"]
+    assert brief["partition_id"] == "PLANT"
+    assert {item["ref"] for item in brief["partition_items"]} >= {"P01:A1", "P02:B1"}
+    assert len(brief["categories"]) == 17
+
+    def build(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        evidence = results[0]["evidence_id"]
+        item = {
+            "key": "X1",
+            "meter_ids": ["AC1"],
+            "windows": [{"start": "2026-03-07 00:00", "end": "2026-03-08 00:00"}],
+            "finding_method": {"method_id": "state-windows", "params": STOPPED, "description": "全厂停产时段的空压机"},
+            "phenomenon": "全厂停产时空压机平均 12 kW",
+            "evidence_ids": [evidence],
+            "reasoning": "状态轴上全厂停产的长段里空压机没有停。",
+            "root_cause_candidates": _cause(evidence),
+            "candidate_categories": [{"item_id": "LOSS-SUPPORT", "why": "停产时公辅仍运行"}],
+        }
+        return [
+            {
+                "partition_id": "PLANT",
+                "items": [item],
+                "category_coverage": categories(["AC1"], [item]),
+                "links": [{"left": "X1", "right": "P01:A1", "relation": "same_event_evidence", "note": "同是空压机不随生产停"}],
+            }
+        ]
+
+    calls = [("try-method", {"scope": scope, "meter_ids": ["AC1"], "method_id": "state-windows", "params": STOPPED})]
+    return ("work", calls, build)
+
+
 def _answer(message):
     content = message.content
+    if '<task id="find-plant">' in content:
+        return _plant(_input_of(content))
     if '<task id="find-partition">' in content:
         brief = _input_of(content)
         assert '<context name="profile_text">' in content
@@ -268,7 +310,14 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
 
         assert run["run"]["status"] == "completed"
         register = outputs["register"]
-        assert register["counts"] == {"model_items": 3, "rule_items": 1, "partitions": 2, "partitions_failed": 0}
+        assert register["counts"] == {
+            "model_items": 4,
+            "rule_items": 1,
+            "partitions": 2,
+            "partitions_failed": 0,
+            "plant_items": 1,
+            "plant_pass": "ok",
+        }
         assert {"path": f"Work/runs/{run_id}/energy/register.xlsx"} in register["output_artifacts"]
         artifacts = {item["path"] for item in binding.get_outputs(run_id)["outputs"] if item["kind"] == "artifact"}
         assert f"Work/runs/{run_id}/energy/register.xlsx" in artifacts
@@ -276,6 +325,10 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
         data = json.loads((tmp_path / "Work/runs" / run_id / "energy/register.json").read_text(encoding="utf-8"))
         items = {item["local_key"]: item for item in data["items"]}
         assert items["B2"]["check_issues"] == []
+        assert items["X1"]["partition_id"] == "PLANT" and items["X1"]["check_issues"] == []
+        assert items["A1"]["id"] in items["X1"]["related_ids"] and items["X1"]["id"] in items["A1"]["related_ids"]
+        # Weekends and weekday nights after 17:00 are a stopped plant: 12 kW there.
+        assert items["X1"]["scalars"]["window_avg_kw"] == 12.0
         assert items["B2"]["related_ids"] == [items["B1"]["id"]]
         assert items["A1"]["scalars"]["replay_item_kwh"] == 13 * 12 * 12
         # Lighting is instant power: no energy is made up for it.
@@ -319,7 +372,7 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
     report_id = report_run["run_id"]
     assert binding.get_run(report_id)["run"]["status"] == "completed"
     report = _values(binding, report_id)["report"]
-    assert report["counts"] == {"keep": 1, "drop": 1, "needs_data": 1, "unselected": 1}
+    assert report["counts"] == {"keep": 1, "drop": 1, "needs_data": 1, "unselected": 2}
     # The marks and rules were copied into the run when it started.
     assert (tmp_path / "Work/runs" / report_id / "energy-selection/marks.csv").is_file()
     assert (tmp_path / "Work/runs" / report_id / "energy-selection/source-register/register.json").is_file()

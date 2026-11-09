@@ -21,7 +21,9 @@ from manyselves.runtime.state_store import FileWorkflowStateStore
 from .. import CAPABILITY_FILE
 from ..domain import finder_tools
 from ..domain.check import check_submission, settle_partition
-from ..domain.inputs import InputFormatError
+from ..domain.inputs import MANIFEST_NAME, InputFormatError, load_manifest
+from ..domain.items import PLANT
+from ..domain.plant import plant_brief
 from ..domain.prepare import parse_inputs, partition_meters, profile_meters, run_prechecks
 from ..domain.quantify import quantify_register
 from ..domain.register import write_register
@@ -30,6 +32,7 @@ from ..domain.requests import (
     CandidatesRequest,
     CheckRequest,
     PartitionRequest,
+    PlantRequest,
     QuantifyRequest,
     RenderRequest,
     ReportRequest,
@@ -38,7 +41,16 @@ from ..domain.requests import (
     SettleRequest,
 )
 from ..domain.selection import SelectionError, load_rules, read_marks, select
-from ..domain.store import DATA_DIR, RunDataError, freeze_inputs, read_json, run_dir, write_json
+from ..domain.store import (
+    DATA_DIR,
+    RunDataError,
+    freeze_inputs,
+    narrowed,
+    read_json,
+    run_dir,
+    write_json,
+    write_task_scope,
+)
 
 SELECTION_INPUTS = "energy-selection"
 SOURCE_COPY = "source-register"
@@ -95,10 +107,17 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
             request.correction_errors,
         )
 
+    def plant(values: Any) -> dict[str, Any]:
+        request = PlantRequest.model_validate(_value(values))
+        results = {key: value.model_dump(mode="json") for key, value in request.partition_results.items()}
+        return plant_brief(workspace, request.run_id, results)
+
     def quantify(values: Any) -> dict[str, Any]:
         request = QuantifyRequest.model_validate(_value(values))
         results = {key: value.model_dump(mode="json") for key, value in request.partition_results.items()}
-        register = quantify_register(workspace, request.run_id, results, request.partition_errors)
+        results.update({PLANT: value.model_dump(mode="json") for value in request.plant_results.values()})
+        errors = {**request.partition_errors, **({PLANT: next(iter(request.plant_errors.values()))} if request.plant_errors else {})}
+        register = quantify_register(workspace, request.run_id, results, errors)
         paths = write_register(run_dir(workspace, request.run_id) / DATA_DIR, register)
         files = [_relative(workspace, path) for path in paths]
         return {
@@ -151,6 +170,7 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
         "profile-energy-data": profile,
         "run-energy-prechecks": prechecks,
         "partition-energy-meters": partitions,
+        "plant-brief": plant,
         "check-partition-items": check,
         "settle-partition-items": settle,
         "quantify-candidates": quantify,
@@ -228,7 +248,10 @@ def start_input(workspace: Path) -> Callable[[str, str, Any], dict[str, Any]]:
         try:
             if workflow_id == "energy-candidates":
                 request = CandidatesRequest.model_validate(values)
-                freeze_inputs(workspace, run_id, request.input_dir)
+                frozen = freeze_inputs(workspace, run_id, request.input_dir)
+                write_task_scope(workspace, run_id, request.task_scope())
+                if (frozen / MANIFEST_NAME).is_file():
+                    narrowed(load_manifest(frozen), request.task_scope())
                 return {"request": request.model_dump(mode="json"), "run-id": run_id}
             if workflow_id == "energy-report":
                 request = ReportRequest.model_validate(values)

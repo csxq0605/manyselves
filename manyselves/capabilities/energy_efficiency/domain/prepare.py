@@ -19,6 +19,7 @@ from .inputs import (
     read_meter_table,
     tariff_schedule,
 )
+from .items import INPUT_KINDS, kb_categories
 from .methods import (
     MENU,
     MethodContext,
@@ -31,6 +32,7 @@ from .methods import (
     top_occurrences,
 )
 from .profile import meter_profile, profile_text
+from .states import COVERAGE_NOTE, meter_states, plant_summary, segments
 from .store import SiteData, read_json, write_json
 
 RULE_WINDOWS = 5
@@ -150,6 +152,7 @@ def method_context(site: SiteData) -> MethodContext:
         quantity_basis=production.quantity_basis if production else None,
         quantity_unit=production.quantity_unit if production else None,
         product_group_columns=tuple(production.product_group_columns) if production else (),
+        segments=site.segments(),
     )
 
 
@@ -174,9 +177,36 @@ def meter_totals(site: SiteData) -> dict[str, float | None]:
 def profile_meters(workspace: Path, run_id: str) -> dict[str, Any]:
     site = SiteData(workspace, run_id)
     period = site.period()
+    batches = site.batches()
+    pieces = None
+    if batches is not None:
+        pieces, meta = segments(batches, period)
+        write_json(
+            site.path("states.json"),
+            {
+                **meta,
+                "note": COVERAGE_NOTE,
+                "plant": plant_summary(pieces),
+                "segments": [
+                    {
+                        "start": piece.start,
+                        "end": piece.end,
+                        "running": sorted(piece.running),
+                        "unknown": sorted(piece.unknown),
+                        "recorded": piece.recorded,
+                    }
+                    for piece in pieces
+                ],
+            },
+        )
     profiles = []
     for spec in site.manifest.meters:
-        profiles.append(meter_profile(spec, site.series(spec.id), site.quality(spec.id), period))
+        series = site.series(spec.id)
+        profile = meter_profile(spec, series, site.quality(spec.id), period)
+        profile["states"] = (
+            meter_states(series, pieces, list(spec.production_machines)) if pieces is not None else None
+        )
+        profiles.append(profile)
     write_json(site.path("profiles.json"), {"profiles": profiles})
     return {
         "run_id": run_id,
@@ -360,8 +390,17 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
             }
             for fact in site.facts() or []
         ],
-        "assumptions": [item.model_dump(mode="json") for item in site.manifest.assumptions],
+        "assumptions": brief_assumptions(site),
+        "categories": kb_categories(),
+        "input_kinds": INPUT_KINDS,
     }
+
+
+def brief_assumptions(site: SiteData) -> list[dict[str, Any]]:
+    return [
+        {key: entry[key] for key in ("id", "topic", "inference", "basis", "origin", "meter_ids") if key in entry}
+        for entry in site.assumptions()
+    ]
 
 
 __all__ = [

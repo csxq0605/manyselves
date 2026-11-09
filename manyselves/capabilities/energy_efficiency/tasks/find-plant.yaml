@@ -1,0 +1,24 @@
+id: find-plant
+version: 0.1.0
+description: Look across every meter once the partitions are done, add items between objects and link items of different partitions
+agent: loss-finder
+objective: 各分区已经各自找完。下面是全厂关联的说明：每块表的简要画像（全期电量、状态轴、工作日和周末小时曲线、数据说明）、全厂状态轴（全厂在生产、全厂停产、判断不了、生产记录之外各多少小时，哪些机台没有表）、各分区已提的项（partition_items，编号写成 P01:A1）和各分区写了缺资料或不适用的类别（partition_category_gaps）、方法菜单和就绪表、知识库 17 类。只做分区看不到的事：找跨对象的损耗项（例如全厂停产时公辅设备、照明或空调仍在运行；两块表同时运行；一条线停着时它的辅机还开着），并标出不同分区的项之间、新项和已有项之间的关系。
+input_contract: plant-brief
+context_fields:
+- meters_text
+output_contract: partition-submission
+constraints:
+- partition_id 填 PLANT。每次调用工具都把输入里的 scope 原样填进 scope；这一步可以查所有表、所有机台的批次。
+- 不重复分区已经提过的项；分区的项不能删、不能改，也不要排序或合并。同一现象如果和某个分区项有关，在 links 里写关系，不要再提一次。
+- 新的项写跨对象的现象：至少涉及两块表，或一块表和别的对象的状态（例如用 state-windows 的 plant_stopped 量没有挂机台的表，用 paired-meter 比两块表，用 daily-clock-window / threshold-segments 的 exclude 扣掉别的机台的批次）。数字只能来自工具证据；不同表的电量不相加（表之间可能有上下级）。
+- 其余项的写法和分区一样：寻找方式能用菜单方法的填 method_id 和 params 并先试过；思考过程；至少两条候选原因，其中至少一条不是损耗，原因写依据和怎样核实；候选类别从 17 类里选；数字依赖 assumptions 的写进 depends_on_assumptions。
+- links 写关系：left、right 是本次提交的项的 key，或分区项的编号（P01:A1）；relation 从 alternative_explanation、same_event_evidence、parent_child、mutually_exclusive、independent、joint_scenario 里选，note 写依据。关系只是标注，不让人少看哪一项。
+- category_coverage 按 17 类交代跨对象这一层：某类有本次提交的项提议就不用写；其余写 none_found（跨对象看过没找到）、not_applicable 或 needs_input（missing_inputs 从 input_kinds 里选）。每类至少有一条交代，meter_ids 写你看过的表。
+- coverage（方法覆盖）在这一步可以不写；rule_item_notes 可以不写。
+- 不判断哪一项是真的、值得做或能省多少，不写金额，不写人员过错。
+tools:
+- energy-series
+- compare-windows
+- try-method
+- production-records
+recovery: typed-turn-recovery

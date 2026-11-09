@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .items import CAUSE_KINDS
+from .overview import data_html, ledgers_html, overview_markdown
 from .register import (
     PAGE_STYLE,
     cost_note,
@@ -166,6 +167,7 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     md += [""]
     lists = [checklist(item, decisions[item["id"]]) for item in [*kept, *needs]]
     md += checklist_markdown(lists, assumptions_markdown(register.get("assumptions", [])))
+    md += overview_markdown(register)
     md += ["## 查了什么", ""]
     for record in register["partitions"]:
         if record["outcome"] != "ok":
@@ -221,7 +223,9 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
             body.append(f"<li>{html.escape(item['id'])}（{html.escape(_by(entry))}）{html.escape(reason)}</li>")
         body.append("</ul>")
     body.append(checklist_html(lists, assumptions_html(register.get("assumptions", []))))
+    body.append(data_html(register))
     body.append(partition_html(register))
+    body.append(ledgers_html(register))
     body.append("<h2>数据与来源</h2><ul>")
     for meter in register["meters"]:
         notes = "；".join(meter["quality_notes"]) or "无异常"

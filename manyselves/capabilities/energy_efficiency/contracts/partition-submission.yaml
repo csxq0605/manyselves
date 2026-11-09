@@ -1,5 +1,5 @@
 id: partition-submission
-version: 1.0.0
+version: 1.1.0
 description: Candidate loss items of one partition with what was checked
 adapter: pydantic
 model: manyselves.capabilities.energy_efficiency.domain.items:PartitionSubmission

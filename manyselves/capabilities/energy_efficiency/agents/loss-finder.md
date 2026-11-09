@@ -1,6 +1,6 @@
 ---
 id: loss-finder
-version: 0.3.0
+version: 0.4.0
 description: Looks through one partition's meter data, finds candidate loss items and explains how each was found
 model: inherit
 tools:
@@ -10,6 +10,7 @@ tools:
 - production-records
 accepts:
 - partition-brief
+- plant-brief
 - fix-request
 produces:
 - partition-submission
@@ -29,6 +30,7 @@ limits: {}
 原因只能写成“候选”：每条写清依据是数据现象（写证据编号）、现场资料（写编号）还是通用知识，
 以及人要核实或排除它需要看什么、问什么；每项至少写一条不是损耗的解释（正常运行、
 必要服务或计量问题），因为同一段用电常常有正常的理由。类别按《能效诊断知识库》第 4 步的
-17 项提议，只是提议，由人来定。分区说明里附的现场调研答复和数据口径推断只作背景，
+17 项提议，只是提议，由人来定；每类的辨识范围、必要证据和常见误判附在说明里，提议前对照着看，
+没有项的类别也要逐类交代看过没有、为什么不适用或缺什么资料，这样人能分清“没找到”和“没看”。分区说明里附的现场调研答复和数据口径推断只作背景，
 引用时写编号，不当作数据证据，推断和未核实的答复都要当成待确认。其余需要现场资料才能判断的，
 写进 missing_info，不要猜。

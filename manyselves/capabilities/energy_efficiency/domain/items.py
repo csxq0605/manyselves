@@ -9,8 +9,11 @@ the ``check-partition-items`` tool's.
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .methods import MENU, NO_METHOD, MethodParamsError, Window, overlapping_windows, parse_params
@@ -68,6 +71,59 @@ RELATIONS: dict[str, str] = {
 Relation = Literal[
     "alternative_explanation", "same_event_evidence", "parent_child", "mutually_exclusive", "independent", "joint_scenario"
 ]
+PLANT = "PLANT"
+# What a category may be short of (coverage outcome needs_input); the program
+# checks the ones the inputs decide: production records, quantity, calendar, tariff.
+INPUT_KINDS: dict[str, str] = {
+    "production_records": "生产记录（或本表没挂机台）",
+    "quantity": "经声明口径的批次数量",
+    "qualified_quantity": "合格品量",
+    "product": "批次的产品",
+    "calendar": "经人确认的日历",
+    "tariff": "电价",
+    "meter_topology": "表间上下级关系或计量范围",
+    "service_parameters": "服务参数（流量、压力、温度等）",
+    "control_logs": "控制、告警日志",
+    "maintenance_logs": "维护、检修记录",
+    "bills_contracts": "账单、合同、需量",
+    "environment": "环境数据（气温等）",
+    "other": "其他（note 里写明）",
+}
+InputKind = Literal[
+    "production_records",
+    "quantity",
+    "qualified_quantity",
+    "product",
+    "calendar",
+    "tariff",
+    "meter_topology",
+    "service_parameters",
+    "control_logs",
+    "maintenance_logs",
+    "bills_contracts",
+    "environment",
+    "other",
+]
+CATEGORY_OUTCOMES: dict[str, str] = {
+    "none_found": "看过，没找到",
+    "not_applicable": "不适用",
+    "needs_input": "缺资料",
+}
+
+
+@lru_cache(maxsize=1)
+def kb_categories() -> list[dict[str, str]]:
+    """The 17 items of step 4 as the knowledge base words them: scope, evidence, pitfalls."""
+
+    path = Path(__file__).with_name("kb_categories.yaml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    categories = [
+        {**entry, "role": KB_ITEMS[entry["id"]][0]} for entry in data["categories"]
+    ]
+    assert [entry["id"] for entry in categories] == list(KB_ITEMS)
+    return categories
+
+
 CAUSE_KINDS: dict[str, str] = {
     "loss": "可能是损耗",
     "normal_operation": "正常运行或工艺需要",
@@ -138,6 +194,10 @@ class LossItem(_Strict):
         default_factory=list, description="这段用电里可能有哪些必要服务（工艺、环保、质量、安全），由人确认"
     )
     missing_info: list[str] = Field(default_factory=list, description="判断这一项还缺的资料")
+    depends_on_assumptions: list[str] = Field(
+        default_factory=list,
+        description="这一项的数字或判断建立在哪几条数据口径推断上（assumptions 的编号）；没有就留空",
+    )
     monitoring_suggestion: str | None = None
     related_keys: list[str] = Field(default_factory=list)
     relation_types: dict[str, Relation] = Field(
@@ -186,6 +246,38 @@ class CoverageEntry(_Strict):
         return self
 
 
+class CategoryCoverage(_Strict):
+    item_id: KbItemId = Field(description="知识库第 4 步 17 个稳定项之一")
+    meter_ids: list[str] = Field(min_length=1, description="这条说明针对哪些表")
+    outcome: Literal["none_found", "not_applicable", "needs_input"] = Field(
+        description="none_found 看过没找到；not_applicable 这些表上不适用；needs_input 缺资料"
+    )
+    missing_inputs: list[InputKind] = Field(
+        default_factory=list, description="needs_input 时缺哪几类资料"
+    )
+    note: str = Field(min_length=1, description="看了什么、为什么不适用、缺什么")
+
+    @model_validator(mode="after")
+    def missing_named(self) -> "CategoryCoverage":
+        if self.outcome == "needs_input" and not self.missing_inputs:
+            raise ValueError(f"category coverage of {self.item_id}: needs_input names missing_inputs")
+        if self.outcome != "needs_input" and self.missing_inputs:
+            raise ValueError(f"category coverage of {self.item_id}: only needs_input names missing_inputs")
+        if len(set(self.meter_ids)) != len(self.meter_ids):
+            raise ValueError(f"category coverage of {self.item_id}: meter_ids repeat")
+        return self
+
+
+class ItemLink(_Strict):
+    """A relation the plant-wide pass declares; a side is an item key of this
+    submission or a partition item written as <partition id>:<key>, e.g. P01:A1."""
+
+    left: str = Field(min_length=1)
+    right: str = Field(min_length=1)
+    relation: Relation
+    note: str = Field(min_length=1, description="为什么有这个关系")
+
+
 class RuleItemNote(_Strict):
     rule_key: str = Field(min_length=1)
     note: str = Field(min_length=1)
@@ -194,7 +286,14 @@ class RuleItemNote(_Strict):
 class PartitionSubmission(_Strict):
     partition_id: str = Field(min_length=1)
     items: list[LossItem] = Field(default_factory=list)
-    coverage: list[CoverageEntry] = Field(min_length=1)
+    coverage: list[CoverageEntry] = Field(default_factory=list)
+    category_coverage: list[CategoryCoverage] = Field(
+        default_factory=list,
+        description="17 类里本分区（全厂关联时：跨对象）没有损耗项提议的类别，逐类写看过没找到、不适用或缺资料",
+    )
+    links: list[ItemLink] = Field(
+        default_factory=list, description="只在全厂关联时写：本次的项和各分区已有项之间、或已有项之间的关系"
+    )
     rule_item_notes: list[RuleItemNote] = Field(default_factory=list)
     notes: str = ""
 
@@ -209,9 +308,11 @@ class PartitionSubmission(_Strict):
             unknown = sorted(set(item.related_keys) - known)
             if unknown:
                 raise ValueError(f"item {item.key}: related_keys {unknown} are not items")
+        if self.links and self.partition_id != PLANT:
+            raise ValueError("links are written only by the plant-wide pass")
         covered = {entry.method_id for entry in self.coverage}
         missing = [method_id for method_id in MENU if method_id not in covered]
-        if missing:
+        if missing and self.partition_id != PLANT:
             raise ValueError(
                 f"coverage must say for every menu method whether it was checked; missing {missing}"
             )
@@ -223,6 +324,12 @@ class PartitionSubmission(_Strict):
 
 
 __all__ = [
+    "CATEGORY_OUTCOMES",
+    "INPUT_KINDS",
+    "PLANT",
+    "CategoryCoverage",
+    "ItemLink",
+    "kb_categories",
     "CAUSE_KINDS",
     "KB_ITEMS",
     "RELATIONS",

@@ -14,6 +14,7 @@ from manyselves.capabilities.energy_efficiency.adapters.runtime import (
     tool_implementations,
 )
 from manyselves.capabilities.energy_efficiency.domain.check import settle_partition
+from manyselves.capabilities.energy_efficiency.domain.items import KB_ITEMS
 from manyselves.capabilities.energy_efficiency.domain.methods import MENU
 from manyselves.capabilities.energy_efficiency.domain.selection import (
     SelectionError,
@@ -26,10 +27,44 @@ from tests.capabilities.energy_efficiency.synthetic import write_site
 RUN = "candidates-1"
 
 
+def categories(meter_ids: list[str], items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Category coverage for every category the items do not propose on a meter."""
+
+    proposed = {
+        (proposal["item_id"], meter_id)
+        for item in items
+        for proposal in item.get("candidate_categories", [])
+        for meter_id in item["meter_ids"]
+    }
+    entries = []
+    for item_id in KB_ITEMS:
+        left = [meter_id for meter_id in meter_ids if (item_id, meter_id) not in proposed]
+        if left:
+            entries.append({"item_id": item_id, "meter_ids": left, "outcome": "none_found", "note": "看过"})
+    return entries
+
+
+def _covering(tools: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """Tests that are not about category coverage get it filled in for every category left."""
+
+    check = tools["check-partition-items"]
+
+    def checked(values: dict[str, Any]) -> dict[str, Any]:
+        submission = dict(values["submission"])
+        if "category_coverage" not in submission:
+            run_id, _sep, partition_id = values["scope"].partition("#")
+            partitions = read_json(workspace / "Work/runs" / run_id / "energy/partitions.json")["partitions"]
+            meters = next((item["meter_ids"] for item in partitions if item["partition_id"] == partition_id), [])
+            submission["category_coverage"] = categories(meters, submission.get("items", []))
+        return check({**values, "submission": submission})
+
+    return {**tools, "check-partition-items": checked}
+
+
 def _prepared(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     write_site(workspace / "data/site")
     start_input(workspace)(RUN, "energy-candidates", {"input_dir": "data/site"})
-    tools = tool_implementations(workspace)
+    tools = _covering(tool_implementations(workspace), workspace)
     tools["parse-energy-inputs"]({"run_id": RUN})
     tools["profile-energy-data"]({"run_id": RUN})
     tools["run-energy-prechecks"]({"run_id": RUN})
@@ -170,7 +205,7 @@ def test_replay_recomputes_every_item_over_the_whole_period(tmp_path: Path) -> N
     tools, _briefs = _prepared(tmp_path)
     summary = _candidates(tools)
 
-    assert summary["counts"] == {"model_items": 2, "rule_items": 1, "partitions": 2, "partitions_failed": 0}
+    assert summary["counts"] == {"model_items": 2, "rule_items": 1, "partitions": 2, "partitions_failed": 0, "plant_items": 0, "plant_pass": None}
     register = read_json(tmp_path / "Work/runs" / RUN / "energy/register.json")
     items = {item["id"]: item for item in register["items"]}
     assert set(items) == {"L001", "L002", "R001"}
@@ -1093,7 +1128,7 @@ def test_survey_answers_and_inferences_reach_the_finder_and_can_be_cited(tmp_pat
     manifest["assumptions"] = [{"id": "A1", "topic": "AC1 计量范围", "inference": "只计空压机", "basis": "台账名称"}]
     (site / "manifest.yaml").write_text(yaml.safe_dump(manifest, allow_unicode=True), encoding="utf-8")
     start_input(tmp_path)(RUN, "energy-candidates", {"input_dir": "data/site"})
-    tools = tool_implementations(tmp_path)
+    tools = _covering(tool_implementations(tmp_path), tmp_path)
     parsed = tools["parse-energy-inputs"]({"run_id": RUN})
     tools["profile-energy-data"]({"run_id": RUN})
     tools["run-energy-prechecks"]({"run_id": RUN})

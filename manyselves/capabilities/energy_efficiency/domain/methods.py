@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .inputs import QUANTITY_BASES, Batch, CalendarWindow, clock_window
 from .series import MeterSeries, WindowMeasure, days_between
+from .states import STATES, Segment, segments, state_windows
 
 _CLOCK = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$|^24:00$")
 NO_METHOD = "none"
@@ -176,6 +177,21 @@ class PowerEventsParams(Thresholds):
     min_minutes: float = Field(gt=0, description="连起来后至少多长才算一次事件")
 
 
+class StateWindowsParams(Thresholds):
+    state: Literal["own_running", "plant_running", "plant_stopped", "unknown", "no_record"] = Field(
+        description="状态轴上的状态："
+        + "；".join(f"{name} {text}" for name, text in STATES.items())
+    )
+    min_minutes: float = Field(default=0, ge=0, description="一段状态至少多长才算一次出现")
+    max_minutes: float | None = Field(default=None, gt=0, description="一段状态最长多长（例如只看短间隙）")
+
+    @model_validator(mode="after")
+    def ordered(self) -> "StateWindowsParams":
+        if self.max_minutes is not None and self.max_minutes < self.min_minutes:
+            raise ValueError("max_minutes must not be below min_minutes")
+        return self
+
+
 class BatchIntensityParams(_Params):
     machine: str = Field(min_length=1, description="生产记录里的机台名，须已在 manifest 里挂到这块表")
     product: str | None = Field(default=None, min_length=1, description="只看这种产品的批次")
@@ -194,6 +210,15 @@ class MethodContext:
     quantity_basis: str | None = None
     quantity_unit: str | None = None
     product_group_columns: tuple[str, ...] = ()
+    # The state axis cut from the batches; computed from them when not given.
+    segments: list[Segment] | None = None
+
+    def state_segments(self) -> list[Segment] | None:
+        if self.batches is None:
+            return None
+        if self.segments is not None:
+            return self.segments
+        return segments(self.batches, self.period)[0]
 
 
 UNKNOWN_HIT = "无数据，无法判断"
@@ -751,6 +776,32 @@ def _power_events(series: MeterSeries, params: PowerEventsParams, ctx: MethodCon
     return run
 
 
+def _state_windows(series: MeterSeries, params: StateWindowsParams, ctx: MethodContext) -> MethodRun:
+    method_id = "state-windows"
+    pieces = ctx.state_segments()
+    if pieces is None:
+        return MethodRun(method_id, series.meter_id, "needs_input", "manifest 里没有生产记录，分不出状态")
+    machines = ctx.machines.get(series.meter_id, [])
+    if params.state == "own_running" and not machines:
+        return MethodRun(
+            method_id, series.meter_id, "not_applicable", f"表 {series.meter_id} 没有挂机台，没有“本表机台在生产”这个状态"
+        )
+    problem = _threshold_problem(series, params)
+    if problem:
+        return MethodRun(method_id, series.meter_id, "not_applicable", problem)
+    stretches = state_windows(pieces, machines)[params.state]
+    kept = []
+    for begin, finish in stretches:
+        minutes = (finish - begin).total_seconds() / 60
+        if minutes < params.min_minutes or (params.max_minutes is not None and minutes > params.max_minutes):
+            continue
+        kept.append((begin, finish))
+    run = _windowed(method_id, series, params, kept)
+    run.summary["stretches_of_state"] = len(stretches)
+    run.summary["stretches_outside_length"] = len(stretches) - len(kept)
+    return run
+
+
 def _batch_intensity(series: MeterSeries, params: BatchIntensityParams, ctx: MethodContext) -> MethodRun:
     method_id = "batch-intensity"
     if ctx.batches is None:
@@ -949,6 +1000,20 @@ MENU: dict[str, MethodSpec] = {
             kb_note="分带只是按功率计数，不认定真待机、漏记生产或断电；生产记录和电表是否同一时钟没有核对（OP045 未做）",
         ),
         MethodSpec(
+            "state-windows",
+            "状态轴时段",
+            "按生产记录切出的状态轴，量某个状态（例如全厂停产 plant_stopped、本表机台没生产而别的机台在生产 plant_running）"
+            "每一段里这块表的电量或平均功率；可限定一段的最短、最长时长。没挂机台的表（公辅、照明等）也能用，"
+            "用来看全厂停产时它是否还在运行。需要生产记录。",
+            StateWindowsParams,
+            frozenset({"production_any"}),
+            True,
+            _state_windows,
+            operators=("OP004", "OP007", "OP013"),
+            scenarios=("BS-16", "BS-14", "ZQ19"),
+            kb_note="状态只按生产记录定，停产不等于没有服务需求；与参考电量的差值属于基准，这里不算",
+        ),
+        MethodSpec(
             "batch-intensity",
             "批次单耗分布",
             "量每个批次时段里这块表的电量，除以批次数量得单耗（数量口径由人在 manifest 声明），给出分布："
@@ -978,6 +1043,8 @@ def readiness(
         return "not_applicable", "这块表没有可用记录"
     if "calendar" in spec.needs and ctx.calendar is None:
         return "needs_input", "manifest 里没有经人确认的日历"
+    if "production_any" in spec.needs and ctx.batches is None:
+        return "needs_input", "manifest 里没有生产记录"
     if "production" in spec.needs:
         if ctx.batches is None:
             return "needs_input", "manifest 里没有生产记录"

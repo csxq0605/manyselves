@@ -1,8 +1,8 @@
 id: find-partition
-version: 0.3.0
+version: 0.4.0
 description: Look through one partition and submit its candidate loss items with how each was found
 agent: loss-finder
-objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像、方法菜单（每个方法是知识库算子链，标了 OP 号和对应的专家场景）、程序判定的每块表能否用每个方法（method_readiness），以及程序规则已经列出的规则项；有的话还附现场调研答复（site_facts）和准备资料时对数据口径的推断（assumptions）。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何。
+objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像（含按生产记录切出的状态轴：本表机台在生产、别的机台在生产、全厂停产、判断不了、生产记录之外各占多少时间和电量）、方法菜单（每个方法是知识库算子链，标了 OP 号和对应的专家场景）、程序判定的每块表能否用每个方法（method_readiness），以及程序规则已经列出的规则项；有的话还附现场调研答复（site_facts）和准备资料时对数据口径的推断（assumptions）。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何；对知识库 17 类（categories 附了每类的辨识范围、必要证据、常见误判），在本分区每块表上说明有没有项提议、没有的话是看过没找到、不适用还是缺资料。
 input_contract: partition-brief
 context_fields:
 - profile_text
@@ -15,13 +15,16 @@ constraints:
 - reasoning 写思考过程：从画像或哪次查数开始注意到它，又查了什么、排除了什么，为什么认为它可能是损耗。
 - root_cause_candidates 至少两条，其中至少一条不是损耗：kind 填 loss（可能是损耗）、normal_operation（正常运行或工艺需要）、necessary_service（必要服务）或 measurement（计量或时间口径问题）。不要为了凑数写和现场无关的解释，也不要因为常见就默认它最可能。cause 写可能的原因；basis 填 data（数据现象，basis_detail 写本项 evidence_ids 里的证据编号，如 EV-0123456789，可加一句说明）、site_fact（现场调研答复或数据口径推断，basis_detail 写 site_facts 或 assumptions 里的编号）或 general_knowledge（通用设备或工艺知识，basis_detail 写是哪条知识）；how_to_check 写人要核实或排除它需要看什么、问什么。原因不要写成定论。
 - candidate_categories 至少一条：从知识库 17 项里选可能对应的（LOSS-PROCESS、LOSS-INTERRUPTION、LOSS-IDLE、LOSS-HOLD、LOSS-TRANSITION、LOSS-PARALLEL、LOSS-SUPPORT、LOSS-CONDITIONAL、MECH-CONTROL、OPP-CAPABILITY、COST-SHIFT、COST-BASIC、COST-REACTIVE、COST-STORAGE、COST-PROCURE、NECESSARY、MEASUREMENT_ISSUE），可多选，why 写数据上看到了什么。按对象和状态选，不按方法名选；只是提议，人来定。
-- site_facts 是现场调研问卷的答复，只作背景：可以用来提出或排除候选原因、列可能的必要服务，引用时写它的编号；它不是数据证据，phenomenon 里的数字仍只能来自工具证据。confirmed 为 false 的答复还没核实，问卷可能同时讲几个厂，只用讲本厂的。assumptions 是对表计范围、报表口径等的推断，现场还没确认；数字建立在它上面的项，在 missing_info 写明“依赖推断 A编号，待现场确认”。
+- site_facts 是现场调研问卷的答复，只作背景：可以用来提出或排除候选原因、列可能的必要服务，引用时写它的编号；它不是数据证据，phenomenon 里的数字仍只能来自工具证据。confirmed 为 false 的答复还没核实，问卷可能同时讲几个厂，只用讲本厂的。assumptions 是对表计范围、报表口径等的推断（origin 为 drafted 的是模型按程序算的依据起草的），现场都还没确认；数字建立在它上面的项写进 depends_on_assumptions。
 - possible_necessary_services 列出这段用电里可能有的必要服务（工艺、环保、质量、安全），由人确认；想不到就留空，不要编。
 - 不判断这一项是否真实、是否值得处理、能节约多少，也不排序；不写年化节约或金额。拿不准的项照样列出，在 missing_info 写还缺什么资料。不写“相关性高所以存在浪费”“功率最大所以设备是根因”“夜班偏高所以人员未关机”这类由相关或标签推出原因的话，也不写人员过错。
 - coverage 对方法菜单里每个方法都写一条（method_readiness 是程序按资料判定的：程序判定 ready 的不能写 not_applicable；程序判定用不了的不能写 found）：found（找到了，item_keys 列你提交的对应项；只由规则项体现的，rule_keys 列它的 rule_key）、none_found（查了没找到，note 写查了什么）、not_applicable（本分区不适用，note 写原因）或 needs_input（缺日历、生产记录等资料，note 写缺什么）。meter_ids 只写本分区的表。
 - rule_items 是程序按规则已经列出的规则项，不能删除。你认为某个规则项是误报或需要说明时，写进 rule_item_notes（rule_key 填它的 rule_key）；不要把规则项再作为自己的损耗项重复提交。
 - 几个损耗项有关联时在 related_keys 互相列出，不要合并成一项；relation_types 给 related_keys 里每一项写关系：alternative_explanation（同一事实的替代解释）、same_event_evidence（同一事件的不同证据）、parent_child（父子分解）、mutually_exclusive（并行但互斥）、independent（独立事件）、joint_scenario（联合情景）。程序会核对同一事件、替代解释、父子分解的两项是否真在同一块表上计入了共同的记录。
-- 本分区确实没有找到损耗项时 items 可以为空，但 coverage 仍要逐个方法写明。
+- category_coverage 按知识库 17 类逐类交代本分区每块表：某类已有你提交的项在这块表上提议的，不用再写；其余的写 none_found（按这一类的辨识范围看过，没找到，note 写看了什么）、not_applicable（这些表上不适用，note 写为什么，例如照明表没有加工批次）或 needs_input（缺资料，missing_inputs 从 input_kinds 里选，note 写缺了什么会卡住什么）。同一类在同一块表上只写一条，可以一条覆盖几块表。程序会核对每类每块表都有交代，也会核对你说缺的生产记录、数量、产品、日历、电价这次是否其实有。
+- 判断时读 categories 里每类的“常见误判”，在 reasoning 写你排除了哪几条；不要按方法名对号入座。
+- 数字或判断建立在 assumptions 某几条推断上的项，把编号写进 depends_on_assumptions（不再只写在 missing_info 里），程序会把它们和推断表连起来。
+- 本分区确实没有找到损耗项时 items 可以为空，但 coverage 仍要逐个方法写明，category_coverage 仍要逐类写明。
 tools:
 - energy-series
 - compare-windows

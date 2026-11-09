@@ -26,7 +26,7 @@ from typing import Any
 import pandas as pd
 
 from .evidence import has_evidence, load_evidence
-from .items import PartitionSubmission
+from .items import INPUT_KINDS, KB_ITEMS, PLANT, PartitionSubmission
 from .methods import MENU, NO_METHOD, readiness, run_method
 from .prepare import meter_totals, method_context
 from .store import SiteData, read_json
@@ -81,7 +81,7 @@ def _item_issues(
             add(f"证据 {evidence_id} 不存在；只能引用工具返回的 evidence_id")
             continue
         record = load_evidence(site, evidence_id)
-        if record["partition_id"] not in (partition_id, None):
+        if partition_id != PLANT and record["partition_id"] not in (partition_id, None):
             add(f"证据 {evidence_id} 来自别的分区")
         elif not set(record["meter_ids"]) & set(item.meter_ids):
             add(f"证据 {evidence_id} 讲的是表 {record['meter_ids']}，不是本项的表")
@@ -89,7 +89,11 @@ def _item_issues(
             spans = _spans(record)
             if spans is not None and not _touches(spans, windows):
                 add(f"证据 {evidence_id} 查的时段和本项的时间窗没有交集；请引用查这些时间窗的证据")
-    known_facts = {fact.id for fact in site.facts() or []} | {entry.id for entry in site.manifest.assumptions}
+    assumption_ids = {entry["id"] for entry in site.assumptions()}
+    known_facts = {fact.id for fact in site.facts() or []} | assumption_ids
+    stray = sorted(set(item.depends_on_assumptions) - assumption_ids)
+    if stray:
+        add(f"depends_on_assumptions 里的 {stray} 不是分区说明里 assumptions 的编号")
     for cause in item.root_cause_candidates:
         if cause.basis == "site_fact":
             if not any(fact_id in cause.basis_detail for fact_id in known_facts):
@@ -130,7 +134,7 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
     run_id, _separator, partition_id = scope.partition("#")
     site = SiteData(workspace, run_id)
     parsed = PartitionSubmission.model_validate(submission)
-    meters = site.partitions().get(partition_id)
+    meters = site.scope_meters(partition_id)
     issues: list[dict[str, str]] = []
     if meters is None:
         return {"ok": False, "issues": [{"key": "", "problem": f"unknown partition {partition_id}"}]}
@@ -194,7 +198,103 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
     for note in parsed.rule_item_notes:
         if note.rule_key not in rule_keys:
             issues.append({"key": "", "problem": f"规则检出项 {note.rule_key} 不属于本分区"})
+    issues += category_issues(site, partition_id, meters, parsed)
+    if partition_id == PLANT:
+        issues += link_issues(site, parsed)
     return {"ok": not issues, "issues": issues}
+
+
+def _claimed_but_present(site: SiteData, meter_ids: list[str], kinds: list[str]) -> list[str]:
+    """Inputs a coverage entry says are missing that the run does hold."""
+
+    manifest = site.manifest
+    production = manifest.production
+    present: list[str] = []
+    for kind in kinds:
+        if kind == "production_records":
+            mapped = [meter_id for meter_id in meter_ids if site.spec(meter_id).production_machines]
+            if site.batches() is not None and mapped:
+                present.append(f"生产记录（表 {mapped} 挂了机台，有批次）")
+        elif kind == "quantity" and production is not None and production.quantity_basis:
+            present.append("批次数量（manifest 已声明口径）")
+        elif kind == "qualified_quantity" and production is not None and production.quantity_basis == "qualified":
+            present.append("合格品量")
+        elif kind == "product" and production is not None and production.product_column:
+            present.append("批次的产品")
+        elif kind == "calendar" and manifest.calendar is not None:
+            present.append("经人确认的日历")
+        elif kind == "tariff" and manifest.tariff is not None:
+            present.append("电价")
+    return present
+
+
+def category_issues(site: SiteData, partition_id: str, meters: list[str], parsed: PartitionSubmission) -> list[dict[str, str]]:
+    """Every one of the 17 categories is accounted for on every meter of the partition.
+
+    A category on a meter is accounted for by an item proposing it there, or
+    by a coverage entry (none found, not applicable, missing inputs).  For the
+    plant-wide pass, each category needs one of the two anywhere.
+    """
+
+    issues: list[dict[str, str]] = []
+
+    def add(problem: str) -> None:
+        issues.append({"key": "", "problem": problem})
+
+    proposed = {
+        (proposal.item_id, meter_id)
+        for item in parsed.items
+        for proposal in item.candidate_categories
+        for meter_id in item.meter_ids
+    }
+    written: set[tuple[str, str]] = set()
+    for entry in parsed.category_coverage:
+        outside = [meter_id for meter_id in entry.meter_ids if meter_id not in meters]
+        if outside:
+            add(f"类别覆盖 {entry.item_id} 里的表 {outside} 不在本分区")
+        for meter_id in entry.meter_ids:
+            pair = (entry.item_id, meter_id)
+            if pair in written:
+                add(f"类别覆盖 {entry.item_id} 在表 {meter_id} 上写了不止一条")
+            written.add(pair)
+            if pair in proposed:
+                add(
+                    f"类别覆盖写 {entry.item_id} 在表 {meter_id} 上 {entry.outcome}，但本次提交里有项在这块表上提议了这一类；"
+                    "有项提议的类别不用再写覆盖"
+                )
+        present = _claimed_but_present(site, [m for m in entry.meter_ids if m in meters], list(entry.missing_inputs))
+        if present:
+            names = "、".join(INPUT_KINDS[kind] for kind in entry.missing_inputs)
+            add(f"类别覆盖 {entry.item_id} 写缺 {names}，但这次的资料里有：{'；'.join(present)}")
+    if partition_id == PLANT:
+        accounted = {item_id for item_id, _meter in proposed | written}
+        left = [item_id for item_id in KB_ITEMS if item_id not in accounted]
+        if left:
+            add(f"类别覆盖缺这些类别的说明（跨对象看过没找到、不适用或缺资料）：{left}")
+        return issues
+    for item_id in KB_ITEMS:
+        uncovered = [meter_id for meter_id in meters if (item_id, meter_id) not in proposed | written]
+        if uncovered:
+            add(f"类别 {item_id} 在表 {uncovered} 上既没有项提议，也没有类别覆盖说明")
+    return issues
+
+
+def link_issues(site: SiteData, parsed: PartitionSubmission) -> list[dict[str, str]]:
+    """Each side of a plant-wide link is an item of this pass or a listed partition item."""
+
+    path = site.path("plant.json")
+    known = set(read_json(path)["item_refs"]) if path.is_file() else set()
+    own = {item.key for item in parsed.items}
+    issues = []
+    for link in parsed.links:
+        for side in (link.left, link.right):
+            if side not in own and side not in known:
+                issues.append(
+                    {"key": "", "problem": f"关系 {link.left}—{link.right} 里的 {side} 既不是本次的项，也不是分区项（写成 P01:A1）"}
+                )
+        if link.left == link.right:
+            issues.append({"key": "", "problem": f"关系 {link.left}—{link.right} 两边是同一项"})
+    return issues
 
 
 def _content(item: dict[str, Any]) -> str:
@@ -497,6 +597,11 @@ def _settle(
         first["rule_item_notes"] != final["rule_item_notes"] or first["notes"] != final["notes"]
     ):
         issues.append({"key": "", "problem": "修正轮改了规则项说明或分区说明，但核对没有指出分区层面的问题"})
+    if not partition_flagged and (
+        first.get("category_coverage", []) != final.get("category_coverage", [])
+        or first.get("links", []) != final.get("links", [])
+    ):
+        issues.append({"key": "", "problem": "修正轮改了类别覆盖说明或项之间的关系，但核对没有指出分区层面的问题"})
     # Links of items the check did not flag should not change.
     first_links = {item["key"]: item.get("relation_types", {}) for item in first["items"]}
     settled_links = {item["key"]: item.get("relation_types", {}) for item in final["items"]}
@@ -523,4 +628,4 @@ def _settle(
     }
 
 
-__all__ = ["check_submission", "settle_partition"]
+__all__ = ["category_issues", "check_submission", "link_issues", "settle_partition"]

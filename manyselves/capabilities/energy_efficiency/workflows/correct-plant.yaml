@@ -1,0 +1,41 @@
+id: correct-plant
+version: 0.1.0
+description: One correction round of the plant-wide pass in the finder's own conversation, then the program's recheck
+tasks:
+- fix-plant-items
+recovery:
+- typed-turn-recovery
+output_contract: partition-attempt
+state:
+  item: null
+  conversation: null
+actions:
+- id: fix
+  kind: invoke_agent
+  agent: loss-finder
+  task: fix-plant-items
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: submission
+- id: scope
+  kind: set_variable
+  variable: scope
+  value_variable: item
+  field: scope
+- id: recheck
+  kind: invoke_tool
+  tool: check-partition-items
+  input_variables:
+    scope: scope
+    submission: submission
+  output_variable: check
+- id: result
+  kind: set_variable
+  variable: result
+  value_variables:
+    submission: submission
+    check: check
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

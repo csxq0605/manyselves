@@ -19,6 +19,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from .inputs import UNPRICED_REASONS
 from .items import CAUSE_KINDS, RELATIONS
+from .overview import add_sheets, data_html, ledgers_html
 from .store import write_json
 
 DECISION_LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料"}
@@ -236,6 +237,7 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
         quality.append(
             _cells([meter["meter_id"], meter["name"], meter["period_energy_kwh"], "；".join(meter["quality_notes"])])
         )
+    add_sheets(book, register)
     _plain_text(book)
     path.parent.mkdir(parents=True, exist_ok=True)
     book.save(path)
@@ -453,10 +455,12 @@ def write_page(path: Path, register: dict[str, Any]) -> None:
         f"模型发现 {counts['model_items']} 项，规则检出 {counts['rule_items']} 项；"
         f"分区 {counts['partitions']} 个，失败 {counts['partitions_failed']} 个。</p>",
         "<p>这是候选清单，不是结论：保留哪些由人在表格里标记或按人写的规则决定。所有数值由程序从数据算出；候选原因都未经核实。</p>",
+        data_html(register),
         "<h2>候选项（按全期涉及电量从大到小）</h2>",
     ]
     body += [item_html(item, names) for item in sorted(register["items"], key=sort_key)]
     body.append(partition_html(register))
+    body.append(ledgers_html(register))
     page = (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
