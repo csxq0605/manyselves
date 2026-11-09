@@ -64,7 +64,13 @@ SCALAR_FIELDS: dict[str, str] = {
     "check_issue_count": "程序检查后仍未解决的问题数",
     "number_hint_count": "文字中对不上证据和程序计算的数的个数",
     "window_avg_kw_hour_rank": "筛查参考：本项时间窗的平均功率在该表全期各小时平均功率里的位次（0-1）",
+    "window_avg_kw_replay_rank": "统计参考，可比性未核：本项时间窗的平均功率在同表同方法全期各次出现里的位次（0-1）",
 }
+
+REPLAY_RANK_RULE = (
+    "按本项的寻找方式在全期回放，取各次出现（有记录的）的平均功率，数出不高于本项时间窗平均功率的占几成；"
+    "各次出现是否同工况、可不可比没有核对，只作统计参考，不说明是否损耗"
+)
 
 HOUR_RANK_RULE = (
     "全期每个整点小时（只算有记录的）各取平均功率，数出不高于本项时间窗平均功率的小时占几成；"
@@ -585,6 +591,7 @@ def quantify_register(
                 run = run_method(method_id, method["params"], series, ctx, totals.get(meter_id))
                 entry["replay"] = run.as_dict(top=5)
                 if run.status == "ok":
+                    entry["reference"].update(_replay_rank(run, whole["avg_kw"]))
                     counted = _counted(run)
                     entry["replay"]["item_kwh"] = item_kwh(run)
                     robustness = _robustness(series, counted, period, spec.shiftable)
@@ -662,6 +669,8 @@ def quantify_register(
             "production_machines": list(spec.production_machines),
             "period_energy_kwh": totals.get(spec.id),
             "quality_notes": site.quality(spec.id).notes(),
+            "excluded_spans": site.quality(spec.id).excluded_spans,
+            "excluded_spans_more": site.quality(spec.id).excluded_spans_more,
             "states": states_by_meter.get(spec.id),
         }
         for spec in site.manifest.meters
@@ -693,6 +702,7 @@ def quantify_register(
         "scalar_fields": SCALAR_FIELDS,
         "rules_of_computation": {
             "窗口功率小时位次": HOUR_RANK_RULE,
+            "窗口功率同方法位次": REPLAY_RANK_RULE,
             "区间平均功率换算电量": "区间平均功率是区间内的真实平均值，电量 = 平均功率 × 区间时长；不外推、不跨区间摊分",
         },
         "counts": {
@@ -874,6 +884,16 @@ def _relation_notes(items: list[dict[str, Any]]) -> None:
                 )
 
 
+def _replay_rank(run: Any, avg_kw: float | None) -> dict[str, Any]:
+    """REPLAY_RANK_RULE: the item's window among the method's own occurrences on the meter."""
+
+    powers = [item.measure.avg_kw for item in run.occurrences if item.measure.records and item.measure.avg_kw is not None]
+    if avg_kw is None or not powers:
+        return {"window_avg_kw_replay_rank": None, "replay_rank_occurrences": len(powers)}
+    rank = sum(1 for power in powers if power <= avg_kw) / len(powers)
+    return {"window_avg_kw_replay_rank": round(rank, 3), "replay_rank_occurrences": len(powers)}
+
+
 def _scalars(item: dict[str, Any]) -> dict[str, Any]:
     per_meter = item["computed"]["per_meter"]
     overlap = item["computed"]["overlap"]
@@ -903,6 +923,7 @@ def _scalars(item: dict[str, Any]) -> dict[str, Any]:
             "window_avg_kw": entry["window_total"]["avg_kw"],
             "window_coverage": entry["window_total"]["coverage"],
             "window_avg_kw_hour_rank": entry["reference"]["window_avg_kw_hour_rank"],
+            "window_avg_kw_replay_rank": entry["reference"].get("window_avg_kw_replay_rank"),
             "replay_occurrences": summary.get("occurrences"),
             "replay_hits": summary.get("hits"),
             "replay_unknown": summary.get("unknown"),

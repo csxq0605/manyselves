@@ -152,6 +152,8 @@ def excluded_rows(register: dict[str, Any]) -> list[list[Any]]:
     for meter in register["meters"]:
         for span in meter.get("excluded_spans") or []:
             rows.append([meter["meter_id"], span["start"], span["end"], span["reason"]])
+        if meter.get("excluded_spans_more"):
+            rows.append([meter["meter_id"], "", "", f"另有 {meter['excluded_spans_more']} 段未列出"])
     return rows
 
 

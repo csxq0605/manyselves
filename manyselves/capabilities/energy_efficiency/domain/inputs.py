@@ -939,6 +939,10 @@ class MeterQuality(_Strict):
     flat_throughout: bool = False
     long_intervals: int = 0
     outside_period_excluded: int = 0
+    excluded_spans: list[dict[str, str]] = Field(
+        default_factory=list, description="未纳入的时段：起、止、原因（相接的合成一段，最多列 MAX_EXCLUDED_SPANS 段）"
+    )
+    excluded_spans_more: int = 0
     semantics: str | None = None
     declared_interval_minutes: int | None = None
     median_spacing_minutes: float | None = None
@@ -1010,6 +1014,30 @@ class MeterQuality(_Strict):
                 )
             return f"{head}；与前一段重叠的记录已不纳入。请人核对 interval_minutes"
         return f"{head}；覆盖率按每条 {declared} 分钟估算，会因此失真。请人核对 interval_minutes"
+
+
+MAX_EXCLUDED_SPANS = 50
+
+
+def _span_list(pairs: list[tuple[Any, Any]], reason: str) -> list[dict[str, str]]:
+    """Time spans left out, touching or overlapping ones joined."""
+
+    merged: list[list[Any]] = []
+    for start, end in sorted(pairs):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [
+        {"start": pd.Timestamp(start).isoformat(sep=" "), "end": pd.Timestamp(end).isoformat(sep=" "), "reason": reason}
+        for start, end in merged
+    ]
+
+
+def _keep_spans(quality: "MeterQuality", spans: list[dict[str, str]]) -> None:
+    listed = sorted(quality.excluded_spans + spans, key=lambda span: span["start"])
+    quality.excluded_spans = listed[:MAX_EXCLUDED_SPANS]
+    quality.excluded_spans_more = max(0, len(listed) - MAX_EXCLUDED_SPANS)
 
 
 def _spacing(times: pd.Series) -> float | None:
@@ -1225,6 +1253,13 @@ def _difference_readings(raw: pd.DataFrame, quality: "MeterQuality") -> pd.DataF
         energy.append(float(readings[index] - readings[index - 1]))
     quality.intervals_excluded_at_breaks = sum(1 for index in excluded if 1 <= index < len(readings))
     quality.intervals_excluded_at_edges = len(edges)
+    broken = [(stamps[index - 1], stamps[index]) for index in excluded if 1 <= index < len(readings)]
+    at_edges = [(stamps[index - 1], stamps[index]) for index in edges]
+    _keep_spans(
+        quality,
+        _span_list(broken, "累计读数下降，或读数停在异常值上、跳入跳回异常读数，不做差分")
+        + _span_list(at_edges, "累计读数从头到尾没有变化" if quality.flat_throughout else "数据开头或结尾的读数无从核对"),
+    )
     return pd.DataFrame(
         {
             "start": pd.Series(starts, dtype=raw["time"].dtype),
@@ -1272,6 +1307,13 @@ def normalize_meter(
         negative = raw["value"] < 0
         quality.negative_values_excluded = int(negative.sum())
         kept = raw[~negative]
+        shift = step if spec.timestamp_marks == "start" else -step
+        _keep_spans(
+            quality,
+            _span_list(
+                [(min(time, time + shift), max(time, time + shift)) for time in raw.loc[negative, "time"]], "负值"
+            ),
+        )
         if spec.timestamp_marks == "start":
             starts, ends = kept["time"], kept["time"] + step
         else:
@@ -1287,6 +1329,7 @@ def normalize_meter(
         result = result.sort_values("start").reset_index(drop=True)
         overlap = result["start"] < result["end"].shift(1)
         quality.overlapping_intervals_excluded = int(overlap.sum())
+        _keep_spans(quality, _span_list(list(zip(result.loc[overlap, "start"], result.loc[overlap, "end"], strict=True)), "与前一区间重叠"))
         result = result[~overlap]
 
     if period is not None and len(result):

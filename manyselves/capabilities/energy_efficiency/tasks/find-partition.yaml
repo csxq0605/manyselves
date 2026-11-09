@@ -1,5 +1,5 @@
 id: find-partition
-version: 0.4.0
+version: 0.5.0
 description: Look through one partition and submit its candidate loss items with how each was found
 agent: loss-finder
 objective: 下面是一个分区的说明：表的清单、数据期、程序算好的用电画像（含按生产记录切出的状态轴：本表机台在生产、别的机台在生产、全厂停产、判断不了、生产记录之外各占多少时间和电量）、方法菜单（每个方法是知识库算子链，标了 OP 号和对应的专家场景）、程序判定的每块表能否用每个方法（method_readiness），以及程序规则已经列出的规则项；有的话还附现场调研答复（site_facts）和准备资料时对数据口径的推断（assumptions）。先读画像找可疑的地方，再用工具查数核实，把找到的损耗项连同寻找方式、思考过程、候选原因一起提交，并对方法菜单里每个方法说明查了没有、结果如何；对知识库 17 类（categories 附了每类的辨识范围、必要证据、常见误判），在本分区每块表上说明有没有项提议、没有的话是看过没找到、不适用还是缺资料。
@@ -9,6 +9,8 @@ context_fields:
 output_contract: partition-submission
 constraints:
 - 每次调用工具都把输入里的 scope 原样填进 scope；meter_id 只能是本分区 meters 里的表。
+- 有 focus 时它是用户这次的关注点：先看和它有关的表和现象，但其他表、其他类别照样要看、照样交代。
+- meters 里的 candidate_category、candidate_equipment、candidate_tree_path 是程序按编号或名称在台账、工厂树里对上的候选位置，没人确认过，只作背景。
 - 每个损耗项至少引用一个工具返回的 evidence_id；phenomenon 里的数字（电量、功率、次数、占比）必须能在所引证据里找到，不自己估算，不把几块表的数相加。
 - finding_method 说明这一项是怎么找到的。能用方法菜单里的方法描述的，填 method_id 和 params（参数只能用菜单 params 里列出的字段），并先用 try-method 在全期数据上试过，程序会按它在全期复算；菜单里没有合适的方法时 method_id 填 none，params 留空，在 description 里用文字说清怎么找的。
 - windows 写看到现象的具体时间窗（站点本地时间，不带时区），在数据期内、互不重叠；每个时间窗里这一项的表都要有记录。evidence_ids 里的证据要讲本项的表，查的时段要和本项的时间窗有交集。

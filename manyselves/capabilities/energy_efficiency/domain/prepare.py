@@ -366,6 +366,7 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
     calendar = site.calendar()
     batches = site.batches()
     machines = [machine for meter_id in meter_ids for machine in site.spec(meter_id).production_machines]
+    places = {entry["meter_id"]: entry for entry in (site.topology() or {}).get("meters", [])}
     available = {
         "calendar_states": sorted({window.state for window in calendar}) if calendar else [],
         "production_machines": machines if batches is not None else [],
@@ -385,6 +386,11 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
                 "unit_kind": site.spec(meter_id).unit_kind,
                 "interval_minutes": site.spec(meter_id).interval_minutes,
                 "production_machines": site.spec(meter_id).production_machines,
+                **{
+                    f"candidate_{key}": places[meter_id][key]
+                    for key in ("category", "equipment", "tree_path")
+                    if places.get(meter_id, {}).get(key)
+                },
             }
             for meter_id in meter_ids
         ],
@@ -407,6 +413,7 @@ def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]
         "assumptions": brief_assumptions(site),
         "categories": kb_categories(),
         "input_kinds": INPUT_KINDS,
+        **({"focus": focus} if (focus := (site.task_scope() or {}).get("focus")) else {}),
     }
 
 

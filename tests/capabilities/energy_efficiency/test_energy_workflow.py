@@ -365,6 +365,8 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
         assert items["X1"]["scalars"]["window_avg_kw"] == 12.0
         assert items["B2"]["related_ids"] == [items["B1"]["id"]]
         assert items["A1"]["scalars"]["replay_item_kwh"] == 13 * 12 * 12
+        # Every night is 12 kW: the item's windows sit at the top of the method's own occurrences.
+        assert items["A1"]["scalars"]["window_avg_kw_replay_rank"] == 1.0
         # Lighting is instant power: no energy is made up for it.
         assert items["B2"]["scalars"]["replay_item_kwh"] is None
         # One calendar row per weekend day; touching rows are one stretch: two weekends.

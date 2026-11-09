@@ -89,3 +89,18 @@ def test_drafted_inferences_are_numbered_and_their_citations_checked(tmp_path: P
     rows = {row["id"]: row for row in brief_assumptions(SiteData(tmp_path, RUN))}
     assert rows["D2"]["basis_fact_ids"] == ["AC1-STATE"] and "basis" not in rows["D2"]
     assert rows["D1"]["basis"] == "准备资料时看过"
+
+
+def test_left_out_spans_are_listed_and_the_focus_reaches_the_finders(tmp_path: Path) -> None:
+    write_site(tmp_path / "data/site")
+    start_input(tmp_path)(RUN, "energy-candidates", {"input_dir": "data/site", "focus": "空压系统"})
+    tools = tool_implementations(tmp_path)
+    tools["parse-energy-inputs"]({"run_id": RUN})
+    tools["profile-energy-data"]({"run_id": RUN})
+    tools["run-energy-prechecks"]({"run_id": RUN})
+    # The moulding meter is reset once: the intervals around the drop are listed with their reason.
+    spans = SiteData(tmp_path, RUN).quality("IM1").excluded_spans
+    assert spans and all(span["reason"] for span in spans)
+    assert any(span["start"] <= "2026-03-09 03:00" <= span["end"] for span in spans)
+    briefs = tools["partition-energy-meters"]({"run_id": RUN, "max_meters": 6})["partitions"]
+    assert {brief.get("focus") for brief in briefs} == {"空压系统"}

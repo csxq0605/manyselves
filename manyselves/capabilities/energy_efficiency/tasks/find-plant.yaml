@@ -15,6 +15,7 @@ constraints:
 - links 写关系：left、right 是本次提交的项的 key，或分区项的编号（P01:A1）；relation 从 alternative_explanation、same_event_evidence、parent_child、mutually_exclusive、independent、joint_scenario 里选，note 写依据。关系只是标注，不让人少看哪一项。
 - category_coverage 按 17 类交代跨对象这一层：某类有本次提交的项提议就不用写；其余写 none_found（跨对象看过没找到）、not_applicable 或 needs_input（missing_inputs 从 input_kinds 里选）。每类至少有一条交代，meter_ids 写你看过的表。
 - coverage（方法覆盖）在这一步可以不写；rule_item_notes 可以不写。
+- 有 focus 时它是用户这次的关注点：先看和它有关的现象，但不只看它。
 - 不判断哪一项是真的、值得做或能省多少，不写金额，不写人员过错。
 tools:
 - energy-series
