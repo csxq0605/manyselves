@@ -136,9 +136,10 @@ def method_readiness(site: SiteData, meter_ids: list[str]) -> list[dict[str, Any
 
     ctx = method_context(site)
     rows = []
+    records = {meter_id: len(site.series(meter_id)) for meter_id in meter_ids}
     for spec in MENU.values():
         for meter_id in meter_ids:
-            state, reason = readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx)
+            state, reason = readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx, records[meter_id])
             rows.append({"method_id": spec.id, "meter_id": meter_id, "state": state, "reason": reason})
     return rows
 

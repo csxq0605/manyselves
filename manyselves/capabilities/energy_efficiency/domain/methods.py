@@ -955,12 +955,17 @@ MENU: dict[str, MethodSpec] = {
 }
 
 
-def readiness(spec: MethodSpec, meter_id: str, has_energy: bool, ctx: MethodContext) -> tuple[str, str | None]:
+def readiness(
+    spec: MethodSpec, meter_id: str, has_energy: bool, ctx: MethodContext, records: int | None = None
+) -> tuple[str, str | None]:
     """Whether the data could feed the method on this meter: ready, needs_input or not_applicable.
 
     Only what the inputs decide; thresholds and parameters are not judged.
+    ``records`` is the meter's count of usable records, when known.
     """
 
+    if records == 0:
+        return "not_applicable", "这块表没有可用记录"
     if "calendar" in spec.needs and ctx.calendar is None:
         return "needs_input", "manifest 里没有经人确认的日历"
     if "production" in spec.needs:

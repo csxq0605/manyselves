@@ -324,6 +324,13 @@ def test_readiness_follows_the_inputs_only() -> None:
     assert readiness(MENU["batch-intensity"], "M1", False, full)[0] == "not_applicable"
 
 
+def test_a_meter_without_usable_records_fits_no_method() -> None:
+    full = _intensity_ctx([_batch(2, _at(0), _at(1), quantity=1)])
+    for spec in MENU.values():
+        assert readiness(spec, "M1", True, full, records=0) == ("not_applicable", "这块表没有可用记录")
+    assert readiness(MENU["fixed-windows"], "M1", True, full, records=5) == ("ready", None)
+
+
 def test_quantity_basis_is_one_of_the_knowledge_base_kinds() -> None:
     with pytest.raises(ValueError):
         ProductionSpec(

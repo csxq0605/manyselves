@@ -165,7 +165,7 @@ def check_submission(workspace: Path, scope: str, submission: dict[str, Any]) ->
         if spec is None:
             continue
         states = {
-            meter_id: readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx)
+            meter_id: readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx, len(site.series(meter_id)))
             for meter_id in entry.meter_ids
             if meter_id in meters
         }
