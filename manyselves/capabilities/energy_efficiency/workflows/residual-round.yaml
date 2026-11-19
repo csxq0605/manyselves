@@ -1,0 +1,65 @@
+id: residual-round
+version: 0.1.0
+description: "S4: one residual round: the program briefs the largest unexplained pieces (none once the rounds stopped), the analyst answers, the program computes the specs and measures what the round added"
+tasks: []
+recovery:
+- typed-turn-recovery
+output_contract: apply-summary
+state:
+  item: null
+  item_key: null
+  residual_results: {}
+  residual_errors: {}
+actions:
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: number
+  kind: set_variable
+  variable: round
+  value_variable: item
+  field: round
+- id: round-input
+  kind: set_variable
+  variable: round_input
+  value_variables:
+    run_id: run_id
+    round: round
+- id: brief
+  kind: invoke_tool
+  tool: residual-brief
+  input_variable: round_input
+  output_variable: residual_set
+- id: briefs
+  kind: set_variable
+  variable: residual_briefs
+  value_variable: residual_set
+  field: briefs
+- id: look
+  kind: map
+  items_variable: residual_briefs
+  key_field: key
+  workflow: look-residual
+  key_input_variable: item_key
+  output_variable: residual_results
+  errors_variable: residual_errors
+  max_concurrency: 1
+- id: apply-input
+  kind: set_variable
+  variable: apply_input
+  value_variables:
+    run_id: run_id
+    round: round
+    results: residual_results
+    errors: residual_errors
+- id: apply
+  kind: invoke_tool
+  tool: apply-residual
+  input_variable: apply_input
+  output_variable: applied
+- id: finish
+  kind: end_workflow
+  output_variable: applied
+  output_name: result

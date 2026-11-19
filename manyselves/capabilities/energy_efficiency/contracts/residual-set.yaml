@@ -1,0 +1,11 @@
+id: residual-set
+version: 1.0.0
+description: The brief of one residual round, or none when the rounds stopped or nothing is left
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, round, briefs]
+  properties:
+    run_id: {type: string}
+    round: {type: integer}
+    briefs: {type: array, items: {type: object}}

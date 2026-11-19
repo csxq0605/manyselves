@@ -1,0 +1,99 @@
+id: look-system
+version: 0.1.0
+description: "S2: the analyst looks at one system where the lenses cannot see; the program checks the answer, sends it back once and settles it"
+tasks:
+- look-system
+recovery:
+- typed-turn-recovery
+output_contract: settled-result
+state:
+  item: null
+  item_key: null
+  corrected: {}
+  correction_errors: {}
+actions:
+- id: open
+  kind: create_conversation
+  agent: loss-analyst
+  conversation_key: look
+  key_variable: item_key
+  mode: run
+  output_variable: conversation
+- id: answer
+  kind: invoke_agent
+  agent: loss-analyst
+  task: look-system
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: submission
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: check-input
+  kind: set_variable
+  variable: check_input
+  value_variables:
+    run_id: run_id
+    key: item_key
+    submission: submission
+- id: check
+  kind: invoke_tool
+  tool: check-look
+  input_variable: check_input
+  output_variable: check
+- id: passed
+  kind: set_variable
+  variable: passed
+  value_variable: check
+  field: ok
+- id: route
+  kind: if
+  condition:
+    variable: passed
+    operator: eq
+    value: true
+  then: settle-input
+  otherwise: fix-input
+- id: fix-input
+  kind: set_variable
+  variable: fix_input
+  value_variables:
+    run_id: run_id
+    key: item_key
+    check: check
+    submission: submission
+# One correction round, run as its own item so that its failure keeps the
+# first answer instead of failing the system.
+- id: fix-items
+  kind: set_variable
+  variable: fix_items
+  value_variables:
+    correction: fix_input
+- id: correct
+  kind: map
+  items_variable: fix_items
+  workflow: correct-look
+  input_variables:
+    conversation: conversation
+  output_variable: corrected
+  errors_variable: correction_errors
+- id: settle-input
+  kind: set_variable
+  variable: settle_input
+  value_variables:
+    key: item_key
+    first_submission: submission
+    first_check: check
+    corrected: corrected
+    correction_errors: correction_errors
+- id: settle
+  kind: invoke_tool
+  tool: settle-look
+  input_variable: settle_input
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

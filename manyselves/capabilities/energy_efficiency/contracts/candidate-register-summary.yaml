@@ -1,6 +1,6 @@
 id: candidate-register-summary
 version: 1.0.0
-description: The candidate register of one run and the files it was written to
+description: The workbook (台账) of one run and the files it was written to
 adapter: json_schema
 schema:
   type: object

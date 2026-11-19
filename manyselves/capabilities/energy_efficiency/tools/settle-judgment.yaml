@@ -1,0 +1,10 @@
+id: settle-judgment
+version: 0.1.0
+description: Keep the corrected judgments when the correction round returned them, otherwise the first
+implementation: capability:energy-efficiency:settle-judgment
+input_contract: settle-request
+output_contract: settled-result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

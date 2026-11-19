@@ -411,15 +411,18 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "extract-template-skills",
     } <= set(reporting["workflow_ids"])
     assert set(capabilities[2]["workflow_ids"]) == {
+        "correct-judgment",
+        "correct-look",
         "correct-manifest",
-        "correct-partition",
-        "correct-plant",
+        "correct-residual",
         "draft-assumptions",
         "draft-manifest",
         "energy-candidates",
         "energy-report",
-        "find-partition",
-        "find-plant",
+        "judge-system",
+        "look-residual",
+        "look-system",
+        "residual-round",
     }
     assert capabilities[3] == {
         "id": "parameter-adjustment",

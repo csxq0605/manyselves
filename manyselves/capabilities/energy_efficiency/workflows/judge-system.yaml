@@ -1,0 +1,119 @@
+id: judge-system
+version: 0.1.0
+description: "S5: the analyst judges one system's candidates in two rounds: opinions and cause tests, the program runs the tests, then the final judgments; the program checks them, sends them back once and settles them"
+tasks:
+- judge-system
+- judge-with-tests
+recovery:
+- typed-turn-recovery
+output_contract: settled-result
+state:
+  item: null
+  item_key: null
+  corrected: {}
+  correction_errors: {}
+actions:
+- id: open
+  kind: create_conversation
+  agent: loss-analyst
+  conversation_key: judge
+  key_variable: item_key
+  mode: run
+  output_variable: conversation
+- id: first
+  kind: invoke_agent
+  agent: loss-analyst
+  task: judge-system
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: first_submission
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: probe-input
+  kind: set_variable
+  variable: probe_input
+  value_variables:
+    run_id: run_id
+    key: item_key
+    submission: first_submission
+# The program runs the tests the analyst asked for; the analyst settles its
+# causes on their results in the same conversation.
+- id: probes
+  kind: invoke_tool
+  tool: run-probes
+  input_variable: probe_input
+  output_variable: probes
+- id: second
+  kind: invoke_agent
+  agent: loss-analyst
+  task: judge-with-tests
+  conversation_variable: conversation
+  input_variable: probes
+  output_variable: submission
+- id: check-input
+  kind: set_variable
+  variable: check_input
+  value_variables:
+    run_id: run_id
+    key: item_key
+    submission: submission
+- id: check
+  kind: invoke_tool
+  tool: check-judgment
+  input_variable: check_input
+  output_variable: check
+- id: passed
+  kind: set_variable
+  variable: passed
+  value_variable: check
+  field: ok
+- id: route
+  kind: if
+  condition:
+    variable: passed
+    operator: eq
+    value: true
+  then: settle-input
+  otherwise: fix-input
+- id: fix-input
+  kind: set_variable
+  variable: fix_input
+  value_variables:
+    run_id: run_id
+    key: item_key
+    check: check
+    submission: submission
+- id: fix-items
+  kind: set_variable
+  variable: fix_items
+  value_variables:
+    correction: fix_input
+- id: correct
+  kind: map
+  items_variable: fix_items
+  workflow: correct-judgment
+  input_variables:
+    conversation: conversation
+  output_variable: corrected
+  errors_variable: correction_errors
+- id: settle-input
+  kind: set_variable
+  variable: settle_input
+  value_variables:
+    key: item_key
+    first_submission: submission
+    first_check: check
+    corrected: corrected
+    correction_errors: correction_errors
+- id: settle
+  kind: invoke_tool
+  tool: settle-judgment
+  input_variable: settle_input
+  output_variable: result
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

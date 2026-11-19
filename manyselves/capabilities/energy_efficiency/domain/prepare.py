@@ -1,4 +1,4 @@
-"""Program steps before the model looks: parse, profile, prechecks, partitions."""
+"""Program steps before the foundation: parse the inputs and profile every meter."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any
 
 import pandas as pd
 
-from .evidence import record_evidence
 from .inputs import (
     file_sha256,
     load_batches,
@@ -19,24 +18,10 @@ from .inputs import (
     read_meter_table,
     tariff_schedule,
 )
-from .items import INPUT_KINDS, kb_categories
-from .methods import (
-    MENU,
-    MethodContext,
-    MethodParamsError,
-    menu_entries,
-    parse_params,
-    readiness,
-    resolved_params,
-    run_method,
-    top_occurrences,
-)
-from .profile import meter_profile, profile_text
+from .profile import meter_profile
 from .states import COVERAGE_NOTE, meter_states, plant_summary, segments
 from .store import SiteData, read_json, write_json
-from .topology import build_topology, topology_group
-
-RULE_WINDOWS = 5
+from .topology import build_topology
 
 
 def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
@@ -149,38 +134,6 @@ def parse_inputs(workspace: Path, run_id: str) -> dict[str, Any]:
     }
 
 
-def method_context(site: SiteData, meters: list[str] | None = None) -> MethodContext:
-    """What the methods read besides one meter; ``meters`` limits the other meters a method may read."""
-
-    production = site.manifest.production
-    return MethodContext(
-        period=site.period(),
-        calendar=site.calendar(),
-        batches=site.batches(),
-        machines={meter.id: list(meter.production_machines) for meter in site.manifest.meters},
-        quantity_basis=production.quantity_basis if production else None,
-        quantity_unit=production.quantity_unit if production else None,
-        product_group_columns=tuple(production.product_group_columns) if production else (),
-        segments=site.segments(),
-        series_of=site.series,
-        meters_in_scope=frozenset(meters) if meters is not None else None,
-        product_column=production.product_column if production else None,
-    )
-
-
-def method_readiness(site: SiteData, meter_ids: list[str]) -> list[dict[str, Any]]:
-    """For each menu method and meter, whether the inputs could feed it (program decided)."""
-
-    ctx = method_context(site, meter_ids)
-    rows = []
-    records = {meter_id: len(site.series(meter_id)) for meter_id in meter_ids}
-    for spec in MENU.values():
-        for meter_id in meter_ids:
-            state, reason = readiness(spec, meter_id, site.spec(meter_id).has_energy, ctx, records[meter_id])
-            rows.append({"method_id": spec.id, "meter_id": meter_id, "state": state, "reason": reason})
-    return rows
-
-
 def meter_totals(site: SiteData) -> dict[str, float | None]:
     profiles = read_json(site.path("profiles.json"))["profiles"]
     return {item["meter_id"]: item["period_energy_kwh"] for item in profiles}
@@ -238,208 +191,4 @@ def _iso(value: datetime) -> str:
     return pd.Timestamp(value).isoformat(sep=" ")
 
 
-def run_prechecks(workspace: Path, run_id: str) -> dict[str, Any]:
-    """Run the methods a person listed in the manifest; every hit becomes a rule item."""
-
-    site = SiteData(workspace, run_id)
-    ctx = method_context(site)
-    totals = meter_totals(site)
-    items: list[dict[str, Any]] = []
-    outcomes: list[dict[str, Any]] = []
-    for index, check in enumerate(site.manifest.prechecks, start=1):
-        meters = site.meter_ids() if check.meters == "all" else list(check.meters)
-        try:
-            parse_params(check.method, check.params)
-        except MethodParamsError as exc:
-            outcomes.append({"precheck": index, "method_id": check.method, "outcome": "invalid", "reason": str(exc)})
-            continue
-        spec = MENU[check.method]
-        for meter_id in meters:
-            run = run_method(check.method, check.params, site.series(meter_id), ctx, totals.get(meter_id))
-            entry: dict[str, Any] = {
-                "precheck": index,
-                "method_id": check.method,
-                "meter_id": meter_id,
-                "outcome": run.status,
-            }
-            if run.status != "ok":
-                entry["reason"] = run.reason
-                outcomes.append(entry)
-                continue
-            counted = [item for item in run.occurrences if item.hit] if run.summary["hits"] is not None else [
-                item for item in run.occurrences if item.measure.records
-            ]
-            entry["hits"] = run.summary["hits"]
-            entry["occurrences"] = run.summary["occurrences"]
-            if not counted:
-                entry["outcome"] = "none_found"
-                outcomes.append(entry)
-                continue
-            largest = [item for item in top_occurrences(run, len(run.occurrences)) if item in counted]
-            shown = sorted(largest[:RULE_WINDOWS], key=lambda item: item.measure.start)
-            evidence_id = record_evidence(
-                site,
-                partition_id=None,
-                tool="precheck",
-                arguments={
-                    "method_id": check.method,
-                    "params": check.params,
-                    "resolved_params": resolved_params(check.method, check.params),
-                    "meter_id": meter_id,
-                },
-                meter_ids=[meter_id],
-                result=run.as_dict(),
-            )
-            key = f"R{len(items) + 1}"
-            hits = run.summary["hits"]
-            if hits is None:
-                counted_text = f"有数据的出现 {run.summary['with_data']} 次"
-            else:
-                counted_text = f"命中 {hits} 次"
-                if run.summary.get("unknown"):
-                    counted_text += f"，{run.summary['unknown']} 次没有数据、无法判断"
-            items.append(
-                {
-                    "key": key,
-                    "meter_ids": [meter_id],
-                    "windows": [
-                        {"start": _iso(item.measure.start), "end": _iso(item.measure.end)} for item in shown
-                    ],
-                    "finding_method": {
-                        "method_id": check.method,
-                        "params": check.params,
-                        "description": f"manifest 预检第 {index} 条：{spec.title}",
-                    },
-                    "phenomenon": f"规则检出：{spec.title}，共 {run.summary['occurrences']} 次出现，{counted_text}。",
-                    "evidence_ids": [evidence_id],
-                }
-            )
-            entry["outcome"] = "found"
-            entry["rule_key"] = key
-            outcomes.append(entry)
-    write_json(site.path("prechecks.json"), {"items": items, "outcomes": outcomes})
-    return {"run_id": run_id, "rule_items": len(items), "outcomes": outcomes}
-
-
-def partition_meters(workspace: Path, run_id: str, max_meters: int) -> dict[str, Any]:
-    """Group meters by their declared group, at most ``max_meters`` per partition."""
-
-    site = SiteData(workspace, run_id)
-    topology = site.topology()
-    groups: dict[str, list[str]] = {}
-    for spec in site.manifest.meters:
-        # The manifest's group; else the asset list's category (a candidate match, said so in the register).
-        groups.setdefault(spec.group or topology_group(topology, spec.id) or "", []).append(spec.id)
-    partitions = []
-    for group, meter_ids in groups.items():
-        chunks = [meter_ids[i : i + max_meters] for i in range(0, len(meter_ids), max_meters)]
-        for number, chunk in enumerate(chunks, start=1):
-            label = group or "未分组"
-            if len(chunks) > 1:
-                label = f"{label}（{number}/{len(chunks)}）"
-            partitions.append(
-                {"partition_id": f"P{len(partitions) + 1:02d}", "label": label, "meter_ids": chunk}
-            )
-    write_json(site.path("partitions.json"), {"partitions": partitions})
-    briefs = [partition_brief(site, partition) for partition in partitions]
-    return {"run_id": run_id, "partitions": briefs}
-
-
-def partition_brief(site: SiteData, partition: dict[str, Any]) -> dict[str, Any]:
-    profiles = {
-        item["meter_id"]: item for item in read_json(site.path("profiles.json"))["profiles"]
-    }
-    prechecks = read_json(site.path("prechecks.json"))
-    meter_ids = partition["meter_ids"]
-    rule_items = [
-        {
-            "rule_key": item["key"],
-            "meter_ids": item["meter_ids"],
-            "method_id": item["finding_method"]["method_id"],
-            "params": item["finding_method"]["params"],
-            "phenomenon": item["phenomenon"],
-        }
-        for item in prechecks["items"]
-        if set(item["meter_ids"]) & set(meter_ids)
-    ]
-    start, end = site.period()
-    calendar = site.calendar()
-    batches = site.batches()
-    machines = [machine for meter_id in meter_ids for machine in site.spec(meter_id).production_machines]
-    places = {entry["meter_id"]: entry for entry in (site.topology() or {}).get("meters", [])}
-    available = {
-        "calendar_states": sorted({window.state for window in calendar}) if calendar else [],
-        "production_machines": machines if batches is not None else [],
-        "production_quantity_basis": site.manifest.production.quantity_basis if site.manifest.production else None,
-        "tariff": site.manifest.tariff is not None,
-    }
-    return {
-        "scope": f"{site.run_id}#{partition['partition_id']}",
-        "partition_id": partition["partition_id"],
-        "label": partition["label"],
-        "site": site.manifest.site.name,
-        "period": {"start": _iso(start), "end": _iso(end)},
-        "meters": [
-            {
-                "meter_id": meter_id,
-                "name": site.spec(meter_id).name,
-                "unit_kind": site.spec(meter_id).unit_kind,
-                "interval_minutes": site.spec(meter_id).interval_minutes,
-                "production_machines": site.spec(meter_id).production_machines,
-                **{
-                    f"candidate_{key}": places[meter_id][key]
-                    for key in ("category", "equipment", "tree_path")
-                    if places.get(meter_id, {}).get(key)
-                },
-            }
-            for meter_id in meter_ids
-        ],
-        "available_inputs": available,
-        "methods": menu_entries(),
-        "method_readiness": method_readiness(site, meter_ids),
-        "rule_items": rule_items,
-        "profile_text": "\n\n".join(profile_text(profiles[meter_id]) for meter_id in meter_ids),
-        "site_facts": [
-            {
-                "id": fact.id,
-                "topic": fact.topic,
-                "question": fact.question,
-                "answer": fact.answer,
-                "status": fact.status,
-                "confirmed": fact.confirmed,
-            }
-            for fact in site.facts() or []
-        ],
-        "assumptions": brief_assumptions(site),
-        "categories": kb_categories(),
-        "input_kinds": INPUT_KINDS,
-        **({"focus": focus} if (focus := (site.task_scope() or {}).get("focus")) else {}),
-    }
-
-
-def brief_assumptions(site: SiteData) -> list[dict[str, Any]]:
-    """The inferences for a finder: a drafted one gives its reasoning and fact ids, not the facts' full text."""
-
-    keys = ("id", "topic", "inference", "origin", "meter_ids", "affects")
-    listed = []
-    for entry in site.assumptions():
-        row = {key: entry[key] for key in keys if entry.get(key)}
-        if entry.get("origin") == "drafted":
-            row["reasoning"] = entry.get("reasoning", "")
-            row["basis_fact_ids"] = entry.get("basis_fact_ids", [])
-        else:
-            row["basis"] = entry["basis"]
-        listed.append(row)
-    return listed
-
-
-__all__ = [
-    "meter_totals",
-    "method_context",
-    "method_readiness",
-    "parse_inputs",
-    "partition_brief",
-    "partition_meters",
-    "profile_meters",
-    "run_prechecks",
-]
+__all__ = ["meter_totals", "parse_inputs", "profile_meters"]

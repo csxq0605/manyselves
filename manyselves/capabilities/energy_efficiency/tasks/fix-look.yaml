@@ -1,0 +1,13 @@
+id: fix-look
+version: 0.1.0
+description: Correct a look after the program's check, in the same conversation
+agent: loss-analyst
+objective: 程序核对了你刚才交的答复，check.issues 列出了要改的地方（触发没处置或处置了两次、规格编译不过或选出的时段是空的、问卷编号不存在或不是已核实的等）。submission 是你上次的答复。逐条改正后重新提交完整的答复。
+input_contract: look-fix-request
+output_contract: look-submission
+constraints:
+- 只改 issues 指出的问题，其余照原样保留。
+- 规格写不对、又找不到能算的写法时，把它从 specs 里去掉，对应的处置改成 needs_data 并写现场问题；不要编时段或编号。
+- 其余要求与上一步相同。
+needs_history: true
+recovery: typed-turn-recovery

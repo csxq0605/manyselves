@@ -1,6 +1,6 @@
 id: render-energy-report
 version: 0.1.0
-description: Render the report of the selected items with their finding method and sources
+description: Render the report of the selected items with their references, decomposition and the model's opinions
 implementation: capability:energy-efficiency:render-energy-report
 input_contract: render-request
 output_contract: energy-report-summary

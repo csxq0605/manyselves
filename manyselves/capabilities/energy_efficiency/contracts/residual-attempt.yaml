@@ -1,0 +1,5 @@
+id: residual-attempt
+version: 1.0.0
+description: A corrected residual answer and the program's check of it
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ResidualAttempt

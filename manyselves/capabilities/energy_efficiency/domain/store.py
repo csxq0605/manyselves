@@ -32,6 +32,16 @@ from .inputs import (
     manifest_files,
     safe_relative,
 )
+from .preparation import (
+    PREPARATION_NAMES,
+    Confirmations,
+    Parameters,
+    ParameterSet,
+    TaskDefinition,
+    load_confirmations,
+    load_parameters,
+    load_task,
+)
 from .series import Kind, MeterSeries
 from .states import Segment
 
@@ -90,12 +100,18 @@ def freeze_inputs(workspace: Path, run_id: str, input_dir: str) -> Path:
             raise InputFormatError(f"{input_dir} has no {MANIFEST_NAME} and no .csv, .xlsx or .json file")
         if len(names) > MAX_SURVEYED_FILES:
             raise InputFormatError(f"{input_dir} has {len(names)} data files; at most {MAX_SURVEYED_FILES} without a manifest")
+    # The preparation files besides the manifest (A01, A04, A05), when the folder has them.
+    names += [name for name in PREPARATION_NAMES if (source / name).is_file() and name not in names]
     for name in names:
         path = safe_relative(source, name)
         destination = staging / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, destination)
     staging.rename(target)
+    # Read them now, so a file that does not follow its format refuses the start.
+    load_task(target)
+    load_parameters(target)
+    load_confirmations(target)
     return target
 
 
@@ -194,6 +210,31 @@ class SiteData:
         """What the person asked this run to look at: meters, times, a focus."""
 
         return task_scope(self.root)
+
+    # Preparation inputs (A01, A04, A05) ---------------------------------------
+    def task(self) -> TaskDefinition | None:
+        return load_task(self.inputs)
+
+    def parameters(self) -> Parameters | None:
+        return load_parameters(self.inputs)
+
+    def confirmations(self) -> Confirmations | None:
+        return load_confirmations(self.inputs)
+
+    def parameter_set(self) -> ParameterSet:
+        if getattr(self, "_parameter_set", None) is None:
+            production = self.manifest.production
+            try:
+                period = self.period()
+            except RunDataError:
+                period = None
+            self._parameter_set = ParameterSet(
+                self.parameters(),
+                self.confirmations(),
+                period,
+                production.product_column if production else None,
+            )
+        return self._parameter_set
 
     # Paths -----------------------------------------------------------------
     def series_path(self, meter_id: str) -> Path:

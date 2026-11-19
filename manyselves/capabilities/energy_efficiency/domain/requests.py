@@ -6,13 +6,23 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import to_jsonable_python
 
 from .inputs import Manifest
-from .items import PartitionSubmission
+from .submissions import JudgmentSubmission, LookSubmission, ResidualSubmission
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class _Plain(_Strict):
+    """A request that carries an agent's answer as plain data: the runtime may hand the answer over as a model."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def plain(cls, data: Any) -> Any:
+        return to_jsonable_python(data) if isinstance(data, dict) else data
 
 
 class CandidatesRequest(_Strict):
@@ -20,11 +30,10 @@ class CandidatesRequest(_Strict):
         min_length=1,
         description="项目里放数据文件的文件夹；有 manifest.yaml 就按它读，没有时程序先探测文件、由模型起草一份",
     )
-    max_meters_per_partition: int = Field(default=6, ge=1, le=30)
     meters: list[str] = Field(default_factory=list, description="只分析这些表（表编号）；不写时分析全部")
     start: datetime | None = Field(default=None, description="只分析这之后（站点本地时间）")
     end: datetime | None = Field(default=None, description="只分析这之前（站点本地时间）")
-    focus: str | None = Field(default=None, max_length=500, description="关注点，例如“空压系统”；只作为给模型的提示")
+    focus: str | None = Field(default=None, max_length=500, description="关注点（某个系统、设备或问题）；只作为给模型的提示")
 
     @model_validator(mode="after")
     def ordered(self) -> "CandidatesRequest":
@@ -42,84 +51,114 @@ class CandidatesRequest(_Strict):
 
 
 class ReportRequest(_Strict):
-    source_run_id: str = Field(min_length=1, description="出候选清单的那次运行")
-    marks_file: str | None = Field(default=None, description="标好“选择”列的清单（.xlsx 或 .csv）")
-    rules_file: str | None = Field(default=None, description="人写的选择规则（.yaml）")
-
-    @model_validator(mode="after")
-    def something_to_select_with(self) -> "ReportRequest":
-        if not self.marks_file and not self.rules_file:
-            raise ValueError("give marks_file, rules_file or both")
-        return self
+    source_run_id: str = Field(min_length=1, description="出台账的那次运行")
+    marks_file: str | None = Field(default=None, description="标好“取舍”列的台账（.xlsx 或 .csv）；不给时按规则文件和筛选结果")
+    rules_file: str | None = Field(default=None, description="人写的选择规则（.yaml）；不给时按标记和筛选结果")
 
 
 class RunRef(_Strict):
     run_id: str
 
 
-class PartitionRequest(_Strict):
+class CheckRequest(_Plain):
+    """A model's answer to one brief, with the brief's key and its run."""
+
     run_id: str
-    max_meters: int = Field(ge=1)
+    key: str
+    submission: dict[str, Any]
 
 
-class CheckRequest(_Strict):
-    scope: str
-    submission: PartitionSubmission
+class LookFixRequest(_Strict):
+    """The program's check of an answer, sent back with the answer."""
 
-
-class FixRequest(_Strict):
-    """The check result and the submission it is about, sent back to the finder."""
-
-    scope: str
+    run_id: str
+    key: str
     check: dict[str, Any]
-    submission: PartitionSubmission
+    submission: LookSubmission
 
 
-class PartitionAttempt(_Strict):
-    """A corrected submission and the program's recheck of it."""
+class ResidualFixRequest(_Strict):
+    """The program's check of an answer, sent back with the answer."""
 
-    submission: PartitionSubmission
+    run_id: str
+    key: str
+    check: dict[str, Any]
+    submission: ResidualSubmission
+
+
+class JudgmentFixRequest(_Strict):
+    """The program's check of an answer, sent back with the answer."""
+
+    run_id: str
+    key: str
+    check: dict[str, Any]
+    submission: JudgmentSubmission
+
+
+class LookAttempt(_Strict):
+    submission: LookSubmission
     check: dict[str, Any]
 
 
-class SettleRequest(_Strict):
-    partition_id: str
-    first_submission: PartitionSubmission
+class ResidualAttempt(_Strict):
+    submission: ResidualSubmission
+    check: dict[str, Any]
+
+
+class JudgmentAttempt(_Strict):
+    submission: JudgmentSubmission
+    check: dict[str, Any]
+
+
+class SettleRequest(_Plain):
+    """The first answer and check of one brief, and what the correction round returned."""
+
+    key: str
+    first_submission: dict[str, Any]
     first_check: dict[str, Any]
-    corrected: dict[str, PartitionAttempt] = Field(default_factory=dict)
+    corrected: dict[str, Any] = Field(default_factory=dict)
     correction_errors: dict[str, Any] = Field(default_factory=dict)
 
 
-class PartitionResult(_Strict):
-    """One partition's settled submission, its last check and partition notes."""
-
-    partition_id: str
-    submission: PartitionSubmission
+class SettledResult(_Strict):
+    submission: dict[str, Any]
     check: dict[str, Any]
+    corrected: bool = False
     notes: list[str] = Field(default_factory=list)
 
 
-class QuantifyRequest(_Strict):
+class ApplyLooksRequest(_Plain):
     run_id: str
-    partition_results: dict[str, PartitionResult]
-    partition_errors: dict[str, Any] = Field(default_factory=dict)
-    plant_results: dict[str, PartitionResult] = Field(default_factory=dict)
-    plant_errors: dict[str, Any] = Field(default_factory=dict)
+    results: dict[str, SettledResult] = Field(default_factory=dict)
+    errors: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResidualRoundRequest(_Strict):
+    run_id: str
+    round: int = Field(ge=1)
+
+
+class ApplyResidualRequest(_Plain):
+    run_id: str
+    round: int = Field(ge=1)
+    results: dict[str, SettledResult] = Field(default_factory=dict)
+    errors: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegisterRequest(_Plain):
+    run_id: str
+    judge_results: dict[str, SettledResult] = Field(default_factory=dict)
+    judge_errors: dict[str, Any] = Field(default_factory=dict)
     assumption_errors: dict[str, Any] = Field(default_factory=dict)
-
-
-class PlantRequest(_Strict):
-    run_id: str
-    partition_results: dict[str, PartitionResult]
 
 
 class DraftedAssumption(_Strict):
     """One inference about what the data measures, drafted from the program's facts."""
 
-    topic: str = Field(min_length=1, description="关于什么，例如“E06 的计量范围”“数量列的口径”")
+    topic: str = Field(min_length=1, description="关于什么，例如某块表的计量范围、数量列的口径")
     inference: str = Field(min_length=1, description="推断：可能是什么，写成待确认的话")
     reasoning: str = Field(min_length=1, description="从依据怎样推到这条推断；有别的可能也写上")
-    basis_fact_ids: list[str] = Field(min_length=1, description="依据的编号：程序算的事实（如 E06-MACHINES）或现场调研答复的编号")
+    basis_fact_ids: list[str] = Field(min_length=1, description="依据的编号：程序算的事实（如 <表编号>-MACHINES）或现场调研答复的编号")
     meter_ids: list[str] = Field(default_factory=list, description="涉及的表")
     affects: str = Field(default="", description="推断不成立时，哪些数字或线索会变（例如单耗、批间功率）")
     how_to_confirm: str = Field(min_length=1, description="现场怎样确认：看什么、问谁、比什么")
@@ -162,23 +201,28 @@ class RenderRequest(_Strict):
 
 
 __all__ = [
+    "ApplyLooksRequest",
+    "ApplyResidualRequest",
     "AssumptionDraft",
     "CandidatesRequest",
-    "DraftedAssumption",
-    "ManifestFixRequest",
-    "SettleAssumptionsRequest",
-    "SettleManifestRequest",
-    "TryManifestRequest",
     "CheckRequest",
-    "FixRequest",
-    "PartitionAttempt",
-    "PartitionRequest",
-    "PartitionResult",
-    "PlantRequest",
-    "QuantifyRequest",
+    "DraftedAssumption",
+    "JudgmentAttempt",
+    "JudgmentFixRequest",
+    "LookAttempt",
+    "LookFixRequest",
+    "ManifestFixRequest",
+    "RegisterRequest",
     "RenderRequest",
     "ReportRequest",
+    "ResidualAttempt",
+    "ResidualFixRequest",
+    "ResidualRoundRequest",
     "RunRef",
     "SelectRequest",
+    "SettleAssumptionsRequest",
+    "SettleManifestRequest",
     "SettleRequest",
+    "SettledResult",
+    "TryManifestRequest",
 ]

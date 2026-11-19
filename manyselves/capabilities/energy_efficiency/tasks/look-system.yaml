@@ -1,0 +1,15 @@
+id: look-system
+version: 0.1.0
+description: Look at one system where the lenses cannot see; answer every trigger, check the domain and the survey, hand in specs and site questions
+agent: loss-analyst
+objective: 下面是一个对象系统的说明包：各表的电量账摘要（meters：总量、全厂停时电量、钟点和星期分布、和产线的相关、停产和在产的平均功率）、程序候选里超出最大的几项（candidates）、程序算出的触发（triggers，每条写了要你做什么）、没解释的剩余（residual_kwh、slices）、问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、知识库（kb，只作参考）和写规格能用的维度（axes）。请做三件事：一，triggers 里每个触发写一条处置；二，用领域知识和问卷把本系统该看的机理过一遍（mechanisms），程序视角没覆盖、像浪费的交参照规格；三，把问卷里能落到时段上的事实写成规格，落不成的写现场问题。
+input_contract: look-brief
+output_contract: look-submission
+constraints:
+- key 原样填说明包的 key。
+- triggers 每个各写一条：possible_waste 要在 specs 里交 reference 规格并写进本条 specs；comparable_group 交 grouping 规格；driver 交 driver 或 residual 规格；needs_data 写一条 settles 含本触发编号的现场问题，或在规格里写 request；necessary_service、not_a_problem 写清依据。
+- mechanisms 至少一条：本系统按领域常识和问卷该看的机理，各写结果（spec 交了规格、covered 已被哪些候选覆盖、not_applicable 不适用、site_question 转现场问题）。
+- 规格的 objects 只写本系统 meters 里的表；when 只用 axes 里的维度和取值；参照取值（固定功率、分位、倍数）写出处，出处不是问卷或数据的写 领域常识 并在 why 里说明。参照可以给 1–3 个备选（alternatives），一起算给人选。
+- 不写电量、金额和节约量；why 里不写数。basis 里问卷写行编号，写成已确认（claims_confirmed）的那一行必须是已核实的。
+- 现场问题写成能直接去现场问的话，ask_role 从 roles 的键里选（metering、production、process、equipment、energy_finance、data）。
+recovery: typed-turn-recovery

@@ -1,6 +1,6 @@
 id: select-energy-items
 version: 0.1.0
-description: Apply the person's marks and selection rules to the candidate register
+description: Apply the person's marks, then the person's rules, then the screening to the workbook
 implementation: capability:energy-efficiency:select-energy-items
 input_contract: select-request
 output_contract: selection-result

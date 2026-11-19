@@ -1,8 +1,9 @@
 """Python Tools and runtime binding for the energy-efficiency Capability.
 
-Every Tool is one deterministic step.  Finding and explaining loss items is
-the loss finder's task; the order of the steps, the per-partition fan-out
-and the one correction round are declared in the workflow files.
+Every Tool is one deterministic step.  The program runs the lenses, computes
+every amount and screens the candidates; the analyst's turns (a look per
+system, the residual rounds, the judgments) and the one correction round
+of each are declared in the workflow files.
 """
 
 from __future__ import annotations
@@ -13,31 +14,42 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from pydantic_core import to_jsonable_python
 
 from manyselves.kernel.workflow.models import WorkflowStatus
 from manyselves.runtime.generic_binding import GenericCapabilityRuntimeBinding
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 from .. import CAPABILITY_FILE
-from ..domain import finder_tools
+from ..domain.analysis import (
+    apply_looks,
+    apply_residual,
+    check_judgment,
+    check_look,
+    judge_briefs,
+    lens_step,
+    residual_brief,
+    run_probes,
+    save_judgments,
+    settle,
+)
 from ..domain.caliber import caliber_brief, settle_assumptions
-from ..domain.check import check_submission, settle_partition
+from ..domain.foundation import build_foundation
 from ..domain.inputs import MANIFEST_NAME, InputFormatError, load_manifest
-from ..domain.items import PLANT
+from ..domain.ledger import compose, write_ledger
 from ..domain.manifest_draft import settle_manifest, survey_brief, try_manifest
-from ..domain.plant import plant_brief
-from ..domain.prepare import parse_inputs, partition_meters, profile_meters, run_prechecks
-from ..domain.quantify import quantify_register
-from ..domain.register import write_register
+from ..domain.preparation import load_task, merged_scope
+from ..domain.prepare import parse_inputs, profile_meters
 from ..domain.report import build_report, write_report
 from ..domain.requests import (
+    ApplyLooksRequest,
+    ApplyResidualRequest,
     CandidatesRequest,
     CheckRequest,
-    PartitionRequest,
-    PlantRequest,
-    QuantifyRequest,
+    RegisterRequest,
     RenderRequest,
     ReportRequest,
+    ResidualRoundRequest,
     RunRef,
     SelectRequest,
     SettleAssumptionsRequest,
@@ -49,6 +61,7 @@ from ..domain.selection import SelectionError, load_rules, read_marks, select
 from ..domain.store import (
     DATA_DIR,
     RunDataError,
+    SiteData,
     freeze_inputs,
     narrowed,
     read_json,
@@ -56,6 +69,7 @@ from ..domain.store import (
     write_json,
     write_task_scope,
 )
+from ..domain.workbook import build_register, write_register
 
 SELECTION_INPUTS = "energy-selection"
 SOURCE_COPY = "source-register"
@@ -77,7 +91,34 @@ def _project_file(workspace: Path, name: str) -> Path:
 
 
 def _value(value: Any) -> dict[str, Any]:
-    return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
+    """A tool's input as plain data: the runtime may hand over models, also nested ones (an agent's answer)."""
+
+    return dict(to_jsonable_python(value))
+
+
+def _dumped(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: _value(value) for key, value in values.items()}
+
+
+def register_candidates(workspace: Path, request: RegisterRequest) -> dict[str, Any]:
+    """S6 and S7: recompose the ledger, keep the judgments and write the workbook."""
+
+    site = SiteData(workspace, request.run_id)
+    ledger = compose(site)
+    write_ledger(site, ledger)
+    results = _dumped(request.judge_results)
+    save_judgments(site, results, request.judge_errors)
+    register = build_register(site, ledger, results, request.judge_errors, request.assumption_errors)
+    paths = write_register(site, run_dir(workspace, request.run_id) / DATA_DIR, register)
+    files = [_relative(workspace, path) for path in paths]
+    return {
+        "run_id": request.run_id,
+        "site": register["site"],
+        "period": register["period"],
+        "counts": register["counts"],
+        "files": files,
+        "output_artifacts": [{"path": path} for path in files],
+    }
 
 
 def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
@@ -85,8 +126,15 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
 
     workspace = Path(workspace)
 
-    def survey(values: Any) -> dict[str, Any]:
-        return survey_brief(workspace, RunRef.model_validate(_value(values)).run_id)
+    def run_ref(handler: Callable[[Path, str], dict[str, Any]]) -> Callable[[Any], Any]:
+        return lambda values: handler(workspace, RunRef.model_validate(_value(values)).run_id)
+
+    def checked(handler: Callable[[Path, str, str, dict[str, Any]], dict[str, Any]]) -> Callable[[Any], Any]:
+        def call(values: Any) -> dict[str, Any]:
+            request = CheckRequest.model_validate(_value(values))
+            return handler(workspace, request.run_id, request.key, request.submission)
+
+        return call
 
     def check_draft(values: Any) -> dict[str, Any]:
         request = TryManifestRequest.model_validate(_value(values))
@@ -102,63 +150,33 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
             corrected.model_dump(mode="json") if corrected else None,
         )
 
-    def parse(values: Any) -> dict[str, Any]:
-        return parse_inputs(workspace, RunRef.model_validate(_value(values)).run_id)
-
-    def profile(values: Any) -> dict[str, Any]:
-        return profile_meters(workspace, RunRef.model_validate(_value(values)).run_id)
-
-    def caliber(values: Any) -> dict[str, Any]:
-        return caliber_brief(workspace, RunRef.model_validate(_value(values)).run_id)
-
     def settle_drafted(values: Any) -> dict[str, Any]:
         request = SettleAssumptionsRequest.model_validate(_value(values))
         return settle_assumptions(workspace, request.run_id, request.draft.model_dump(mode="json"))
 
-    def prechecks(values: Any) -> dict[str, Any]:
-        return run_prechecks(workspace, RunRef.model_validate(_value(values)).run_id)
-
-    def partitions(values: Any) -> dict[str, Any]:
-        request = PartitionRequest.model_validate(_value(values))
-        return partition_meters(workspace, request.run_id, request.max_meters)
-
-    def check(values: Any) -> dict[str, Any]:
-        request = CheckRequest.model_validate(_value(values))
-        return check_submission(workspace, request.scope, request.submission.model_dump(mode="json"))
-
-    def settle(values: Any) -> dict[str, Any]:
+    def settled(values: Any) -> dict[str, Any]:
         request = SettleRequest.model_validate(_value(values))
-        return settle_partition(
-            request.partition_id,
-            request.first_submission.model_dump(mode="json"),
+        return settle(
+            request.first_submission,
             request.first_check,
-            {key: value.model_dump(mode="json") for key, value in request.corrected.items()},
+            _dumped(request.corrected),
             request.correction_errors,
         )
 
-    def plant(values: Any) -> dict[str, Any]:
-        request = PlantRequest.model_validate(_value(values))
-        results = {key: value.model_dump(mode="json") for key, value in request.partition_results.items()}
-        return plant_brief(workspace, request.run_id, results)
+    def applied(values: Any) -> dict[str, Any]:
+        request = ApplyLooksRequest.model_validate(_value(values))
+        return apply_looks(workspace, request.run_id, _dumped(request.results), request.errors)
 
-    def quantify(values: Any) -> dict[str, Any]:
-        request = QuantifyRequest.model_validate(_value(values))
-        results = {key: value.model_dump(mode="json") for key, value in request.partition_results.items()}
-        results.update({PLANT: value.model_dump(mode="json") for value in request.plant_results.values()})
-        errors = {**request.partition_errors, **({PLANT: next(iter(request.plant_errors.values()))} if request.plant_errors else {})}
-        register = quantify_register(
-            workspace, request.run_id, results, errors, drafting_failed=bool(request.assumption_errors)
-        )
-        paths = write_register(run_dir(workspace, request.run_id) / DATA_DIR, register)
-        files = [_relative(workspace, path) for path in paths]
-        return {
-            "run_id": request.run_id,
-            "site": register["site"],
-            "period": register["period"],
-            "counts": register["counts"],
-            "files": files,
-            "output_artifacts": [{"path": path} for path in files],
-        }
+    def round_brief(values: Any) -> dict[str, Any]:
+        request = ResidualRoundRequest.model_validate(_value(values))
+        return residual_brief(workspace, request.run_id, request.round)
+
+    def round_applied(values: Any) -> dict[str, Any]:
+        request = ApplyResidualRequest.model_validate(_value(values))
+        return apply_residual(workspace, request.run_id, request.round, _dumped(request.results), request.errors)
+
+    def registered(values: Any) -> dict[str, Any]:
+        return register_candidates(workspace, RegisterRequest.model_validate(_value(values)))
 
     def choose(values: Any) -> dict[str, Any]:
         request = SelectRequest.model_validate(_value(values))
@@ -193,29 +211,28 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
             "output_artifacts": [{"path": path} for path in files],
         }
 
-    def model_tool(handler: Callable[[Path, dict[str, Any]], dict[str, Any]]) -> Callable[[Any], Any]:
-        return lambda values: handler(workspace, _value(values))
-
     return {
-        "survey-energy-inputs": survey,
+        "survey-energy-inputs": run_ref(survey_brief),
         "check-manifest": check_draft,
         "settle-manifest": settle_draft,
-        "parse-energy-inputs": parse,
-        "profile-energy-data": profile,
-        "caliber-facts": caliber,
+        "parse-energy-inputs": run_ref(parse_inputs),
+        "profile-energy-data": run_ref(profile_meters),
+        "caliber-facts": run_ref(caliber_brief),
         "settle-assumptions": settle_drafted,
-        "run-energy-prechecks": prechecks,
-        "partition-energy-meters": partitions,
-        "plant-brief": plant,
-        "check-partition-items": check,
-        "settle-partition-items": settle,
-        "quantify-candidates": quantify,
+        "build-foundation": run_ref(build_foundation),
+        "run-lenses": run_ref(lens_step),
+        "check-look": checked(check_look),
+        "settle-look": settled,
+        "apply-looks": applied,
+        "residual-brief": round_brief,
+        "apply-residual": round_applied,
+        "judge-briefs": run_ref(judge_briefs),
+        "run-probes": checked(run_probes),
+        "check-judgment": checked(check_judgment),
+        "settle-judgment": settled,
+        "register-candidates": registered,
         "select-energy-items": choose,
         "render-energy-report": render,
-        "energy-series": model_tool(finder_tools.energy_series),
-        "compare-windows": model_tool(finder_tools.compare_windows),
-        "try-method": model_tool(finder_tools.try_method),
-        "production-records": model_tool(finder_tools.production_records),
     }
 
 
@@ -233,8 +250,9 @@ def _source_completed(workspace: Path, source_run_id: str) -> None:
 def _freeze_selection(workspace: Path, run_id: str, request: ReportRequest) -> None:
     """Copy the source register and the person's files into the run, then check them.
 
-    A problem in the marks or the rules refuses the start, so the person can
-    fix the file and start again; nothing half-copied is left behind.
+    Neither file is needed: without them the screening by the preference
+    rules decides.  A problem in a file refuses the start, so the person can
+    fix it and start again; nothing half-copied is left behind.
     """
 
     source = run_dir(workspace, request.source_run_id) / DATA_DIR
@@ -263,12 +281,7 @@ def _freeze_selection(workspace: Path, run_id: str, request: ReportRequest) -> N
         register = read_json(copy / "register.json")
         if request.marks_file:
             codes = {item["id"]: item["check_code"] for item in register["items"]}
-            marked = read_marks(frozen / Path(request.marks_file).name, codes)
-            if not any(mark["decision"] for mark in marked.values()) and not request.rules_file:
-                raise SelectionError(
-                    "marks file marks no item: fill 选择 (保留/不保留/需补资料) in the register you marked, "
-                    "or give a rules file"
-                )
+            read_marks(frozen / Path(request.marks_file).name, codes)
         if request.rules_file:
             load_rules(frozen / Path(request.rules_file).name)
     except Exception:
@@ -285,9 +298,10 @@ def start_input(workspace: Path) -> Callable[[str, str, Any], dict[str, Any]]:
             if workflow_id == "energy-candidates":
                 request = CandidatesRequest.model_validate(values)
                 frozen = freeze_inputs(workspace, run_id, request.input_dir)
-                write_task_scope(workspace, run_id, request.task_scope())
+                scope = merged_scope(request.task_scope(), load_task(frozen))
+                write_task_scope(workspace, run_id, scope)
                 if (frozen / MANIFEST_NAME).is_file():
-                    narrowed(load_manifest(frozen), request.task_scope())
+                    narrowed(load_manifest(frozen), scope)
                 return {"request": request.model_dump(mode="json"), "run-id": run_id}
             if workflow_id == "energy-report":
                 request = ReportRequest.model_validate(values)

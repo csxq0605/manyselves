@@ -9,13 +9,14 @@ meters move together, how the meter compares with the energy the report
 writes per batch).  The caliber drafter reads them and writes inferences,
 each citing the facts it rests on; a person confirms them on site.
 
-The thresholds below only decide which measurements are worth listing;
+The limits below (analysis preferences P14–P19) only decide which measurements are worth listing;
 none of them decides what a meter is.
 """
 
 from __future__ import annotations
 
 import statistics
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,21 +25,58 @@ import numpy as np
 import pandas as pd
 
 from .inputs import QUANTITY_BASES, Batch
-from .items import INPUT_KINDS
 from .series import MeterSeries
 from .states import state_label
 from .store import SiteData, read_json, write_json
 
 CALIBER = "CALIBER"
-# A machine needs this many placed batches before its lift on a meter is listed.
-MIN_BATCHES = 3
-# Machines listed per meter, by how much the meter's power rises while they run.
-TOP_MACHINES = 3
-# Pairs of meters listed: hours in common, correlation, share of hours one stays under the other.
-PAIR_HOURS = 48
-PAIR_CORRELATION = 0.7
-PAIR_UNDER = 0.95
-MAX_PAIRS = 30
+# What a data gap may be short of; the caliber drafter names one of these when
+# it says what would confirm an inference.
+INPUT_KINDS: dict[str, str] = {
+    "production_records": "生产记录（或本表没挂机台）",
+    "quantity": "经声明口径的批次数量",
+    "qualified_quantity": "合格品量",
+    "product": "批次的产品",
+    "calendar": "经人确认的日历",
+    "tariff": "电价",
+    "meter_topology": "表间上下级关系或计量范围",
+    "service_parameters": "服务参数（流量、压力、温度等）",
+    "control_logs": "控制、告警日志",
+    "maintenance_logs": "维护、检修记录",
+    "bills_contracts": "账单、合同、需量",
+    "environment": "环境数据（气温等）",
+    "other": "其他（note 里写明）",
+}
+
+
+@dataclass(frozen=True)
+class Limits:
+    """How much the caliber facts list; analysis preferences P14–P19, read from the run's parameter set."""
+
+    # A machine needs this many placed batches before its lift on a meter is listed.
+    min_batches: int = 3
+    # Machines listed per meter, by how much the meter's power rises while they run.
+    top_machines: int = 3
+    # Pairs of meters listed: hours in common, correlation, share of hours one stays under the other.
+    pair_hours: int = 48
+    pair_correlation: float = 0.7
+    pair_under: float = 0.95
+    max_pairs: int = 30
+
+    @classmethod
+    def of(cls, site: SiteData) -> "Limits":
+        params = site.parameter_set()
+        return cls(
+            min_batches=int(params.value("caliber_min_batches")),
+            top_machines=int(params.value("caliber_top_machines")),
+            pair_hours=int(params.value("caliber_pair_hours")),
+            pair_correlation=float(params.value("caliber_pair_correlation")),
+            pair_under=float(params.value("caliber_pair_under")),
+            max_pairs=int(params.value("caliber_max_pairs")),
+        )
+
+
+DEFAULT_LIMITS = Limits()
 
 
 def _r(value: float | None, digits: int = 2) -> float | None:
@@ -231,6 +269,7 @@ def machine_fact(
     by_machine: dict[str, list[Batch]],
     mapped: list[str],
     coverage: tuple[datetime, datetime] | None,
+    limits: Limits = DEFAULT_LIMITS,
 ) -> dict[str, Any] | None:
     """How much the meter's power rises while each machine runs, against while it does not."""
 
@@ -241,7 +280,7 @@ def machine_fact(
         return None
     rows = []
     for machine, batches in by_machine.items():
-        if len(batches) < MIN_BATCHES:
+        if len(batches) < limits.min_batches:
             continue
         spans = _merged([(batch.start, batch.end) for batch in batches])  # type: ignore[misc]
         inside, inside_hours = _power_inside(series, spans)
@@ -263,7 +302,7 @@ def machine_fact(
     if not rows:
         return None
     rows.sort(key=lambda row: (row["lift"] is None, -(row["lift"] or 0)))
-    shown = rows[:TOP_MACHINES] + [row for row in rows[TOP_MACHINES:] if row["mapped"]]
+    shown = rows[: limits.top_machines] + [row for row in rows[limits.top_machines :] if row["mapped"]]
     text = f"{spec_id} 按机台在产时段比本表平均功率（在产 / 不在产）：" + "；".join(
         f"{row['machine']}{'（manifest 挂在本表）' if row['mapped'] else ''} {row['running_kw']} / {row['not_running_kw']} kW"
         + (f"，{row['lift']} 倍" if row["lift"] is not None else "")
@@ -304,7 +343,9 @@ def batch_fact(
     return _fact(f"{spec_id}-BATCH", [spec_id], "挂表机台批次时段的读数", text, values)
 
 
-def reported_fact(spec_id: str, series: MeterSeries, own: list[Batch]) -> dict[str, Any] | None:
+def reported_fact(
+    spec_id: str, series: MeterSeries, own: list[Batch], limits: Limits = DEFAULT_LIMITS
+) -> dict[str, Any] | None:
     """Metered energy in the batches against the energy the report writes for them."""
 
     if not series.has_energy:
@@ -316,7 +357,7 @@ def reported_fact(spec_id: str, series: MeterSeries, own: list[Batch]) -> dict[s
         measure = series.measure(batch.start, batch.end)  # type: ignore[arg-type]
         if measure.coverage >= 0.9 and measure.energy_kwh is not None:
             pairs.append((measure.energy_kwh, batch.reported_energy_kwh))
-    if len(pairs) < MIN_BATCHES:
+    if len(pairs) < limits.min_batches:
         return None
     metered = sum(pair[0] for pair in pairs)
     reported = sum(pair[1] for pair in pairs)
@@ -358,7 +399,7 @@ def hourly_kw(series: MeterSeries) -> pd.Series | None:
     return grouped["kwh"] / grouped["h"]
 
 
-def pair_facts(hourly: dict[str, pd.Series]) -> list[dict[str, Any]]:
+def pair_facts(hourly: dict[str, pd.Series], limits: Limits = DEFAULT_LIMITS) -> list[dict[str, Any]]:
     """Pairs of meters whose hourly power moves together while one stays under the other."""
 
     found = []
@@ -366,20 +407,20 @@ def pair_facts(hourly: dict[str, pd.Series]) -> list[dict[str, Any]]:
     for number, left in enumerate(ids):
         for right in ids[number + 1 :]:
             joined = pd.concat([hourly[left], hourly[right]], axis=1, join="inner").dropna()
-            if len(joined) < PAIR_HOURS:
+            if len(joined) < limits.pair_hours:
                 continue
             a, b = joined.iloc[:, 0].to_numpy(), joined.iloc[:, 1].to_numpy()
             if a.std() == 0 or b.std() == 0:
                 continue
             correlation = float(np.corrcoef(a, b)[0, 1])
-            if correlation < PAIR_CORRELATION:
+            if correlation < limits.pair_correlation:
                 continue
             upper, lower = (left, right) if a.mean() >= b.mean() else (right, left)
             big, small = (a, b) if upper == left else (b, a)
             tolerance = 0.01 * float(np.percentile(big, 95))
             under = float(np.mean(small <= big * 1.02 + tolerance))
             ratio = float(small.mean() / big.mean()) if big.mean() > 0 else None
-            if under < PAIR_UNDER and (ratio is None or ratio < 0.9):
+            if under < limits.pair_under and (ratio is None or ratio < 0.9):
                 continue
             found.append(
                 _fact(
@@ -394,16 +435,16 @@ def pair_facts(hourly: dict[str, pd.Series]) -> list[dict[str, Any]]:
                 )
             )
     found.sort(key=lambda fact: -fact["values"]["correlation"])
-    return found[:MAX_PAIRS]
+    return found[: limits.max_pairs]
 
 
-def total_fact(hourly: dict[str, pd.Series]) -> dict[str, Any] | None:
+def total_fact(hourly: dict[str, pd.Series], limits: Limits = DEFAULT_LIMITS) -> dict[str, Any] | None:
     """The meter with the highest power against the sum of all the others, hour by hour."""
 
     if len(hourly) < 3:
         return None
     frame = pd.concat(hourly, axis=1, join="inner").dropna()
-    if len(frame) < PAIR_HOURS:
+    if len(frame) < limits.pair_hours:
         return None
     top = str(frame.mean().idxmax())
     rest = frame.drop(columns=[top]).sum(axis=1)
@@ -507,6 +548,7 @@ def production_facts(site: SiteData, batches: list[Batch] | None) -> list[dict[s
 
 
 def compute_facts(site: SiteData) -> list[dict[str, Any]]:
+    limits = Limits.of(site)
     period = site.period()
     batches = site.batches()
     profiles = {item["meter_id"]: item for item in read_json(site.path("profiles.json"))["profiles"]}
@@ -541,9 +583,9 @@ def compute_facts(site: SiteData) -> list[dict[str, Any]]:
             if notes
             else None,
             state_fact(spec.id, rows, bool(machines)),
-            machine_fact(spec.id, series, by_machine, machines, coverage) if by_machine else None,
+            machine_fact(spec.id, series, by_machine, machines, coverage, limits) if by_machine else None,
             batch_fact(spec.id, series, own, stopped),
-            reported_fact(spec.id, series, own),
+            reported_fact(spec.id, series, own, limits),
         ]
         facts += [fact for fact in candidates if fact is not None]
         series_hourly = hourly_kw(series)
@@ -551,10 +593,10 @@ def compute_facts(site: SiteData) -> list[dict[str, Any]]:
             hourly[spec.id] = series_hourly
     facts += topology_facts(site.topology())
     facts += production_facts(site, batches)
-    total = total_fact(hourly)
+    total = total_fact(hourly, limits)
     if total:
         facts.append(total)
-    facts += pair_facts(hourly)
+    facts += pair_facts(hourly, limits)
     return facts
 
 

@@ -1,0 +1,136 @@
+# 能效能力包的默认分析偏好。
+#
+# 分析偏好是“怎样分析”的选择，不是关于工厂的事实，所以不进现场核实清单。
+# 人在输入文件夹里放 preferences.yaml 或 分析偏好.xlsx 时，按项覆盖这里的值；
+# 没放的项用这里的值。每次运行都会在输出里附一份写着当前取值的 分析偏好.xlsx，
+# 改好后放回输入文件夹，在同一运行编号上续跑即可。
+#
+# 想换所有项目的默认值，直接改这个文件。origin 写这个值是怎么来的。
+# alternatives 是做敏感性对照用的备选值：程序同时按备选值算一遍，列出结果会变多少。
+values:
+  day_run_hours:
+    value: 1.0
+    alternatives: [0.5, 2.0]
+    origin: 程序设定（2026-11-18），没有外部依据
+  band_reference_quantile:
+    value: 0.95
+    origin: 沿用 EveryMe 0.6 站点配置 A15 的 P95，未经本项目确认
+  band_off_fraction:
+    value: 0.05
+    alternatives: [0.03]
+    origin: 沿用 EveryMe 0.6 站点配置 A15，未经本项目确认；备选值是程序设定
+  band_run_fraction:
+    value: 0.40
+    alternatives: [0.30]
+    origin: 沿用 EveryMe 0.6 站点配置 A15，未经本项目确认；备选值是程序设定
+  full_fraction:
+    value: 0.5
+    origin: 程序设定（对应 EveryMe A16 的满产划分），没有外部依据
+  peer_group_columns:
+    value: []
+    origin: 用户 2026-11-09 定：按型号分组，中试和常规一起算（空表示用生产记录的产品列）
+  peak_top_intervals:
+    value: 20
+    origin: 程序设定（2026-11-18），没有外部依据
+  demand_busy_min_hours:
+    value: 4
+    origin: 程序设定（2026-11-18），没有外部依据
+  band_reference_fallback:
+    value: true
+    origin: 程序设定（2026-11-18），没有外部依据
+  reference_quantiles:
+    value: [0.1, 0.25, 0.5]
+    origin: 程序设定（2026-11-19）：同对象同类出现的低位、四分位和中位，作统计参考
+  overlap_group_share:
+    value: 0.5
+    origin: 程序设定（2026-11-19），没有外部依据
+  caliber_min_batches:
+    value: 3
+    origin: 程序设定（2026-11-09），没有外部依据
+  caliber_top_machines:
+    value: 3
+    origin: 程序设定（2026-11-09），没有外部依据
+  caliber_pair_hours:
+    value: 48
+    origin: 程序设定（2026-11-09），没有外部依据
+  caliber_pair_correlation:
+    value: 0.7
+    origin: 程序设定（2026-11-09），没有外部依据
+  caliber_pair_under:
+    value: 0.95
+    origin: 程序设定（2026-11-09），没有外部依据
+  caliber_max_pairs:
+    value: 30
+    origin: 程序设定（2026-11-09），没有外部依据
+  plant_stop_fraction:
+    value: 0.05
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  driven_correlation:
+    value: 0.5
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  idle_floor_quantile:
+    value: 0.05
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  batch_reference_quantiles:
+    value: [0.0, 0.25, 0.5]
+    origin: 程序设定（2026-11-19）：组内最低、四分位、中位
+  batch_default_quantile:
+    value: 0.25
+    origin: 程序设定（2026-11-19）：取四分位，比组内最低稳，参照一换就没的项另筛为待定
+  day_window_days:
+    value: 10
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  day_neighbours:
+    value: 5
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  day_reference_quantiles:
+    value: [0.1, 0.25, 0.5]
+    origin: 程序设定（2026-11-19）：低位、四分位、中位
+  day_default_quantile:
+    value: 0.25
+    origin: 程序设定（2026-11-19），没有外部依据
+  residual_sigma:
+    value: 3.0
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  residual_min_share:
+    value: 0.15
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  elasticity_trigger:
+    value: 0.7
+    origin: 程序设定（2026-11-19），没有外部依据
+  trigger_min_share:
+    value: 0.05
+    origin: 程序设定（2026-11-19），没有外部依据
+  residual_rounds:
+    value: 3
+    origin: 程序设定（2026-11-19）
+  residual_stop_share:
+    value: 0.05
+    origin: 程序设定（2026-11-19），没有外部依据
+  residual_top_slices:
+    value: 10
+    origin: 程序设定（2026-11-19），没有外部依据
+  screen_min_kwh:
+    value: 100
+    origin: 程序设定（2026-11-19），没有外部依据
+  screen_min_share:
+    value: 0.01
+    origin: 程序设定（2026-11-19），没有外部依据
+  screen_min_coverage:
+    value: 0.8
+    origin: 程序设定（2026-11-19），没有外部依据
+  reference_rules:
+    value: []
+    origin: 默认没有人确认的参照规则
+  residual_rules:
+    value: []
+    origin: 默认没有人确认的剩余规则
+  discovery_min_share:
+    value: 0.05
+    origin: 程序设定（2026-11-19 离线试算用的值），没有外部依据
+  probe_change_share:
+    value: 0.2
+    origin: 程序设定（2026-11-19），没有外部依据
+  probe_share:
+    value: 0.5
+    origin: 程序设定（2026-11-19）：过半，没有外部依据

@@ -211,11 +211,28 @@ class ProductionSpec(TableSource):
         default=None, min_length=1, description="报表里每批的用电量列；程序拿它和挂表的计量电量比，不当作计量数据"
     )
     reported_energy_unit: Literal["Wh", "kWh", "MWh"] = "kWh"
+    phase_start_column: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "批内另一个时刻（例如开工时刻）所在的列。批次仍从 start_column 算到 end_column，"
+            "这个时刻只把批次分成准备段和加工段"
+        ),
+    )
+    phase_start_time_column: str | None = Field(
+        default=None, min_length=1, description="批内时刻的时刻所在的列；phase_start_column 这时只取日期"
+    )
+    stop_hours_columns: list[str] = Field(
+        default_factory=list,
+        description="每批登记的停机、换线时长（小时）所在的列；只有时长、没有起止时刻",
+    )
 
     @model_validator(mode="after")
     def basis_needs_column(self) -> "ProductionSpec":
         if (self.quantity_basis or self.quantity_unit) and not self.quantity_column:
             raise ValueError("quantity_basis and quantity_unit describe quantity_column, which is not given")
+        if self.phase_start_time_column and not self.phase_start_column:
+            raise ValueError("phase_start_time_column needs phase_start_column")
         return self
 
 
@@ -526,7 +543,7 @@ class Assumption(_Strict):
     """
 
     id: str = Field(pattern=_ID, description="编号，例如 A1")
-    topic: str = Field(min_length=1, description="关于什么，例如 E06 表的计量范围")
+    topic: str = Field(min_length=1, description="关于什么，例如某块表的计量范围")
     inference: str = Field(min_length=1, description="推断的内容")
     basis: str = Field(min_length=1, description="从哪些数据或资料推出来的")
 
@@ -1360,6 +1377,8 @@ class Batch(_Strict):
     quantity: float | None = None
     reported_energy_kwh: float | None = None
     problem: str | None = None
+    phase_start: datetime | None = None
+    stop_hours: dict[str, float] = Field(default_factory=dict)
 
 
 def _text(value: Any) -> str:
@@ -1414,9 +1433,17 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
         column for column in (spec.product_column, spec.quantity_column, spec.reported_energy_column) if column
     ]
     columns += spec.product_group_columns
+    columns += [column for column in (spec.phase_start_column, spec.phase_start_time_column) if column]
+    columns += spec.stop_hours_columns
     frame = read_table(folder, spec, list(dict.fromkeys(columns)))
     starts = _batch_times(frame, spec, spec.start_column, spec.start_time_column)
     ends = _batch_times(frame, spec, spec.end_column, spec.end_time_column)
+    phases = (
+        _batch_times(frame, spec, spec.phase_start_column, spec.phase_start_time_column)
+        if spec.phase_start_column
+        else None
+    )
+    stops = {column: parse_numbers(frame[column]) for column in spec.stop_hours_columns}
     quantities = (
         parse_numbers(frame[spec.quantity_column]) if spec.quantity_column else None
     )
@@ -1441,6 +1468,12 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
         quantity = None
         if quantities is not None and not pd.isna(quantities.iloc[index]):
             quantity = float(quantities.iloc[index])
+        phase = None
+        if phases is not None and not pd.isna(phases.iloc[index]):
+            moment = phases.iloc[index].to_pydatetime()
+            # A batch-internal moment outside the batch is not used to split it.
+            if start is not None and end is not None and start <= moment <= end:
+                phase = moment
         batches.append(
             Batch(
                 row=index + offset,
@@ -1454,6 +1487,12 @@ def load_batches(folder: Path, spec: ProductionSpec) -> tuple[list[Batch], int]:
                 if reported is None or pd.isna(reported.iloc[index])
                 else float(reported.iloc[index]) * ENERGY_UNITS[spec.reported_energy_unit],
                 problem=problem,
+                phase_start=phase,
+                stop_hours={
+                    column: float(values.iloc[index])
+                    for column, values in stops.items()
+                    if not pd.isna(values.iloc[index])
+                },
             )
         )
     return batches, skipped

@@ -1,0 +1,5 @@
+id: judgment-attempt
+version: 1.0.0
+description: Corrected judgments and the program's check of them
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:JudgmentAttempt

@@ -1,5 +1,0 @@
-id: plant-request
-version: 1.0.0
-description: The run and every settled partition result, for the plant-wide pass
-adapter: pydantic
-model: manyselves.capabilities.energy_efficiency.domain.requests:PlantRequest

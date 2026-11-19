@@ -1,0 +1,11 @@
+id: look-set
+version: 1.0.0
+description: The register after the program's lenses, and one look brief per system
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, summary, briefs]
+  properties:
+    run_id: {type: string}
+    summary: {type: object}
+    briefs: {type: array, items: {type: object}}

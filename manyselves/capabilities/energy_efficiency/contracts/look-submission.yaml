@@ -1,0 +1,5 @@
+id: look-submission
+version: 1.0.0
+description: "One system's blind spots: trigger dispositions, mechanisms checked, specs and site questions; no amounts"
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.submissions:LookSubmission

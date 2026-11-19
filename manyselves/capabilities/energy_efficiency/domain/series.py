@@ -156,6 +156,21 @@ class MeterSeries:
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(self.durations_h > 0, self.values / self.durations_h, np.nan)
 
+    def record_kwh(self) -> np.ndarray:
+        """Energy of every record (kWh): its reading, or for an instant reading its power held
+        until the next reading (at most one interval on), the same span ``record_end`` gives."""
+
+        if self.has_energy:
+            return self.values.astype(float)
+        if not len(self):
+            return np.zeros(0)
+        step = np.timedelta64(self.interval_minutes, "m")
+        following = np.empty_like(self.starts)
+        following[:-1] = self.starts[1:]
+        following[-1] = self.starts[-1] + step
+        hours = np.minimum(following - self.starts, step).astype("timedelta64[s]").astype(float) / 3600
+        return self.values.astype(float) * hours
+
     def follows(self, index: int) -> bool:
         """Whether record ``index`` follows record ``index - 1`` with no data missing between them.
 

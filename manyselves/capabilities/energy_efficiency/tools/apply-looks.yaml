@@ -1,0 +1,10 @@
+id: apply-looks
+version: 0.1.0
+description: "S3: compute the systems' accepted specs into the register and list the residual rounds the preferences allow"
+implementation: capability:energy-efficiency:apply-looks
+input_contract: apply-looks-request
+output_contract: apply-summary
+side_effect: run_local_write
+parallel_safe: false
+reuse_result: false
+model_visible: false

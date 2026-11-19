@@ -1,0 +1,5 @@
+id: judgment-submission
+version: 1.0.0
+description: "Opinions per candidate: reference choice, cause candidates with tests, measures, site questions; never a verdict on screening"
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.submissions:JudgmentSubmission

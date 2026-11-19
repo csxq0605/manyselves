@@ -1,0 +1,5 @@
+id: settled-result
+version: 1.0.0
+description: The answer kept for one brief, its last check and notes
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:SettledResult

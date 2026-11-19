@@ -1,6 +1,6 @@
 id: energy-candidates
 version: 0.1.0
-description: Read one site's meter data, look for candidate loss items partition by partition and once across the plant, replay them over the whole period and write the candidate register
+description: Read one site's meter data, run the program's lenses on the electricity grid, let the analyst look where they cannot see (per system, then the residual) and judge the candidates, screen them by the preference rules and write the workbook (台账)
 tasks: []
 recovery:
 - typed-turn-recovery
@@ -72,74 +72,98 @@ actions:
   output_variable: assumption_results
   errors_variable: assumption_errors
   max_concurrency: 1
-- id: prechecks
+# The program builds the company model, the foundation tables (states,
+# events, measures, the plant stopped by power) and the electricity grid.
+- id: foundation
   kind: invoke_tool
-  tool: run-energy-prechecks
+  tool: build-foundation
   input_variable: run_ref
-  output_variable: prechecked
-- id: max-meters
-  kind: set_variable
-  variable: max_meters
-  value_variable: request
-  field: max_meters_per_partition
-- id: partition
+  output_variable: foundation
+# S1: every lens on every meter it applies to; overlap, coverage, residual,
+# triggers and screening; one look brief per system.
+- id: lenses
   kind: invoke_tool
-  tool: partition-energy-meters
-  input_variables:
-    run_id: run-id
-    max_meters: max_meters
-  output_variable: partition_set
-- id: briefs
+  tool: run-lenses
+  input_variable: run_ref
+  output_variable: look_set
+- id: look-briefs
   kind: set_variable
-  variable: briefs
-  value_variable: partition_set
-  field: partitions
-- id: find-all
+  variable: look_briefs
+  value_variable: look_set
+  field: briefs
+# S2: one conversation per system; a failed system keeps the program's
+# candidates and the run goes on.
+- id: look
   kind: map
-  items_variable: briefs
-  key_field: partition_id
-  workflow: find-partition
-  key_input_variable: partition_key
-  output_variable: partition_results
-  errors_variable: partition_errors
+  items_variable: look_briefs
+  key_field: key
+  workflow: look-system
+  key_input_variable: item_key
+  output_variable: look_results
+  errors_variable: look_errors
   max_concurrency: 4
-# One look across every meter: items between objects and links between
-# partitions.  It runs as a map of one so its failure leaves the run going.
-- id: plant-input
+# S3: the accepted specs into the register.
+- id: apply-input
   kind: set_variable
-  variable: plant_input
+  variable: apply_input
   value_variables:
     run_id: run-id
-    partition_results: partition_results
-- id: plant-brief
+    results: look_results
+    errors: look_errors
+- id: apply
   kind: invoke_tool
-  tool: plant-brief
-  input_variable: plant_input
-  output_variable: plant_set
-- id: plant-briefs
+  tool: apply-looks
+  input_variable: apply_input
+  output_variable: applied
+- id: rounds
   kind: set_variable
-  variable: plant_briefs
-  value_variable: plant_set
-  field: briefs
-- id: plant
+  variable: rounds
+  value_variable: applied
+  field: rounds
+# S4: the residual rounds one after the other; each stops the next when it
+# added less than the preference's share of the residual (P34).
+- id: residual
   kind: map
-  items_variable: plant_briefs
-  key_field: partition_id
-  workflow: find-plant
-  key_input_variable: partition_key
-  output_variable: plant_results
-  errors_variable: plant_errors
+  items_variable: rounds
+  key_field: key
+  workflow: residual-round
+  key_input_variable: item_key
+  output_variable: round_results
+  errors_variable: round_errors
   max_concurrency: 1
-- id: quantify
+# S5: two-round judgments per system, with the program's cause tests between.
+- id: judge-briefs
   kind: invoke_tool
-  tool: quantify-candidates
-  input_variables:
+  tool: judge-briefs
+  input_variable: run_ref
+  output_variable: judge_set
+- id: judge-items
+  kind: set_variable
+  variable: judge_items
+  value_variable: judge_set
+  field: briefs
+- id: judge
+  kind: map
+  items_variable: judge_items
+  key_field: key
+  workflow: judge-system
+  key_input_variable: item_key
+  output_variable: judge_results
+  errors_variable: judge_errors
+  max_concurrency: 4
+# S6 and S7: the screening by the preference rules and the workbook.
+- id: register-input
+  kind: set_variable
+  variable: register_input
+  value_variables:
     run_id: run-id
-    partition_results: partition_results
-    partition_errors: partition_errors
-    plant_results: plant_results
-    plant_errors: plant_errors
+    judge_results: judge_results
+    judge_errors: judge_errors
     assumption_errors: assumption_errors
+- id: register
+  kind: invoke_tool
+  tool: register-candidates
+  input_variable: register_input
   output_variable: register
 - id: publish
   kind: publish_result

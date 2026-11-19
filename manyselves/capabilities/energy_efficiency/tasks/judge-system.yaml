@@ -1,0 +1,14 @@
+id: judge-system
+version: 0.1.0
+description: "First round of judgments for one system's candidates: reference opinion, cause candidates with the tests the program should run"
+agent: loss-analyst
+objective: 下面是一个系统里筛为有效或待定的候选（judge），每项有时段、各档参照下的超出（levels）、默认档和最保守档、重叠、程序的拆分（decomposition：时长、星期和钟点分布、全厂停占比、集中度、和产线的相关、变化最大的分界日、批次的功率和时长对比）和筛选规则；筛为无效的一行一项（invalid）；本系统的盲区处置（system_look）、问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、知识库（只作参考）和程序能跑的检验（test_types）。请对 judge 里每个候选写一条判断：意见、参照选哪一档和理由、候选原因（每个原因能检验的写一个 test）、措施选项、现场问题和相关项。这一轮之后程序会跑你写的检验，把结果给你，你再定稿。
+input_contract: judge-brief
+output_contract: judgment-submission
+constraints:
+- key 原样填。judge 里每个候选各写一条，candidate 写候选编号。
+- reference_choice 写 levels 里的 label，都不合适写 other；reference_reason 只谈可比性（是不是同一场景、同一产品，那几天有没有特殊情况）。
+- causes 要把非损耗的解释也列上（必要服务、工艺需要、数据问题、外部驱动），kind 标清；能用数据检验的写 test，type 从 test_types 里选，参数只用 date、when、groups。这一轮 status 都写 open。
+- measures 原因没确认时只给 management、operation 两类；repair、retrofit 要写 depends_on，并且所依的原因要经检验支持（第二轮再定）。owner_role 从 roles 的键里选。
+- 不写电量、金额和节约量（数以台账为准），不决定有效无效、留不留。
+recovery: typed-turn-recovery

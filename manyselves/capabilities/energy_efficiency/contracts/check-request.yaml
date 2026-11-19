@@ -1,5 +1,5 @@
 id: check-request
 version: 1.0.0
-description: A partition submission and the scope it was made in
+description: A model's answer to one brief, with the brief's key and run
 adapter: pydantic
 model: manyselves.capabilities.energy_efficiency.domain.requests:CheckRequest

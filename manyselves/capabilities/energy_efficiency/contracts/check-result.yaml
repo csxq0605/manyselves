@@ -15,3 +15,12 @@ schema:
         properties:
           key: {type: string}
           problem: {type: string}
+    hints:
+      description: The program's own failures while checking; shown, never sent back as problems
+      type: array
+      items:
+        type: object
+        required: [key, problem]
+        properties:
+          key: {type: string}
+          problem: {type: string}

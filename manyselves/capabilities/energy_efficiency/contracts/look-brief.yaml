@@ -1,0 +1,26 @@
+id: look-brief
+version: 1.0.0
+description: One system's meters, its largest candidates, the triggers to answer, the residual, the survey, the knowledge base as reference and the grid's axes
+adapter: json_schema
+schema:
+  type: object
+  required: [key, run_id, kind, system, meters, candidates, triggers, facts, kb, axes]
+  properties:
+    key: {type: string}
+    run_id: {type: string}
+    kind: {type: string}
+    system: {type: string}
+    meters: {type: array, items: {type: object}}
+    lenses: {type: object}
+    candidates: {type: array, items: {type: object}}
+    candidates_left: {type: integer}
+    triggers: {type: array, items: {type: object}}
+    residual_kwh: {type: object}
+    slices: {type: array, items: {type: object}}
+    facts: {type: array, items: {type: object}}
+    assumptions: {type: array, items: {type: object}}
+    task: {type: object}
+    focus: {type: string}
+    kb: {type: array, items: {type: object}}
+    axes: {type: object}
+    preferences: {type: array, items: {type: object}}

@@ -1,5 +1,0 @@
-id: partition-result
-version: 1.0.0
-description: A partition's final submission and the program's last check of it
-adapter: pydantic
-model: manyselves.capabilities.energy_efficiency.domain.requests:PartitionResult

@@ -1,0 +1,10 @@
+id: settle-look
+version: 0.1.0
+description: Keep the corrected look when the correction round returned one, otherwise the first
+implementation: capability:energy-efficiency:settle-look
+input_contract: settle-request
+output_contract: settled-result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

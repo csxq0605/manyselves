@@ -5,11 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import openpyxl
-import pandas as pd
 import pytest
 
 from manyselves.capabilities.energy_efficiency.domain.inputs import (
-    Batch,
     InputFormatError,
     Manifest,
     MeterSpec,
@@ -23,8 +21,6 @@ from manyselves.capabilities.energy_efficiency.domain.inputs import (
     read_meter_table,
     tariff_schedule,
 )
-from manyselves.capabilities.energy_efficiency.domain.methods import MethodContext, run_method
-from manyselves.capabilities.energy_efficiency.domain.series import MeterSeries
 
 
 def _write_rows(path, rows, sheet="Sheet1"):
@@ -221,43 +217,3 @@ def test_the_tariff_workbook_is_one_of_the_frozen_input_files() -> None:
         site={"name": "厂"}, meters=[_meter()], tariff={"file": "电价.xlsx", "plan": "1G3", "year": 2026}
     )
     assert manifest_files(manifest) == ["long.csv", "电价.xlsx"]
-
-
-# --- batch intensity per grouping --------------------------------------------
-
-
-def test_batch_intensity_gives_one_table_per_named_grouping() -> None:
-    day = datetime(2026, 7, 1)
-    starts = [day + timedelta(minutes=15 * index) for index in range(24 * 4)]
-    frame = pd.DataFrame({"start": starts, "end": [moment + timedelta(minutes=15) for moment in starts], "kwh": 2.5})
-    series = MeterSeries("M1", "energy", frame, 15)
-
-    def batch(row, hour, quantity, model, code):
-        return Batch(
-            row=row,
-            machine="L1",
-            start=day + timedelta(hours=hour),
-            end=day + timedelta(hours=hour + 1),
-            product=code,
-            groups={"型号": model, "品号": code},
-            quantity=quantity,
-        )
-
-    ctx = MethodContext(
-        period=(day, day + timedelta(days=1)),
-        batches=[batch(2, 0, 10, "A", "A-黑"), batch(3, 2, 5, "A", "A-白"), batch(4, 4, 5, "B", "B-黑")],
-        machines={"M1": ["L1"]},
-        quantity_basis="output",
-        quantity_unit="kg",
-        product_group_columns=("型号", "品号"),
-    )
-    run = run_method("batch-intensity", {"machine": "L1"}, series, ctx, None)
-
-    assert run.summary["by_group"] == {
-        "型号": {"A": {"count": 2, "median": 1.5, "of_sums": 1.3333}, "B": {"count": 1, "median": 2.0, "of_sums": 2.0}},
-        "品号": {
-            "A-白": {"count": 1, "median": 2.0, "of_sums": 2.0},
-            "A-黑": {"count": 1, "median": 1.0, "of_sums": 1.0},
-            "B-黑": {"count": 1, "median": 2.0, "of_sums": 2.0},
-        },
-    }

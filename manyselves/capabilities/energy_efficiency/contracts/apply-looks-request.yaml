@@ -1,0 +1,5 @@
+id: apply-looks-request
+version: 1.0.0
+description: The settled looks of every system and the systems that failed
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ApplyLooksRequest

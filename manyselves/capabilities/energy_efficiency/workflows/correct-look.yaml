@@ -1,0 +1,51 @@
+id: correct-look
+version: 0.1.0
+description: One correction round of a system look in the analyst's own conversation, then the program's check
+tasks:
+- fix-look
+recovery:
+- typed-turn-recovery
+output_contract: look-attempt
+state:
+  item: null
+  conversation: null
+actions:
+- id: fix
+  kind: invoke_agent
+  agent: loss-analyst
+  task: fix-look
+  conversation_variable: conversation
+  input_variable: item
+  output_variable: corrected_submission
+- id: run-id
+  kind: set_variable
+  variable: run_id
+  value_variable: item
+  field: run_id
+- id: key
+  kind: set_variable
+  variable: key
+  value_variable: item
+  field: key
+- id: check-input
+  kind: set_variable
+  variable: check_input
+  value_variables:
+    run_id: run_id
+    key: key
+    submission: corrected_submission
+- id: recheck
+  kind: invoke_tool
+  tool: check-look
+  input_variable: check_input
+  output_variable: recheck
+- id: result
+  kind: set_variable
+  variable: result
+  value_variables:
+    submission: corrected_submission
+    check: recheck
+- id: finish
+  kind: end_workflow
+  output_variable: result
+  output_name: result

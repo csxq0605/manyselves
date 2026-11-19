@@ -1,0 +1,5 @@
+id: look-fix-request
+version: 1.0.0
+description: The program's check of a look, sent back with the look
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:LookFixRequest

@@ -1,4 +1,4 @@
-"""Both entrypoints run on the generic Runtime with a scripted loss finder."""
+"""Both entrypoints run on the generic Runtime with a scripted analyst."""
 
 from __future__ import annotations
 
@@ -15,66 +15,30 @@ import yaml
 
 from manyselves.capabilities.energy_efficiency import CAPABILITY_FILE
 from manyselves.capabilities.energy_efficiency.adapters.runtime import build_runtime_binding
-from manyselves.capabilities.energy_efficiency.domain.methods import MENU
 from manyselves.config.schema import AgentDefaults
-from manyselves.interfaces.types import UserMessage
 from manyselves.kernel.definitions import load_capability
 from manyselves.runtime.capability_binding import CapabilityRunInputError
 from manyselves.runtime.loops.bus import MessageBus
-from manyselves.runtime.providers.base import LLMToolCall
-from manyselves.runtime.providers.base import Message as LLMMessage
 from manyselves.runtime.services import RuntimeServicesView
 from tests.capabilities.energy_efficiency.synthetic import write_site
-from tests.capabilities.energy_efficiency.test_energy_steps import categories
 from tests.runtime.scripted_loop import ScriptedLoop
 
+EXTRA_LIGHT = ("2026-03-10", "2026-03-11", "2026-03-12")
 
-class FinderLoop(ScriptedLoop):
-    """A scripted finder that can call its tools before it submits.
 
-    A ``("work", calls, build)`` step calls each ``(tool, arguments)`` in
-    turn and submits ``build(results)``; other steps are the base loop's.
-    """
+def _site(folder: Path) -> Path:
+    """The made-up site, with the workshop lights at 12 kW instead of 6 kW on three working days from 09:00 to 17:00."""
 
-    async def start(self) -> None:
-        await super().start()
-        base = self._callback
-        self.bus.unsubscribe(UserMessage, base)
-
-        async def respond(message: UserMessage) -> None:
-            if message.agent_type != self.kwargs["agent_type"]:
-                return
-            step = self.script(message)
-            if step[0] != "work":
-                script = self.script
-                self.script = lambda _message: step
-                try:
-                    await base(message)
-                finally:
-                    self.script = script
-                return
-            self.received.append(message)
-            self.history.append(LLMMessage(role="user", content=message.content))
-            results = []
-            for name, arguments in step[1]:
-                result = await self.tools.get(name)(**arguments)
-                self.feedback.append(result)
-                results.append(result)
-            for arguments in step[2](results):
-                self.history.append(
-                    LLMMessage(
-                        role="assistant",
-                        content="",
-                        tool_calls=[LLMToolCall("c", "submit_result", arguments)],
-                    )
-                )
-                feedback = await self.tools.get("submit_result")(**arguments)
-                self.feedback.append(feedback)
-                if feedback.get("status") != "correction_required":
-                    return
-
-        self._callback = respond
-        self.bus.subscribe(UserMessage, respond)
+    write_site(folder, prechecks=False)
+    path = folder / "lighting.csv"
+    with path.open(encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    for row in rows[1:]:
+        if row[0][:10] in EXTRA_LIGHT and "09:00" <= row[0][11:] < "17:00":
+            row[1] = "12.0"
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        csv.writer(handle).writerows(rows)
+    return folder
 
 
 def _input_of(content: str) -> dict[str, Any]:
@@ -83,217 +47,141 @@ def _input_of(content: str) -> dict[str, Any]:
     return json.loads(match.group(1))
 
 
-def _coverage(meter_ids: list[str], found: dict[str, list[str]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "method_id": method_id,
-            "meter_ids": meter_ids,
-            "outcome": "found" if method_id in found else "none_found",
-            "note": "查过",
-            "item_keys": found.get(method_id, []),
-        }
-        for method_id in MENU
-    ]
+def _task(content: str) -> str | None:
+    match = re.search(r'<task id="([^"]+)">', content)
+    return match.group(1) if match else None
 
 
-def _cause(evidence: str) -> list[dict[str, str]]:
-    return [
-        {"cause": "设备没有停", "kind": "loss", "basis": "data", "basis_detail": evidence, "how_to_check": "问值班人员"},
-        {"cause": "有必须连续运行的服务", "kind": "necessary_service", "basis": "general_knowledge", "basis_detail": "公辅常识", "how_to_check": "问设备科"},
-    ]
+NIGHT = {
+    "kind": "reference",
+    "id": "night",
+    "objects": ["AC1"],
+    "when": {"plant": "STOP", "clock": "22:00-06:00"},
+    "reference": {"type": "zero"},
+    "alternatives": [{"type": "fixed_kw", "value": 3, "label": "保压"}],
+    "basis": [{"source": "领域常识"}],
+    "why": "全厂停的夜里不用压缩空气",
+}
+QUESTION = {"question": "三月十到十二日白天车间为什么开了加装的灯？", "ask_role": "production", "objects": ["LT1"]}
 
 
-CATEGORY = [{"item_id": "LOSS-IDLE", "why": "非生产时段功率不降"}]
-
-
-NIGHT = {"start_time": "20:00", "end_time": "08:00", "min_avg_kw": 5}
-WEEKEND = {"state": "non_production", "min_avg_kw": 1}
-GAPS = {"machine": "IM-01", "min_gap_minutes": 30, "max_gap_minutes": 120}
-LIGHT_WEEK = [
-    {"start": "2026-03-02 00:00", "end": "2026-03-07 00:00"},
-    {"start": "2026-03-07 00:00", "end": "2026-03-09 00:00"},
-]
-
-
-def _p01(brief: dict[str, Any]):
-    scope = brief["scope"]
-
-    def build(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        evidence = results[0]["evidence_id"]
-        return [
-            {
-                "partition_id": "P01",
-                "items": [
-                    {
-                        "key": "A1",
-                        "meter_ids": ["AC1"],
-                        "windows": [{"start": "2026-03-02 20:00", "end": "2026-03-03 08:00"}],
-                        "finding_method": {
-                            "method_id": "daily-clock-window",
-                            "params": NIGHT,
-                            "description": "每天 20:00-08:00 的平均功率",
-                        },
-                        "phenomenon": "夜间平均 12 kW，13 个夜晚都在 5 kW 以上",
-                        "evidence_ids": [evidence],
-                        "reasoning": "画像里夜间和周末都是 12 kW，不随生产下降。",
-                        "root_cause_candidates": _cause(evidence),
-                        "candidate_categories": CATEGORY,
-                        "missing_info": ["夜间是否有用气设备"],
-                    }
-                ],
-                "coverage": _coverage(["AC1"], {"daily-clock-window": ["A1"]}),
-                "category_coverage": categories(["AC1"], [{"meter_ids": ["AC1"], "candidate_categories": CATEGORY}]),
-                "rule_item_notes": [{"rule_key": "R1", "note": "与 A1 是同一现象"}],
-            }
-        ]
-
-    calls = [("try-method", {"scope": scope, "meter_ids": ["AC1"], "method_id": "daily-clock-window", "params": NIGHT})]
-    return ("work", calls, build)
-
-
-def _p02_first(brief: dict[str, Any]):
-    scope = brief["scope"]
-
-    def build(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        gaps = results[0]["evidence_id"]
-        return [
-            {
-                "partition_id": "P02",
-                "items": [
-                    {
-                        "key": "B1",
-                        "meter_ids": ["IM1"],
-                        "windows": [{"start": "2026-03-02 11:30", "end": "2026-03-02 12:30"}],
-                        "finding_method": {"method_id": "production-gaps", "params": GAPS, "description": "午间批次间隙"},
-                        "phenomenon": "午间间隙平均 8 kW",
-                        "evidence_ids": [gaps],
-                        "reasoning": "批次之间功率没有降到夜间水平。",
-                        "root_cause_candidates": _cause(gaps),
-                        "candidate_categories": CATEGORY,
-                    },
-                    {
-                        "key": "B2",
-                        "meter_ids": ["LT1"],
-                        "windows": [{"start": "2026-03-07 07:00", "end": "2026-03-07 22:00"}],
-                        "finding_method": {"method_id": "calendar-state", "params": WEEKEND, "description": "非生产日的照明"},
-                        "phenomenon": "周末照明和工作日一样",
-                        # Wrong: cites the moulding machine's evidence.
-                        "evidence_ids": [gaps],
-                        "reasoning": "照明画像周末和工作日相同。",
-                        "root_cause_candidates": _cause(gaps),
-                        "candidate_categories": CATEGORY,
-                        "related_keys": ["B1"],
-                        "relation_types": {"B1": "independent"},
-                    },
-                ],
-                "coverage": _coverage(["IM1", "LT1"], {"production-gaps": ["B1"], "calendar-state": ["B2"]}),
-                "category_coverage": categories(
-                    ["IM1", "LT1"], [{"meter_ids": ["IM1", "LT1"], "candidate_categories": CATEGORY}]
-                ),
-            }
-        ]
-
-    calls = [("try-method", {"scope": scope, "meter_ids": ["IM1"], "method_id": "production-gaps", "params": GAPS})]
-    return ("work", calls, build)
-
-
-def _p02_fix(request: dict[str, Any]):
-    assert request["check"]["ok"] is False
-    assert [issue["key"] for issue in request["check"]["issues"]] == ["B2"]
-
-    def build(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        submission = json.loads(json.dumps(request["submission"]))
-        light = results[0]["evidence_id"]
-        b2 = next(item for item in submission["items"] if item["key"] == "B2")
-        b2["evidence_ids"] = [light]
-        b2["root_cause_candidates"] = _cause(light)
-        return [submission]
-
-    calls = [("compare-windows", {"scope": request["scope"], "meter_id": "LT1", "windows": LIGHT_WEEK})]
-    return ("work", calls, build)
-
-
-STOPPED = {"state": "plant_stopped", "min_minutes": 600}
-
-
-def _plant(brief: dict[str, Any]):
-    scope = brief["scope"]
-    assert brief["partition_id"] == "PLANT"
-    assert {item["ref"] for item in brief["partition_items"]} >= {"P01:A1", "P02:B1"}
-    assert len(brief["categories"]) == 17
-
-    def build(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        evidence = results[0]["evidence_id"]
-        item = {
-            "key": "X1",
-            "meter_ids": ["AC1"],
-            "windows": [{"start": "2026-03-07 00:00", "end": "2026-03-08 00:00"}],
-            "finding_method": {"method_id": "state-windows", "params": STOPPED, "description": "全厂停产时段的空压机"},
-            "phenomenon": "全厂停产时空压机平均 12 kW",
-            "evidence_ids": [evidence],
-            "reasoning": "状态轴上全厂停产的长段里空压机没有停。",
-            "root_cause_candidates": _cause(evidence),
-            "candidate_categories": [{"item_id": "LOSS-SUPPORT", "why": "停产时公辅仍运行"}],
-        }
-        return [
-            {
-                "partition_id": "PLANT",
-                "items": [item],
-                "category_coverage": categories(["AC1"], [item]),
-                "links": [{"left": "X1", "right": "P01:A1", "relation": "same_event_evidence", "note": "同是空压机不随生产停"}],
-            }
-        ]
-
-    calls = [("try-method", {"scope": scope, "meter_ids": ["AC1"], "method_id": "state-windows", "params": STOPPED})]
-    return ("work", calls, build)
-
-
-def _draft(brief: dict[str, Any]):
+def _draft(brief: dict[str, Any]) -> dict[str, Any]:
     assert brief["key"] == "CALIBER"
-    assert "AC1-COVER" in brief["fact_ids"]
-
-    def build(_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
+    return {
+        "assumptions": [
             {
-                "assumptions": [
-                    {
-                        "topic": "AC1 的计量范围",
-                        "inference": "AC1 可能只量空压机，不带别的设备",
-                        "reasoning": "停产时功率稳定，不随机台起落；也可能只是别的负载同样不停。",
-                        "basis_fact_ids": ["AC1-COVER", "NOPE-1"],
-                        "meter_ids": ["AC1", "ZZ9"],
-                        "affects": "停产时空压机的电量",
-                        "how_to_confirm": "看配电柜回路标签",
-                    }
-                ]
+                "topic": "AC1 的计量范围",
+                "inference": "AC1 可能只量空压机，不带别的设备",
+                "reasoning": "停产时功率稳定，不随机台起落；也可能只是别的负载同样不停。",
+                "basis_fact_ids": ["AC1-COVER"],
+                "meter_ids": ["AC1"],
+                "affects": "停产时空压机的电量",
+                "how_to_confirm": "看配电柜回路标签",
             }
         ]
-
-    return ("work", [], build)
-
-
-def _answer(message):
-    content = message.content
-    if '<task id="draft-assumptions">' in content:
-        assert '<context name="facts_text">' in content
-        return _draft(_input_of(content))
-    if '<task id="find-plant">' in content:
-        return _plant(_input_of(content))
-    if '<task id="find-partition">' in content:
-        brief = _input_of(content)
-        assert '<context name="profile_text">' in content
-        return _p01(brief) if brief["partition_id"] == "P01" else _p02_first(brief)
-    if '<task id="fix-partition-items">' in content:
-        return _p02_fix(_input_of(content))
-    return ("say", "still looking")
+    }
 
 
-def _binding(workspace: Path, bus: MessageBus, loops: list[FinderLoop], answer=None):
-    def build(**kwargs: Any) -> FinderLoop:
-        loop = FinderLoop(bus, answer or _answer, kwargs)
-        loops.append(loop)
-        return loop
+def _look(brief: dict[str, Any]) -> dict[str, Any]:
+    if brief["system"] == "动力站":
+        # Forgets the mechanisms: the check sends it back once.
+        return {"key": brief["key"], "triggers": [], "mechanisms": [], "specs": [NIGHT]}
+    assert [trigger["id"] for trigger in brief["triggers"]] == ["T-RES-LT1"]
+    return {
+        "key": brief["key"],
+        "triggers": [{"trigger": "T-RES-LT1", "disposition": "needs_data", "note": "数据里没有照明的开关记录"}],
+        "mechanisms": [
+            {"mechanism": "午休批次间隙", "objects": ["IM1"], "outcome": "covered", "covered_by": ["L1-IM1-between"], "note": "程序已看"},
+            {"mechanism": "照明随作息", "objects": ["LT1"], "outcome": "site_question", "note": "要问开关灯的作息"},
+        ],
+        "site_questions": [{**QUESTION, "settles": ["T-RES-LT1"]}],
+    }
 
+
+def _fix_look(request: dict[str, Any]) -> dict[str, Any]:
+    assert any("机理" in issue["problem"] for issue in request["check"]["issues"])
+    fixed = json.loads(json.dumps(request["submission"]))
+    fixed["mechanisms"] = [{"mechanism": "停产夜间空压机加载", "objects": ["AC1"], "outcome": "spec", "specs": ["night"], "note": "停产时管网没人用气"}]
+    return fixed
+
+
+def _residual(brief: dict[str, Any]) -> dict[str, Any]:
+    assert brief["round"] == 1 and [entry["id"] for entry in brief["slices"]] == ["S-LT1-2026-03-09"]
+    return {
+        "key": brief["key"],
+        "slices": [{"slice": "S-LT1-2026-03-09", "disposition": "explained", "specs": ["extra-light"], "note": "三天白天的检修照明"}],
+        "specs": [
+            {
+                "kind": "residual",
+                "id": "extra-light",
+                "objects": ["LT1"],
+                "when": {"dates": ["2026-03-10..2026-03-12"], "clock": "09:00-17:00"},
+                "type": "necessary_service",
+                "request": "问生产科这三天白天的检修安排",
+                "why": "检修时临时加灯",
+            }
+        ],
+        "site_questions": [{**QUESTION, "settles": ["extra-light"]}],
+    }
+
+
+def _judgment(entry: dict[str, Any], test: bool) -> dict[str, Any]:
+    cause: dict[str, Any] = {"id": "C1", "cause": "停产后没人关", "kind": "loss"}
+    if test:
+        cause["test"] = {"type": "base_load_when_stopped"}
+    return {
+        "candidate": entry["id"],
+        "opinion": "likely_loss",
+        "reference_choice": entry["default"],
+        "reference_reason": "本表自己在可比时段的功率",
+        "causes": [cause],
+        "measures": [{"type": "management", "action": "交班时检查并关闭", "owner_role": "equipment"}],
+    }
+
+
+class Analyst:
+    """Answers each brief as a person might, and remembers what it was asked."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, list[dict[str, Any]]] = {}
+        self.firsts: dict[str, dict[str, Any]] = {}
+
+    def __call__(self, message: Any) -> tuple[Any, ...]:
+        task = _task(message.content)
+        if task is None:
+            return ("say", "还在看")
+        value = _input_of(message.content)
+        self.seen.setdefault(task, []).append(value)
+        if task == "draft-assumptions":
+            return ("submit", [_draft(value)])
+        if task == "look-system":
+            return ("submit", [_look(value)])
+        if task == "fix-look":
+            return ("submit", [_fix_look(value)])
+        if task == "look-residual":
+            return ("submit", [_residual(value)])
+        if task == "judge-system":
+            first = {"key": value["key"], "judgments": [_judgment(entry, value["system"] == "动力站") for entry in value["judge"]]}
+            self.firsts[value["key"]] = first
+            return ("submit", [first])
+        if task == "judge-with-tests":
+            final = json.loads(json.dumps(self.firsts[value["key"]]))
+            for judgment in final["judgments"]:
+                for cause in judgment["causes"]:
+                    # Keeps every cause, whatever the tests said: the check sends back the contradicted ones.
+                    cause["status"] = "kept"
+            return ("submit", [final])
+        if task == "fix-judgment":
+            fixed = json.loads(json.dumps(value["submission"]))
+            for judgment in fixed["judgments"]:
+                for cause in judgment["causes"]:
+                    if any(cause["id"] in issue["key"] and judgment["candidate"] in issue["key"] for issue in value["check"]["issues"]):
+                        cause["status"] = "dropped"
+            return ("submit", [fixed])
+        raise AssertionError(f"no answer for {task}")
+
+
+def _binding(workspace: Path, bus: MessageBus, script: Any):
     return build_runtime_binding(
         workspace=workspace,
         services=RuntimeServicesView(
@@ -303,7 +191,7 @@ def _binding(workspace: Path, bus: MessageBus, loops: list[FinderLoop], answer=N
             agent_defaults=AgentDefaults(),
             global_knowledge_root=None,
         ),
-        loop_builder=build,
+        loop_builder=lambda **kwargs: ScriptedLoop(bus, script, kwargs),
     )
 
 
@@ -321,10 +209,10 @@ def test_definitions_are_neutral() -> None:
 
 @pytest.mark.asyncio
 async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
-    write_site(tmp_path / "data/site")
+    _site(tmp_path / "data/site")
     bus = MessageBus()
-    loops: list[FinderLoop] = []
-    binding = _binding(tmp_path, bus, loops)
+    analyst = Analyst()
+    binding = _binding(tmp_path, bus, analyst)
     bus_task = asyncio.create_task(bus.process_queue())
     try:
         accepted = await binding.start(
@@ -334,72 +222,59 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
         )
         run_id = accepted["run_id"]
         run = binding.get_run(run_id)
-        outputs = _values(binding, run_id)
-
-        assert run["run"]["status"] == "completed"
-        register = outputs["register"]
-        assert register["counts"] == {
-            "model_items": 4,
-            "rule_items": 1,
-            "partitions": 2,
-            "partitions_failed": 0,
-            "plant_items": 1,
-            "plant_pass": "ok",
-            "assumptions_drafted": 1,
-            "assumption_draft": "ok",
-        }
-        assert {"path": f"Work/runs/{run_id}/energy/register.xlsx"} in register["output_artifacts"]
-        artifacts = {item["path"] for item in binding.get_outputs(run_id)["outputs"] if item["kind"] == "artifact"}
-        assert f"Work/runs/{run_id}/energy/register.xlsx" in artifacts
-
+        register = _values(binding, run_id)["register"]
         data = json.loads((tmp_path / "Work/runs" / run_id / "energy/register.json").read_text(encoding="utf-8"))
-        items = {item["local_key"]: item for item in data["items"]}
-        drafted = next(entry for entry in data["assumptions"] if entry["origin"] == "drafted")
-        assert drafted["id"] == "D1" and drafted["basis_fact_ids"] == ["AC1-COVER"] and drafted["meter_ids"] == ["AC1"]
-        assert len(drafted["check_notes"]) == 2
-        assert any(fact["id"] == "AC1-COVER" for fact in data["caliber_facts"])
-        assert items["B2"]["check_issues"] == []
-        assert items["X1"]["partition_id"] == "PLANT" and items["X1"]["check_issues"] == []
-        assert items["A1"]["id"] in items["X1"]["related_ids"] and items["X1"]["id"] in items["A1"]["related_ids"]
-        # Weekends and weekday nights after 17:00 are a stopped plant: 12 kW there.
-        assert items["X1"]["scalars"]["window_avg_kw"] == 12.0
-        assert items["B2"]["related_ids"] == [items["B1"]["id"]]
-        assert items["A1"]["scalars"]["replay_item_kwh"] == 13 * 12 * 12
-        # Every night is 12 kW: the item's windows sit at the top of the method's own occurrences.
-        assert items["A1"]["scalars"]["window_avg_kw_replay_rank"] == 1.0
-        # Lighting is instant power: no energy is made up for it.
-        assert items["B2"]["scalars"]["replay_item_kwh"] is None
-        # One calendar row per weekend day; touching rows are one stretch: two weekends.
-        assert items["B2"]["scalars"]["replay_hits"] == 2
+        items = {item["id"]: item for item in data["items"]}
 
-        # One correction round, only in the partition whose check failed.
-        firsts = [(_input_of(loop.received[0].content), loop) for loop in loops]
-        by_partition = {brief["partition_id"]: loop for brief, loop in firsts if "partition_id" in brief}
-        assert len(by_partition["P01"].received) == 1
-        assert ['<task id="fix-partition-items">' in m.content for m in by_partition["P02"].received] == [False, True]
-        state = run["state"]["variables"]
-        assert set(state["partition_results"]) == {"P01", "P02"}
-        assert state["partition_errors"] == {}
+        assert run["run"]["status"] == "completed", run["run"]
+        # One look per system; only the power station's was sent back, once.
+        assert sorted(brief["key"] for brief in analyst.seen["look-system"]) == ["look-动力站", "look-注塑车间"]
+        assert [request["key"] for request in analyst.seen["fix-look"]] == ["look-动力站"]
+        # The program computed the analyst's night reference: 12 kW on the stopped nights.
+        night = items["M-night-AC1"]
+        assert night["excess_kwh"] == 1329.0 and night["screen"]["rule"] == "S8"
+        # One residual round: the analyst explained all of it, so the next rounds had nothing to brief.
+        assert len(analyst.seen["look-residual"]) == 1
+        assert data["rounds"][0]["gain_kwh"] == 144.0 and data["rounds"][0]["stopped"] is False
+        assert data["summary"]["residual_open_kwh"] == 144.0 and data["summary"]["residual_model_kwh"] == 144.0
+        # Two rounds of judgments per system; the contradicted cause was sent back and dropped.
+        assert sorted(brief["key"] for brief in analyst.seen["judge-system"]) == ["judge-动力站", "judge-注塑车间"]
+        probes = next(value for value in analyst.seen["judge-with-tests"] if value["key"] == "judge-动力站")
+        assert {entry["result"] for entry in probes["results"]} == {"contradicts"}
+        assert [request["key"] for request in analyst.seen["fix-judgment"]] == ["judge-动力站"]
+        stop = items["L1-AC1-stop"]["judgment"]
+        assert stop["causes"][0]["status"] == "dropped"
+        # The trigger's answer and the site questions reach the workbook.
+        assert data["triggers"][0]["answer"]["disposition"] == "needs_data"
+        assert any(question["question"] == QUESTION["question"] for question in data["site_questions"])
+        assert register["counts"]["systems_looked"] == 2 and register["counts"]["assumptions_drafted"] == 1
+        for name in ("register.xlsx", "register.html", "分析偏好.xlsx"):
+            assert {"path": f"Work/runs/{run_id}/energy/{name}"} in register["output_artifacts"]
 
         with (tmp_path / "marks.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["编号", "核对码", "选择", "备注"])
-            writer.writerow([items["B1"]["id"], items["B1"]["check_code"], "保留", "午休不停机"])
-            writer.writerow([items["B2"]["id"], items["B2"]["check_code"], "需补资料", "问周末是否有人"])
+            writer.writerow(["编号", "核对码", "取舍", "理由", "选定参照"])
+            writer.writerow(["M-night-AC1", items["M-night-AC1"]["check_code"], "保留", "夜里不用气", "保压"])
+            writer.writerow(["L2c-LT1", items["L2c-LT1"]["check_code"], "需补资料", "问三天白天加灯的原因", ""])
         (tmp_path / "rules.yaml").write_text(
-            "rules:\n- when:\n  - {field: source, op: eq, value: rule}\n  decision: drop\n  note: 与模型项重复\n",
+            "rules:\n- when:\n  - {field: lens, op: eq, value: L4}\n  decision: drop\n  note: 和日电量先例是同一现象\n",
             encoding="utf-8",
         )
         with pytest.raises(CapabilityRunInputError):
             await binding.start(
                 UUID("60000000-0000-4000-8000-000000000002"),
                 "energy-report",
-                {"source_run_id": "energy-candidates-missing", "rules_file": "rules.yaml"},
+                {"source_run_id": "energy-candidates-missing"},
             )
         report_run = await binding.start(
             UUID("60000000-0000-4000-8000-000000000003"),
             "energy-report",
             {"source_run_id": run_id, "marks_file": "marks.csv", "rules_file": "rules.yaml"},
+        )
+        screened = await binding.start(
+            UUID("60000000-0000-4000-8000-000000000004"),
+            "energy-report",
+            {"source_run_id": run_id},
         )
     finally:
         await binding.close()
@@ -408,20 +283,22 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
 
     report_id = report_run["run_id"]
     assert binding.get_run(report_id)["run"]["status"] == "completed"
-    report = _values(binding, report_id)["report"]
-    assert report["counts"] == {"keep": 1, "drop": 1, "needs_data": 1, "unselected": 2}
-    # The marks and rules were copied into the run when it started.
     assert (tmp_path / "Work/runs" / report_id / "energy-selection/marks.csv").is_file()
-    assert (tmp_path / "Work/runs" / report_id / "energy-selection/source-register/register.json").is_file()
     text = (tmp_path / "Work/runs" / report_id / "energy-report/report.md").read_text(encoding="utf-8")
-    kept = text.split("## 保留的候选损耗项")[1].split("## 需补资料的项")[0]
-    assert f"### {items['B1']['id']}" in kept
-    assert "午休不停机" in kept
-    assert f"### {items['A1']['id']}" not in kept
+    kept = text.split("## 保留的损耗项")[1].split("## 需补资料或待定的项")[0]
+    assert "### M-night-AC1" in kept and "夜里不用气" in kept and "997 kWh（参照：保压，人选" in kept
+    assert "### L1-AC1-stop" in kept  # screened valid, nobody marked it
+    dropped = text.split("## 人或规则不保留的项")[1].split("## 覆盖与剩余")[0]
+    assert "L4-LT1（规则 1）" in dropped
+    # Without marks or rules the screening decides alone.
+    assert binding.get_run(screened["run_id"])["run"]["status"] == "completed"
+    counts = _values(binding, screened["run_id"])["report"]["counts"]
+    assert counts["keep"] == data["counts"]["valid"] and counts["needs_data"] == data["counts"]["pending"]
 
 
+@pytest.mark.asyncio
 async def test_a_folder_without_manifest_is_read_with_a_drafted_one(tmp_path: Path) -> None:
-    folder = write_site(tmp_path / "data/site")
+    folder = _site(tmp_path / "data/site")
     written = yaml.safe_load((folder / "manifest.yaml").read_text(encoding="utf-8"))
     (folder / "manifest.yaml").unlink()
     wrong = json.loads(json.dumps(written))
@@ -431,22 +308,21 @@ async def test_a_folder_without_manifest_is_read_with_a_drafted_one(tmp_path: Pa
     wrong["assumptions"] = [{"id": "M1", "topic": "IM1 读数", "inference": "可能是每段电量", "basis": "列名"}]
     written["assumptions"] = [{"id": "M1", "topic": "IM1 读数", "inference": "可能是累计读数", "basis": "读数从不下降"}]
     seen: dict[str, Any] = {}
+    analyst = Analyst()
 
-    def answer(message):
-        content = message.content
-        if '<task id="draft-manifest">' in content:
-            survey = _input_of(content)
+    def answer(message: Any) -> tuple[Any, ...]:
+        task = _task(message.content)
+        if task == "draft-manifest":
+            survey = _input_of(message.content)
             seen["files"] = sorted({table["file"] for table in survey["tables"]})
-            return ("work", [], lambda _results: [wrong])
-        if '<task id="fix-manifest">' in content:
-            request = _input_of(content)
-            seen["issues"] = request["check"]["issues"]
-            return ("work", [], lambda _results: [written])
-        return _answer(message)
+            return ("submit", [wrong])
+        if task == "fix-manifest":
+            seen["issues"] = _input_of(message.content)["check"]["issues"]
+            return ("submit", [written])
+        return analyst(message)
 
     bus = MessageBus()
-    loops: list[FinderLoop] = []
-    binding = _binding(tmp_path, bus, loops, answer)
+    binding = _binding(tmp_path, bus, answer)
     bus_task = asyncio.create_task(bus.process_queue())
     try:
         accepted = await binding.start(
@@ -464,6 +340,6 @@ async def test_a_folder_without_manifest_is_read_with_a_drafted_one(tmp_path: Pa
     assert any("IM1" in issue and "累计" in issue for issue in seen["issues"])
     data = json.loads((tmp_path / "Work/runs" / run_id / "energy/register.json").read_text(encoding="utf-8"))
     assert data["manifest_origin"]["kept"] == "corrected"
-    assert data["counts"]["model_items"] == 4
+    assert "M-night-AC1" in {item["id"] for item in data["items"]}
     drafted = next(entry for entry in data["assumptions"] if entry["id"] == "M1")
     assert drafted["origin"] == "manifest-drafted" and drafted["inference"] == "可能是累计读数"

@@ -1,0 +1,5 @@
+id: residual-round-request
+version: 1.0.0
+description: Which residual round to brief
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ResidualRoundRequest

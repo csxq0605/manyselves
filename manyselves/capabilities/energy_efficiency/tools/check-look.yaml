@@ -1,0 +1,10 @@
+id: check-look
+version: 0.1.0
+description: "Check a system look or a residual round: every trigger or slice answered once, specs compile and select something, survey rows exist and are not called confirmed when they are not"
+implementation: capability:energy-efficiency:check-look
+input_contract: check-request
+output_contract: check-result
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

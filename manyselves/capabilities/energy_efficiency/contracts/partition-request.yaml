@@ -1,5 +1,0 @@
-id: partition-request
-version: 1.0.0
-description: The run and the largest number of meters per partition
-adapter: pydantic
-model: manyselves.capabilities.energy_efficiency.domain.requests:PartitionRequest

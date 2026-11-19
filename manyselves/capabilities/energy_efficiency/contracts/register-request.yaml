@@ -1,0 +1,5 @@
+id: register-request
+version: 1.0.0
+description: The settled judgments and the failures to write into the workbook
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:RegisterRequest

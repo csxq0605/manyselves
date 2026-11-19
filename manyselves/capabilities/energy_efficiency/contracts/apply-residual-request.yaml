@@ -1,0 +1,5 @@
+id: apply-residual-request
+version: 1.0.0
+description: One residual round's settled answer, or its failure
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ApplyResidualRequest

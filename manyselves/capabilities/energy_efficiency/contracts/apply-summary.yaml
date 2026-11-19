@@ -1,0 +1,15 @@
+id: apply-summary
+version: 1.0.0
+description: The register after the model's specs were computed, and the residual rounds still allowed
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id]
+  properties:
+    run_id: {type: string}
+    summary: {type: object}
+    rounds: {type: array, items: {type: object}}
+    round: {type: integer}
+    ran: {type: boolean}
+    stopped: {type: boolean}
+    gain_kwh: {type: number}

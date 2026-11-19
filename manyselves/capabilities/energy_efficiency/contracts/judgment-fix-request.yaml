@@ -1,0 +1,5 @@
+id: judgment-fix-request
+version: 1.0.0
+description: The program's check of the judgments, sent back with them
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:JudgmentFixRequest

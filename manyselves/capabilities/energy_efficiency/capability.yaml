@@ -1,6 +1,6 @@
 id: energy-efficiency
 version: 0.1.0
-description: Find candidate energy-loss items in meter data; a person or the person's rules choose what the report keeps
+description: Find energy-loss items in meter data by program lenses (loss = actual − reference), let the analyst look where the lenses cannot see and judge causes, screen the items by the preference rules; a person or the person's rules choose what the report keeps
 agents: ./agents
 workflows: ./workflows
 tasks: ./tasks

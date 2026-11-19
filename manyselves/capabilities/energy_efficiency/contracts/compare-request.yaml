@@ -1,5 +1,0 @@
-id: compare-request
-version: 1.0.0
-description: Two to four windows of one meter
-adapter: pydantic
-model: manyselves.capabilities.energy_efficiency.domain.finder_tools:CompareRequest

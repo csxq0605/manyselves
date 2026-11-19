@@ -1,0 +1,11 @@
+id: fix-residual
+version: 0.1.0
+description: Correct a residual round after the program's check, in the same conversation
+agent: loss-analyst
+objective: 程序核对了你刚才交的答复，check.issues 列出了要改的地方。submission 是你上次的答复。逐条改正后重新提交完整的答复。
+input_contract: residual-fix-request
+output_contract: residual-submission
+constraints:
+- 只改 issues 指出的问题，其余照原样保留。写不成能算的规格时，处置改成 cannot_tell 或 needs_data。
+needs_history: true
+recovery: typed-turn-recovery

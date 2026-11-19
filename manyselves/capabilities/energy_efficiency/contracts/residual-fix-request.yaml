@@ -1,0 +1,5 @@
+id: residual-fix-request
+version: 1.0.0
+description: The program's check of a residual round, sent back with the answer
+adapter: pydantic
+model: manyselves.capabilities.energy_efficiency.domain.requests:ResidualFixRequest

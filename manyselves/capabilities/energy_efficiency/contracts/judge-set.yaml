@@ -1,0 +1,10 @@
+id: judge-set
+version: 1.0.0
+description: One judgment brief per system (split when a system has many candidates)
+adapter: json_schema
+schema:
+  type: object
+  required: [run_id, briefs]
+  properties:
+    run_id: {type: string}
+    briefs: {type: array, items: {type: object}}
