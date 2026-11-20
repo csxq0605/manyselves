@@ -167,6 +167,15 @@ def stability_text(item: dict[str, Any]) -> str:
     return "；".join(texts)
 
 
+def set_aside_text(item: dict[str, Any]) -> str:
+    """What the analyst wrote when it left a large difference out of every item: an opinion, never screened."""
+
+    entry = item.get("set_aside")
+    if not entry:
+        return ""
+    return f"{SET_ASIDE_REASONS.get(entry.get('reason'), entry.get('reason', ''))}：{entry.get('note', '')}（{entry.get('origin', '')}）"
+
+
 def proposal_cause_text(item: dict[str, Any]) -> str:
     tests: dict[str, dict[str, Any]] = {entry["cause"]: entry for entry in item.get("proposal_tests", [])}
     texts = []
@@ -240,6 +249,8 @@ def _items(
                 "item": candidate.item,
                 "item_title": proposal.get("title", ""),
                 "origin": item.get("origin", ""),
+                "item_source": item.get("source", "model"),
+                "set_aside": item.get("set_aside"),
                 "proposal": {key: proposal.get(key) for key in ("finding", "reasoning", "causes", "missing_info", "related")},
                 "proposal_tests": proposed.get(candidate.id, []),
                 "lens": candidate.lens,
@@ -322,6 +333,7 @@ def _loss_items(ledger: Ledger, rows: list[dict[str, Any]]) -> list[dict[str, An
                 "causes": proposal.get("causes", []),
                 "missing_info": proposal.get("missing_info", ""),
                 "related": proposal.get("related", []),
+                "set_aside": item.get("set_aside"),
             }
         )
     listed.sort(key=lambda entry: (not entry["accepted"], -entry["excess_kwh"], entry["id"]))
@@ -331,6 +343,7 @@ def _loss_items(ledger: Ledger, rows: list[dict[str, Any]]) -> list[dict[str, An
 def _differences(ledger: Ledger) -> list[dict[str, Any]]:
     set_aside = {entry["difference"]: entry for entry in ledger.set_aside}
     must = set(ledger.must_answer)
+    unclaimed = set(ledger.unclaimed)
     grid = ledger.grid
     rows = []
     for difference in ledger.differences:
@@ -353,6 +366,7 @@ def _differences(ledger: Ledger) -> list[dict[str, Any]]:
                 "money": None if difference.money is None else round(difference.money, 1),
                 "must_answer": difference.id in must,
                 "adopted_by": ledger.adopted.get(difference.id),
+                "unclaimed": difference.id in unclaimed,
                 "set_aside": set_aside.get(difference.id),
                 "residual_kwh": round(left, 1),
             }
@@ -465,6 +479,7 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
             mechanisms.append({**mechanism, "system": look.get("system")})
     counts = {
         "loss_items": sum(1 for entry in loss_items if entry["accepted"]),
+        "loss_items_unclaimed": len(ledger.unclaimed),
         "loss_items_refused": sum(1 for entry in loss_items if not entry["accepted"]),
         "differences": len(ledger.differences),
         "differences_adopted": len(ledger.adopted),
@@ -545,6 +560,7 @@ def ledger_columns() -> list[tuple[str, str, Any]]:
         ("提项（模型，未核实）", "思考过程", lambda item: item["proposal"].get("reasoning") or ""),
         ("提项（模型，未核实）", "提项时的原因与检验", proposal_cause_text),
         ("提项（模型，未核实）", "还缺的资料", lambda item: item["proposal"].get("missing_info") or ""),
+        ("提项（模型，未核实）", "暂不立项的理由", set_aside_text),
         ("计算", "默认参照", lambda item: item["default_level"]),
         ("计算", "默认参照下超出 kWh", lambda item: item["excess_kwh"]),
         ("计算", "最保守参照下 kWh", lambda item: item["scalars"]["conservative_kwh"]),
@@ -619,17 +635,18 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
         book,
         "损耗项",
         [
-            "每个损耗项一行：谁提的（模型按系统、补找第几轮，或人定的参照规则 P39）、落在哪几行、这些行合起来的超出（同一格只算一次，不同的项不要相加）。"
-            "寻找方式、思考过程和原因是模型的意见，未核实；没收下的项写了原因，不进台账。"
+            "每个损耗项一行：谁提的（模型按系统、补找第几轮，人定的参照规则 P39，或程序：够大却没有项采用的差额自成一项，编号 D-，最多待定）、"
+            "落在哪几行、这些行合起来的超出（同一格只算一次，不同的项不要相加）。"
+            "寻找方式、思考过程、原因和暂不立项的理由是模型的意见，未核实，不进筛选；没收下的项写了原因，不进台账。"
         ],
-        ["编号", "提出", "名称", "收下", "问题", "采用的差额", "参照规格", "行", "表", "超出 kWh", "各行筛选", "寻找方式", "思考过程", "候选原因", "还缺的资料", "相关项"],
+        ["编号", "提出", "名称", "收下", "问题", "采用的差额", "参照规格", "行", "表", "超出 kWh", "各行筛选", "寻找方式", "思考过程", "候选原因", "还缺的资料", "相关项", "暂不立项的理由"],
         [
             [
                 entry["id"], entry["origin"], entry["title"], "是" if entry["accepted"] else "否", "；".join(entry["problems"]), "、".join(entry["differences"]),
                 entry["spec"] or "", "、".join(entry["rows"]), "、".join(entry["meters"]), entry["excess_kwh"],
                 "、".join(f"{result} {count}" for result, count in entry["screen"].items()), entry["finding"], entry["reasoning"],
                 "；".join(f"{cause['id']} [{CAUSE_KINDS.get(cause['kind'], cause['kind'])}] {cause['cause']}" for cause in entry["causes"]),
-                entry["missing_info"], "、".join(entry["related"]),
+                entry["missing_info"], "、".join(entry["related"]), set_aside_text(entry),
             ]
             for entry in register["loss_items"]
         ],
@@ -639,15 +656,17 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
         book,
         "程序差额",
         [
-            "程序按各视角算出的“实际 − 参照”，每个视角在每块表上一条。差额本身不是损耗项：被某个损耗项采用才进台账。"
-            "够大的差额（达到 P36、P37）模型都要交代：采用，或写暂不立项的理由（意见，未核实）。没被采用的部分算进“覆盖与剩余”的剩余。"
+            "程序按各视角算出的“实际 − 参照”，每个视角在每块表上一条。差额本身不是损耗项。"
+            "够大的差额（达到 P36、P37）都进台账：被某个损耗项采用的，算那一项的行；没有项采用的，程序让它自成一项（编号 D-），照常筛选，最多待定（S12）。"
+            "模型对每条够大的差额都要交代：采用，或写暂不立项的理由；理由只是意见，未核实，不进筛选，也不让这条差额离开台账。"
+            "小差额没被采用的部分算进“覆盖与剩余”的剩余。"
         ],
         ["编号", "视角", "系统", "表", "表名", "说明", "时段", "默认参照", "默认参照下超出 kWh", "各档参照与超出", "进合计", "够大要交代", "采用它的项", "暂不立项的理由", "依据", "仍在剩余里 kWh"],
         [
             [
                 entry["id"], f"{entry['lens']} {entry['lens_name']}", entry["system"], entry["meter"], entry["name"], entry["title"], entry["selection"],
                 entry["default_level"], entry["excess_kwh"], levels_text(entry), "是" if entry["in_totals"] else "否", "是" if entry["must_answer"] else "",
-                entry["adopted_by"] or "", reasons.get((entry["set_aside"] or {}).get("reason"), "") if entry["set_aside"] else "",
+                entry["adopted_by"] or (f"D-{entry['id']}（没有项采用，程序自成一项）" if entry.get("unclaimed") else ""), reasons.get((entry["set_aside"] or {}).get("reason"), "") if entry["set_aside"] else "",
                 (entry["set_aside"] or {}).get("note", ""), entry["residual_kwh"],
             ]
             for entry in register["differences"]
@@ -657,14 +676,15 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
         book,
         "覆盖与剩余",
         [
-            "每块表的电：多少被视角看过（看过一次、两次以上、没看过），程序差额（同一格只算一次），损耗项占了其中多少、按筛选结果分，"
-            "以及没解释的剩余（程序差额里没被任何项采用的部分）。剩余里人确认的剩余规则（P40）算已解释；模型的解释（剩余解释规格、暂不立项的理由）只列出来，不算已解释。"
+            "每块表的电：多少被视角看过（看过一次、两次以上、没看过），程序差额（同一格只算一次），损耗项的行有多少（按参照规格回算的可以超出程序差额）、按筛选结果分，"
+            "够大却没有项采用的差额（程序照样成行，最多待定），以及没解释的剩余（程序差额里没被任何一行盖到的部分，都是低于电量下限的小差额）。"
+            "剩余里人确认的剩余规则（P40）算已解释；模型的剩余解释规格只列出来，不算已解释。"
         ],
-        ["表", "表名", "系统", "全期电量 kWh", "数据覆盖率", "看过的视角", "看过 kWh", "看过两次以上 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "有效 kWh", "待定 kWh", "无效 kWh", "没解释的剩余 kWh", "其中模型有解释 kWh", "人定规则已解释 kWh"],
+        ["表", "表名", "系统", "全期电量 kWh", "数据覆盖率", "看过的视角", "看过 kWh", "看过两次以上 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "够大但没有项采用 kWh", "有效 kWh", "待定 kWh", "无效 kWh", "没解释的剩余 kWh", "其中模型有解释 kWh", "人定规则已解释 kWh"],
         [
             [
                 row["meter"], row["name"], row["system"], row["energy_kwh"], row["data_coverage"], "、".join(row["lenses"]),
-                row["examined_kwh"], row["examined_twice_kwh"], row["not_examined_kwh"], row["differences_kwh"], row["items_kwh"], row["valid_kwh"], row["pending_kwh"],
+                row["examined_kwh"], row["examined_twice_kwh"], row["not_examined_kwh"], row["differences_kwh"], row["items_kwh"], row.get("unclaimed_kwh", 0), row["valid_kwh"], row["pending_kwh"],
                 row["invalid_kwh"], row["residual_open_kwh"], row["residual_model_kwh"], row["residual_rule_kwh"],
             ]
             for row in register["coverage"]
@@ -745,9 +765,9 @@ def _table(head: list[str], rows: list[list[Any]]) -> str:
 
 def coverage_html(register: dict[str, Any]) -> str:
     return "<h2>覆盖与剩余</h2>" + _table(
-        ["表", "表名", "全期 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "有效 kWh", "待定 kWh", "没解释的剩余 kWh", "模型有解释"],
+        ["表", "表名", "全期 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "没有项采用 kWh", "有效 kWh", "待定 kWh", "没解释的剩余 kWh", "模型有解释"],
         [
-            [row["meter"], row["name"], f"{row['energy_kwh']:,.0f}", f"{row['not_examined_kwh']:,.0f}", f"{row['differences_kwh']:,.0f}", f"{row['items_kwh']:,.0f}", f"{row['valid_kwh']:,.0f}", f"{row['pending_kwh']:,.0f}", f"{row['residual_open_kwh']:,.0f}", f"{row['residual_model_kwh']:,.0f}"]
+            [row["meter"], row["name"], f"{row['energy_kwh']:,.0f}", f"{row['not_examined_kwh']:,.0f}", f"{row['differences_kwh']:,.0f}", f"{row['items_kwh']:,.0f}", f"{row.get('unclaimed_kwh', 0):,.0f}", f"{row['valid_kwh']:,.0f}", f"{row['pending_kwh']:,.0f}", f"{row['residual_open_kwh']:,.0f}", f"{row['residual_model_kwh']:,.0f}"]
             for row in register["coverage"]
         ],
     )
@@ -758,9 +778,9 @@ def write_page(path: Path, register: dict[str, Any]) -> None:
     summary = register["summary"]
     body = [
         f"<h1>{_e(register['site'])} 损耗项台账</h1>",
-        f"<p>数据期 {_e(register['period']['start'])} 至 {_e(register['period']['end'])}；损耗项 {counts['loss_items']} 个，落在 {counts['items']} 行：有效 {counts['valid']}、待定 {counts['pending']}、无效 {counts['invalid']}；"
-        f"程序差额 {summary['differences_kwh']:,.0f} kWh，损耗项占了 {summary['found_kwh']:,.0f} kWh（同一格只算一次），没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。</p>",
-        "<p class='note'>这是台账，不是结论。损耗项由模型提出（或来自人定的参照规则），数都由程序在全期按写明的参照算；有效、无效、待定按偏好里的规则定；模型的寻找方式、思考过程、意见、原因和措施都未经核实。"
+        f"<p>数据期 {_e(register['period']['start'])} 至 {_e(register['period']['end'])}；损耗项 {counts['loss_items']} 个（其中够大却没有项采用、程序自成一项的 {counts.get('loss_items_unclaimed', 0)} 个），落在 {counts['items']} 行：有效 {counts['valid']}、待定 {counts['pending']}、无效 {counts['invalid']}；"
+        f"程序差额 {summary['differences_kwh']:,.0f} kWh，损耗项的行共 {summary['found_kwh']:,.0f} kWh（同一格只算一次；按参照规格回算的行可以超出程序差额），没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。</p>",
+        "<p class='note'>这是台账，不是结论。损耗项由模型提出（或来自人定的参照规则）；够大的程序差额没有项采用的，程序让它自成一项，最多待定。数都由程序在全期按写明的参照算；有效、无效、待定按偏好里的规则定；模型的寻找方式、思考过程、意见、原因和措施都未经核实。"
         "保留哪些由人在 register.xlsx 的“台账”页填“取舍”，人填的优先于筛选结果。</p>",
         coverage_html(register),
         "<h2>损耗项的行</h2>",
@@ -816,6 +836,7 @@ __all__ = [
     "opinion_texts",
     "overlap_text",
     "proposal_cause_text",
+    "set_aside_text",
     "range_text",
     "stability_text",
     "write_register",

@@ -7,6 +7,11 @@ which the program computes over the whole period into one row per meter.  A
 person's reference rule (P39) is an item of its own.  A difference belongs to
 at most one item.
 
+The analyst can only add.  A difference large enough to matter (``must_answer``)
+that no item adopts is still a row, of a program item of its own (``D-…``),
+screened like any other and at most pending (S12); what the analyst wrote
+when setting it aside is shown beside it as an opinion.
+
 Every row gets the stability checks (``probes.stability``: the two halves of
 the period, the largest day, the shifted hours of a spec) before it is
 screened.  Nothing here judges an item; the screening and a person do.
@@ -25,6 +30,7 @@ from .store import SiteData, read_json, write_json
 
 ITEMS_FILE = "items.json"
 RULE_ORIGIN = "偏好 P39"
+UNCLAIMED_ORIGIN = "程序差额（没有项采用）"
 SET_ASIDE_REASONS = {
     "necessary": "必要服务或工艺需要",
     "external": "外部驱动",
@@ -32,7 +38,6 @@ SET_ASIDE_REASONS = {
     "not_comparable": "参照不可比",
     "cannot_tell": "看不出",
 }
-EXPLAINING_REASONS = ("necessary", "external", "data", "not_comparable")  # listed as the model's explanation of the residual
 
 
 def load_item_records(site: SiteData) -> dict[str, list[dict[str, Any]]]:
@@ -55,12 +60,17 @@ def full_id(prefix: str, local: str) -> str:
 class ItemBuild:
     rows: list[Candidate]
     items: dict[str, dict[str, Any]]  # full item id -> the record, with the ids of its rows
-    adopted: dict[str, str]  # difference id -> item id
+    adopted: dict[str, str]  # difference id -> the analyst's or a rule's item adopting it
     problems: list[str] = field(default_factory=list)
+    unclaimed: list[str] = field(default_factory=list)  # rows of large differences no item adopts
 
 
 def rule_item_id(spec: ReferenceSpec) -> str:
     return spec.id if spec.id.startswith("P39") else f"P39-{spec.id}"
+
+
+def unclaimed_item_id(difference_id: str) -> str:
+    return f"D-{difference_id}"
 
 
 def build_items(
@@ -69,8 +79,13 @@ def build_items(
     records: list[dict[str, Any]],
     specs: dict[tuple[str, str], ReferenceSpec],
     rules: list[ReferenceSpec],
+    must_answer: list[str] | None = None,
+    set_aside: list[dict[str, Any]] | None = None,
 ) -> ItemBuild:
-    """The rows of every accepted item; a difference adopted twice or a spec that does not compute is a problem, not a row."""
+    """The rows of every accepted item, then a row for each large difference no item adopts.
+
+    A difference adopted twice or a spec that does not compute is a problem, not a row.
+    """
 
     by_id = {difference.id: difference for difference in differences}
     rows: list[Candidate] = []
@@ -133,18 +148,48 @@ def build_items(
             problems += [f"项 {item_id} 的规格 {spec_id}：{text}" for text in failed]
             for row in made:
                 add(row, item_id)
-    return ItemBuild(rows=rows, items=items, adopted=adopted, problems=problems)
+    # The analyst can only add: a large difference nobody adopted is still a row.
+    notes = {entry["difference"]: entry for entry in set_aside or []}
+    unclaimed: list[str] = []
+    for difference_id in must_answer or []:
+        difference = by_id.get(difference_id)
+        if difference is None or difference_id in adopted or difference_id in taken:
+            continue
+        item_id = unclaimed_item_id(difference_id)
+        items[item_id] = {
+            "id": item_id,
+            "origin": UNCLAIMED_ORIGIN,
+            "source": "program",
+            "proposal": {
+                "id": item_id,
+                "title": difference.title[:120],
+                "differences": [difference_id],
+                "finding": "",
+                "reasoning": "",
+                "causes": [],
+                "missing_info": "",
+                "related": [],
+            },
+            "set_aside": notes.get(difference_id),
+            "accepted": True,
+            "problems": [],
+            "rows": [],
+        }
+        add(replace(difference, notes=list(difference.notes), details=dict(difference.details)), item_id)
+        unclaimed.append(difference_id)
+    return ItemBuild(rows=rows, items=items, adopted=adopted, problems=problems, unclaimed=unclaimed)
 
 
 __all__ = [
-    "EXPLAINING_REASONS",
     "ITEMS_FILE",
     "RULE_ORIGIN",
     "SET_ASIDE_REASONS",
+    "UNCLAIMED_ORIGIN",
     "ItemBuild",
     "build_items",
     "full_id",
     "load_item_records",
     "rule_item_id",
     "save_item_records",
+    "unclaimed_item_id",
 ]

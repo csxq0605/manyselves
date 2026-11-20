@@ -1,8 +1,8 @@
 id: look-residual
-version: 0.2.0
+version: 0.3.0
 description: One residual round over the largest excess no item explains
 agent: loss-analyst
-objective: 下面是程序差额里还没被任何项采用、也没人解释的超出中最大的几片（slices，每片是一块表的一周，带逐日数、夜间和全厂停的占比、和产线的相关），这些表上还没被采用的差额（differences，带上一步写的暂不立项理由 set_aside；低于电量下限的只给概要并标 small）、已有的项（items_so_far）和规格（specs_so_far），以及问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、程序能跑的检验和写规格能用的维度。每片写一条处置：像浪费的提一个项（new_item：采用差额或交参照规格，写寻找方式、思考过程和候选原因），能说清为什么不算损耗的交剩余解释规格（explained），看不出的写 cannot_tell，要补资料的写 needs_data。
+objective: 下面是程序差额里还没被任何项采用、也没人解释的超出中最大的几片（slices，每片是一块表的一周，带逐日数、夜间和全厂停的占比、和产线的相关），这些表上还没被采用的差额（differences，带上一步写的暂不立项理由 set_aside；够大却没有项采用的已由程序自成一项、标 unclaimed，采用它的新项会取代那一项；低于电量下限的只给概要并标 small）、已有的项（items_so_far）和规格（specs_so_far），以及问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、程序能跑的检验和写规格能用的维度。每片写一条处置：像浪费的提一个项（new_item：采用差额或交参照规格，写寻找方式、思考过程和候选原因），能说清为什么不算损耗的交剩余解释规格（explained），看不出的写 cannot_tell，要补资料的写 needs_data。
 input_contract: residual-brief
 output_contract: residual-submission
 constraints:

@@ -4,9 +4,10 @@ The analyst proposes the loss items and the program computes them: S1 runs
 the lenses (the program's differences, the base and the ruler); in S2 the
 analyst reads one system's differences and proposes items, each adopting
 differences or bringing a reference spec, and says why every difference
-large enough to matter is or is not part of an item; S3 computes every item
-over the whole period, with the stability checks and the proposal's cause
-tests, and screens the rows; S4 asks about the largest excess no item
+large enough to matter is or is not part of an item (a large difference no
+item adopts is still a row, at most pending: the analyst can only add); S3
+computes every item over the whole period, with the stability checks and
+the proposal's cause tests, and screens the rows; S4 asks about the largest excess no item
 explains; S5 is one round of judgments on the computed rows.
 
 Each step is deterministic around the model's turns.  The program writes a
@@ -242,6 +243,8 @@ def _difference_brief(ledger: Ledger, difference_id: str) -> dict[str, Any]:
         "overlaps": ledger.difference_overlaps.get(difference.id, [])[:5],
         "adopted_by": ledger.adopted.get(difference.id),
     }
+    if difference.id in ledger.unclaimed:
+        entry["unclaimed"] = True  # a row of a program item of its own (D-…), at most pending; the task text says so once
     if difference.id not in ledger.must_answer:
         return {**entry, "small": SMALL_DIFFERENCE}
     return {**entry, "decomposition": decompose(ledger.grid, difference, ledger.lens_run.batches), "details": difference.details}
@@ -253,6 +256,7 @@ def _item_summary(ledger: Ledger, item_id: str) -> dict[str, Any]:
     return {
         "id": item_id,
         "origin": item["origin"],
+        "source": item.get("source", "model"),
         "title": proposal.get("title", ""),
         "rows": item.get("rows", []),
         "meters": sorted({ledger.by_id[row].meter for row in item.get("rows", []) if row in ledger.by_id}),
@@ -261,6 +265,7 @@ def _item_summary(ledger: Ledger, item_id: str) -> dict[str, Any]:
         "causes": proposal.get("causes", []),
         "missing_info": proposal.get("missing_info", ""),
         "related": proposal.get("related", []),
+        "set_aside": item.get("set_aside"),
     }
 
 
@@ -655,7 +660,8 @@ def residual_brief(workspace: Path, run_id: str, number: int) -> dict[str, Any]:
             {**_difference_brief(ledger, difference.id), "set_aside": set_aside.get(difference.id)}
             for difference in free
         ],
-        "items_so_far": [_item_summary(ledger, item_id) for item_id, item in ledger.items.items() if item.get("accepted")],
+        # The analyst's and the rules' items; the large differences nobody adopted are in ``differences`` (unclaimed).
+        "items_so_far": [_item_summary(ledger, item_id) for item_id, item in ledger.items.items() if item.get("accepted") and item.get("source") != "program"],
         "specs_so_far": [
             {"origin": record["origin"], "kind": record["spec"]["kind"], "id": record["spec"]["id"], "objects": record["spec"].get("objects"), "accepted": record["accepted"], "why": record["spec"].get("why", "")[:120]}
             for record in ledger.specs

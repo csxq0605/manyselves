@@ -106,7 +106,7 @@ PLAIN = {
 }
 
 
-def test_the_lenses_compute_differences_and_nothing_is_an_item_until_proposed(tmp_path: Path) -> None:
+def test_the_lenses_compute_differences_and_the_large_ones_are_rows_before_anyone_proposes(tmp_path: Path) -> None:
     _tools, looks = _ready(tmp_path)
     ledger = _ledger(tmp_path)
     by_id = ledger.difference_by_id
@@ -118,10 +118,14 @@ def test_the_lenses_compute_differences_and_nothing_is_an_item_until_proposed(tm
     # The lunch hour at 8 kW over the 1 kW floor: 70 kWh, under the 100 kWh floor (P36), so the analyst need not account for it.
     assert _levels(by_id["L1-IM1-between"])["底功率"] == 70.0
     assert ledger.must_answer == ["L1-AC1-stop", "L2a-IM1"]
-    # The differences are not items: nothing is screened, all of them is the residual.
-    assert ledger.candidates == [] and ledger.screening == {}
+    # No item yet: each large difference is a row of a program item of its own, pending at most (S12).
+    assert {row.id: row.item for row in ledger.candidates} == {"L1-AC1-stop": "D-L1-AC1-stop", "L2a-IM1": "D-L2a-IM1"}
+    assert ledger.unclaimed == ["L1-AC1-stop", "L2a-IM1"] and ledger.items["D-L1-AC1-stop"]["source"] == "program"
+    assert {key: value["rule"] for key, value in ledger.screening.items()} == {"L1-AC1-stop": "S12", "L2a-IM1": "S12"}
     assert all(row["not_examined_kwh"] == 0 for row in ledger.coverage)
-    assert round(ledger.residual_total(), 1) == round(ledger.differences_total(), 1) == 1210.0
+    # Only the small difference stays in the residual.
+    assert round(ledger.differences_total(), 1) == 1210.0 and round(ledger.residual_total(), 1) == 70.0
+    assert {row["meter"]: row["unclaimed_kwh"] for row in ledger.coverage} == {"AC1": 840.0, "IM1": 300.0, "LT1": 0.0}
     # One brief per system, with the system's meters and all its differences.
     briefs = {brief["key"]: brief for brief in looks["briefs"]}
     assert set(briefs) == {"look-动力站", "look-注塑车间"}
@@ -168,8 +172,11 @@ def test_a_reference_spec_belongs_to_an_item_and_is_computed_and_checked(tmp_pat
     assert row.details["stability"]["shift"]["change_share"] is not None
     # A reference nobody confirmed waits for a person.
     assert ledger.screening["M-night-AC1"]["rule"] == "S8"
-    # The difference set aside as "cannot tell" stays open in the residual for the next round.
+    # The difference set aside is still a row, of a program item of its own: the reason is an opinion on it,
+    # it does not screen the row out and it does not count as explained.
     assert ledger.set_aside[0]["difference"] == "L1-AC1-stop" and not ledger.residual_model.any()
+    assert ledger.by_id["L1-AC1-stop"].item == "D-L1-AC1-stop" and ledger.screening["L1-AC1-stop"]["rule"] == "S12"
+    assert ledger.items["D-L1-AC1-stop"]["set_aside"]["note"] == "和夜间项重叠，先看夜间"
 
     wrong = json.loads(json.dumps(NIGHT))
     wrong.update({"id": "wrong", "objects": ["IM1", "ZZ9"], "when": {"dates": ["2027-01-01"]}})

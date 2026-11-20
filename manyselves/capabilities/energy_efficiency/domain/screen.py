@@ -1,7 +1,8 @@
 """Screening of the loss items' rows: valid, invalid or pending, from the computed values and the preference rules alone.
 
-Only rows of loss items are screened (an analyst's or a person's rule's);
-the program's differences are not.  The program runs the rules in order and
+Only rows are screened: those of the analyst's items, of a person's rules,
+and of the large differences no item adopts (at most pending, S12); the
+program's differences themselves are not.  The program runs the rules in order and
 the first that holds decides; every
 result carries its rule id and the numbers it read.  Nothing the model wrote
 enters here: its opinion is shown beside the result, never in it.  A person's
@@ -29,6 +30,7 @@ RULES: dict[str, tuple[str, str]] = {
     "S7": (PENDING, "可比组没人确认（A05 peer_group），只给方向"),
     "S8": (PENDING, "参照由模型提议、没人确认（确认后抄进偏好 P39）"),
     "S9": (PENDING, "费用视角只是上限，能不能挪要看排产约束"),
+    "S12": (PENDING, "够大的程序差额，没有项采用（模型没提、人也没定规则）：只说明比参照多用了电，没人说明为什么像损耗"),
     "S0": (VALID, "以上规则都不成立"),
 }
 
@@ -40,8 +42,11 @@ class ScreenContext:
     meter_coverage: dict[str, float]
 
 
-def screen(candidate: Candidate, context: ScreenContext, effective_kwh: float) -> dict[str, Any]:
-    """The first rule that holds; ``effective_kwh`` is the default excess outside the person's residual rules."""
+def screen(candidate: Candidate, context: ScreenContext, effective_kwh: float, unclaimed: bool = False) -> dict[str, Any]:
+    """The first rule that holds; ``effective_kwh`` is the default excess outside the person's residual rules.
+
+    ``unclaimed``: the row of a large difference no item adopts, at most pending.
+    """
 
     params = context.params
     minimum = float(params.value("screen_min_kwh"))
@@ -90,6 +95,8 @@ def screen(candidate: Candidate, context: ScreenContext, effective_kwh: float) -
         return result("S8")
     if candidate.lens == "L6":
         return result("S9")
+    if unclaimed:
+        return result("S12")
     return result("S0")
 
 

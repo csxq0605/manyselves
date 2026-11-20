@@ -26,6 +26,7 @@ from .workbook import (
     overlap_text,
     proposal_cause_text,
     range_text,
+    set_aside_text,
     stability_text,
 )
 
@@ -97,6 +98,8 @@ def _item_lines(item: dict[str, Any], entry: dict[str, Any]) -> list[str]:
     for label, value in (("寻找方式", proposal.get("finding")), ("思考过程", proposal.get("reasoning")), ("提项时的原因与检验", proposal_cause_text(item)), ("还缺的资料", proposal.get("missing_info"))):
         if value:
             lines.append(f"- {label}（模型，未核实）：{_md(value)}")
+    if item.get("set_aside"):
+        lines.append(f"- 模型暂不立项的理由（意见，不进筛选）：{_md(set_aside_text(item))}")
     if item.get("overlaps"):
         lines.append(f"- 和其他项重叠：{_md(overlap_text(item))}（重叠部分不要相加）")
     if item.get("notes"):
@@ -124,14 +127,14 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
         f"# {_md(register['site'])} 损耗项报告（待审）",
         "",
         f"数据期：{register['period']['start']} 至 {register['period']['end']}。",
-        f"损耗项 {register['counts'].get('loss_items', 0)} 个，落在 {len(items)} 行：保留 {counts['keep']}、需补资料或待定 {counts['needs_data']}、不保留 {counts['drop']}。",
-        f"程序差额 {summary.get('differences_kwh', 0):,.0f} kWh，损耗项占了其中 {summary['found_kwh']:,.0f} kWh（同一格只算一次）；没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。",
+        f"损耗项 {register['counts'].get('loss_items', 0)} 个（其中够大却没有项采用、程序自成一项的 {register['counts'].get('loss_items_unclaimed', 0)} 个），落在 {len(items)} 行：保留 {counts['keep']}、需补资料或待定 {counts['needs_data']}、不保留 {counts['drop']}。",
+        f"程序差额 {summary.get('differences_kwh', 0):,.0f} kWh，损耗项的行共 {summary['found_kwh']:,.0f} kWh（同一格只算一次；按参照规格回算的行可以超出程序差额）；没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。",
         "",
     ]
     md += [f"> 提示：{_md(warning)}" for warning in selection.get("warnings", [])]
     md += [
         "",
-        "损耗项由模型提出（或来自人定的参照规则）。保留的行来自人在台账上的取舍、人写的规则，或偏好规则下的筛选结果（有效）。"
+        "损耗项由模型提出（或来自人定的参照规则）；够大的程序差额没有项采用的，程序让它自成一项（编号 D-），最多待定。保留的行来自人在台账上的取舍、人写的规则，或偏好规则下的筛选结果（有效）。"
         "所有数由程序在全期按写明的参照算；参照换一档会变多少，每项都列出。寻找方式、思考过程、原因、措施和现场问题是模型的意见，均未经现场核实。各项不相加。",
         "",
         "## 保留的损耗项",
@@ -153,10 +156,10 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     for item in dropped:
         entry = decisions[item["id"]]
         md.append(f"- {item['id']}（{_by(entry)}）" + (f"：{_md(entry['note'])}" if entry["note"] else ""))
-    md += ["", "## 覆盖与剩余", "", "| 表 | 全期 kWh | 没看过 kWh | 程序差额 kWh | 损耗项 kWh | 有效 kWh | 待定 kWh | 没解释的剩余 kWh |", "|---|---|---|---|---|---|---|---|"]
+    md += ["", "## 覆盖与剩余", "", "| 表 | 全期 kWh | 没看过 kWh | 程序差额 kWh | 损耗项 kWh | 没有项采用 kWh | 有效 kWh | 待定 kWh | 没解释的剩余 kWh |", "|---|---|---|---|---|---|---|---|---|"]
     for row in register["coverage"]:
         md.append(
-            f"| {_md(row['meter'])} {_md(row['name'])} | {row['energy_kwh']:,.0f} | {row['not_examined_kwh']:,.0f} | {row.get('differences_kwh', 0):,.0f} | {row.get('items_kwh', 0):,.0f} | {row['valid_kwh']:,.0f} | {row['pending_kwh']:,.0f} | {row['residual_open_kwh']:,.0f} |"
+            f"| {_md(row['meter'])} {_md(row['name'])} | {row['energy_kwh']:,.0f} | {row['not_examined_kwh']:,.0f} | {row.get('differences_kwh', 0):,.0f} | {row.get('items_kwh', 0):,.0f} | {row.get('unclaimed_kwh', 0):,.0f} | {row['valid_kwh']:,.0f} | {row['pending_kwh']:,.0f} | {row['residual_open_kwh']:,.0f} |"
         )
     md += ["", "## 触发与处置", ""]
     for trigger in register["triggers"]:

@@ -58,9 +58,9 @@ class ItemProposal(_Strict):
 
 
 class SetAside(_Strict):
-    """Why a difference large enough to matter is not part of any item."""
+    """Why a difference large enough to matter is not part of any item: an opinion; the difference stays a row."""
 
-    difference: str = Field(description="程序差额编号")
+    difference: str = Field(description="程序差额编号；没有项采用的够大差额，程序照样让它自成一行、最多待定，这条理由作为意见列在旁边")
     reason: Literal["necessary", "external", "data", "not_comparable", "cannot_tell"] = Field(
         description="necessary 必要服务或工艺需要；external 外部驱动（天气、作息、别的系统）；data 数据或口径问题；not_comparable 参照不可比；cannot_tell 看不出"
     )
@@ -96,7 +96,7 @@ class LookSubmission(_Strict):
 
     key: str = Field(description="说明包的 key，原样填")
     items: list[ItemProposal] = Field(default_factory=list, description="提出的损耗项")
-    set_aside: list[SetAside] = Field(default_factory=list, description="must_answer 里没被任何项采用的差额，每条写为什么暂不立项")
+    set_aside: list[SetAside] = Field(default_factory=list, description="must_answer 里没被任何项采用的差额，每条写为什么暂不立项（只是意见：差额照样成行、最多待定）")
     triggers: list[TriggerAnswer] = Field(default_factory=list, description="triggers 里每个触发各一条")
     mechanisms: list[Mechanism] = Field(default_factory=list, description="领域先验和问卷检查：本系统该看的机理，每条写结果")
     specs: list[Spec] = Field(default_factory=list)
