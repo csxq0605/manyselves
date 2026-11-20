@@ -1,5 +1,5 @@
 id: look-submission
 version: 1.0.0
-description: "One system's blind spots: trigger dispositions, mechanisms checked, specs and site questions; no amounts"
+description: "One system's loss items (adopting differences or bringing a reference spec, with how found, the thinking and the causes), the large differences set aside and why, trigger dispositions, mechanisms checked, specs and site questions; no amounts"
 adapter: pydantic
 model: manyselves.capabilities.energy_efficiency.domain.submissions:LookSubmission

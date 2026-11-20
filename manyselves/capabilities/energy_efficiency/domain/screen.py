@@ -1,6 +1,8 @@
-"""Screening: valid, invalid or pending, from the computed values and the preference rules alone.
+"""Screening of the loss items' rows: valid, invalid or pending, from the computed values and the preference rules alone.
 
-The program runs the rules in order and the first that holds decides; every
+Only rows of loss items are screened (an analyst's or a person's rule's);
+the program's differences are not.  The program runs the rules in order and
+the first that holds decides; every
 result carries its rule id and the numbers it read.  Nothing the model wrote
 enters here: its opinion is shown beside the result, never in it.  A person's
 mark in the workbook (取舍) wins over the screening.
@@ -22,6 +24,8 @@ RULES: dict[str, tuple[str, str]] = {
     "S4": (PENDING, "账实不符：生产记录和电表对不上，先核数据"),
     "S5": (PENDING, "表的数据覆盖率低于下限（P38），数可能偏"),
     "S6": (PENDING, "最保守的参照下超出为 0：参照一换就没了"),
+    "S10": (PENDING, "只在数据期的一半里出现：前后两半里较小的一半不到较大一半 × P44，可能是一次性的事或从某天起变了"),
+    "S11": (PENDING, "规格的时段挪一个记录间隔，超出的变化超过 P45：时段写得太贴"),
     "S7": (PENDING, "可比组没人确认（A05 peer_group），只给方向"),
     "S8": (PENDING, "参照由模型提议、没人确认（确认后抄进偏好 P39）"),
     "S9": (PENDING, "费用视角只是上限，能不能挪要看排产约束"),
@@ -72,6 +76,14 @@ def screen(candidate: Candidate, context: ScreenContext, effective_kwh: float) -
         return result("S5")
     if conservative is not None and conservative["excess_kwh"] <= 0:
         return result("S6")
+    steady = candidate.details.get("stability") or {}
+    measured["half_ratio"] = steady.get("half_ratio")
+    if steady.get("half_ratio") is not None and steady["half_ratio"] < float(params.value("stability_half_share")):
+        return result("S10")
+    change = (steady.get("shift") or {}).get("change_share")
+    measured["shift_change_share"] = change
+    if change is not None and change > float(params.value("shift_change_share")):
+        return result("S11")
     if candidate.lens == "L3" and not candidate.in_union:
         return result("S7")
     if candidate.source == "model":

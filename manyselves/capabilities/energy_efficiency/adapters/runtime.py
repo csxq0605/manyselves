@@ -1,9 +1,9 @@
 """Python Tools and runtime binding for the energy-efficiency Capability.
 
 Every Tool is one deterministic step.  The program runs the lenses, computes
-every amount and screens the candidates; the analyst's turns (a look per
-system, the residual rounds, the judgments) and the one correction round
-of each are declared in the workflow files.
+every item the analyst proposes over the whole period and screens its rows;
+the analyst's turns (items per system, the residual rounds, the judgments)
+and the one correction round of each are declared in the workflow files.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from ..domain.analysis import (
     judge_briefs,
     lens_step,
     residual_brief,
-    run_probes,
     save_judgments,
     settle,
 )
@@ -227,7 +226,6 @@ def tool_implementations(workspace: Path) -> dict[str, Callable[[Any], Any]]:
         "residual-brief": round_brief,
         "apply-residual": round_applied,
         "judge-briefs": run_ref(judge_briefs),
-        "run-probes": checked(run_probes),
         "check-judgment": checked(check_judgment),
         "settle-judgment": settled,
         "register-candidates": registered,

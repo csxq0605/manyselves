@@ -1,6 +1,6 @@
 id: check-judgment
 version: 0.1.0
-description: "S5: check the judgments: one per candidate, reference choice among the levels, no kept cause the tests contradict, no repair or retrofit without a supported cause"
+description: "S5: check the judgments: one per row, reference choice among the levels, no kept cause the tests contradict, no repair or retrofit without a supported cause"
 implementation: capability:energy-efficiency:check-judgment
 input_contract: check-request
 output_contract: check-result

@@ -1,23 +1,30 @@
-"""The candidate ledger: lenses and specs laid over each other, screened, and measured for completeness.
+"""The ledger: the program's differences, the loss items laid over them, screened, and measured for completeness.
 
-``compose`` rebuilds it from the run's files every time (the lenses, the
-specs the model handed in so far, the preferences), so each step sees the
+``compose`` rebuilds it from the run's files every time (the lenses, the items
+and specs the model handed in so far, the preferences), so each step sees the
 same numbers for the same inputs:
 
-- overlap: candidates on the same meter that claim the same cells, with the
-  energy they share, and overlap groups;
+- differences: every lens on every meter (``lenses``); the base the analyst
+  reads and the ruler, never screened;
+- items and their rows: what the analyst proposed (adopting differences or
+  bringing a reference spec) and the person's reference rules (P39), each
+  computed over the whole period (``items``);
+- overlap: rows (and differences) on the same meter that claim the same
+  cells, with the energy they share, and overlap groups of rows;
 - union: per meter and cell, the most any lens says is excess (the batch
   precedent and the peer gap add, since the peer gap is defined on top);
-- residual: excess the generic lenses (day precedent, driver residual) see
-  that no located lens accounts for, less what a person's residual rule
-  explains; the model's explanations are listed, not subtracted;
-- coverage: per meter, energy no lens looked at, looked at once, twice;
+- residual: excess of the differences that no item accounts for, less what
+  a person's residual rule explains; the model's explanations (residual
+  specs, differences it set aside with a reason) are listed, not subtracted;
+- coverage: per meter, energy no lens looked at, the differences, the items
+  by screening result and the residual;
 - triggers: where the model must look (plant stopped without the meter
-  dropping, comparable groups nobody confirmed, residual unrelated to
-  production); every system also gets one look regardless;
+  dropping, comparable groups nobody confirmed, excess the generic lenses
+  see beyond the located ones that does not follow production); every
+  system also gets one look regardless;
 - saturation: lenses added greedily by the excess they add, and how many
   meter-days only one lens finds (its independent discoveries);
-- screening: the preference rules on the computed values (``screen``).
+- screening: the preference rules on the rows' computed values (``screen``).
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ import numpy as np
 from .foundation import load_foundation
 from .grid import Grid, load_grid
 from .handles import Foundation, handle_part
+from .items import EXPLAINING_REASONS, build_items, load_item_records
 from .lenses import ANALYSIS_DIR, GENERIC, LENSES, Candidate, LensRun, load_lenses
 from .preparation import ParameterSet
 from .screen import INVALID, PENDING, VALID, ScreenContext, screen
@@ -40,7 +48,6 @@ from .specs import (
     ResidualSpec,
     parse_spec,
     preference_specs,
-    reference_candidates,
     residual_mask,
 )
 from .store import SiteData, read_json, write_json
@@ -84,10 +91,16 @@ class Ledger:
     grid: Grid
     lens_run: LensRun
     params: ParameterSet
-    candidates: list[Candidate]
+    differences: list[Candidate]
+    candidates: list[Candidate]  # the rows of the loss items: what is screened, judged and reported
+    items: dict[str, dict[str, Any]]
+    adopted: dict[str, str]
+    set_aside: list[dict[str, Any]]
+    must_answer: list[str]
     screening: dict[str, dict[str, Any]]
     overlaps: dict[str, list[dict[str, Any]]]
     overlap_group: dict[str, str]
+    difference_overlaps: dict[str, list[dict[str, Any]]]
     coverage: list[dict[str, Any]]
     residual: np.ndarray
     residual_rule: np.ndarray
@@ -103,30 +116,46 @@ class Ledger:
     def by_id(self) -> dict[str, Candidate]:
         return {candidate.id: candidate for candidate in self.candidates}
 
+    @property
+    def difference_by_id(self) -> dict[str, Candidate]:
+        return {difference.id: difference for difference in self.differences}
+
     def residual_total(self, open_only: bool = True) -> float:
         return float((self.residual if open_only else self.residual + self.residual_rule).sum())
 
     def found_total(self) -> float:
+        """The excess the items account for (one cell counted once)."""
+
         return float(union_of(self.grid, self.candidates).sum())
+
+    def differences_total(self) -> float:
+        return float(union_of(self.grid, self.differences).sum())
 
     def summary(self) -> dict[str, Any]:
         counts: dict[str, int] = defaultdict(int)
         for entry in self.screening.values():
             counts[entry["result"]] += 1
         return {
+            "differences": len(self.differences),
+            "items": sum(1 for item in self.items.values() if item.get("accepted")),
             "candidates": len(self.candidates),
             "valid": counts[VALID],
             "pending": counts[PENDING],
             "invalid": counts[INVALID],
+            "differences_kwh": round(self.differences_total(), 1),
             "found_kwh": round(self.found_total(), 1),
             "residual_open_kwh": round(self.residual_total(), 1),
             "residual_model_kwh": round(float((self.residual * self.residual_model).sum()), 1),
+            "must_answer": len(self.must_answer),
+            "must_answer_open": sum(1 for item in self.must_answer if item not in self.adopted),
             "triggers": len(self.triggers),
             "specs": len(self.specs),
         }
 
 
 def _overlaps(grid: Grid, candidates: list[Candidate]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+    """Pairs on one meter sharing cells, and groups of those sharing at least a tenth of the smaller one."""
+
     by_meter: dict[str, list[Candidate]] = defaultdict(list)
     for candidate in candidates:
         if candidate.excess > 0:
@@ -239,21 +268,15 @@ def compose(site: SiteData) -> Ledger:
     foundation = load_foundation(site)
     params = site.parameter_set()
     problems: list[str] = []
-    candidates = list(lens_run.candidates)
-    taken = {candidate.id for candidate in candidates}
+    differences = list(lens_run.candidates)
     spec_records: list[dict[str, Any]] = []
-    # A person's reference rules (P39) are a lens like the others.
+    # A person's reference rules (P39): each is an item of its own.
     rules, found = preference_specs(params.value("reference_rules") or [], "reference")
     problems += found
     for spec in rules:
-        made, failed = reference_candidates(grid, spec, "rule")
-        problems += [f"偏好 P39 规则 {spec.id}：{text}" for text in failed]
-        for candidate in made:
-            if candidate.id not in taken:
-                candidates.append(candidate)
-                taken.add(candidate.id)
-        spec_records.append({"origin": "偏好 P39", "spec": spec.model_dump(mode="json", exclude_none=True), "accepted": True, "problems": failed, "source": "rule"})
-    # The model's specs, as settled by each look.
+        spec_records.append({"origin": "偏好 P39", "spec": spec.model_dump(mode="json", exclude_none=True), "accepted": True, "problems": [], "source": "rule"})
+    # The model's specs, as settled by each step; a reference spec belongs to an item.
+    references: dict[tuple[str, str], ReferenceSpec] = {}
     model_residual: list[ResidualSpec] = []
     for record in load_spec_records(site):
         spec_records.append({**record, "source": "model"})
@@ -261,18 +284,19 @@ def compose(site: SiteData) -> Ledger:
             continue
         spec = parse_spec(record["spec"])
         if isinstance(spec, ReferenceSpec):
-            made, _failed = reference_candidates(grid, spec, "model")
-            for candidate in made:
-                if candidate.id not in taken:
-                    candidate.details["origin"] = record.get("origin")
-                    candidates.append(candidate)
-                    taken.add(candidate.id)
+            references[(record["origin"], spec.id)] = spec
         elif isinstance(spec, ResidualSpec):
             model_residual.append(spec)
-    # Residual: what the generic lenses see beyond the located ones.
-    located = union_of(grid, [c for c in candidates if c.lens not in GENERIC])
-    generic = union_of(grid, [c for c in candidates if c.lens in GENERIC])
-    residual = np.clip(generic - located, 0, None)
+    records = load_item_records(site)
+    build = build_items(grid, differences, records["items"], references, rules)
+    problems += build.problems
+    rows = build.rows
+    items = dict(build.items)
+    for record in records["items"]:
+        if not record.get("accepted"):
+            items.setdefault(record["id"], {**record, "source": "model", "rows": []})
+    # Residual: the differences' excess no item accounts for.
+    residual = np.clip(union_of(grid, differences) - union_of(grid, rows), 0, None)
     rule_mask = np.zeros((len(grid.meters), grid.cells), dtype=bool)
     residual_rules, found = preference_specs(params.value("residual_rules") or [], "residual")
     problems += found
@@ -287,29 +311,50 @@ def compose(site: SiteData) -> Ledger:
         masks, _failed = residual_mask(grid, spec)
         for meter_id, mask in masks.items():
             model_mask[grid.row(meter_id)] |= mask
+    by_difference = {difference.id: difference for difference in differences}
+    set_aside = [entry for entry in records["set_aside"] if entry.get("difference") in by_difference]
+    for entry in set_aside:
+        if entry.get("reason") in EXPLAINING_REASONS and entry["difference"] not in build.adopted:
+            difference = by_difference[entry["difference"]]
+            model_mask[grid.row(difference.meter)] |= difference.cells > 0
     residual_rule = np.where(rule_mask, residual, 0.0)
     residual_open = np.where(rule_mask, 0.0, residual)
-    # Screening.
+    # Screening: the rows of the items; the differences large enough that the analyst must account for them.
     meter_kwh = {meter_id: grid.total(meter_id) for meter_id in grid.meters}
     meter_coverage = {meter_id: grid.coverage(meter_id) for meter_id in grid.meters}
     context = ScreenContext(params, meter_kwh, meter_coverage)
     screening = {}
-    for candidate in candidates:
-        effective = float(candidate.cells[~rule_mask[grid.row(candidate.meter)]].sum())
-        screening[candidate.id] = screen(candidate, context, effective)
-    overlaps, groups = _overlaps(grid, candidates)
-    coverage = _coverage(grid, lens_run, candidates, screening, residual_open, residual_rule, model_mask)
-    triggers = _triggers(grid, foundation, candidates, residual_open, lens_run, params)
+    for row in rows:
+        effective = float(row.cells[~rule_mask[grid.row(row.meter)]].sum())
+        screening[row.id] = screen(row, context, effective)
+    must_answer = []
+    for difference in differences:
+        if difference.excess <= 0:
+            continue
+        effective = float(difference.cells[~rule_mask[grid.row(difference.meter)]].sum())
+        if screen(difference, context, effective)["result"] != INVALID:
+            must_answer.append(difference.id)
+    overlaps, groups = _overlaps(grid, rows)
+    difference_overlaps, _groups = _overlaps(grid, differences)
+    coverage = _coverage(grid, lens_run, differences, rows, screening, residual_open, residual_rule, model_mask)
+    beyond = np.clip(union_of(grid, [c for c in differences if c.lens in GENERIC]) - union_of(grid, [c for c in differences if c.lens not in GENERIC]), 0, None)
+    triggers = _triggers(grid, foundation, differences, np.where(rule_mask, 0.0, beyond), lens_run, params)
     slices = _slices(grid, residual_open, model_mask, int(params.value("residual_top_slices")), lens_run)
-    saturation = _saturation(grid, candidates, params)
+    saturation = _saturation(grid, differences, params)
     return Ledger(
         grid=grid,
         lens_run=lens_run,
         params=params,
-        candidates=candidates,
+        differences=differences,
+        candidates=rows,
+        items=items,
+        adopted=build.adopted,
+        set_aside=set_aside,
+        must_answer=must_answer,
         screening=screening,
         overlaps=overlaps,
         overlap_group=groups,
+        difference_overlaps=difference_overlaps,
         coverage=coverage,
         residual=residual_open,
         residual_rule=residual_rule,
@@ -326,7 +371,8 @@ def compose(site: SiteData) -> Ledger:
 def _coverage(
     grid: Grid,
     lens_run: LensRun,
-    candidates: list[Candidate],
+    differences: list[Candidate],
+    rows: list[Candidate],
     screening: dict[str, dict[str, Any]],
     residual: np.ndarray,
     residual_rule: np.ndarray,
@@ -338,21 +384,23 @@ def _coverage(
         counts += mask
         for row in np.flatnonzero(mask.any(axis=1)):
             looked[grid.meters[row]].append(lens)
-    for candidate in candidates:
+    for candidate in rows:
         if candidate.lens in ("R", "M"):
             looked[candidate.meter].append(candidate.lens)
+    found = union_of(grid, differences)
+    covered = union_of(grid, rows)
     by_result = {
-        result: union_of(grid, [c for c in candidates if screening[c.id]["result"] == result])
+        result: union_of(grid, [c for c in rows if screening[c.id]["result"] == result])
         for result in (VALID, PENDING, INVALID)
     }
-    rows = []
+    table = []
     for meter_id in grid.meters:
         row = grid.row(meter_id)
         energy = grid.energy[row]
         total = float(energy.sum())
         if total <= 0 and not grid.ok[row].any():
             continue
-        rows.append(
+        table.append(
             {
                 "meter": meter_id,
                 "name": grid.names.get(meter_id, ""),
@@ -363,6 +411,8 @@ def _coverage(
                 "examined_kwh": round(float(energy[counts[row] >= 1].sum()), 1),
                 "examined_twice_kwh": round(float(energy[counts[row] >= 2].sum()), 1),
                 "not_examined_kwh": round(float(energy[counts[row] == 0].sum()), 1),
+                "differences_kwh": round(float(found[row].sum()), 1),
+                "items_kwh": round(float(covered[row].sum()), 1),
                 "valid_kwh": round(float(by_result[VALID][row].sum()), 1),
                 "pending_kwh": round(float(by_result[PENDING][row].sum()), 1),
                 "invalid_kwh": round(float(by_result[INVALID][row].sum()), 1),
@@ -371,7 +421,7 @@ def _coverage(
                 "residual_rule_kwh": round(float(residual_rule[row].sum()), 1),
             }
         )
-    return rows
+    return table
 
 
 def _triggers(
@@ -401,7 +451,7 @@ def _triggers(
                     "system": system_of(grid, meter_id),
                     "measured": {"stop_kw": row["stop_kw"], "run_kw": row["run_kw"], "ratio": row["ratio"], "stop_kwh": row["stop_kwh"], "stop_share": row["stop_share"]},
                     "text": f"全厂停时平均 {row['stop_kw']} kW，在产时 {row['run_kw']} kW，比值 {row['ratio']}（≥ P31 {ratio_line:g}）；停时电量 {row['stop_kwh']} kWh，占本表 {row['stop_share']}",
-                    "asks": "判这块表停产时的用电是必要服务还是可能的浪费；可能浪费的交参照规格（参照取多少、出处），必要的说明依据或交剩余解释",
+                    "asks": "判这块表停产时的用电是必要服务还是可能的浪费；可能浪费的提一个项（采用差额或交参照规格，写参照取多少、出处），必要的说明依据或交剩余解释",
                 }
             )
     peers: dict[str, list[str]] = defaultdict(list)
@@ -437,8 +487,8 @@ def _triggers(
                     "meters": [meter_id],
                     "system": system_of(grid, meter_id),
                     "measured": {"residual_kwh": round(left, 1), "share": round(left / total, 4), "production_correlation": None if rho is None else round(rho, 3)},
-                    "text": f"没解释的超出 {left:.0f} kWh，占本表 {left / total:.1%}；逐日电量和产线电量的秩相关 {('%.2f' % rho) if rho is not None else '算不了'}（< P21 {correlation:g}）",
-                    "asks": "说明是什么在推动（天气、作息、别的系统），交驱动假设或剩余解释；数据里没有的写要补的数据；像浪费的交参照规格",
+                    "text": f"通用视角（日电量先例、异常日）看到、定位视角说不清的超出 {left:.0f} kWh，占本表 {left / total:.1%}；逐日电量和产线电量的秩相关 {('%.2f' % rho) if rho is not None else '算不了'}（< P21 {correlation:g}）",
+                    "asks": "说明是什么在推动（天气、作息、别的系统），交驱动假设或剩余解释；数据里没有的写要补的数据；像浪费的提一个项",
                 }
             )
     return triggers
@@ -481,8 +531,22 @@ def _slices(grid: Grid, residual: np.ndarray, model_mask: np.ndarray, top: int, 
 def ledger_record(ledger: Ledger) -> dict[str, Any]:
     """The ledger as JSON: what the workbook, the briefs and the tests read."""
 
+    set_aside = {entry["difference"]: entry for entry in ledger.set_aside}
+    must = set(ledger.must_answer)
     return {
         "summary": ledger.summary(),
+        "differences": [
+            {
+                **difference.as_dict(),
+                "system": system_of(ledger.grid, difference.meter),
+                "adopted_by": ledger.adopted.get(difference.id),
+                "set_aside": set_aside.get(difference.id),
+                "must_answer": difference.id in must,
+                "overlaps": ledger.difference_overlaps.get(difference.id, []),
+            }
+            for difference in ledger.differences
+        ],
+        "items": list(ledger.items.values()),
         "candidates": [
             {
                 **candidate.as_dict(),

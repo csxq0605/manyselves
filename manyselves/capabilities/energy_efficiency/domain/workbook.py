@@ -1,13 +1,17 @@
-"""The workbook (台账) of one run: candidates, screening, opinions and the pages that say what was not seen.
+"""The workbook (台账) of one run: the loss items' rows, screening, opinions and the pages that say what was not seen.
 
-One row per candidate: what the lens compared (meter, hours, reference
-levels), what the program computed (excess under each level, share, overlap,
-decomposition), the screening and its rule, the model's opinions (marked
-unverified) and the columns a person fills in (取舍 wins over the
-screening).  Beside it:
+One row per row of a loss item (an item on one meter): who proposed it, how
+it was found and the thinking, what the program computed over the whole
+period (excess under each level, share, overlap, decomposition, stability),
+the screening and its rule, the model's opinions (marked unverified) and the
+columns a person fills in (取舍 wins over the screening).  Beside it:
 
-- 覆盖与剩余: per meter, energy no lens looked at, excess found by screening
-  result, and the residual nobody explained;
+- 损耗项: one line per item: who proposed it, its rows, the excess it accounts
+  for, how it was found, the thinking, the causes and the tests;
+- 程序差额: every difference the lenses computed, which item adopted it, or
+  why the analyst set it aside;
+- 覆盖与剩余: per meter, energy no lens looked at, the differences, the items
+  by screening result, and the residual nobody explained;
 - 剩余片: the largest unexplained pieces;
 - 触发与处置: where the program sent the model and what it answered;
 - 规格: every spec, what the program computed from it, and the YAML a person
@@ -25,14 +29,16 @@ import html
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from .analysis import looks_of, probe_results
+from .analysis import looks_of, probe_results, proposal_tests
 from .foundation import load_model
-from .ledger import Ledger, system_of
+from .items import SET_ASIDE_REASONS
+from .ledger import Ledger, system_of, union_of
 from .lenses import LENSES
 from .model_sheets import add_model_sheets, model_html
 from .preparation import PREFERENCES_BOOK, ROLES, write_preferences_book
@@ -54,7 +60,7 @@ from .specs import (
 from .store import SiteData, read_json, write_json
 from .submissions import JudgmentSubmission
 
-SCHEMA = "manyselves.energy.register.2"
+SCHEMA = "manyselves.energy.register.3"
 DECISION_LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料"}
 LABEL_DECISIONS = {label: decision for decision, label in DECISION_LABELS.items()}
 SCREEN_DECISIONS = {VALID: "keep", INVALID: "drop", PENDING: "needs_data"}
@@ -65,7 +71,7 @@ CHOICE_HEADER = "取舍"
 NOTE_HEADER = "理由"
 LEVEL_HEADER = "选定参照"
 FILL_HEADERS = (CHOICE_HEADER, NOTE_HEADER, LEVEL_HEADER, "核实人", "核实日期")
-GROUP_COLORS = {"候选": "DDEBF7", "计算": "EDEDED", "筛选": "FCE4D6", "意见（模型，未核实）": "E2EFDA", "人填栏": "FFF2CC"}
+GROUP_COLORS = {"项": "DDEBF7", "提项（模型，未核实）": "E2EFDA", "计算": "EDEDED", "筛选": "FCE4D6", "意见（模型，未核实）": "E2EFDA", "人填栏": "FFF2CC"}
 OPINIONS = {"likely_loss": "像浪费", "likely_necessary": "像必要", "data_problem": "像数据问题", "unclear": "看不出"}
 CAUSE_KINDS = {"loss": "浪费", "necessary": "必要", "data": "数据", "external": "外部驱动"}
 CAUSE_STATUS = {"open": "未定", "kept": "保留", "dropped": "放弃"}
@@ -78,9 +84,10 @@ DISPOSITIONS = {
     "needs_data": "要补资料",
     "not_a_problem": "看不出问题",
     "explained": "已解释（模型）",
-    "new_reference": "新参照",
+    "new_item": "提了项",
     "cannot_tell": "看不出",
 }
+MECHANISM_OUTCOMES = {"item": "提了项", "no_evidence": "数据里没看到", "not_applicable": "不适用", "site_question": "转现场问题"}
 PAGE_STYLE = """
 body{font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;max-width:1040px;margin:0 auto;padding:16px;line-height:1.6;color:#1f2328;background:#fff}
 h1{font-size:1.5rem}h2{font-size:1.2rem;margin-top:2rem}h3{font-size:1.05rem}
@@ -147,6 +154,29 @@ def decomposition_text(item: dict[str, Any]) -> str:
     return "；".join(texts)
 
 
+def stability_text(item: dict[str, Any]) -> str:
+    steady = item.get("stability") or {}
+    texts = []
+    if steady.get("split_day"):
+        texts.append(f"以 {steady['split_day']} 分前后两半：{steady['first_half_kwh']:,.0f} / {steady['second_half_kwh']:,.0f} kWh")
+    if steady.get("largest_day_share") is not None:
+        texts.append(f"最大一天 {steady['largest_day']} 占 {steady['largest_day_share']:.0%}")
+    shift = steady.get("shift") or {}
+    if shift.get("change_share") is not None:
+        texts.append(f"时段提前、推后一格：{shift['earlier_kwh']:,.0f} / {shift['later_kwh']:,.0f} kWh（最多变 {shift['change_share']:.0%}）")
+    return "；".join(texts)
+
+
+def proposal_cause_text(item: dict[str, Any]) -> str:
+    tests: dict[str, dict[str, Any]] = {entry["cause"]: entry for entry in item.get("proposal_tests", [])}
+    texts = []
+    for cause in item.get("proposal", {}).get("causes", []):
+        test = tests.get(cause["id"])
+        tested = f"；检验 {test['type']}：{RESULT_LABELS[test['result']]}" + (f"（{test['why']}）" if test.get("why") else "") if test else ""
+        texts.append(f"{cause['id']} [{CAUSE_KINDS.get(cause['kind'], cause['kind'])}] {cause['cause']}{tested}")
+    return "；".join(texts)
+
+
 def overlap_text(item: dict[str, Any]) -> str:
     return "；".join(f"{entry['id']} {entry['kwh']:,.0f} kWh" for entry in item.get("overlaps", [])[:5])
 
@@ -181,21 +211,37 @@ def opinion_texts(item: dict[str, Any]) -> dict[str, str]:
 # Register ------------------------------------------------------------------------
 
 
-def _items(site: SiteData, ledger: Ledger, judgments: dict[str, dict[str, Any]], tests: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def _items(
+    site: SiteData,
+    ledger: Ledger,
+    judgments: dict[str, dict[str, Any]],
+    tests: dict[str, list[dict[str, Any]]],
+    proposed: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """The rows of the loss items, as the workbook, the selection and the report read them."""
+
     from .probes import decompose
 
     grid = ledger.grid
-    items = []
+    rows = []
     for candidate in ledger.candidates:
         screen = ledger.screening[candidate.id]
         values = [level["excess_kwh"] for level in candidate.levels]
         energy = grid.total(candidate.meter)
         overlaps = ledger.overlaps.get(candidate.id, [])
         part = decompose(grid, candidate, ledger.lens_run.batches)
-        items.append(
+        item = ledger.items.get(candidate.item or "", {})
+        proposal = item.get("proposal", {})
+        steady = candidate.details.get("stability") or {}
+        rows.append(
             {
                 "id": candidate.id,
                 "check_code": check_code(site.run_id, candidate.id),
+                "item": candidate.item,
+                "item_title": proposal.get("title", ""),
+                "origin": item.get("origin", ""),
+                "proposal": {key: proposal.get(key) for key in ("finding", "reasoning", "causes", "missing_info", "related")},
+                "proposal_tests": proposed.get(candidate.id, []),
                 "lens": candidate.lens,
                 "lens_name": LENSES.get(candidate.lens, (candidate.lens, ""))[0],
                 "meter": candidate.meter,
@@ -219,7 +265,8 @@ def _items(site: SiteData, ledger: Ledger, judgments: dict[str, dict[str, Any]],
                 "overlaps": overlaps,
                 "overlap_group": ledger.overlap_group.get(candidate.id),
                 "decomposition": part,
-                "details": candidate.details,
+                "stability": steady,
+                "details": {key: value for key, value in candidate.details.items() if key != "stability"},
                 "judgment": judgments.get(candidate.id),
                 "tests": tests.get(candidate.id, []),
                 "scalars": {
@@ -232,13 +279,86 @@ def _items(site: SiteData, ledger: Ledger, judgments: dict[str, dict[str, Any]],
                     "money": None if candidate.money is None else round(candidate.money, 1),
                     "overlap_kwh": max((entry["kwh"] for entry in overlaps), default=0.0),
                     "data_coverage": round(grid.coverage(candidate.meter), 4),
+                    "half_ratio": steady.get("half_ratio"),
+                    "largest_day_share": steady.get("largest_day_share"),
                 },
             }
         )
     order = {VALID: 0, PENDING: 1, INVALID: 2}
-    # Items outside the totals (cost, books against meters) come after the others of their screening result.
-    items.sort(key=lambda item: (order[item["screen"]["result"]], not item["in_totals"], item["system"], -item["excess_kwh"], item["id"]))
-    return items
+    # Rows outside the totals (cost, books against meters) come after the others of their screening result.
+    rows.sort(key=lambda row: (order[row["screen"]["result"]], not row["in_totals"], row["system"], -row["excess_kwh"], row["id"]))
+    return rows
+
+
+def _loss_items(ledger: Ledger, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One line per item: who proposed it, its rows and what they account for (one cell counted once)."""
+
+    by_item: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_item.setdefault(row["item"], []).append(row)
+    listed = []
+    for item_id, item in ledger.items.items():
+        members = [candidate for candidate in ledger.candidates if candidate.item == item_id]
+        proposal = item.get("proposal", {})
+        results: dict[str, int] = {}
+        for row in by_item.get(item_id, []):
+            results[row["screen"]["result"]] = results.get(row["screen"]["result"], 0) + 1
+        listed.append(
+            {
+                "id": item_id,
+                "origin": item.get("origin", ""),
+                "source": item.get("source", "model"),
+                "title": proposal.get("title", ""),
+                "accepted": bool(item.get("accepted")),
+                "problems": item.get("problems", []),
+                "differences": proposal.get("differences", []),
+                "spec": proposal.get("spec"),
+                "rows": [candidate.id for candidate in members],
+                "meters": sorted({candidate.meter for candidate in members}),
+                "excess_kwh": round(float(union_of(ledger.grid, members).sum()), 1) if members else 0.0,
+                "screen": results,
+                "finding": proposal.get("finding", ""),
+                "reasoning": proposal.get("reasoning", ""),
+                "causes": proposal.get("causes", []),
+                "missing_info": proposal.get("missing_info", ""),
+                "related": proposal.get("related", []),
+            }
+        )
+    listed.sort(key=lambda entry: (not entry["accepted"], -entry["excess_kwh"], entry["id"]))
+    return listed
+
+
+def _differences(ledger: Ledger) -> list[dict[str, Any]]:
+    set_aside = {entry["difference"]: entry for entry in ledger.set_aside}
+    must = set(ledger.must_answer)
+    grid = ledger.grid
+    rows = []
+    for difference in ledger.differences:
+        row = grid.row(difference.meter)
+        left = float(np.where(difference.cells > 0, ledger.residual[row], 0.0).sum())
+        rows.append(
+            {
+                "id": difference.id,
+                "lens": difference.lens,
+                "lens_name": LENSES.get(difference.lens, (difference.lens, ""))[0],
+                "meter": difference.meter,
+                "name": grid.names.get(difference.meter, ""),
+                "system": system_of(grid, difference.meter),
+                "title": difference.title,
+                "selection": difference.selection,
+                "levels": difference.levels,
+                "default_level": difference.default,
+                "excess_kwh": round(difference.excess, 1),
+                "in_totals": difference.in_union,
+                "money": None if difference.money is None else round(difference.money, 1),
+                "must_answer": difference.id in must,
+                "adopted_by": ledger.adopted.get(difference.id),
+                "set_aside": set_aside.get(difference.id),
+                "residual_kwh": round(left, 1),
+            }
+        )
+    rows.sort(key=lambda entry: (entry["adopted_by"] is not None, entry["system"], -entry["excess_kwh"], entry["id"]))
+    return rows
 
 
 def _specs(ledger: Ledger) -> list[dict[str, Any]]:
@@ -319,7 +439,7 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
         judges[key] = {"notes": result.get("notes", []), "issues": (result.get("check") or {}).get("issues", []), "corrected": result.get("corrected", False)}
     for key, error in judge_errors.items():
         judges[key] = {"error": str(error)[:500]}
-    items = _items(site, ledger, judgments, tests)
+    items = _items(site, ledger, judgments, tests, proposal_tests(site, ledger))
     meters = []
     for meter_id in ledger.grid.meters:
         quality = site.quality(meter_id)
@@ -336,6 +456,7 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
         )
     answers = {}
     mechanisms = []
+    loss_items = _loss_items(ledger, items)
     for look in looks.values():
         submission = look.get("submission") or {}
         for answer in submission.get("triggers", []):
@@ -343,6 +464,11 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
         for mechanism in submission.get("mechanisms", []):
             mechanisms.append({**mechanism, "system": look.get("system")})
     counts = {
+        "loss_items": sum(1 for entry in loss_items if entry["accepted"]),
+        "loss_items_refused": sum(1 for entry in loss_items if not entry["accepted"]),
+        "differences": len(ledger.differences),
+        "differences_adopted": len(ledger.adopted),
+        "differences_set_aside": len(ledger.set_aside),
         "items": len(items),
         "valid": sum(1 for item in items if item["screen"]["result"] == VALID),
         "pending": sum(1 for item in items if item["screen"]["result"] == PENDING),
@@ -366,6 +492,8 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
         "counts": counts,
         "meters": meters,
         "items": items,
+        "loss_items": loss_items,
+        "differences": _differences(ledger),
         "coverage": ledger.coverage,
         "slices": ledger.slices,
         "triggers": [{**trigger, "answer": answers.get(trigger["id"])} for trigger in ledger.triggers],
@@ -380,6 +508,7 @@ def build_register(site: SiteData, ledger: Ledger, judge_results: dict[str, Any]
         "drafting_failed": bool(assumption_errors),
         "lens_notes": ledger.lens_run.notes,
         "screen_rules": {rule: {"result": outcome, "text": text} for rule, (outcome, text) in RULES.items()},
+        "set_aside_reasons": SET_ASIDE_REASONS,
         "lenses": {lens: {"name": name, "reference": text} for lens, (name, text) in LENSES.items()},
         "company_model": load_model(site),
         "assumptions": site.assumptions(),
@@ -401,14 +530,21 @@ def _cell(value: Any) -> Any:
 
 def ledger_columns() -> list[tuple[str, str, Any]]:
     return [
-        ("候选", ID_HEADER, lambda item: item["id"]),
-        ("候选", CODE_HEADER, lambda item: item["check_code"]),
-        ("候选", "系统", lambda item: item["system"]),
-        ("候选", "表", lambda item: item["meter"]),
-        ("候选", "表名", lambda item: item["name"]),
-        ("候选", "视角", lambda item: f"{item['lens']} {item['lens_name']}"),
-        ("候选", "说明", lambda item: item["title"]),
-        ("候选", "时段", lambda item: item["selection"]),
+        ("项", ID_HEADER, lambda item: item["id"]),
+        ("项", CODE_HEADER, lambda item: item["check_code"]),
+        ("项", "损耗项", lambda item: item["item"]),
+        ("项", "项名称", lambda item: item["item_title"]),
+        ("项", "提出", lambda item: item["origin"]),
+        ("项", "系统", lambda item: item["system"]),
+        ("项", "表", lambda item: item["meter"]),
+        ("项", "表名", lambda item: item["name"]),
+        ("项", "视角", lambda item: f"{item['lens']} {item['lens_name']}"),
+        ("项", "说明", lambda item: item["title"]),
+        ("项", "时段", lambda item: item["selection"]),
+        ("提项（模型，未核实）", "寻找方式", lambda item: item["proposal"].get("finding") or ""),
+        ("提项（模型，未核实）", "思考过程", lambda item: item["proposal"].get("reasoning") or ""),
+        ("提项（模型，未核实）", "提项时的原因与检验", proposal_cause_text),
+        ("提项（模型，未核实）", "还缺的资料", lambda item: item["proposal"].get("missing_info") or ""),
         ("计算", "默认参照", lambda item: item["default_level"]),
         ("计算", "默认参照下超出 kWh", lambda item: item["excess_kwh"]),
         ("计算", "最保守参照下 kWh", lambda item: item["scalars"]["conservative_kwh"]),
@@ -419,13 +555,14 @@ def ledger_columns() -> list[tuple[str, str, Any]]:
         ("计算", "重叠组", lambda item: item["overlap_group"]),
         ("计算", "与谁重叠", overlap_text),
         ("计算", "拆分", decomposition_text),
+        ("计算", "稳定性", stability_text),
         ("计算", "说明（程序）", lambda item: "；".join(item["notes"])),
         ("筛选", "筛选结果", lambda item: item["screen"]["result"]),
         ("筛选", "规则", lambda item: item["screen"]["rule"]),
         ("筛选", "理由", lambda item: item["screen"]["reason"]),
         ("意见（模型，未核实）", "意见", lambda item: opinion_texts(item)["opinion"]),
         ("意见（模型，未核实）", "参照意见", lambda item: opinion_texts(item)["reference"]),
-        ("意见（模型，未核实）", "原因候选与检验", lambda item: opinion_texts(item)["causes"]),
+        ("意见（模型，未核实）", "原因定稿与检验", lambda item: opinion_texts(item)["causes"]),
         ("意见（模型，未核实）", "措施选项", lambda item: opinion_texts(item)["measures"]),
         ("意见（模型，未核实）", "现场问题", lambda item: opinion_texts(item)["questions"]),
         ("意见（模型，未核实）", "相关项", lambda item: opinion_texts(item)["related"]),
@@ -480,16 +617,54 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     sheet.freeze_panes = "C3"
     _table_sheet(
         book,
+        "损耗项",
+        [
+            "每个损耗项一行：谁提的（模型按系统、补找第几轮，或人定的参照规则 P39）、落在哪几行、这些行合起来的超出（同一格只算一次，不同的项不要相加）。"
+            "寻找方式、思考过程和原因是模型的意见，未核实；没收下的项写了原因，不进台账。"
+        ],
+        ["编号", "提出", "名称", "收下", "问题", "采用的差额", "参照规格", "行", "表", "超出 kWh", "各行筛选", "寻找方式", "思考过程", "候选原因", "还缺的资料", "相关项"],
+        [
+            [
+                entry["id"], entry["origin"], entry["title"], "是" if entry["accepted"] else "否", "；".join(entry["problems"]), "、".join(entry["differences"]),
+                entry["spec"] or "", "、".join(entry["rows"]), "、".join(entry["meters"]), entry["excess_kwh"],
+                "、".join(f"{result} {count}" for result, count in entry["screen"].items()), entry["finding"], entry["reasoning"],
+                "；".join(f"{cause['id']} [{CAUSE_KINDS.get(cause['kind'], cause['kind'])}] {cause['cause']}" for cause in entry["causes"]),
+                entry["missing_info"], "、".join(entry["related"]),
+            ]
+            for entry in register["loss_items"]
+        ],
+    )
+    reasons = register.get("set_aside_reasons", {})
+    _table_sheet(
+        book,
+        "程序差额",
+        [
+            "程序按各视角算出的“实际 − 参照”，每个视角在每块表上一条。差额本身不是损耗项：被某个损耗项采用才进台账。"
+            "够大的差额（达到 P36、P37）模型都要交代：采用，或写暂不立项的理由（意见，未核实）。没被采用的部分算进“覆盖与剩余”的剩余。"
+        ],
+        ["编号", "视角", "系统", "表", "表名", "说明", "时段", "默认参照", "默认参照下超出 kWh", "各档参照与超出", "进合计", "够大要交代", "采用它的项", "暂不立项的理由", "依据", "仍在剩余里 kWh"],
+        [
+            [
+                entry["id"], f"{entry['lens']} {entry['lens_name']}", entry["system"], entry["meter"], entry["name"], entry["title"], entry["selection"],
+                entry["default_level"], entry["excess_kwh"], levels_text(entry), "是" if entry["in_totals"] else "否", "是" if entry["must_answer"] else "",
+                entry["adopted_by"] or "", reasons.get((entry["set_aside"] or {}).get("reason"), "") if entry["set_aside"] else "",
+                (entry["set_aside"] or {}).get("note", ""), entry["residual_kwh"],
+            ]
+            for entry in register["differences"]
+        ],
+    )
+    _table_sheet(
+        book,
         "覆盖与剩余",
         [
-            "每块表的电：多少被视角看过（看过一次、两次以上、没看过），找到的超出按筛选结果分（同一格只算一次），"
-            "以及没解释的超出（通用视角看到、没有哪个定位视角说得清的部分）。剩余里人确认的剩余规则（P40）算已解释；模型的解释只列出来，不算已解释。"
+            "每块表的电：多少被视角看过（看过一次、两次以上、没看过），程序差额（同一格只算一次），损耗项占了其中多少、按筛选结果分，"
+            "以及没解释的剩余（程序差额里没被任何项采用的部分）。剩余里人确认的剩余规则（P40）算已解释；模型的解释（剩余解释规格、暂不立项的理由）只列出来，不算已解释。"
         ],
-        ["表", "表名", "系统", "全期电量 kWh", "数据覆盖率", "看过的视角", "看过 kWh", "看过两次以上 kWh", "没看过 kWh", "有效 kWh", "待定 kWh", "无效 kWh", "没解释的剩余 kWh", "其中模型有解释 kWh", "人定规则已解释 kWh"],
+        ["表", "表名", "系统", "全期电量 kWh", "数据覆盖率", "看过的视角", "看过 kWh", "看过两次以上 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "有效 kWh", "待定 kWh", "无效 kWh", "没解释的剩余 kWh", "其中模型有解释 kWh", "人定规则已解释 kWh"],
         [
             [
                 row["meter"], row["name"], row["system"], row["energy_kwh"], row["data_coverage"], "、".join(row["lenses"]),
-                row["examined_kwh"], row["examined_twice_kwh"], row["not_examined_kwh"], row["valid_kwh"], row["pending_kwh"],
+                row["examined_kwh"], row["examined_twice_kwh"], row["not_examined_kwh"], row["differences_kwh"], row["items_kwh"], row["valid_kwh"], row["pending_kwh"],
                 row["invalid_kwh"], row["residual_open_kwh"], row["residual_model_kwh"], row["residual_rule_kwh"],
             ]
             for row in register["coverage"]
@@ -498,7 +673,7 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
     _table_sheet(
         book,
         "剩余片",
-        ["没解释的超出里最大的几片（一块表的一周）：补找时模型看的就是这些。"],
+        ["没解释的剩余里最大的几片（一块表的一周）：补找时模型看的就是这些。"],
         ["编号", "表", "表名", "周一", "kWh", "其中模型有解释", "夜间占比（22-6点）", "全厂停时占比", "逐日"],
         [
             [entry["id"], entry["meter"], entry["name"], entry["week"], entry["kwh"], entry["model_explained_kwh"], entry["night_share"], entry["stop_share"], "；".join(f"{day} {value}" for day, value in entry["days"])]
@@ -509,16 +684,16 @@ def write_workbook(path: Path, register: dict[str, Any]) -> None:
         book,
         "触发与处置",
         ["程序按偏好里的触发线（P31、P32、P21）把模型引到这些地方；处置是模型的意见。每个系统另外都做了一次领域先验和问卷检查（见下方机理）。"],
-        ["编号", "触发", "系统", "表", "程序算的", "要模型做的", "处置", "对应规格", "理由"],
+        ["编号", "触发", "系统", "表", "程序算的", "要模型做的", "处置", "对应的项和规格", "理由"],
         [
             [
                 trigger["id"], trigger["title"], trigger["system"], "、".join(trigger["meters"]), trigger["text"], trigger["asks"],
                 DISPOSITIONS.get((trigger.get("answer") or {}).get("disposition"), "没有处置"),
-                "、".join((trigger.get("answer") or {}).get("specs", [])), (trigger.get("answer") or {}).get("note", ""),
+                "、".join((trigger.get("answer") or {}).get("items", []) + (trigger.get("answer") or {}).get("specs", [])), (trigger.get("answer") or {}).get("note", ""),
             ]
             for trigger in register["triggers"]
         ]
-        + [["机理", mechanism["mechanism"], mechanism["system"], "、".join(mechanism.get("objects", [])), "", "", mechanism["outcome"], "、".join(mechanism.get("specs", []) + mechanism.get("covered_by", [])), mechanism["note"]] for mechanism in register["mechanisms"]],
+        + [["机理", mechanism["mechanism"], mechanism["system"], "、".join(mechanism.get("objects", [])), "", "", MECHANISM_OUTCOMES.get(mechanism["outcome"], mechanism["outcome"]), "、".join(mechanism.get("items", [])), mechanism["note"]] for mechanism in register["mechanisms"]],
     )
     _table_sheet(
         book,
@@ -570,9 +745,9 @@ def _table(head: list[str], rows: list[list[Any]]) -> str:
 
 def coverage_html(register: dict[str, Any]) -> str:
     return "<h2>覆盖与剩余</h2>" + _table(
-        ["表", "表名", "全期 kWh", "没看过 kWh", "有效 kWh", "待定 kWh", "无效 kWh", "没解释的剩余 kWh", "模型有解释"],
+        ["表", "表名", "全期 kWh", "没看过 kWh", "程序差额 kWh", "损耗项 kWh", "有效 kWh", "待定 kWh", "没解释的剩余 kWh", "模型有解释"],
         [
-            [row["meter"], row["name"], f"{row['energy_kwh']:,.0f}", f"{row['not_examined_kwh']:,.0f}", f"{row['valid_kwh']:,.0f}", f"{row['pending_kwh']:,.0f}", f"{row['invalid_kwh']:,.0f}", f"{row['residual_open_kwh']:,.0f}", f"{row['residual_model_kwh']:,.0f}"]
+            [row["meter"], row["name"], f"{row['energy_kwh']:,.0f}", f"{row['not_examined_kwh']:,.0f}", f"{row['differences_kwh']:,.0f}", f"{row['items_kwh']:,.0f}", f"{row['valid_kwh']:,.0f}", f"{row['pending_kwh']:,.0f}", f"{row['residual_open_kwh']:,.0f}", f"{row['residual_model_kwh']:,.0f}"]
             for row in register["coverage"]
         ],
     )
@@ -583,16 +758,16 @@ def write_page(path: Path, register: dict[str, Any]) -> None:
     summary = register["summary"]
     body = [
         f"<h1>{_e(register['site'])} 损耗项台账</h1>",
-        f"<p>数据期 {_e(register['period']['start'])} 至 {_e(register['period']['end'])}；候选 {counts['items']} 项：有效 {counts['valid']}、待定 {counts['pending']}、无效 {counts['invalid']}；"
-        f"找到的超出（同一格只算一次）{summary['found_kwh']:,.0f} kWh，没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。</p>",
-        "<p class='note'>这是台账，不是结论。数都由程序按写明的参照算；有效、无效、待定按偏好里的规则定；模型的意见、原因和措施都未经核实。"
+        f"<p>数据期 {_e(register['period']['start'])} 至 {_e(register['period']['end'])}；损耗项 {counts['loss_items']} 个，落在 {counts['items']} 行：有效 {counts['valid']}、待定 {counts['pending']}、无效 {counts['invalid']}；"
+        f"程序差额 {summary['differences_kwh']:,.0f} kWh，损耗项占了 {summary['found_kwh']:,.0f} kWh（同一格只算一次），没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。</p>",
+        "<p class='note'>这是台账，不是结论。损耗项由模型提出（或来自人定的参照规则），数都由程序在全期按写明的参照算；有效、无效、待定按偏好里的规则定；模型的寻找方式、思考过程、意见、原因和措施都未经核实。"
         "保留哪些由人在 register.xlsx 的“台账”页填“取舍”，人填的优先于筛选结果。</p>",
         coverage_html(register),
-        "<h2>候选</h2>",
+        "<h2>损耗项的行</h2>",
         _table(
-            ["编号", "表", "视角", "默认参照下 kWh", "参照换档", "筛选", "意见（未核实）"],
+            ["编号", "损耗项", "表", "视角", "默认参照下 kWh", "参照换档", "筛选", "意见（未核实）"],
             [
-                [item["id"], f"{item['meter']} {item['name']}", item["lens_name"], f"{item['excess_kwh']:,.0f}", range_text(item), f"{item['screen']['result']}（{item['screen']['rule']}）", opinion_texts(item)["opinion"]]
+                [item["id"], f"{item['item']} {item['item_title']}", f"{item['meter']} {item['name']}", item["lens_name"], f"{item['excess_kwh']:,.0f}", range_text(item), f"{item['screen']['result']}（{item['screen']['rule']}）", opinion_texts(item)["opinion"]]
                 for item in register["items"]
                 if item["excess_kwh"] > 0
             ],
@@ -640,6 +815,8 @@ __all__ = [
     "levels_text",
     "opinion_texts",
     "overlap_text",
+    "proposal_cause_text",
     "range_text",
+    "stability_text",
     "write_register",
 ]

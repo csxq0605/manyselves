@@ -6,9 +6,11 @@ checks it.  Five kinds:
 
 - ``reference``: what this meter could have used in these hours (zero, a
   fixed power, a quantile of its own power in other hours, a fraction of its
-  mean power in other hours).  Computed into a candidate whose reference waits
-  for a person (lens ``M``); once a person copies it into the preferences
-  (P39) it is a rule (lens ``R``) and screened like any lens.
+  mean power in other hours).  It belongs to one loss item and is computed
+  over the whole period into one row per meter whose reference waits for a
+  person (lens ``M``); the program also says how much the excess moves when
+  the hours shift by one recording interval.  Once a person copies it into
+  the preferences (P39) it is a rule (lens ``R``), an item of its own.
 - ``residual``: why a piece of the unexplained excess is not a loss
   (necessary service, external driver, data problem, an existing item).
   Listed as the model's explanation; only a person's rule (P40) explains it.
@@ -210,6 +212,7 @@ def reference_candidates(grid: Grid, spec: ReferenceSpec, source: str) -> tuple[
         power = grid.power_of(meter_id)
         levels = []
         first = None
+        first_kw = 0.0
         failed = False
         for label, value in zip(labels, values, strict=True):
             try:
@@ -221,9 +224,10 @@ def reference_candidates(grid: Grid, spec: ReferenceSpec, source: str) -> tuple[
             cells = np.where(mask, np.clip(power - kw, 0, None) * grid.step_h, 0.0)
             levels.append({"label": label, "reference": f"{value.text()}（{kw:.2f} kW）", "excess_kwh": round(float(cells.sum()), 2)})
             if first is None:
-                first = cells
+                first, first_kw = cells, kw
         if failed or first is None:
             continue
+        shift = window_shift(grid, meter_id, mask, first_kw)
         hours = float(mask.sum()) * grid.step_h
         candidates.append(
             Candidate(
@@ -239,11 +243,31 @@ def reference_candidates(grid: Grid, spec: ReferenceSpec, source: str) -> tuple[
                 source=source,
                 spec_id=spec.id,
                 notes=[] if source == "rule" else ["参照由模型提议，待人确认；确认后把规格抄进偏好 P39，下次运行按人定规则算"],
-                details={"hours": round(hours, 2), "energy_kwh": round(float(np.where(mask, grid.energy_of(meter_id), 0).sum()), 2), "basis": basis_text(spec.basis), "why": spec.why},
+                details={"hours": round(hours, 2), "energy_kwh": round(float(np.where(mask, grid.energy_of(meter_id), 0).sum()), 2), "basis": basis_text(spec.basis), "why": spec.why, "shift": shift},
                 preferences=["P39"] if source == "rule" else [],
             )
         )
     return candidates, problems
+
+
+def window_shift(grid: Grid, meter_id: str, mask: np.ndarray, kw: float) -> dict[str, Any]:
+    """The default excess with the selected hours one recording interval of the meter earlier and later."""
+
+    power = grid.power_of(meter_id)
+    ok = grid.ok_of(meter_id)
+    cells = grid.interval_cells(meter_id)
+    base = float(np.where(mask, np.clip(power - kw, 0, None) * grid.step_h, 0.0).sum())
+    results = {}
+    for name, step in (("earlier_kwh", -cells), ("later_kwh", cells)):
+        moved = np.roll(mask, step)
+        if step > 0:
+            moved[:step] = False
+        else:
+            moved[step:] = False
+        moved &= ok
+        results[name] = round(float(np.where(moved, np.clip(power - kw, 0, None) * grid.step_h, 0.0).sum()), 2)
+    largest = max(abs(results["earlier_kwh"] - base), abs(results["later_kwh"] - base))
+    return {**results, "change_share": round(largest / base, 3) if base > 0 else None, "step_hours": round(cells * grid.step_h, 4)}
 
 
 def residual_mask(grid: Grid, spec: ResidualSpec) -> tuple[dict[str, np.ndarray], list[str]]:
@@ -442,4 +466,5 @@ __all__ = [
     "rule_snippet",
     "spec_problems",
     "unsourced_numbers",
+    "window_shift",
 ]

@@ -1,6 +1,6 @@
 id: look-system
 version: 0.1.0
-description: "S2: the analyst looks at one system where the lenses cannot see; the program checks the answer, sends it back once and settles it"
+description: "S2: the analyst reads one system's differences and proposes its loss items; the program checks the answer, sends it back once and settles it"
 tasks:
 - look-system
 recovery:

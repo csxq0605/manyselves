@@ -167,6 +167,7 @@ class Grid:
         self.reference_price = data["reference_price"]
         self.names: dict[str, str] = meta["names"]
         self.groups: dict[str, str | None] = meta["groups"]
+        self.intervals_minutes: dict[str, float] = meta.get("intervals_minutes", {})
         self.currency: str | None = meta.get("currency")
         self.day_status: dict[str, str] = meta.get("day_status", {})
         stamps = pd.DatetimeIndex(self.time)
@@ -187,6 +188,12 @@ class Grid:
 
     def power_of(self, meter_id: str) -> np.ndarray:
         return self.power[self.index[meter_id]]
+
+    def interval_cells(self, meter_id: str) -> int:
+        """How many cells one recording interval of this meter spans (1 when the grid does not say)."""
+
+        minutes = self.intervals_minutes.get(meter_id)
+        return max(1, int(round(minutes / 60 / self.step_h))) if minutes else 1
 
     def ok_of(self, meter_id: str) -> np.ndarray:
         return self.ok[self.index[meter_id]]
@@ -387,6 +394,7 @@ def export_grid(builder: Any, directory: Path) -> None:
             "currency": currency,
             "names": {meter_id: builder.specs[meter_id].name for meter_id in meters},
             "groups": {meter_id: builder.specs[meter_id].group for meter_id in meters},
+            "intervals_minutes": {meter_id: builder.specs[meter_id].interval_minutes for meter_id in meters},
             "day_status": getattr(builder, "day_status", {}),
             "line_power_p95": builder.line_power_p95,
             "note": "每格是最细表间隔的一步；电量按记录功率 × 步长摊到格；没数的格是 NaN",

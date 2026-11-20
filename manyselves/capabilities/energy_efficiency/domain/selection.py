@@ -1,4 +1,4 @@
-"""Decide which candidates go into the report: a person's marks, then the person's rules, then the screening.
+"""Decide which rows of the loss items go into the report: a person's marks, then the person's rules, then the screening.
 
 A person marks items in the workbook (取舍: 保留 / 不保留 / 需补资料).
 Rules are written by a person in a YAML file and may only read the numbers
@@ -40,7 +40,7 @@ from .workbook import (
 )
 
 Decision = Literal["keep", "drop", "needs_data"]
-NUMBER_FIELDS = {"excess_kwh", "conservative_kwh", "liberal_kwh", "share_of_meter", "meter_kwh", "hours", "money", "overlap_kwh", "data_coverage"}
+NUMBER_FIELDS = {"excess_kwh", "conservative_kwh", "liberal_kwh", "share_of_meter", "meter_kwh", "hours", "money", "overlap_kwh", "data_coverage", "half_ratio", "largest_day_share"}
 TEXT_FIELDS = {"lens", "system", "source", "screen", "screen_rule"}
 LIST_FIELDS = {"meter_ids"}
 STRUCTURAL_FIELDS = TEXT_FIELDS | LIST_FIELDS

@@ -1,8 +1,10 @@
 """Assemble the report from the selection: what a person kept, what the screening found valid, what waits.
 
-The program writes every number from the register; the model's opinions are
-shown as opinions.  Excess amounts of different items are not added: items
-on one meter may share cells (overlap) and meters may nest.
+Every row belongs to a loss item someone proposed (the analyst, or a
+person's rule).  The program writes every number from the register; how the
+item was found, the thinking and the model's opinions are shown as opinions.
+Excess amounts of different rows are not added: rows on one meter may share
+cells (overlap) and meters may nest.
 """
 
 from __future__ import annotations
@@ -22,7 +24,9 @@ from .workbook import (
     levels_text,
     opinion_texts,
     overlap_text,
+    proposal_cause_text,
     range_text,
+    stability_text,
 )
 
 _LABELS = {"keep": "保留", "drop": "不保留", "needs_data": "需补资料/待定"}
@@ -69,10 +73,12 @@ def _size(item: dict[str, Any]) -> str:
 
 def _item_lines(item: dict[str, Any], entry: dict[str, Any]) -> list[str]:
     opinions = opinion_texts(item)
+    proposal = item.get("proposal") or {}
     lines = [
         f"### {item['id']} · {_md(item['meter'])} {_md(item['name'])} · {_md(item['lens_name'])}",
         "",
         f"- 选择：{_md(_decision_text(entry))}；筛选：{item['screen']['result']}（{item['screen']['rule']} {item['screen']['reason']}）",
+        f"- 损耗项：{_md(item.get('item'))} {_md(item.get('item_title'))}（{_md(item.get('origin'))}）",
         f"- 说明：{_md(item['title'])}",
         f"- 时段：{_md(item['selection'])}",
         f"- 超出：{_amount(item, entry)}"
@@ -85,6 +91,12 @@ def _item_lines(item: dict[str, Any], entry: dict[str, Any]) -> list[str]:
     text = decomposition_text(item)
     if text:
         lines.append(f"- 拆分：{_md(text)}")
+    text = stability_text(item)
+    if text:
+        lines.append(f"- 稳定性：{_md(text)}")
+    for label, value in (("寻找方式", proposal.get("finding")), ("思考过程", proposal.get("reasoning")), ("提项时的原因与检验", proposal_cause_text(item)), ("还缺的资料", proposal.get("missing_info"))):
+        if value:
+            lines.append(f"- {label}（模型，未核实）：{_md(value)}")
     if item.get("overlaps"):
         lines.append(f"- 和其他项重叠：{_md(overlap_text(item))}（重叠部分不要相加）")
     if item.get("notes"):
@@ -112,15 +124,15 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
         f"# {_md(register['site'])} 损耗项报告（待审）",
         "",
         f"数据期：{register['period']['start']} 至 {register['period']['end']}。",
-        f"候选 {len(items)} 项：保留 {counts['keep']}、需补资料或待定 {counts['needs_data']}、不保留 {counts['drop']}。",
-        f"找到的超出（同一格只算一次）{summary['found_kwh']:,.0f} kWh；没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。",
+        f"损耗项 {register['counts'].get('loss_items', 0)} 个，落在 {len(items)} 行：保留 {counts['keep']}、需补资料或待定 {counts['needs_data']}、不保留 {counts['drop']}。",
+        f"程序差额 {summary.get('differences_kwh', 0):,.0f} kWh，损耗项占了其中 {summary['found_kwh']:,.0f} kWh（同一格只算一次）；没解释的剩余 {summary['residual_open_kwh']:,.0f} kWh。",
         "",
     ]
     md += [f"> 提示：{_md(warning)}" for warning in selection.get("warnings", [])]
     md += [
         "",
-        "保留的项来自人在台账上的取舍、人写的规则，或偏好规则下的筛选结果（有效）。所有数由程序按写明的参照算；"
-        "参照换一档会变多少，每项都列出。原因、措施和现场问题是模型的意见，均未经现场核实。各项不相加。",
+        "损耗项由模型提出（或来自人定的参照规则）。保留的行来自人在台账上的取舍、人写的规则，或偏好规则下的筛选结果（有效）。"
+        "所有数由程序在全期按写明的参照算；参照换一档会变多少，每项都列出。寻找方式、思考过程、原因、措施和现场问题是模型的意见，均未经现场核实。各项不相加。",
         "",
         "## 保留的损耗项",
         "",
@@ -141,10 +153,10 @@ def build_report(register: dict[str, Any], selection: dict[str, Any], sources: l
     for item in dropped:
         entry = decisions[item["id"]]
         md.append(f"- {item['id']}（{_by(entry)}）" + (f"：{_md(entry['note'])}" if entry["note"] else ""))
-    md += ["", "## 覆盖与剩余", "", "| 表 | 全期 kWh | 没看过 kWh | 有效 kWh | 待定 kWh | 没解释的剩余 kWh |", "|---|---|---|---|---|---|"]
+    md += ["", "## 覆盖与剩余", "", "| 表 | 全期 kWh | 没看过 kWh | 程序差额 kWh | 损耗项 kWh | 有效 kWh | 待定 kWh | 没解释的剩余 kWh |", "|---|---|---|---|---|---|---|---|"]
     for row in register["coverage"]:
         md.append(
-            f"| {_md(row['meter'])} {_md(row['name'])} | {row['energy_kwh']:,.0f} | {row['not_examined_kwh']:,.0f} | {row['valid_kwh']:,.0f} | {row['pending_kwh']:,.0f} | {row['residual_open_kwh']:,.0f} |"
+            f"| {_md(row['meter'])} {_md(row['name'])} | {row['energy_kwh']:,.0f} | {row['not_examined_kwh']:,.0f} | {row.get('differences_kwh', 0):,.0f} | {row.get('items_kwh', 0):,.0f} | {row['valid_kwh']:,.0f} | {row['pending_kwh']:,.0f} | {row['residual_open_kwh']:,.0f} |"
         )
     md += ["", "## 触发与处置", ""]
     for trigger in register["triggers"]:

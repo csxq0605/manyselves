@@ -1,6 +1,6 @@
 id: look-set
 version: 1.0.0
-description: The register after the program's lenses, and one look brief per system
+description: The register after the program's lenses, and one brief per system with its differences
 adapter: json_schema
 schema:
   type: object

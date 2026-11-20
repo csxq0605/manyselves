@@ -1,6 +1,6 @@
 id: apply-residual
 version: 0.1.0
-description: "S4: compute a residual round's accepted specs, measure what it added and decide whether to stop"
+description: "S4: compute a residual round's accepted items and specs, measure what it added and decide whether to stop"
 implementation: capability:energy-efficiency:apply-residual
 input_contract: apply-residual-request
 output_contract: apply-summary

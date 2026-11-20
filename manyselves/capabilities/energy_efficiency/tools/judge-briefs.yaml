@@ -1,6 +1,6 @@
 id: judge-briefs
 version: 0.1.0
-description: "S5: one judgment brief per system with its valid and pending candidates, their reference levels, overlaps and decompositions"
+description: "S5: one judgment brief per system with its valid and pending rows, their reference levels, overlaps, decompositions, stability and the proposals' cause tests"
 implementation: capability:energy-efficiency:judge-briefs
 input_contract: run-ref
 output_contract: judge-set

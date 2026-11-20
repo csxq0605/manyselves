@@ -1,6 +1,6 @@
 id: judge-set
 version: 1.0.0
-description: One judgment brief per system (split when a system has many candidates)
+description: One judgment brief per system (split when a system has many rows)
 adapter: json_schema
 schema:
   type: object

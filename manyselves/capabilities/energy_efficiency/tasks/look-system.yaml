@@ -1,15 +1,18 @@
 id: look-system
-version: 0.1.0
-description: Look at one system where the lenses cannot see; answer every trigger, check the domain and the survey, hand in specs and site questions
+version: 0.2.0
+description: Read one system's program differences and propose its loss items; account for every large difference, answer every trigger, check the domain and the survey
 agent: loss-analyst
-objective: 下面是一个对象系统的说明包：各表的电量账摘要（meters：总量、全厂停时电量、钟点和星期分布、和产线的相关、停产和在产的平均功率）、程序候选里超出最大的几项（candidates）、程序算出的触发（triggers，每条写了要你做什么）、没解释的剩余（residual_kwh、slices）、问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、知识库（kb，只作参考）和写规格能用的维度（axes）。请做三件事：一，triggers 里每个触发写一条处置；二，用领域知识和问卷把本系统该看的机理过一遍（mechanisms），程序视角没覆盖、像浪费的交参照规格；三，把问卷里能落到时段上的事实写成规格，落不成的写现场问题。
+objective: 下面是一个对象系统的说明包：各表的电量账摘要（meters：总量、全厂停时电量、钟点和星期分布、和产线的相关、停产和在产的平均功率）、程序按各视角算出的全部差额（differences：每条是一个视角在一块表上算出的“实际 − 参照”，带各档参照下的超出 levels、默认档和最保守档、和别的差额的重叠；够大的还带程序的拆分 decomposition 和细节，低于电量下限的只给概要并标 small）、够大必须交代的差额（must_answer）、程序算出的触发（triggers，每条写了要你做什么）、问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、知识库（kb，只作参考）、程序能跑的检验（test_types）和写规格能用的维度（axes）。程序差额只说明“比某个参照多用了电”，不一定是损耗。请提出本系统的损耗项（items）：每项采用若干条差额（differences 写差额编号），或交一条参照规格（spec 写 specs 里的编号；程序看不到的、“一直都这样”的浪费用这种），写清寻找方式（finding）、思考过程（reasoning）、候选原因（causes，至少一条不是损耗，能检验的写 test）和还缺的资料。程序会在全期算每一项并做稳定性检查，再按偏好筛选。must_answer 里没被任何项采用的差额，每条在 set_aside 写为什么暂不立项。另外：triggers 里每个触发写一条处置；用领域知识和问卷把本系统该看的机理过一遍（mechanisms）；问卷里能落到时段上的事实写成规格或项，落不成的写现场问题。
 input_contract: look-brief
 output_contract: look-submission
 constraints:
-- key 原样填说明包的 key。
-- triggers 每个各写一条：possible_waste 要在 specs 里交 reference 规格并写进本条 specs；comparable_group 交 grouping 规格；driver 交 driver 或 residual 规格；needs_data 写一条 settles 含本触发编号的现场问题，或在规格里写 request；necessary_service、not_a_problem 写清依据。
-- mechanisms 至少一条：本系统按领域常识和问卷该看的机理，各写结果（spec 交了规格、covered 已被哪些候选覆盖、not_applicable 不适用、site_question 转现场问题）。
-- 规格的 objects 只写本系统 meters 里的表；when 只用 axes 里的维度和取值；参照取值（固定功率、分位、倍数）写出处，出处不是问卷或数据的写 领域常识 并在 why 里说明。参照可以给 1–3 个备选（alternatives），一起算给人选。
-- 不写电量、金额和节约量；why 里不写数。basis 里问卷写行编号，写成已确认（claims_confirmed）的那一行必须是已核实的。
+- key 原样填说明包的 key。项的 id 写 I1、I2…，程序会加上 item_prefix。
+- 一条差额只归一项；几条差额说的是同一件事（同一块表同一现象、互相重叠）可以放进同一项。差额不像损耗的，不要为了凑数立项，写进 set_aside。
+- 每项的 causes 至少一条 kind 不是 loss（necessary 必要服务或工艺需要、data 数据或口径问题、external 天气作息等外部驱动）；原因写成候选，不写定论。能用数据检验的写 test，type 从 test_types 里选，参数只用 date、when、groups；status 写 open。
+- set_aside 的 reason：necessary、external、data、not_comparable（参照不可比）、cannot_tell（看不出）；note 写依据。
+- triggers 每个各写一条：possible_waste 要提一个项（items 写本次的项编号）；comparable_group 交 grouping 规格；driver 交 driver 或 residual 规格；needs_data 写一条 settles 含本触发编号的现场问题，或在规格里写 request；necessary_service、not_a_problem 写清依据。
+- mechanisms 至少一条：本系统按领域常识和问卷该看的机理，各写结果（item 提了项、no_evidence 数据里没看到、not_applicable 不适用、site_question 转现场问题）。
+- 参照规格要挂在一个项上。规格的 objects 只写本系统 meters 里的表；when 只用 axes 里的维度和取值；参照取值（固定功率、分位、倍数）写出处，出处不是问卷或数据的写 领域常识 并在 why 里说明。参照可以给 1–3 个备选（alternatives），一起算给人选。
+- 不写电量、金额和节约量（数由程序在全期算）；不决定哪项有效、留不留。basis 里问卷写行编号，写成已确认（claims_confirmed）的那一行必须是已核实的。
 - 现场问题写成能直接去现场问的话，ask_role 从 roles 的键里选（metering、production、process、equipment、energy_finance、data）。
 recovery: typed-turn-recovery

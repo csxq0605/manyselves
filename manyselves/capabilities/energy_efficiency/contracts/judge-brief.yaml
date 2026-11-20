@@ -1,16 +1,17 @@
 id: judge-brief
-version: 1.0.0
-description: A system's valid and pending candidates with every reference level, overlap and decomposition; the invalid ones in one line each; the screening rules, the survey, the knowledge base as reference and the cause tests the program can run
+version: 2.0.0
+description: A system's valid and pending rows of loss items, each computed over the whole period with every reference level, overlap, decomposition, stability and the proposal's cause tests; the items' proposals; the invalid rows in one line each; the screening rules, the survey, the knowledge base as reference and the cause tests the program can run
 adapter: json_schema
 schema:
   type: object
-  required: [key, run_id, kind, system, judge, test_types, roles]
+  required: [key, run_id, kind, system, judge, items, test_types, roles]
   properties:
     key: {type: string}
     run_id: {type: string}
     kind: {type: string}
     system: {type: string}
     judge: {type: array, items: {type: object}}
+    items: {type: array, items: {type: object}}
     invalid: {type: array, items: {type: object}}
     screen_rules: {type: object}
     system_look: {type: array, items: {type: object}}

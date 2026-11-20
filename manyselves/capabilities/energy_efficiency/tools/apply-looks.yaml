@@ -1,6 +1,6 @@
 id: apply-looks
 version: 0.1.0
-description: "S3: compute the systems' accepted specs into the register and list the residual rounds the preferences allow"
+description: "S3: compute the systems' accepted loss items over the whole period (adopted differences, recomputed specs, stability checks), screen their rows and list the residual rounds the preferences allow"
 implementation: capability:energy-efficiency:apply-looks
 input_contract: apply-looks-request
 output_contract: apply-summary

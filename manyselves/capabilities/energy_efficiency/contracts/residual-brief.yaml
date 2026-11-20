@@ -1,20 +1,22 @@
 id: residual-brief
-version: 1.0.0
-description: The largest unexplained pieces of excess, the candidates and specs so far, the survey and the grid's axes
+version: 2.0.0
+description: The largest excess no item explains, the differences not adopted on those meters, the items and specs so far, the survey, the cause tests and the grid's axes
 adapter: json_schema
 schema:
   type: object
-  required: [key, run_id, kind, round, slices, candidates, axes]
+  required: [key, run_id, kind, round, item_prefix, slices, differences, items_so_far, axes]
   properties:
     key: {type: string}
     run_id: {type: string}
     kind: {type: string}
     round: {type: integer}
+    item_prefix: {type: string}
     residual_open_kwh: {type: number}
     model_explained_kwh: {type: number}
     found_kwh: {type: number}
     slices: {type: array, items: {type: object}}
-    candidates: {type: array, items: {type: object}}
+    differences: {type: array, items: {type: object}}
+    items_so_far: {type: array, items: {type: object}}
     specs_so_far: {type: array, items: {type: object}}
     rounds_so_far: {type: array, items: {type: object}}
     facts: {type: array, items: {type: object}}
@@ -23,3 +25,5 @@ schema:
     focus: {type: string}
     kb: {type: array, items: {type: object}}
     axes: {type: object}
+    roles: {type: object}
+    test_types: {type: object}

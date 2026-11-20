@@ -121,6 +121,33 @@ def decompose(grid: Grid, candidate: Candidate, batch_rows: list[dict[str, Any]]
     return result
 
 
+def stability(grid: Grid, candidate: Candidate) -> dict[str, Any]:
+    """Does the excess hold over the whole period: the two halves, the largest day, and for a spec row the shifted hours."""
+
+    cells = candidate.cells
+    total = float(cells.sum())
+    result: dict[str, Any] = {}
+    if total > 0 and len(grid.day_keys) >= 2:
+        daily = grid.daily(cells)
+        half = len(grid.day_keys) // 2
+        first, second = float(daily[:half].sum()), float(daily[half:].sum())
+        largest = int(np.argmax(daily))
+        result.update(
+            {
+                "split_day": grid.day_keys[half],
+                "first_half_kwh": round(first, 1),
+                "second_half_kwh": round(second, 1),
+                "half_ratio": round(min(first, second) / max(first, second), 3) if max(first, second) > 0 else None,
+                "largest_day": grid.day_keys[largest],
+                "largest_day_share": _share(float(daily[largest]), total),
+            }
+        )
+    shift = candidate.details.get("shift")
+    if shift:
+        result["shift"] = shift
+    return result
+
+
 def batch_split(candidate: Candidate, batch_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Batches above the reference against the rest: run power and run hours per unit."""
 
@@ -263,4 +290,4 @@ def run_test(
     return answer("cannot_test", {}, "没有这种检验")
 
 
-__all__ = ["RESULT_LABELS", "TEST_TYPES", "TestRequest", "change_point", "decompose", "run_test"]
+__all__ = ["RESULT_LABELS", "TEST_TYPES", "TestRequest", "change_point", "decompose", "run_test", "stability"]

@@ -1,6 +1,6 @@
 id: energy-candidates
 version: 0.1.0
-description: Read one site's meter data, run the program's lenses on the electricity grid, let the analyst look where they cannot see (per system, then the residual) and judge the candidates, screen them by the preference rules and write the workbook (台账)
+description: Read one site's meter data, run the program's lenses on the electricity grid (the differences), let the analyst propose the loss items (per system, then the residual), compute every item over the whole period, screen the rows by the preference rules, let the analyst judge them and write the workbook (台账)
 tasks: []
 recovery:
 - typed-turn-recovery
@@ -79,8 +79,8 @@ actions:
   tool: build-foundation
   input_variable: run_ref
   output_variable: foundation
-# S1: every lens on every meter it applies to; overlap, coverage, residual,
-# triggers and screening; one look brief per system.
+# S1: every lens on every meter it applies to (the program's differences);
+# overlap and triggers; one brief per system with all its differences.
 - id: lenses
   kind: invoke_tool
   tool: run-lenses
@@ -91,8 +91,9 @@ actions:
   variable: look_briefs
   value_variable: look_set
   field: briefs
-# S2: one conversation per system; a failed system keeps the program's
-# candidates and the run goes on.
+# S2: one conversation per system: the analyst proposes the loss items and
+# says why each large difference left out is left out; a failed system has
+# no items and its differences stay in the residual; the run goes on.
 - id: look
   kind: map
   items_variable: look_briefs
@@ -102,7 +103,9 @@ actions:
   output_variable: look_results
   errors_variable: look_errors
   max_concurrency: 4
-# S3: the accepted specs into the register.
+# S3: the accepted items computed over the whole period (the adopted
+# differences' numbers, the specs recomputed, the stability checks) and
+# screened.
 - id: apply-input
   kind: set_variable
   variable: apply_input
@@ -120,8 +123,9 @@ actions:
   variable: rounds
   value_variable: applied
   field: rounds
-# S4: the residual rounds one after the other; each stops the next when it
-# added less than the preference's share of the residual (P34).
+# S4: the residual rounds one after the other (the differences no item
+# explains); each stops the next when it added less than the preference's
+# share of the residual (P34).
 - id: residual
   kind: map
   items_variable: rounds
@@ -131,7 +135,8 @@ actions:
   output_variable: round_results
   errors_variable: round_errors
   max_concurrency: 1
-# S5: two-round judgments per system, with the program's cause tests between.
+# S5: one round of judgments per system on the computed rows, with the
+# stability checks and the proposals' cause tests already run.
 - id: judge-briefs
   kind: invoke_tool
   tool: judge-briefs

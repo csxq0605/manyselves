@@ -1,13 +1,13 @@
 id: look-residual
-version: 0.1.0
-description: One residual round over the largest unexplained pieces of excess
+version: 0.2.0
+description: One residual round over the largest excess no item explains
 agent: loss-analyst
-objective: 下面是程序算出的、还没有哪个视角或规格说得清的超出里最大的几片（slices，每片是一块表的一周，带逐日数、夜间和全厂停的占比、和产线的相关），已有的候选（candidates）和已交的规格（specs_so_far），以及问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）和写规格能用的维度。每片写一条处置：能说清为什么不算损耗的交剩余解释规格（explained），像浪费的交参照规格（new_reference），看不出的写 cannot_tell，要补资料的写 needs_data。
+objective: 下面是程序差额里还没被任何项采用、也没人解释的超出中最大的几片（slices，每片是一块表的一周，带逐日数、夜间和全厂停的占比、和产线的相关），这些表上还没被采用的差额（differences，带上一步写的暂不立项理由 set_aside；低于电量下限的只给概要并标 small）、已有的项（items_so_far）和规格（specs_so_far），以及问卷（facts）、对数据口径的推断（assumptions，待确认）、任务和关注点（task、focus，有才给）、程序能跑的检验和写规格能用的维度。每片写一条处置：像浪费的提一个项（new_item：采用差额或交参照规格，写寻找方式、思考过程和候选原因），能说清为什么不算损耗的交剩余解释规格（explained），看不出的写 cannot_tell，要补资料的写 needs_data。
 input_contract: residual-brief
 output_contract: residual-submission
 constraints:
-- key 原样填。slices 里每片各写一条，处置对应的规格写进本条 specs。
-- 剩余解释的 type：necessary_service 必要服务、external_driver 外部驱动（写 driver 和要补的数据 request）、data_problem 数据问题、existing_item 已有候选（item 写候选编号）。
-- 规格只用 axes 里的维度；不写电量和金额；问卷依据写行编号。
-- 已交过的规格（specs_so_far）不重复交。
+- key 原样填。slices 里每片各写一条，处置对应的项写进本条 items，规格写进 specs。项的 id 写 I1、I2…，程序会加上 item_prefix。
+- 一条差额只归一项，已被采用的不能再采用。每项的 causes 至少一条不是损耗的解释。
+- 剩余解释的 type：necessary_service 必要服务、external_driver 外部驱动（写 driver 和要补的数据 request）、data_problem 数据问题、existing_item 已有项（item 写项或行的编号）。
+- 规格只用 axes 里的维度，参照规格要挂在一个项上，编号不和已交过的（specs_so_far）重复；不写电量和金额；问卷依据写行编号。
 recovery: typed-turn-recovery

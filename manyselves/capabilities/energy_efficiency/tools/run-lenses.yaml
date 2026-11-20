@@ -1,6 +1,6 @@
 id: run-lenses
 version: 0.1.0
-description: "S1: run every program lens on the electricity grid, compose the candidate register (overlap, coverage, residual, triggers, screening) and write one look brief per system"
+description: "S1: run every program lens on the electricity grid (the differences), compose the register (overlap, coverage, triggers) and write one brief per system with all its differences"
 implementation: capability:energy-efficiency:run-lenses
 input_contract: run-ref
 output_contract: look-set

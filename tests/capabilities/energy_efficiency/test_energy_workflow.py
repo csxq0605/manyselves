@@ -82,17 +82,48 @@ def _draft(brief: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+NOT_A_LOSS = {"id": "C2", "cause": "有设备要保压或值班用电", "kind": "necessary"}
+
+
+def _proposal(local: str, title: str, differences: list[str] | None = None, spec: str | None = None, test: str | None = None) -> dict[str, Any]:
+    loss: dict[str, Any] = {"id": "C1", "cause": "该关的时候没人关", "kind": "loss"}
+    if test:
+        loss["test"] = {"type": test}
+    return {
+        "id": local,
+        "title": title,
+        "differences": differences or [],
+        **({"spec": spec} if spec else {}),
+        "finding": "从程序差额和问卷的作息看出来的",
+        "reasoning": "这段时间没有生产，用电却没有降下来",
+        "causes": [loss, NOT_A_LOSS],
+        "missing_info": "开关记录",
+    }
+
+
 def _look(brief: dict[str, Any]) -> dict[str, Any]:
     if brief["system"] == "动力站":
+        assert brief["item_prefix"] == "S1" and brief["must_answer"] == ["L1-AC1-stop"]
         # Forgets the mechanisms: the check sends it back once.
-        return {"key": brief["key"], "triggers": [], "mechanisms": [], "specs": [NIGHT]}
+        return {
+            "key": brief["key"],
+            "items": [
+                _proposal("I1", "停产时空压机高于底功率", differences=["L1-AC1-stop"], test="base_load_when_stopped"),
+                _proposal("I2", "停产的夜里空压机还在加载", spec="night"),
+            ],
+            "triggers": [],
+            "mechanisms": [],
+            "specs": [NIGHT],
+        }
     assert [trigger["id"] for trigger in brief["triggers"]] == ["T-RES-LT1"]
+    assert sorted(brief["must_answer"]) == ["L2c-LT1", "L4-LT1"]
     return {
         "key": brief["key"],
+        "items": [_proposal("I1", "三个工作日白天车间灯比平常亮一倍", differences=["L2c-LT1", "L4-LT1"])],
         "triggers": [{"trigger": "T-RES-LT1", "disposition": "needs_data", "note": "数据里没有照明的开关记录"}],
         "mechanisms": [
-            {"mechanism": "午休批次间隙", "objects": ["IM1"], "outcome": "covered", "covered_by": ["L1-IM1-between"], "note": "程序已看"},
-            {"mechanism": "照明随作息", "objects": ["LT1"], "outcome": "site_question", "note": "要问开关灯的作息"},
+            {"mechanism": "午休批次间隙", "objects": ["IM1"], "outcome": "no_evidence", "note": "L1-IM1-between 不到电量下限"},
+            {"mechanism": "照明随作息", "objects": ["LT1"], "outcome": "item", "items": ["I1"], "note": "三天白天加灯"},
         ],
         "site_questions": [{**QUESTION, "settles": ["T-RES-LT1"]}],
     }
@@ -101,40 +132,47 @@ def _look(brief: dict[str, Any]) -> dict[str, Any]:
 def _fix_look(request: dict[str, Any]) -> dict[str, Any]:
     assert any("机理" in issue["problem"] for issue in request["check"]["issues"])
     fixed = json.loads(json.dumps(request["submission"]))
-    fixed["mechanisms"] = [{"mechanism": "停产夜间空压机加载", "objects": ["AC1"], "outcome": "spec", "specs": ["night"], "note": "停产时管网没人用气"}]
+    fixed["mechanisms"] = [{"mechanism": "停产夜间空压机加载", "objects": ["AC1"], "outcome": "item", "items": ["I2"], "note": "停产时管网没人用气"}]
     return fixed
 
 
 def _residual(brief: dict[str, Any]) -> dict[str, Any]:
-    assert brief["round"] == 1 and [entry["id"] for entry in brief["slices"]] == ["S-LT1-2026-03-09"]
+    assert brief["round"] == 1 and brief["item_prefix"] == "R1"
+    slices = [entry["id"] for entry in brief["slices"]]
+    assert slices and all(entry.startswith("S-IM1-") for entry in slices)
+    assert [entry["id"] for entry in brief["differences"]] == ["L1-IM1-between"]
+    first, *rest = slices
     return {
         "key": brief["key"],
-        "slices": [{"slice": "S-LT1-2026-03-09", "disposition": "explained", "specs": ["extra-light"], "note": "三天白天的检修照明"}],
+        "slices": [
+            {"slice": first, "disposition": "explained", "specs": ["lunch-heat"], "note": "午休时机台保温"},
+            *({"slice": entry, "disposition": "new_item", "items": ["I1"], "note": "午休时机台没停"} for entry in rest),
+        ],
+        "items": [_proposal("I1", "午休时注塑机没停", differences=["L1-IM1-between"])] if rest else [],
         "specs": [
             {
                 "kind": "residual",
-                "id": "extra-light",
-                "objects": ["LT1"],
-                "when": {"dates": ["2026-03-10..2026-03-12"], "clock": "09:00-17:00"},
+                "id": "lunch-heat",
+                "objects": ["IM1"],
+                "when": {"weekdays": [1, 2, 3, 4, 5], "clock": "11:30-12:30"},
                 "type": "necessary_service",
-                "request": "问生产科这三天白天的检修安排",
-                "why": "检修时临时加灯",
+                "request": "问生产科午休时机台是否要保温",
+                "why": "注塑机午休保温",
             }
         ],
-        "site_questions": [{**QUESTION, "settles": ["extra-light"]}],
+        "site_questions": [{**QUESTION, "settles": ["lunch-heat"]}],
     }
 
 
-def _judgment(entry: dict[str, Any], test: bool) -> dict[str, Any]:
-    cause: dict[str, Any] = {"id": "C1", "cause": "停产后没人关", "kind": "loss"}
-    if test:
-        cause["test"] = {"type": "base_load_when_stopped"}
+def _judgment(entry: dict[str, Any]) -> dict[str, Any]:
+    # Keeps the proposal's causes, whatever the tests said: the check sends back the contradicted ones.
+    causes = [{"id": "C1", "cause": "停产后没人关", "kind": "loss", "status": "kept"}, {**NOT_A_LOSS, "status": "open"}]
     return {
         "candidate": entry["id"],
         "opinion": "likely_loss",
         "reference_choice": entry["default"],
         "reference_reason": "本表自己在可比时段的功率",
-        "causes": [cause],
+        "causes": causes,
         "measures": [{"type": "management", "action": "交班时检查并关闭", "owner_role": "equipment"}],
     }
 
@@ -144,7 +182,6 @@ class Analyst:
 
     def __init__(self) -> None:
         self.seen: dict[str, list[dict[str, Any]]] = {}
-        self.firsts: dict[str, dict[str, Any]] = {}
 
     def __call__(self, message: Any) -> tuple[Any, ...]:
         task = _task(message.content)
@@ -161,16 +198,7 @@ class Analyst:
         if task == "look-residual":
             return ("submit", [_residual(value)])
         if task == "judge-system":
-            first = {"key": value["key"], "judgments": [_judgment(entry, value["system"] == "动力站") for entry in value["judge"]]}
-            self.firsts[value["key"]] = first
-            return ("submit", [first])
-        if task == "judge-with-tests":
-            final = json.loads(json.dumps(self.firsts[value["key"]]))
-            for judgment in final["judgments"]:
-                for cause in judgment["causes"]:
-                    # Keeps every cause, whatever the tests said: the check sends back the contradicted ones.
-                    cause["status"] = "kept"
-            return ("submit", [final])
+            return ("submit", [{"key": value["key"], "judgments": [_judgment(entry) for entry in value["judge"]]}])
         if task == "fix-judgment":
             fixed = json.loads(json.dumps(value["submission"]))
             for judgment in fixed["judgments"]:
@@ -230,17 +258,30 @@ async def test_candidates_then_report_on_a_made_up_site(tmp_path: Path) -> None:
         # One look per system; only the power station's was sent back, once.
         assert sorted(brief["key"] for brief in analyst.seen["look-system"]) == ["look-动力站", "look-注塑车间"]
         assert [request["key"] for request in analyst.seen["fix-look"]] == ["look-动力站"]
-        # The program computed the analyst's night reference: 12 kW on the stopped nights.
+        # The items' rows: the adopted differences carry their whole-period numbers, the night spec is computed over the whole period.
+        assert {row: items[row]["item"] for row in ("L1-AC1-stop", "M-night-AC1", "L2c-LT1", "L4-LT1", "L1-IM1-between")} == {
+            "L1-AC1-stop": "S1-I1",
+            "M-night-AC1": "S1-I2",
+            "L2c-LT1": "S2-I1",
+            "L4-LT1": "S2-I1",
+            "L1-IM1-between": "R1-I1",
+        }
         night = items["M-night-AC1"]
         assert night["excess_kwh"] == 1329.0 and night["screen"]["rule"] == "S8"
-        # One residual round: the analyst explained all of it, so the next rounds had nothing to brief.
+        # The extra light is all in the second half of the period: pending as a possible one-off.
+        assert items["L2c-LT1"]["screen"]["rule"] == "S10"
+        # The lunch hour adopted in the residual round is under the floor.
+        assert items["L1-IM1-between"]["screen"]["rule"] == "S2"
+        # One residual round: the analyst took up all of it, so the next round had nothing to brief.
         assert len(analyst.seen["look-residual"]) == 1
-        assert data["rounds"][0]["gain_kwh"] == 144.0 and data["rounds"][0]["stopped"] is False
-        assert data["summary"]["residual_open_kwh"] == 144.0 and data["summary"]["residual_model_kwh"] == 144.0
-        # Two rounds of judgments per system; the contradicted cause was sent back and dropped.
+        assert data["rounds"][0]["gain_kwh"] == 70.0 and data["rounds"][0]["stopped"] is False
+        assert data["summary"]["residual_open_kwh"] == 0.0
+        assert {entry["id"] for entry in data["loss_items"]} == {"S1-I1", "S1-I2", "S2-I1", "R1-I1"}
+        # One round of judgments per system, with the proposal's test already run; the contradicted cause was sent back and dropped.
         assert sorted(brief["key"] for brief in analyst.seen["judge-system"]) == ["judge-动力站", "judge-注塑车间"]
-        probes = next(value for value in analyst.seen["judge-with-tests"] if value["key"] == "judge-动力站")
-        assert {entry["result"] for entry in probes["results"]} == {"contradicts"}
+        power = next(value for value in analyst.seen["judge-system"] if value["key"] == "judge-动力站")
+        stop_brief = next(entry for entry in power["judge"] if entry["id"] == "L1-AC1-stop")
+        assert {entry["result"] for entry in stop_brief["tests"]} == {"contradicts"}
         assert [request["key"] for request in analyst.seen["fix-judgment"]] == ["judge-动力站"]
         stop = items["L1-AC1-stop"]["judgment"]
         assert stop["causes"][0]["status"] == "dropped"

@@ -1,8 +1,8 @@
 id: fix-judgment
-version: 0.1.0
+version: 0.2.0
 description: Correct the judgments after the program's check, in the same conversation
 agent: loss-analyst
-objective: 程序核对了你刚才交的判断，check.issues 列出了要改的地方（候选没写或写了两次、参照档不在 levels 里、检验矛盾的原因写了 kept、检修改造类措施没有检验支持的原因等）。submission 是你上次的判断。逐条改正后重新提交完整的判断。
+objective: 程序核对了你刚才交的判断，check.issues 列出了要改的地方（行没写或写了两次、参照档不在 levels 里、检验矛盾的原因写了 kept、检修改造类措施没有检验支持的原因等）。submission 是你上次的判断。逐条改正后重新提交完整的判断。
 input_contract: judgment-fix-request
 output_contract: judgment-submission
 constraints:

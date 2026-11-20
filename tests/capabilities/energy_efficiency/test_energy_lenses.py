@@ -1,4 +1,4 @@
-"""The program finds and sizes the loss items; the model's specs are computed and checked; the screening follows the preferences."""
+"""The program computes the differences; the analyst's items adopt them or bring specs; the program computes and checks the items, and the screening of their rows follows the preferences."""
 
 from __future__ import annotations
 
@@ -58,46 +58,98 @@ NIGHT = {
     "basis": [{"source": "领域常识"}],
     "why": "全厂停的夜里不用压缩空气",
 }
+NOT_A_LOSS = {"id": "C2", "cause": "夜里有设备保压要用气", "kind": "necessary"}
 
 
-def _look(key: str, specs: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+def _item(local: str, differences: list[str] | None = None, spec: str | None = None, **extra: Any) -> dict[str, Any]:
+    return {
+        "id": local,
+        "title": "停产后空压机还开着",
+        "differences": differences or [],
+        **({"spec": spec} if spec else {}),
+        "finding": "无需求用电视角：全厂停时空压机高于底功率",
+        "reasoning": "停产时管网没人用气，功率却只降到在产时的一部分",
+        "causes": [{"id": "C1", "cause": "停产后没人关空压机", "kind": "loss"}, NOT_A_LOSS],
+        **extra,
+    }
+
+
+def _look(key: str, items: list[dict[str, Any]], specs: list[dict[str, Any]] | None = None, **extra: Any) -> dict[str, Any]:
     return {
         "key": key,
+        "items": items,
+        "set_aside": [],
         "triggers": [],
         "mechanisms": [
-            {"mechanism": "停产夜间空压机加载", "objects": ["AC1"], "outcome": "spec", "specs": [spec["id"] for spec in specs], "note": "停产时管网没人用气"}
-        ],
-        "specs": specs,
+            {"mechanism": "停产夜间空压机加载", "objects": ["AC1"], "outcome": "item", "items": [item["id"] for item in items][:1], "note": "停产时管网没人用气"}
+        ]
+        if items
+        else [{"mechanism": "照明随作息", "outcome": "no_evidence", "note": "看过，数据里没看到"}],
+        "specs": specs or [],
         "site_questions": [],
         **extra,
     }
 
 
-def test_the_lenses_find_and_size_items_on_every_meter(tmp_path: Path) -> None:
+def _apply(tools: dict[str, Any], looks: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    results = {}
+    for key, submission in looks.items():
+        check = tools["check-look"]({"run_id": RUN, "key": key, "submission": submission})
+        assert check["ok"], check["issues"]
+        results[key] = tools["settle-look"]({"key": key, "first_submission": submission, "first_check": check})
+    return tools["apply-looks"]({"run_id": RUN, "results": results, "errors": {}})
+
+
+PLAIN = {
+    "look-动力站": _look("look-动力站", [_item("I1", ["L1-AC1-stop"])]),
+    "look-注塑车间": _look("look-注塑车间", [_item("I1", ["L2a-IM1"], title="长批次单耗高"), _item("I2", ["L1-IM1-between"], title="午休保温")]),
+}
+
+
+def test_the_lenses_compute_differences_and_nothing_is_an_item_until_proposed(tmp_path: Path) -> None:
     _tools, looks = _ready(tmp_path)
     ledger = _ledger(tmp_path)
-    by_id = ledger.by_id
+    by_id = ledger.difference_by_id
     # The compressor is not off while the plant is stopped: 12 kW all night and 40 kW until 20:00.
     stop = by_id["L1-AC1-stop"]
     assert _levels(stop) == {"零": 3777.0, "底功率": 840.0} and stop.default == "底功率"
-    assert ledger.screening["L1-AC1-stop"]["result"] == "有效"
     # Two batches a day, 3.5 h and 4.5 h at 30 kW for 100 件 each: the long batch is over the quartile.
     assert _levels(by_id["L2a-IM1"]) == {"组内最低": 300.0, "P25": 300.0, "P50": 150.0}
-    # The lunch hour at 8 kW over the 1 kW floor: 70 kWh, under the 100 kWh floor of the screening (P36).
+    # The lunch hour at 8 kW over the 1 kW floor: 70 kWh, under the 100 kWh floor (P36), so the analyst need not account for it.
     assert _levels(by_id["L1-IM1-between"])["底功率"] == 70.0
-    assert ledger.screening["L1-IM1-between"]["rule"] == "S2"
-    # Every meter is examined by some lens; nothing is left unexplained on a site this regular.
+    assert ledger.must_answer == ["L1-AC1-stop", "L2a-IM1"]
+    # The differences are not items: nothing is screened, all of them is the residual.
+    assert ledger.candidates == [] and ledger.screening == {}
     assert all(row["not_examined_kwh"] == 0 for row in ledger.coverage)
-    assert ledger.residual_total() == 0
-    # One look brief per system, with the system's meters only.
+    assert round(ledger.residual_total(), 1) == round(ledger.differences_total(), 1) == 1210.0
+    # One brief per system, with the system's meters and all its differences.
     briefs = {brief["key"]: brief for brief in looks["briefs"]}
     assert set(briefs) == {"look-动力站", "look-注塑车间"}
     assert [meter["meter"] for meter in briefs["look-动力站"]["meters"]] == ["AC1"]
-    assert looks["summary"]["valid"] == 2
+    assert [entry["id"] for entry in briefs["look-注塑车间"]["differences"]] == ["L2a-IM1", "L1-IM1-between"]
+    assert briefs["look-动力站"]["must_answer"] == ["L1-AC1-stop"] and briefs["look-动力站"]["item_prefix"] == "S1"
+
+
+def test_items_adopt_differences_and_their_rows_are_screened(tmp_path: Path) -> None:
+    tools, _looks = _ready(tmp_path)
+    applied = _apply(tools, PLAIN)
+    assert [entry["key"] for entry in applied["rounds"]] == ["R1", "R2", "R3"]
+    ledger = _ledger(tmp_path)
+    # Each adopted difference is a row of its item, with the difference's whole-period numbers.
+    assert {row.id: row.item for row in ledger.candidates} == {"L1-AC1-stop": "S1-I1", "L2a-IM1": "S2-I1", "L1-IM1-between": "S2-I2"}
+    assert _levels(ledger.by_id["L1-AC1-stop"]) == {"零": 3777.0, "底功率": 840.0}
+    assert ledger.screening["L1-AC1-stop"]["result"] == "有效"
+    assert ledger.screening["L1-IM1-between"]["rule"] == "S2"
+    # Every row is checked for stability: both halves of the period hold the excess.
+    steady = ledger.by_id["L1-AC1-stop"].details["stability"]
+    assert steady["first_half_kwh"] > 0 and steady["second_half_kwh"] > 0
+    # What the items adopted leaves the residual.
+    assert ledger.found_total() == pytest.approx(ledger.differences_total()) and ledger.residual_total() == pytest.approx(0, abs=1e-6)
 
 
 def test_the_screening_follows_the_preferences(tmp_path: Path) -> None:
-    _ready(tmp_path, {"screen_min_kwh": 50, "screen_min_share": 0.2})
+    tools, _looks = _ready(tmp_path, {"screen_min_kwh": 50, "screen_min_share": 0.2})
+    _apply(tools, {key: value for key, value in PLAIN.items()})
     screening = _ledger(tmp_path).screening
     # 70 kWh is now over the kWh floor, but 2.6 % of the moulding meter is under a 20 % share.
     assert screening["L1-IM1-between"]["result"] == "无效" and screening["L1-IM1-between"]["rule"] == "S3"
@@ -105,43 +157,83 @@ def test_the_screening_follows_the_preferences(tmp_path: Path) -> None:
     assert screening["L1-AC1-stop"]["rule"] == "S3"
 
 
-def test_a_reference_spec_is_computed_by_the_program_and_checked(tmp_path: Path) -> None:
+def test_a_reference_spec_belongs_to_an_item_and_is_computed_and_checked(tmp_path: Path) -> None:
     tools, _looks = _ready(tmp_path)
-    check = tools["check-look"]({"run_id": RUN, "key": "look-动力站", "submission": _look("look-动力站", [NIGHT])})
-    assert check == {"ok": True, "issues": [], "hints": []}
-    settled = tools["settle-look"]({"key": "look-动力站", "first_submission": _look("look-动力站", [NIGHT]), "first_check": check})
-    applied = tools["apply-looks"]({"run_id": RUN, "results": {"look-动力站": settled}, "errors": {}})
-    assert [entry["key"] for entry in applied["rounds"]] == ["R1", "R2", "R3"]
+    night = _look("look-动力站", [_item("I1", spec="night")], [NIGHT], set_aside=[{"difference": "L1-AC1-stop", "reason": "cannot_tell", "note": "和夜间项重叠，先看夜间"}])
+    _apply(tools, {"look-动力站": night})
     ledger = _ledger(tmp_path)
-    night = ledger.by_id["M-night-AC1"]
-    # 12 kW for the stopped nights, and 9 kW over the alternative's 3 kW.
-    assert _levels(night) == {"规格参照": 1329.0, "保压": 996.75}
+    row = ledger.by_id["M-night-AC1"]
+    # 12 kW for the stopped nights, and 9 kW over the alternative's 3 kW, over the whole period.
+    assert _levels(row) == {"规格参照": 1329.0, "保压": 996.75} and row.item == "S1-I1"
+    assert row.details["stability"]["shift"]["change_share"] is not None
     # A reference nobody confirmed waits for a person.
     assert ledger.screening["M-night-AC1"]["rule"] == "S8"
+    # The difference set aside as "cannot tell" stays open in the residual for the next round.
+    assert ledger.set_aside[0]["difference"] == "L1-AC1-stop" and not ledger.residual_model.any()
 
     wrong = json.loads(json.dumps(NIGHT))
     wrong.update({"id": "wrong", "objects": ["IM1", "ZZ9"], "when": {"dates": ["2027-01-01"]}})
     wrong["basis"] = [{"source": "问卷", "ref": "Q9", "claims_confirmed": True}]
-    submission = _look("look-动力站", [wrong], triggers=[{"trigger": "T-NONE", "disposition": "not_a_problem", "note": "看过"}])
-    submission["mechanisms"].append({"mechanism": "管网泄漏", "objects": ["AC1"], "outcome": "covered", "covered_by": ["L9-AC1"], "note": "已覆盖"})
+    orphan = {**NIGHT, "id": "orphan"}
+    items = [
+        _item("I1", spec="wrong"),
+        _item("I2", ["L2a-IM1", "L9-AC1"]),
+        _item("I3", ["L1-AC1-stop"], causes=[{"id": "C1", "cause": "没人关", "kind": "loss"}]),
+        _item("I4", ["L1-AC1-stop"]),
+        _item("I5"),
+    ]
+    submission = _look("look-动力站", items, [wrong, orphan], triggers=[{"trigger": "T-NONE", "disposition": "not_a_problem", "note": "看过"}])
+    submission["mechanisms"].append({"mechanism": "管网泄漏", "objects": ["AC1"], "outcome": "item", "items": ["I9"], "note": "提了"})
     issues = tools["check-look"]({"run_id": RUN, "key": "look-动力站", "submission": submission})["issues"]
     text = "\n".join(f"{issue['key']}: {issue['problem']}" for issue in issues)
-    assert "ZZ9" in text and "IM1" in text  # not a meter, and not this system's
+    assert "ZZ9" in text and "不是本系统的表" in text  # not a meter, and not this system's
     assert "Q9" in text  # no such survey row
     assert "T-NONE" in text  # not a trigger of this brief
-    assert "L9-AC1" in text  # covered by a candidate that does not exist
+    assert "L9-AC1" in text  # a difference that does not exist
+    assert "item I3: causes 里至少要有一条不是损耗" in text
+    assert "也被本次的项 I3 采用" in text  # one difference, two items
+    assert "item I5: 每项要采用至少一条程序差额" in text
+    assert "spec orphan: 参照规格要挂在一个项上" in text
+    assert "mechanism 2" in text  # an item that is not in the submission
+    # A large difference neither adopted nor set aside is sent back.
+    silent = _look("look-动力站", [], [])
+    issues = tools["check-look"]({"run_id": RUN, "key": "look-动力站", "submission": silent})["issues"]
+    assert [issue["key"] for issue in issues] == ["difference L1-AC1-stop"]
 
 
-def test_confirmed_rules_become_a_lens_and_explain_what_they_cover(tmp_path: Path) -> None:
+def test_stability_checks_screen_rows_that_do_not_hold(tmp_path: Path) -> None:
+    # The half hour below is 84 kWh: the floor comes down so that it is screened on its stability.
+    tools, _looks = _ready(tmp_path, {"screen_min_kwh": 50})
+    first_week = {**NIGHT, "id": "early", "when": {"plant": "STOP", "clock": "22:00-06:00", "dates": ["2026-03-02..2026-03-08"]}}
+    # Half an hour right after the compressor drops from 40 kW to 12 kW at 20:00.
+    edge = {**NIGHT, "id": "edge", "when": {"plant": "STOP", "clock": "20:00-20:30"}}
+    items = [_item("I1", spec="night"), _item("I2", spec="early"), _item("I3", spec="edge")]
+    _apply(tools, {"look-动力站": _look("look-动力站", items, [NIGHT, first_week, edge], set_aside=[{"difference": "L1-AC1-stop", "reason": "cannot_tell", "note": "看不出"}])})
+    ledger = _ledger(tmp_path)
+    screening = ledger.screening
+    # Only in the first week: the second half has none of it.
+    assert ledger.by_id["M-early-AC1"].details["stability"]["half_ratio"] == 0
+    assert screening["M-early-AC1"]["rule"] == "S10"
+    # One interval earlier takes in a quarter hour at 40 kW: the excess more than doubles (P45 is 0.5).
+    assert ledger.by_id["M-edge-AC1"].details["stability"]["shift"]["change_share"] > 0.5
+    assert screening["M-edge-AC1"]["rule"] == "S11"
+    # The night is flat at 12 kW: moving the hours changes nothing, and the row is only pending for its unconfirmed reference.
+    assert ledger.by_id["M-night-AC1"].details["stability"]["shift"]["change_share"] == 0
+    assert screening["M-night-AC1"]["rule"] == "S8"
+
+
+def test_confirmed_rules_are_items_and_explain_what_they_cover(tmp_path: Path) -> None:
     reference = {"objects": ["AC1"], "when": {"plant": "STOP", "clock": "22:00-06:00"}, "reference": {"type": "fixed_kw", "value": 3}}
     residual = {"objects": ["AC1"], "when": {"plant": "STOP", "weekdays": [1, 2, 3, 4, 5], "clock": "17:00-20:00"}, "type": "necessary_service"}
-    _ready(tmp_path, {"reference_rules": [reference], "residual_rules": [residual]})
+    tools, _looks = _ready(tmp_path, {"reference_rules": [reference], "residual_rules": [residual]})
     ledger = _ledger(tmp_path)
-    # A person's reference is a lens of its own and screened like any lens.
+    # A person's reference is an item of its own, screened like any item.
     assert _levels(ledger.by_id["R-P39-1-AC1"]) == {"规格参照": 996.75}
+    assert ledger.by_id["R-P39-1-AC1"].item == "P39-1" and ledger.items["P39-1"]["source"] == "rule"
     assert ledger.screening["R-P39-1-AC1"]["result"] == "有效"
-    # The evening wash the person explained is all of L1-AC1-stop's excess over the floor.
-    assert ledger.screening["L1-AC1-stop"]["rule"] == "S1"
+    # The evening wash the person explained is all of L1-AC1-stop's excess over the floor: the item adopting it is invalid.
+    _apply(tools, {"look-动力站": PLAIN["look-动力站"]})
+    assert _ledger(tmp_path).screening["L1-AC1-stop"]["rule"] == "S1"
 
 
 def _judge(candidate: str, **extra: Any) -> dict[str, Any]:
@@ -166,14 +258,16 @@ def _judge(candidate: str, **extra: Any) -> dict[str, Any]:
 
 def test_judgments_are_checked_against_the_tests_the_program_ran(tmp_path: Path) -> None:
     tools, _looks = _ready(tmp_path)
-    tools["apply-looks"]({"run_id": RUN, "results": {}, "errors": {}})
+    tested = _item("I1", ["L1-AC1-stop"], causes=[{"id": "C1", "cause": "停产后没人关空压机", "kind": "loss", "test": {"type": "base_load_when_stopped"}}, NOT_A_LOSS])
+    _apply(tools, {"look-动力站": _look("look-动力站", [tested])})
     briefs = {brief["key"]: brief for brief in tools["judge-briefs"]({"run_id": RUN})["briefs"]}
     brief = briefs["judge-动力站"]
     assert [entry["id"] for entry in brief["judge"]] == ["L1-AC1-stop"]
-    first = {"key": "judge-动力站", "judgments": [_judge("L1-AC1-stop")]}
-    probes = tools["run-probes"]({"run_id": RUN, "key": "judge-动力站", "submission": first})["results"]
-    # 15.4 kW stopped against 40 kW producing: under the P31 ratio, the data does not back "it does not drop".
-    assert probes[0]["cause"] == "C1" and probes[0]["result"] == "contradicts"
+    assert [item["id"] for item in brief["items"]] == ["S1-I1"] and brief["items"][0]["finding"]
+    # The test written with the proposal was run before the judgment: 15.4 kW stopped against 40 kW producing
+    # is under the P31 ratio, so the data does not back "it does not drop".
+    tests = brief["judge"][0]["tests"]
+    assert tests[0]["cause"] == "C1" and tests[0]["result"] == "contradicts"
     retrofit = {"type": "retrofit", "action": "换变频空压机", "owner_role": "equipment", "depends_on": ["C1"]}
     wrong = {
         "key": "judge-动力站",
@@ -185,21 +279,25 @@ def test_judgments_are_checked_against_the_tests_the_program_ran(tmp_path: Path)
     assert "不能写 kept" in problems
     assert "retrofit" in problems
     assert "L9" in problems
-    fixed = _judge("L1-AC1-stop")
+    fixed = _judge("L1-AC1-stop", related=["S1-I1"])
     fixed["causes"][0]["status"] = "dropped"
     assert tools["check-judgment"]({"run_id": RUN, "key": "judge-动力站", "submission": {"key": "judge-动力站", "judgments": [fixed]}})["ok"]
     missing = tools["check-judgment"]({"run_id": RUN, "key": "judge-动力站", "submission": {"key": "judge-动力站", "judgments": []}})
     assert any("没有判断" in issue["problem"] for issue in missing["issues"])
 
 
-def test_a_person_chooses_items_and_levels_and_the_report_writes_the_chosen_amount(tmp_path: Path) -> None:
+def test_a_person_chooses_rows_and_levels_and_the_report_writes_the_chosen_amount(tmp_path: Path) -> None:
     tools, _looks = _ready(tmp_path)
-    tools["apply-looks"]({"run_id": RUN, "results": {}, "errors": {}})
+    _apply(tools, PLAIN)
     tools["register-candidates"]({"run_id": RUN})
     folder = tmp_path / "Work/runs" / RUN / "energy"
     register = read_json(folder / "register.json")
     items = {item["id"]: item for item in register["items"]}
-    assert items["L1-AC1-stop"]["screen"]["result"] == "有效"
+    assert items["L1-AC1-stop"]["screen"]["result"] == "有效" and items["L1-AC1-stop"]["item"] == "S1-I1"
+    assert {entry["id"] for entry in register["loss_items"]} == {"S1-I1", "S2-I1", "S2-I2"}
+    # The differences no item adopted are listed on their own page, not in the ledger.
+    differences = {entry["id"]: entry for entry in register["differences"]}
+    assert differences["L1-AC1-stop"]["adopted_by"] == "S1-I1" and "L5-IM1" not in items
     assert (folder / "register.xlsx").is_file() and (folder / "分析偏好.xlsx").is_file()
     marks = tmp_path / "marks.csv"
     with marks.open("w", encoding="utf-8", newline="") as handle:
@@ -213,10 +311,10 @@ def test_a_person_chooses_items_and_levels_and_the_report_writes_the_chosen_amou
     assert decisions["L1-AC1-stop"] == {"item_id": "L1-AC1-stop", "decision": "keep", "by": "person", "note": "夜里也该关", "level": "零"}
     # Without a mark the screening decides.
     assert decisions["L2a-IM1"]["decision"] == "keep" and decisions["L2a-IM1"]["by"] == "screen S0"
-    assert decisions["L5-IM1"]["decision"] == "drop"
     markdown, page = build_report(register, selection, [])
     kept = markdown.split("## 保留的损耗项")[1].split("## 需补资料或待定的项")[0]
     assert "### L1-AC1-stop" in kept and "3,777 kWh（参照：零，人选" in kept
+    assert "寻找方式（模型，未核实）：无需求用电视角" in kept
     assert "### L2a-IM1" in kept
     waiting = markdown.split("## 需补资料或待定的项")[1].split("## 人或规则不保留的项")[0]
     assert "L1-IM1-between" in waiting and "问午休是否保温" in waiting

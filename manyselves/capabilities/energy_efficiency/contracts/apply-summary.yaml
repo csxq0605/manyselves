@@ -1,6 +1,6 @@
 id: apply-summary
 version: 1.0.0
-description: The register after the model's specs were computed, and the residual rounds still allowed
+description: The register after the model's items were computed, and the residual rounds still allowed
 adapter: json_schema
 schema:
   type: object

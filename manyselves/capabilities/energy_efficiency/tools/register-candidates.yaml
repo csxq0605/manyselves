@@ -1,6 +1,6 @@
 id: register-candidates
 version: 0.1.0
-description: "S6 and S7: screen by the preference rules and write the workbook (台账, coverage and residual, triggers, specs, saturation, site checklist)"
+description: "S6 and S7: screen the rows by the preference rules and write the workbook (台账, items, differences, coverage and residual, triggers, specs, saturation, site checklist)"
 implementation: capability:energy-efficiency:register-candidates
 input_contract: register-request
 output_contract: candidate-register-summary

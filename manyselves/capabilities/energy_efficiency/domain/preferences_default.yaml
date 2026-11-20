@@ -134,3 +134,9 @@ values:
   probe_share:
     value: 0.5
     origin: 程序设定（2026-11-19）：过半，没有外部依据
+  stability_half_share:
+    value: 0.1
+    origin: 程序设定（2026-11-20），没有外部依据
+  shift_change_share:
+    value: 0.5
+    origin: 程序设定（2026-11-20），没有外部依据

@@ -1,5 +1,5 @@
 id: residual-submission
 version: 1.0.0
-description: "One residual round: a disposition per slice, specs and site questions; no amounts"
+description: "One residual round: a disposition per slice, new loss items, specs and site questions; no amounts"
 adapter: pydantic
 model: manyselves.capabilities.energy_efficiency.domain.submissions:ResidualSubmission

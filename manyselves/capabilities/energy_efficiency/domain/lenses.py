@@ -6,7 +6,11 @@ each other (overlap), summed per meter (union) and compared (saturation).  A
 candidate is one lens on one meter (sometimes one part of it, e.g. between
 batches or with the plant stopped); it carries its excess under every
 reference level the preferences list, the default level and what each level
-means.  Nothing here says what is a loss: the screening rules and a person do.
+means.  These candidates are the program's differences: the base the analyst
+reads and the ruler that measures how much an analysis explained.  Nothing
+here says what is a loss: a difference becomes part of a loss item only when
+the analyst or a person's rule proposes it (``items``), and only items are
+screened.
 
 Lenses (ids are stable; the screening and the workbook name them):
 
@@ -89,6 +93,7 @@ class Candidate:
     notes: list[str] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
     preferences: list[str] = field(default_factory=list)
+    item: str | None = None  # the loss item this row belongs to; a program difference has none
 
     @property
     def excess(self) -> float:
@@ -122,6 +127,7 @@ class Candidate:
             "notes": self.notes,
             "details": self.details,
             "preferences": self.preferences,
+            "item": self.item,
         }
 
     @classmethod
@@ -143,6 +149,7 @@ class Candidate:
             notes=list(data.get("notes", [])),
             details=dict(data.get("details", {})),
             preferences=list(data.get("preferences", [])),
+            item=data.get("item"),
         )
 
 

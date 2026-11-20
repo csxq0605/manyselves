@@ -1,6 +1,6 @@
 id: residual-brief
 version: 0.1.0
-description: "S4: brief one residual round with the largest unexplained pieces, or none when the rounds stopped"
+description: "S4: brief one residual round with the largest excess no item explains, or none when the rounds stopped"
 implementation: capability:energy-efficiency:residual-brief
 input_contract: residual-round-request
 output_contract: residual-set

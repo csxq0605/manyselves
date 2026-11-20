@@ -1,9 +1,8 @@
 id: judge-system
 version: 0.1.0
-description: "S5: the analyst judges one system's candidates in two rounds: opinions and cause tests, the program runs the tests, then the final judgments; the program checks them, sends them back once and settles them"
+description: "S5: the analyst judges one system's computed rows in one round, with the stability checks and the cause tests of the proposals already run; the program checks the judgments, sends them back once and settles them"
 tasks:
 - judge-system
-- judge-with-tests
 recovery:
 - typed-turn-recovery
 output_contract: settled-result
@@ -20,39 +19,18 @@ actions:
   key_variable: item_key
   mode: run
   output_variable: conversation
-- id: first
+- id: answer
   kind: invoke_agent
   agent: loss-analyst
   task: judge-system
   conversation_variable: conversation
   input_variable: item
-  output_variable: first_submission
+  output_variable: submission
 - id: run-id
   kind: set_variable
   variable: run_id
   value_variable: item
   field: run_id
-- id: probe-input
-  kind: set_variable
-  variable: probe_input
-  value_variables:
-    run_id: run_id
-    key: item_key
-    submission: first_submission
-# The program runs the tests the analyst asked for; the analyst settles its
-# causes on their results in the same conversation.
-- id: probes
-  kind: invoke_tool
-  tool: run-probes
-  input_variable: probe_input
-  output_variable: probes
-- id: second
-  kind: invoke_agent
-  agent: loss-analyst
-  task: judge-with-tests
-  conversation_variable: conversation
-  input_variable: probes
-  output_variable: submission
 - id: check-input
   kind: set_variable
   variable: check_input
