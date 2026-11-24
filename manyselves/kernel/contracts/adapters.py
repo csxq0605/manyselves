@@ -10,6 +10,7 @@ from jsonschema.validators import validator_for
 from pydantic import TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
+from manyselves.kernel.contracts.decoding import read_json_text
 from manyselves.kernel.contracts.relocation import relocate
 from manyselves.kernel.definitions import (
     ContractDefinition,
@@ -48,9 +49,11 @@ class PydanticContractAdapter:
             return self._adapter.validate_python(value)
         except PydanticValidationError as exc:
             first = exc
-        # A field submitted at the wrong level goes back where the contract
-        # declares it, when the contract makes that place certain.
-        moved, notes = relocate(value, self._schema())
+        # A list or object sent as its JSON text is read back, and a field
+        # submitted at the wrong level goes back where the contract declares
+        # it, each only when the contract makes it certain.
+        read, _where = read_json_text(value, self._schema())
+        moved, notes = relocate(read, self._schema())
         if moved != value:
             try:
                 return self._adapter.validate_python(moved)
@@ -128,7 +131,8 @@ class JsonSchemaContractAdapter:
             return value
         except JsonSchemaValidationError as exc:
             first = exc
-        moved, notes = relocate(value, self._schema)
+        read, _where = read_json_text(value, self._schema)
+        moved, notes = relocate(read, self._schema)
         if moved != value:
             try:
                 self._validator.validate(moved)

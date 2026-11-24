@@ -21,6 +21,7 @@ from typing import Any
 
 from manyselves.interfaces.types import AgentResultMessage
 from manyselves.kernel.contracts import ContractAdapter, ContractValidationError
+from manyselves.kernel.contracts.decoding import read_json_text
 from manyselves.kernel.recovery import RecoveryActionKind
 
 from ..agent_results import FileAgentResultStore
@@ -99,13 +100,19 @@ class SubmitResultTool(Tool):
         # The last rejected submission: a correction need only carry what was
         # wrong, and is merged into it before validation.
         self._rejected: dict[str, Any] | None = None
+        # Fields this task sent as JSON text that were read back as lists or objects.
+        self._read_from_text: list[str] = []
 
     async def __call__(self, **submission: Any) -> dict[str, Any]:
-        candidate = dict(submission)
+        schema = self.output_contract.json_schema()
+        # A list or object sent as its JSON text is read back before a
+        # correction is merged, so a corrected item still replaces only the
+        # item with its id, and the rejected submission is kept as lists.
+        candidate, read = read_json_text(dict(submission), schema)
+        if read:
+            self._read_from_text.extend(f for f in read if f not in self._read_from_text)
         if self._rejected is not None:
-            candidate = merge_correction(
-                self._rejected, candidate, schema=self.output_contract.json_schema()
-            )
+            candidate = merge_correction(self._rejected, candidate, schema=schema)
         try:
             result = self.output_contract.validate(candidate)
         except ContractValidationError as exc:
@@ -123,7 +130,11 @@ class SubmitResultTool(Tool):
             reads=self.reads() if self.reads is not None else None,
         )
         await self._publish(result_ref, "completed", "")
-        return {"status": "ok", "accepted": True, "result_path": result_ref}
+        accepted: dict[str, Any] = {"status": "ok", "accepted": True, "result_path": result_ref}
+        if self._read_from_text:
+            # Kept in the conversation record, so a run shows where it relied on this.
+            accepted["read_from_json_text"] = list(self._read_from_text)
+        return accepted
 
     async def _correction(self, error: str) -> dict[str, Any]:
         self._failures += 1

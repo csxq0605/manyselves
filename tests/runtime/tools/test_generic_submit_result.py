@@ -135,3 +135,55 @@ def test_the_task_message_carries_the_task_schema_when_the_tool_is_generic() -> 
     schema = json.dumps(CONTRACTS["beta"].json_schema(), ensure_ascii=False, separators=(",", ":"))
     assert f'<output_schema contract="beta">\n{schema}\n</output_schema>' in prompt
     assert "output_schema 填写" in prompt
+
+
+ROWS = {
+    "type": "object",
+    "required": ["rows"],
+    "additionalProperties": False,
+    "properties": {
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "v"],
+                "additionalProperties": False,
+                "properties": {"id": {"type": "string"}, "v": {"type": "number"}},
+            },
+        },
+    },
+}
+CONTRACTS["rows"] = _contract("rows", ROWS)
+
+
+@pytest.mark.asyncio
+async def test_a_list_sent_as_json_text_is_accepted_as_the_list() -> None:
+    store = _Store()
+    tool = _tool("rows", store)
+    accepted = await tool(rows='[{"id": "R-1", "v": 1}, {"id": "R-2", "v": 2}]')
+    assert accepted["accepted"] is True
+    assert accepted["read_from_json_text"] == ["rows"]
+    assert store.saved[-1]["result"] == {"rows": [{"id": "R-1", "v": 1}, {"id": "R-2", "v": 2}]}
+
+
+@pytest.mark.asyncio
+async def test_a_correction_sent_as_text_still_replaces_only_its_own_item() -> None:
+    store = _Store()
+    tool = _tool("rows", store)
+    wrong = await tool(rows='[{"id": "R-1", "v": 1}, {"id": "R-2", "v": "高"}]')
+    assert wrong["status"] == "correction_required"
+    # Only the wrong item, sent as text again: the other one is kept.
+    accepted = await tool(rows='[{"id": "R-2", "v": 2}]')
+    assert accepted["accepted"] is True
+    assert store.saved[-1]["result"] == {"rows": [{"id": "R-1", "v": 1}, {"id": "R-2", "v": 2}]}
+
+
+@pytest.mark.asyncio
+async def test_text_that_does_not_parse_is_corrected_as_before() -> None:
+    store = _Store()
+    tool = _tool("rows", store)
+    wrong = await tool(rows='[{"id": "R-1", "v": 1},')
+    assert wrong["status"] == "correction_required"
+    failed = await tool(rows='[{"id": "R-1", "v": 1},')
+    assert failed["status"] == "failed"
+    assert store.saved[-1]["status"] == "failed"
